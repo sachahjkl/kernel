@@ -31,6 +31,8 @@ This guide says what is built, how it works, and what is not built.
 
 ## 1. The layers, and what is built
 
+The design grows in five layers, from a machine with no principal to one principal on several machines. Each layer works alone, and each adds one capability to the layer below it. Layers 1 to 3 are built, in part; layers 4 and 5 are designs.
+
 | Layer | What it is | State |
 |---|---|---|
 | 1 | No principal: the root service is the only source of grants. A caller acts for the principal or not (`acts_for_principal`) | Built |
@@ -42,6 +44,8 @@ This guide says what is built, how it works, and what is not built.
 With no named principal, the system runs as principal 0 only, with no unlock: the behavior of layer 2.
 
 ## 2. Principal 0: the machine
+
+The machine itself is a principal, number 0. The programs of the system run for it, and its data are the data of the system, such as the settings. It needs no unlock, and it is not an administrator: it cannot see the data of a named principal.
 
 The root service makes the record of principal 0 at each boot, before the first program starts, from the trust record of the boot program (`TRUSTED_BOOT.md`). The record holds:
 
@@ -56,6 +60,8 @@ The programs of the system belong to principal 0: the services, the console, and
 The key that signs the system description is the key of a principal like any other: the principal that signs the system. It is not principal 0, and it is not in the TPM.
 
 ## 3. A named principal
+
+A named principal is a principal with a name and keys of its own: two key pairs, kept on the disk sealed under a key that only its passphrase gives. Nothing of the passphrase is stored: a wrong passphrase simply fails to open the seal.
 
 A named principal has the number 1. The root service holds two records: principal 0 and one named principal.
 
@@ -104,6 +110,8 @@ A passphrase has 8 to 128 bytes of the printable characters (32 to 126). It is t
 
 ## 4. The unlock and the lock
 
+A session of a named principal starts when its passphrase opens its file, and ends with a lock. One program, `unlock`, handles the passphrase and the keys; it tells the root service the result and stops.
+
 The root service starts `unlock` at boot, after the boot pass of `settings`.
 
 - With no file, `unlock` stops at once: "unlock: no named principal: the machine runs as principal 0, with no unlock".
@@ -119,6 +127,8 @@ The root service starts `unlock` at boot, after the boot pass of `settings`.
 The root service trusts `unlock` for the record and for the unlock, as the one program with the grant `Principals`, as it trusts `settings` as the one writer of the settings page. No other program can send these two commands.
 
 ## 5. The session
+
+Each program runs for one principal, and the root service decides which when it starts the program. A service learns the principal of each caller from the grant of its connection, never from the caller itself.
 
 The root service records, for each program that it starts, the principal whose session the program belongs to:
 
@@ -145,6 +155,8 @@ A caller acts for the principal when its role has the grant `acts_for_principal`
 **The grant records name the principal.** `grants("notes")` in the console gives the grants of a program, then "notes runs for principal 1 "alice"". `revoke` works on a program of a session as on any other program.
 
 ## 6. The store of a principal
+
+One program run for two principals has two stores, so the data of each principal stay apart. The name of a store carries its principal, and one procedure of the storage service decides from it which stores a caller is allowed to name.
 
 The storage service names a store by the name that the root service gives to the connection. The root service builds that name in one procedure, `principals.store_name_write`, from the principal and the name of the program:
 

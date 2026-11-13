@@ -39,6 +39,8 @@ This document names the key systems of `modus` and shows how they connect: the k
 
 ## The whole system
 
+The system has three layers of programs and one kernel at their side. Programs call services, and services call device services; each call is a record in a ring of shared memory, so data never passes through the kernel. The kernel only sets up what the programs cannot set up themselves: the memory that they share, the handles that they hold, and the waits.
+
 ```mermaid
 flowchart TB
   subgraph programs["Programs: sandboxed, no access at start"]
@@ -110,6 +112,20 @@ The same picture in text:
 
 The kernel is small on purpose: it does only what a program cannot do safely for itself (P1, P4). It has five systems, and 33 kernel operations reach them (`contract/operation`, `Operation`). Each system owns a small set of flat tables of fixed size (P13), so the kernel allocates nothing while it runs.
 
+The fixed sizes of the tables, from `kernel/program.odin`, `kernel/processor.odin` and `contract/operation`:
+
+| Table | Capacity | Why a fixed size is enough |
+|---|---|---|
+| Programs | 64 (`PROGRAM_CAPACITY`) | A program slot is also a bit in the sets of the kernel events ("Kernel events", section 7) |
+| Handles of one program | 128 (`HANDLE_CAPACITY`) | A program holds what its grants name, not one handle for each piece of data |
+| Mappings of one program | 128 (`MAPPING_CAPACITY`) | One mapping covers a range of any size, also a reserved range with no pages paid |
+| Threads of the machine | 256 (`THREAD_TABLE_CAPACITY`); 32 for one program (`THREAD_CAPACITY`) | The extended state area of each thread is a field of its slot ("The extended state of the processor", section 2) |
+| Memory objects | 2048 (`REGION_CAPACITY`) | |
+| Budgets | 128 (`BUDGET_CAPACITY`) | |
+| Processors | 64 (`PROCESSOR_CAPACITY`) | |
+
+A full table is a status of the operation that asks for one more entry (`No_Slot`), never a failure of the kernel.
+
 ### K1. Handle table
 
 The handle table is how the kernel knows who can do what. A program names an object only by a handle, and the handle carries the rights that the program has on it.
@@ -132,20 +148,29 @@ The handle table is how the kernel knows who can do what. A program names an obj
 
 - **Not an object kind**: a ring, a timer, an address space alone. A ring is memory that two programs map. A time is the deadline of a kernel entry. The address space belongs to its program.
 - **Does not**: know names, paths, users or files.
+- **Example**: the program `rights` holds a part of the rights of two handles; the kernel does the four operations that those rights allow and refuses the five others, each with its status. The program `origin` shows the origin of a handle through twelve cases of copies, gifts and revocations.
+
+![A program with a part of the rights of two handles: the kernel does four operations and refuses five](screenshots/rights.png)
 
 ### K2. Memory
+
+The memory system gives each program its own address space and lets two programs map the same pages. A program asks for memory as an object, paid by a budget; then it maps the object where it wants. The kernel never chooses to give a program more memory than its budget paid for.
 
 - **Does**: Tracks physical page frames. Builds address spaces. Gives "reserve address space", "commit pages", and "map this region in that program" (P14).
 - **As implemented**: `Memory_Create` reserves: the budget pays for each page, and each page gets its page frame at its first use, by the program (a page fault) or by the kernel. The flag `Frames_Now` gives all the frames at creation. Map is a separate operation. No access fails for lack of memory: a reserved page always has a free frame. A page table lives while a mapping holds an entry in it, and returns to the budget that paid for it with the unmap that empties it.
 - **Owns**: the page frame table; one address space record per program; the frame list of each memory object.
 - **Does not**: page to disk, cache files, or allocate hidden memory for a caller.
+- **Example**: `Memory_Create` with 16 pages and no flag pays 16 pages of the budget now; the frames come one at a time, at the first touch of each page. The program `frames` shows ten such cases with the answer of the kernel. The inside of this system is in "The virtual memory of a program", below.
 
 ### K3. Scheduler
+
+The scheduler decides which ready thread runs on each processor, and for how long. It has one run queue for each processor, and it moves ready threads to idle processors, so the machine acts as if it had one queue.
 
 - **Does**: Chooses which thread runs on each processor. Keeps time. Wakes threads.
 - **As implemented** (`docs/SCHEDULING.md`): three strategies behind one table of six functions (round robin, fair, EEVDF), one for the whole machine, which a program with the right Schedule changes while the system runs (`Strategy_Set`). Wake preemption, also on another processor. A weight and a request for each thread, at its creation.
 - **Owns**: one run queue per processor; the thread table, split in a hot part and a cold part.
 - **Does not**: know about priorities of services by name. Policy is data that the root service sets.
+- **Example**: the program `scheduler` runs the three strategies side by side and shows the wakes, the delay of a wake and the shares of spinners with weights (`docs/screenshots/scheduler.png`). The locks and the order of a wake are in "Locks of the kernel", "Rules that keep each path correct".
 
 ### K4. Rings and wait
 
@@ -289,6 +314,8 @@ Designed, not built. A program must reach a document of the principal only when 
 
 ### U7. Network steering service
 
+The network steering service owns the network identity of the machine and decides which program is allowed to send to whom. In the design it hands a program a queue of the card and then leaves the path of the data; today it stays on that path, because the device of the test machine has one pair of queues.
+
 - Owns the network identity of the machine: address, ports.
 - Gives a program a network queue and a port range, then leaves the data path.
 - The TCP stack is a library inside each program (P5).
@@ -297,9 +324,13 @@ Designed, not built. A program must reach a document of the principal only when 
 
 ### U7b. The remote service
 
+The remote service lets the host of the machine call the exports of services, as the console does inside the machine. It is the one door from the host into the system, and it carries only what the root service granted it.
+
 - The calls of the host: the program `remote` holds an endpoint whose grant names the host, and connections to the services that the root service names for it. The tool encodes an isolated call with the description of the export; `remote` relays it and sends the typed result back. See `MODULE_CONTRACT.md`, section 4, "A call from the host".
 
 ### U8. Graphics: WebGPU library and compositor
+
+Each program draws its own pixels into memory that it shares with the compositor; the compositor alone owns the display and puts the surfaces together. So a program never draws into another program's window, and the display has one owner.
 
 - **WebGPU library** (designed, not built): the one graphics interface, linked into each program that draws. It has one back end per display type. The first back end is software (P18). Today a program draws with `support/graphics` (fills, lines, text, pictures in software) and `support/interface` (the elements of a window as a draw table, `INTERFACE.md`).
 - **Compositor** (built: `programs/compositor`): a service that owns the display. Each program draws into a surface in shared memory. The compositor combines the surfaces and sends input events to the program that has focus.
@@ -335,9 +366,15 @@ The tool checks a part of the rule on the sources (`text_cut_check` in `kernelto
 
 ## Locks of the kernel
 
+Several processors run the kernel at the same time, and each lock guards one piece of data, not the whole kernel. A processor that needs two locks takes them in one fixed order, so no two processors can wait for each other for ever. This section lists each datum, its lock, and the rules that keep each path correct.
+
 The kernel runs on all processors with no single lock: no kernel entry takes a lock for all the kernel. The code follows this section. A lock protects data: a table, or a part of a table. It does not protect a code path.
 
+**What a lock is** (`kernel/lock.odin`). A lock serves the processors in the order in which they asked for it: a processor takes the next ticket and waits until the lock serves that ticket. So no processor waits for ever while others take the same lock again and again. A lock is two words of 32 bits (`next`, `serving`). Each processor counts its takes and its waits for each kind of lock; the console command `memory()` prints the sums, one line for each kind, and the program `locks` shows them in its window (`docs/screenshots/locks.png`).
+
 ### The data of the kernel
+
+The table below is the reference for a reader who changes the kernel: before code reads or writes a datum, it must hold the lock of its row. "Read by" and "Written by" name the paths of the kernel that touch the datum.
 
 Paths: **op** a kernel operation; **tick** the timer of a processor; **dev** a device interrupt; **fault** a processor exception of a program; **wake** a word wake, an event or a deadline; **revoke** `Handle_Revoke`; **stop** the stop of a program or of a thread.
 
@@ -415,20 +452,30 @@ Interrupts are off in the kernel, so a processor never takes a lock again in an 
 
 ### Rules that keep each path correct
 
+A lock alone does not make a path correct: a path can free a lock, wait, and find the world changed. Each rule below names one such hazard of the kernel and the way the code closes it. The rules come in four groups: threads and programs, memory, waits and access, and scheduling.
+
+#### Threads and programs
+
 - **The owner of a running thread.** A thread that runs on a processor belongs to that processor: only it reads and writes the frame, the extended state area, the kernel ring and the word list of the thread. Another processor that stops the thread sets `stop_requested` and sends an interrupt. The processor ends the thread itself, at its next pass in the kernel. No processor takes a thread away from another one.
 - **Three rules against three forms of error.** (1) A state that is true only between two sections of one lock is a state that another processor sees: a thread is taken from its queue and given to a processor in one section of the run lock (`queue_pick`). (2) A slot named by its index across a wait for a lock can serve another object when the wait ends: a path that names a thread or a program across such a wait also keeps its serial and checks it (`thread_finish`, `stop_wait`), or holds a lock that keeps the slot (`program_free` only after `cleaned`). (3) A state checked before a work must mean that the work is done: Stopped means that the threads were marked, not that the program was cleaned up (`cleaned`); a new thread is refused in a program that is not Created or Ready.
 - **A program ends after its last thread leaves its processor.** `holds` counts the processors that run a thread of the program. A stop adds 1, marks the program Stopped, marks each thread (a thread that waits or is in a queue ends at once; a thread on a processor gets `stop_requested`), then subtracts 1 and sets the bit Stopped in the same atomic addition. The one subtraction that leaves exactly the bit Stopped does the cleanup: unmap, close the handles, free the page tables. So no processor uses the page table or the mappings of a program while they are freed, and the cleanup runs one time. The slot of the program is free (`program_free`) only after the cleanup: by the cleanup if no handle names the program, else when the last handle closes.
 - **A stop returns after the threads left their processors.** `Thread_Stop` and `Program_Stop` mark the threads under their locks; the operation then frees all its locks and waits until each marked thread that ran on another processor left it (`stop_wait`): after the operation, no thread of what stopped runs an instruction. A stop of a program that another stop already marked waits in the same way: the state Stopped does not say that the threads left. A wait inside the locks could wait for a thread that waits for these locks. The wait ends at once if the thread that waits is stopped too: two threads that stop each other do not wait for each other.
 - **A read of the registers of a thread that waits in the fault ring** (`thread_held_off_processor`) can find the thread still on its way out of its processor: the record is published before it leaves. The reader then spins, with interrupts off, and holds the program lock of the thread, and for a thread of another program the control lock too. The way out of the thread takes neither lock (an event record, a charge of the budget, one save of the extended state, one run lock), so the spin ends after that way; while it spins, the reader answers `processor_sync`. Each other user of these locks waits that time too.
+#### Memory
+
 - **The page tables of a program change under its program lock.** `user_range` and the `user_copy` that follows run under the program lock: no unmap runs between them. An entry that becomes present needs no message to other processors. An entry that becomes 0 (`unmap`, and the undo of a `map_region` that failed on a later page) is followed by `processor_sync` to each processor whose `table` is the table of the program, before the memory object can free a frame, and before a page table that the unmap emptied returns to the frame table ("The page tables of a program"). A processor answers `processor_sync` at each kernel entry, in idle, and while it waits for a lock: then it reloads `cr3`, so it keeps no old translation. It keeps its table only if that table is the one of the program of its current thread; else (no thread, or a thread picked before `run` loaded its table) it loads the kernel table, so a program that ends can free a table that the processor named. Two processors that synchronize each other at one time do not wait for ever: each answers while it waits.
 - **The frame caches** (`kernel/memory.odin`, "The frame cache of each processor"). Each processor has a stack of at most 256 free frames in its processor record, with its own cache lock (kind Cache, after Frame in the order). A first use takes a frame from the stack of its processor under the cache lock only, and counts it in `taken` of the stack: a reserved page that the stack served. An empty stack takes one frame for the page and a batch of 128 for the stack in one section of the frame lock, and subtracts `taken` from `reserved_pages` there. The end of a memory object puts its frames on the stack of its processor (the frame lock is held there for the budget); a full stack gives a batch of 128 back to the frame table in the same section. The invariant, true whenever the frame lock and the cache locks are free: `free_frames + the frames of all stacks = the pages of all budgets + reserved_pages - the taken of all stacks`. Each step keeps it: a take from a stack moves 1 from the frames of the stack to `taken` (the two in one section of the cache lock); a batch and a give back move frames between `free_frames` and a stack under the frame lock and the cache lock; the fold of `taken` moves it to `reserved_pages` under the two. So the sum of each stack (frames + taken) changes only under the frame lock: `System_Report` holds the frame lock and reads each stack under its cache lock, one after the other, and gets the exact difference free pages - reserved pages, with no stop of the other processors. The free pages alone and the reserved pages alone are not values of one instant: a take from a stack after the report read it is in neither sum, a take before is in both. The leak check of the console ("budgets N pages: all the free pages") and the checks of `locks` compare the pages of the budgets with that difference only. When the frame table has no free frame for a take that cannot fail (a reserved page, a list page, a page table) or for a contiguous object, the taker, under the frame lock, takes each cache lock in turn and moves the frames of each stack to the frame table (`caches_drain`), then takes again. No frame can stay in a stack while a take fails: a stack is never touched under a cache lock that waits for the frame lock (the order is frame, then cache), so the drain always gets each stack. Frames on a stack are not zero: a frame gets its zeros when a page takes it, as before, after the locks are free (P20: a program never sees the old content of a frame).
 - **Pages.** Each move of pages between a budget, the reserved pages and the frame table is one section under the frame lock. So `free_frames` = pages of all budgets + `reserved_pages` holds at each moment that the lock is free, and `System_Report` reads it under the lock. A page fault takes the region lock (to give the frame of one page one time), then the frame lock. The zero fill of a frame is done after the frame lock is free.
 - **References.** A reference count is an atomic count. A holder adds 1 only while it holds a handle or a mapping of the object, so a count never goes from 0 to 1. The processor that subtracts the last 1 frees the object: no other processor can name it.
 - **Budgets and the tick.** The tick adds the processor time to the budget of the thread and each budget above, with atomic additions, and with no lock. When a budget ends, its objects and its children move to its parent (control lock and frame lock), and its slot is used again only after `processor_sync` to all processors: a tick that walked through the old budget has finished its walk. The log limit uses one word with the second and the count: a record is accepted only if each budget of the chain accepted it; a refusal takes back the counts that it added, in the same second only.
+#### Waits and access
+
 - **The word wait.** A word is named by its physical address. A thread registers each word in the bucket of the word, under the wait lock of the bucket, after it compared the value: a waker changes the word before it enters the kernel, so either the waker finds the entry, or the thread finds the new value. The waker then takes the run lock of the thread: a thread that waits becomes Ready; a thread that still registers (in its own entry) gets `woken` and does not wait. An entry carries the `wait_serial` of its thread; the serial changes when the wait ends, so a late waker of an old wait does not count a thread that runs as woken. A thread removes its entries at its next kernel entry.
 - **Revocation.** It holds the control lock. It sets `revoking` and lists the holdings that came from the handle, under the origin lock. While `revoking` is set, a path that adds a holding to the origin tree without the control lock stops and runs again under the control lock, after the revocation. Then the revocation ends each holding under its program lock, after it checks under the origin lock that the tree did not change since it chose the holding: the count of changes travels from the choice of the first holding (`revoke`) through each step (`revoke_under`). If another processor changed the tree, it looks again from the handle: a slot that a close freed can hold a new handle.
 - **The kernel half of the page tables** changes only at boot, on one processor. A report reads it and never makes a table (`kernel_entry` with no create).
 - **Ports.** A processor changes only its own port bitmap, in `run`, when the program that runs or its `ports_serial` changed. A change of the Ports handles of a program adds 1 to `ports_serial`, then synchronizes all processors: each one checks again before it returns to a program.
+#### Scheduling
+
 - **The scheduler.** Each processor has a run queue. A new thread goes to the queue of the processor that created it; a woken thread goes to the queue of its `home`. If the processor of that queue is idle, the waker sends it an interrupt; else the waker sends one to another idle processor, which takes the thread. When a processor chooses its next thread (after a wait, at the end of a turn, or idle), it takes a thread from the queue of another processor whose load (the threads in its queue, plus 1 if it runs one) is above the count of threads in its own queue. So the ready threads move to the processors that have less, as with one queue for all. The order inside a queue is the strategy of the queue (`kernel/strategy.odin`, `docs/SCHEDULING.md`): six functions that run under the run lock of the queue (`move` under the two run locks of a move). The time slice (10 ticks) is the longest turn under each strategy, so each processor passes through the balance at least each 10 ms while it has a thread.
 - **Wake preemption.** If the home of the woken thread is busy and another processor is idle, the waker wakes that processor and stores the home in its `look_first`, after the exchange of `idle` (the order of the idle protocol does not change); its next pick takes from that queue first. With no idle processor, the waker asks the strategy of the home queue, in the same section of its run lock as the wake, if the woken thread preempts the thread of the home (`processors[home].current`, under the same lock). A thread of another program than the thread of the home preempts that processor at most once in each millisecond (`preempted_at`, under the same run lock). If yes, it ends the turn of its own thread when the home is its processor, else it sets `preempt` of the home and sends an interrupt; the home processor ends the turn of its thread when the interrupt comes from a program. The decision is made under the lock and acted on after it: if the home runs another thread then, that thread loses its turn (one more pass through `schedule`), or the woken thread waits for the end of the turn (at most the time slice). No state is wrong in either case: a turn is not a state of a thread. Interrupts are off in the kernel, so the interrupt arrives either when the processor returns to a program, where it ends the turn, or while it waits idle with no thread, where it clears the flag and the processor picks a thread anyway.
 - **The change of strategy** (`Strategy_Set`, `strategy_change`, `queue_convert`). The operation writes `strategy_chosen` (atomic), then for each processor in turn takes its run lock, converts its queue to the value of `strategy_chosen` that it reads under the lock, and frees the lock. It holds the program lock of the caller (`execute_locked`) and one run lock at a time: program before run, so the lock order holds (the test build checks it on each take; the full check ran 104 changes, no report). A conversion changes no list, no `state`, no `home`, no `processor`: no thread leaves a queue or a processor, so no thread is lost. It clears the strategy fields of each thread whose home is the queue and that is in the list, on the processor, or Waiting, sets `strategy`, and places each thread of the list with `ready(New)`, in the order of the list. The invariant: the strategy fields of a thread are zero or belong to the strategy of the queue of its home. The interleavings, step by step:
@@ -441,7 +488,17 @@ Interrupts are off in the kernel, so a processor never takes a lock again in an 
 
 ## The virtual memory of a program
 
-A program drives its own virtual memory: paging and virtual memory are a design tool for the program. The terms are in `GLOSSARY.md`: uncommitted object, committed page, decommit, page protection, shoot-down, large page, fault ring.
+A program drives its own virtual memory: paging and virtual memory are a design tool for the program. It can reserve a large range of addresses and pay only for the pages that it uses, give pages back, make a part of its memory read-only or unreachable, and answer its own page faults. The kernel holds no policy here: it does what the program asks, within the budget that pays and the rights of the handles.
+
+The terms are in `GLOSSARY.md`: uncommitted object, committed page, decommit, page protection, shoot-down, large page, fault ring. The test is the program `address_space` (`kerneltool test address_space`): it runs each case of this section with two programs and shows the answer of the kernel (`docs/screenshots/address_space.png`).
+
+An example of the whole cycle, as a program writes it with the system library:
+
+1. `Memory_Create` with the flag `Uncommitted` and 262144 pages (1 GiB, the most for one object): the budget pays the frame list only, and at least one page.
+2. `Memory_Map` maps the whole object at one address: one of the 128 mappings of the program.
+3. `Memory_Commit` with a table of one `Page_Range` of 16 pages: the budget pays 16 pages; each one gets its frame at its first touch.
+4. `Memory_Protect` with `No_Access` on the last page of a stack: a guard page. A touch there is a fault, which the program receives in its fault ring if it named a fault handler.
+5. `Memory_Commit` with the flag `Decommit`: the 16 pages return to the budget, and their content is lost.
 
 ### What a program can do, and with which operation
 
@@ -458,6 +515,8 @@ Batches: `Memory_Commit` and `Memory_Protect` take a table of ranges in memory o
 
 ### The state of a page
 
+Each page of an object carries its state beside its frame, in the same word: is it paid for, and what does it deny. So the kernel needs no second table to know the protection of a page.
+
 The frame list of an object that is not contiguous has one slot of 8 bytes for each page. A frame is aligned on 4096 bytes, so the low 12 bits of a slot are free; the kernel keeps there the state of the page that is not a frame:
 
 - bit 0, `committed`: only for an uncommitted object. A page of an uncommitted object is committed when its budget paid for it; a page of another object is always committed. A page that is not committed has no frame, and an access to it is a fault.
@@ -467,6 +526,8 @@ The frame list of an object that is not contiguous has one slot of 8 bytes for e
 The frame of the slot is `slot & PAGE_ADDRESS`; 0 is no frame. A slot changes under the region lock of the object (a first use) or under the program lock and the region lock (commit, decommit, protection); the frame lock is held where frames or budgets move.
 
 ### Who pays a commit
+
+One budget pays for each memory object, for its whole life. A program that lets another program commit pages of its object gives it a narrow right on that budget, so the other program can pay for pages of this object and for nothing else. The ten cases below show each way a holder can misuse that right, and the answer of the kernel.
 
 `Memory_Commit` takes a budget handle as its second argument, and that budget must be the budget of the object: one payer for each object, and the pages of a decommit go back to it. The right Write on the object does not spend the budget of its maker. The handle needs the right `Commit` (pay pages of an object that this budget already pays for, and nothing else) or `Spend`. `Spend` is wide: it also makes objects, threads, programs and budgets; so a program that lets another one commit gives it the narrow right `Commit`. Delegation uses what exists: A makes a child budget, makes the uncommitted object on it, and gives B the object and the child budget with `Commit` only. A decommit reads no budget handle: it gives pages back to the payer, and it needs an object that only this program names, so B cannot take pages from an object that A uses. The cases, each shown by `address_space` with two programs and its error record:
 
@@ -485,6 +546,8 @@ A limit of revocation: a revocation of a budget handle ends the holdings that ca
 
 ### Commit and decommit
 
+A commit pays for pages of a reserved range; a decommit gives them back and forgets their content. Both act on a whole table of ranges at once, and both are all or nothing.
+
 - **Commit** of a range of an uncommitted object: under the program lock of the caller, the region lock of the object and the frame lock, in one section for the table: the budget of the object pays one page for each page that is not committed, `reserved_pages` grows by as much, the bit `committed` is set. A budget that cannot pay the whole table refuses the whole table (`No_Budget`, its error record names the range): no table is half done.
 - **Decommit**: the same locks. For each committed page: the bit is cleared; a page with a frame loses its page table entry (the shoot-down below), its frame goes to the frame cache of this processor (in the section of the frame lock, as the end of an object does), `present` of the object falls by one; a page with no frame gives back its reserved page; the budget receives one page for each page. The content of a page that is committed again is zero (a new frame at its first use: P20, ZII).
 - Decommit and a protection change of a part of a mapping need an object that only this program names, with one mapping at most (the references of the object are the handles of this program to it and its mapping): its pages have no page table entry in another program, so the shoot-down is the one of this program. Another object gives `Bad_State`, kind `Object_Shared`.
@@ -495,17 +558,36 @@ A limit of revocation: a revocation of a budget handle ends the holdings that ca
 
 ### Protection and the shoot-down
 
-`Memory_Protect` sets, for each page of each range, the protection of the page: Read only, Read and Write, Read and Execute, or `No_Access`. A part of a mapping takes away from the protection of its mapping now, as marks in the slots of its pages; a part that gets the protection of its mapping has no mark, and a whole mapping clears the marks of its pages. While an object has marks (`marked_pages`), it is not mapped again and not given (`Bad_State`, kind `Object_Marked`): the marks are of the object, so they would reach another mapping. The other form, the marks in each mapping (a table of ranges in the mapping), lets an object with parts protected be shared; it costs a table in each of the 128 mappings of each program, or a second table to allocate, for a case that no program needs now; the count is one word and keeps the slots as the one place of the state of a page. It can only take away what the mapping was made with: a range of a mapping made without Write cannot become writable (the handle was checked for the rights of the mapping). Write and Execute together are refused (no page is both). For an object with a frame list, the state is in the slots (above): a page that gets its frame later gets the protection of its slot. For a contiguous object (device memory, large pages) the protection is of the whole mapping: a range must cover the mapping. The page table entries that exist are rewritten; then one `processor_sync` to the processors whose page table is the one of the program, for all the ranges of the call. A processor answers it at its next kernel entry, its idle wait or its wait for a lock, and reloads its page table: it keeps no old translation. The cost is measured with 1, 2 and 4 processors running threads of the program.
+A program can take rights away from pages that it already maps: make them read-only, not executable, or unreachable. The hard part is the other processors: each one can keep an old translation of the page in its cache, so the kernel makes each processor that runs the program forget it before the operation returns. That step is the shoot-down.
+
+**What the operation sets.** `Memory_Protect` sets, for each page of each range, the protection of the page: Read only, Read and Write, Read and Execute, or `No_Access`. The whole table is checked before any change, so a refused table changes nothing.
+
+**What it can never give.** It can only take away what the mapping was made with: a range of a mapping made without Write cannot become writable, because the handle was checked for the rights of the mapping when it was mapped. Write and Execute together are refused: no page is both.
+
+**Where the protection is kept.**
+
+- For an object with a frame list, a part of a mapping takes away from the protection of its mapping now, as marks in the slots of its pages ("The state of a page"). A part that gets the protection of its mapping has no mark, and a whole mapping clears the marks of its pages. A page that gets its frame later gets the protection of its slot.
+- For a contiguous object (device memory, large pages) the protection is of the whole mapping: a range must cover the mapping.
+
+**Why the marks are in the object, not in the mapping.** While an object has marks (`marked_pages`), it is not mapped again and not given (`Bad_State`, kind `Object_Marked`): the marks are of the object, so they would reach another mapping. The other form, the marks in each mapping (a table of ranges in the mapping), lets an object with parts protected be shared. It costs a table in each of the 128 mappings of each program, or a second table to allocate, for a case that no program needs now. The count is one word, and the slots stay the one place of the state of a page.
+
+**The shoot-down.** The page table entries that exist are rewritten; then one `processor_sync` goes to the processors whose page table is the one of the program, for all the ranges of the call. A processor answers it at its next kernel entry, its idle wait or its wait for a lock, and reloads its page table: it keeps no old translation. The operation returns after each of them answered. The cost is measured with 1, 2 and 4 processors running threads of the program.
 
 ### Large pages
+
+A large page maps 2 MiB with one entry of the page table in place of 512 entries. A program that reads a large table at random addresses then misses the translation cache of the processor less often. The program asks for it with one flag at the creation of the object; the kernel uses large pages wherever the mapping allows them.
 
 An object made with `Large_Pages` takes its frames in one run aligned on 2 MiB (`frames_take_aligned`). A mapping of it uses a large page for each 2 MiB of the mapping whose address and first page are aligned: one entry of the second level, with the bit `PAGE_LARGE`; other parts use 4 KiB pages. The walk of the page table (`page_entry`) gives the entry of the second level for an address in a large page; each path that reads or writes entries knows it: the end of a mapping clears the large entries and releases them as held entries of the table of the second level, a large entry never has a count, the reports count 512 present pages for a large entry. A protection change of a part of a large page is refused (a range must cover the mapping); a decommit of such an object is refused (it is contiguous). The benefit is measured: random reads over 64 MiB, with large pages and with 4 KiB pages of the same object; under QEMU with KVM the numbers are those of the processor of the host, with the nested page tables of the host.
 
 ### The addresses that the kernel chooses
 
+When a program maps an object with no address, the kernel picks the lowest free range from a fixed base. So the addresses of a program stay few and stable, and a program that maps and unmaps in a loop does not walk through its address space.
+
 A mapping with no address takes the lowest address from `CHOSEN_BASE` where its pages fit with one page with no mapping before and after them: the first gap between the mappings of the program (`chosen_address`, at most 129 passes over the 128 mappings). So the range of a mapping that ended serves again: a program that maps and unmaps at each call uses the same few addresses. `address_space` maps and unmaps one object 100 000 times and its budget is the same after as after the first time.
 
 ### The page tables of a program
+
+The page tables of a program are memory too, and its budget pays for them. A table exists while a mapping needs it, and returns to the budget when the last mapping that used it ends. So a program that maps and unmaps keeps no hidden pages, and a page fault never needs a new table.
 
 `map_region` makes each page table that a new mapping needs, and the budget of the program pays one page for each: a page fault never needs a table. The mapping holds its entries while it lives: each page of it, present or not, and each large page. An entry that names a table is held while that table holds an entry. The top table lives as long as the program.
 
@@ -519,6 +601,8 @@ A mapping with no address takes the lowest address from `CHOSEN_BASE` where its 
 
 ### The interleavings
 
+Each case below is two things that happen at the same time on two processors, and the reason why the outcome is still correct. A reader who changes the memory code checks a new path against these cases.
+
 The locks: a commit holds the program lock of the caller (the operation), then the region lock of the object, then the frame lock; a decommit also the cache lock of its processor; a protection change the program lock, then for a part the region lock. The order is program, region, frame, cache: the order of the locks of the kernel.
 
 1. **A commit and a first use on another processor.** The first use of a page of the object runs `region_frame`, which reads the slot, then takes the region lock and reads it again. A commit sets `SLOT_COMMITTED` under the region lock. A first use that read the slot before the commit sees a page that is not committed and gives no frame: the program faults, as it accessed a page that was not committed at that moment. A first use after it takes a frame. A commit never takes a frame: there is no frame to lose.
@@ -529,6 +613,12 @@ The locks: a commit holds the program lock of the caller (the operation), then t
 6. **Another program that names the object.** Decommit and the protection of a part need the references of the object to be this one mapping and the handles of this program: another program that holds a handle to it counts in the references, so it cannot have an entry of a page of the object while the decommit runs.
 
 ### The fault ring
+
+A program can answer its own faults. It names one of its threads as its fault handler; then a fault of another thread does not stop the program: the kernel writes a record of the fault in memory that the handler reads, and the faulting thread waits. The handler repairs (it commits the page, or gives Write back) and lets the thread go on, or stops the program.
+
+The program `fault_ring` shows each case: a page committed at its first touch, Write given back, a thread that goes on after a breakpoint, and a stop (`docs/screenshots/fault_ring.png`).
+
+![The fault ring: a handler thread repairs the faults of the other threads of its program](screenshots/fault_ring.png)
 
 Without a fault handler, a processor exception of a program that the kernel does not serve itself (a page fault that `page_give` cannot serve, a divide error, an invalid opcode, ...) stops the program, with a stop report. The terms are in `GLOSSARY.md`: fault handler, fault ring, fault record, fault kind, fault class. The code is `kernel/fault_ring.odin`, the two operations in `kernel/enter.odin`, the case of `kernel_interrupt`, and `thread_finish`; the kinds and their classes are in `contract/operation` (`Fault_Kind`, `fault_kind_class`, `fault_kind_resumes`, `fault_kinds_of_argument`, with host tests); the test is the program `fault_ring` (`kerneltool test fault_ring`).
 
@@ -589,6 +679,8 @@ A program names one of its threads as its fault handler (`Fault_Handler_Set`, op
 
 ### The control of a thread
 
+A program can hold one of its threads still, read its registers, change them, and let it go on. This is what a debugger, a collector of garbage and a profiler need, and the kernel gives it as one operation with a command. A thread of another program can be held only through a thread handle that its program gave, with the right of the command.
+
 A program stops one of its threads, reads and writes its registers, and resumes it (`Thread_Control`, operation 33). A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the program that runs a guest use it. The code is `kernel/thread_control.odin`; the checks of a write are `op.thread_registers_refusal` and `op.extended_state_refusal` in `contract/operation`, with host tests; the test is the program `fault_ring` (`kerneltool test fault_ring`, the cases 20 to 28). The terms are in `GLOSSARY.md`: thread control, stop count, held thread, register image.
 
 **The operation.** One operation with a command (`op.Thread_Control_Command`): `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`. Its reason: no operation of the kernel stops a thread without its end, or gives its registers, and a guest needs both; one operation with a command keeps the count of operations lower than four. The arguments: a thread handle with the right of the command, or 0 and the number of a thread of the calling program (`Thread_Record.number`, the `thread` of a fault record); the command; the address and the size of a register image or of an extended state area.
@@ -630,6 +722,8 @@ The kernel returns to a program only with `iretq`, never with `sysret`, so the f
 
 ## The extended state of the processor
 
+Besides its general registers, a thread has the registers of the floating point and vector units: x87, SSE, AVX and AVX-512. These are its extended state, up to 2688 bytes. The kernel must keep it for each thread, or one thread sees the values of another; it saves it only when a processor changes threads, because a save at each kernel entry costs about a third of the entry.
+
 The kernel saves each state component that it enables, not only x87 and SSE, and writes `CR4` and `XCR0` itself. A kernel that saves only 512 bytes with `fxsave64` (x87 and SSE) and keeps the `CR4` and `XCR0` of the firmware has a fault: a program that uses AVX on a firmware that enabled it gets the high halves of its ymm registers from another thread, with no error.
 
 The kernel saves and restores the extended state only at a switch of threads, and has no vector code (sections 3 and 3a). A save at each kernel entry makes each entry 29 to 41 % slower (section 3).
@@ -667,7 +761,7 @@ The area is a fixed field of 2688 bytes, aligned on 64 bytes, in the entry of ea
 - Pages of the budget would cost 4096 bytes for each thread for 832 bytes of use, a refusal path in `Thread_Create`, a free in the end of a thread, and a pointer in place of a field.
 - The cost: 256 x 2688 bytes = 672 KiB of kernel memory, against 128 KiB with 512 bytes: 544 KiB more, the same on every machine, before any program starts. The processor records do not have an area: a save always goes to the area of the thread that the processor leaves (section 3).
 
-The kernel writes an area at one time only: `Thread_Create` writes the start state. The start state is the bytes of a zero area with the x87 control word `0x037F` (offset 0), `MXCSR` `0x1F80` (offset 24), and, with `xsave`, `XSTATE_BV` = 3 (offset 512): x87 and SSE come from the area, and every other component starts in its init state (zero). With `fxsave`, the header is not read. A new thread therefore never sees a register of another thread.
+The kernel writes an area at two times only: `Thread_Create` writes the start state, and `Thread_Control` with `Write_Extended_State` writes an area that its caller gave, for a held thread that is on no processor, after its check ("The control of a thread", its paragraph on the extended state). The start state is the bytes of a zero area with the x87 control word `0x037F` (offset 0), `MXCSR` `0x1F80` (offset 24), and, with `xsave`, `XSTATE_BV` = 3 (offset 512): x87 and SSE come from the area, and every other component starts in its init state (zero). With `fxsave`, the header is not read. A new thread therefore never sees a register of another thread.
 
 ### 3. When the kernel saves and restores: at a switch of threads only
 
@@ -691,10 +785,10 @@ Why `xsaveopt64` (Intel SDM, volume 1, sections 13.6 and 13.9): the init optimiz
 The trap of the modified optimization: if another writer changes an area between the `xrstor` of a processor from it and the next `xsaveopt` of that processor into it, the `xsaveopt` can skip a component, and the area keeps the bytes of the other writer. The kernel never makes this case:
 
 - A processor saves a thread only in `schedule`, and that thread is the one that it restored last: it restored it when it took it, and it restores no other area until it leaves it. Between the two, only that thread and the kernel run on the processor, and the kernel restores nothing.
-- No other processor writes the area while the thread is on this processor: a thread runs on one processor at a time, and the kernel writes an area only at `Thread_Create`, for a slot whose thread runs nowhere.
+- No other processor writes the area while the thread is on this processor: a thread runs on one processor at a time, and the kernel writes an area only at `Thread_Create`, for a slot whose thread runs nowhere, and at `Write_Extended_State`, for a held thread that is on no processor.
 - The proofs at boot restore their own areas; the first thread on the first processor is restored before it runs.
 
-A future operation that writes the extended state of a thread (a debugger) writes it only while the thread is on no processor: its area is complete then, and the next restore reads the new bytes. An operation that writes the area of a thread while its state is live on a processor breaks the rule, and must not exist. An operation that reads the extended state of a thread reads it only while the thread is on no processor: while it runs, the area is old.
+`Thread_Control` keeps this rule: `Write_Extended_State` writes an area only while the thread is held and on no processor. Its area is complete then, and the next restore reads the new bytes in full, so the modified optimization never skips them. An operation that writes the area of a thread while its state is live on a processor breaks the rule, and must not exist. `Read_Extended_State` reads an area only under the same condition: while the thread runs, the area is old.
 
 Why not `xsavec` or `xsaves`: they write the compacted form, whose offsets depend on the components in use; `xsaves` also saves supervisor components (`IA32_XSS`) that the kernel does not use. The standard form has fixed offsets: the start state and the test read them directly.
 
@@ -742,7 +836,7 @@ The lines of `kerneltool measure`:
 
 ### 5. A hostile program
 
-- **Can a program write its own area?** No. The area is in the thread table of the kernel, in the kernel half of the address space, whose pages no program maps (the page tables of the kernel half have no user bit, and the paging audit of each boot proves it). The processor writes the area at a switch; the kernel writes the start state; no kernel operation copies bytes of a program into an area.
+- **Can a program write its own area?** Not directly. The area is in the thread table of the kernel, in the kernel half of the address space, whose pages no program maps (the page tables of the kernel half have no user bit, and the paging audit of each boot proves it). The processor writes the area at a switch, and the kernel writes the start state. One kernel operation copies bytes of a program into an area: `Thread_Control` with `Write_Extended_State`, for a held thread, with the rights **Inspect** and **Write** on its handle. It copies the bytes into a buffer of the processor and checks them there first ("The control of a thread", its paragraph on the extended state), so an area that it writes never makes `xrstor` fault.
 - **A bad header.** `xrstor` faults (general protection) when a bit of `XSTATE_BV` is set for a component that `XCR0` does not enable, or when bytes 8 to 23 of the header (`XCOMP_BV` at offset 520, and the 8 bytes after it) are not zero in the standard form (Intel SDM, volume 1, section 13.8.1). Such a fault in `schedule` is a fault of the kernel and stops the machine. The kernel never makes such a header: the start state has `XSTATE_BV` = 3 and zeros after it, and an `xsaveopt` writes only bits of `XCR0`, which is the same on each processor that runs threads. The first processor runs two proofs at boot, before any program, and stops the machine with a sentence if one fails. First it restores an area with an x87 control word (`0x027F`), an `MXCSR` (`0x3F80`), the low half of xmm0 and, with AVX, the high half of ymm0 that are not their init state, and reads the registers back in the same routine: so the processor reads these values where the kernel writes them. Then it restores the start state and saves it again: this shows only that the start state does not fault and that the header of a save has no bit outside `XCR0`, because x87 and SSE in the start state are their init state, which `xsaveopt` does not write.
 - **`MXCSR`.** `fxrstor` and `xrstor` fault if a reserved bit of `MXCSR` is set. `MXCSR` in an area comes from the start state (`0x1F80`) or from a save of the register. A program sets the register only with `ldmxcsr`, `fxrstor` or `xrstor` of its own memory, and these fault in the program (the program stops) when a reserved bit is set. So the register never holds a reserved bit, and a save never writes one.
 - **The state of the program in the kernel.** The kernel runs with the registers, the `MXCSR` and the x87 control word of the program that entered. It never uses them (section 3a), so no value of a program can make the kernel fault, and the kernel cannot change a register of a program.
@@ -757,12 +851,16 @@ With no kernel operation: the processor tells it. `CPUID` leaf 1 gives `OSXSAVE`
 - **The idle wait**: a processor with no thread saves and restores nothing: it saved the last thread when it left it.
 - **The boot program** (UEFI): not changed. It runs before the kernel, with the `CR4` of the firmware, and uses no AVX.
 - **The faults of the kernel**: an interrupt or a fault of the kernel saves nothing, and the report of a fault of the kernel reads no extended state.
-- **The readers of the state of a thread**: none. `Thread_State`, the reports of `Inspect` and the stop report of a program give no register of the extended state; the area is read only by the restore. A future reader (a debugger) reads a thread that is on no processor (section 3).
+- **The readers of the state of a thread**: the restore, and `Thread_Control` with `Read_Extended_State`, which reads the area of a held thread that is on no processor (section 3). `Thread_State` gives the size of the area, its components and its form, and no register. The reports of `Inspect` and the stop report of a program give no register of the extended state.
 - **A thread that ends**: it is saved when its processor leaves it, then its slot is freed; the next thread of the slot gets the start state.
 
 ## The return to a program
 
+After each kernel entry, the kernel returns to a thread with the saved state of that thread. A program can put values in that state that the processor refuses at the return, and such a refusal faults inside the kernel. This section shows how the kernel makes each such case a fault of the program: it checks the state before the return, and it catches the refusal of the processor if one still comes.
+
 A fault at the return to a program is a fault of that program, not of the kernel. Without the checks of this section, a thread whose saved state the processor refuses at `iretq` makes the processor fault in the kernel, and the kernel stops the machine: one program can stop the machine (property 2). The term is in `GLOSSARY.md`: refused return. The code is `kernel/return_to_program.odin`, `resume` and `interrupt_common` in `kernel/processor.asm`, `run` in `kernel/schedule.odin`; the test is the program `return_fault` (`kerneltool test return_fault`).
+
+![The return to a program: five children give the kernel a thread that the processor refuses at its return, or flags that it must not keep; the kernel stops each one as its own fault, and the machine goes on](screenshots/return_fault.png)
 
 ### 1. The frame of a thread, and who writes it
 
@@ -775,7 +873,7 @@ The kernel returns to a thread with `iretq`, from the frame of 22 values that it
 | The flags of the kernel at `syscall`: the flags of the program less the mask of `MSR_SFMASK` | the flags of `iretq` itself | Yes, if the mask does not clear nested task, which a program sets with `popfq`: the kernel then runs with it, and its `iretq` faults. `MSR_SFMASK` clears it (section 2). |
 | `Thread_Create` and `Program_Start` (`thread_create`) | `rip`, `rsp`, `cs`, `ss`, `rflags` | No: an entry at or above `USER_END` and a stack above `USER_END` or below 8 are refused (`Bad_Address`); `cs`, `ss` and the flags are constants. |
 | `run`: `rax` after a kernel entry (the time) | `rax` | No: a general register. |
-| Another writer (a debugger, a restart, a fault handler that changes `rip`) | | None exists. A future one writes the frame only through the rules of section 2, and the frame is checked again before each return. |
+| `Thread_Control` with `Write_Registers` (a debugger, a collector that moves objects, a fault handler that moves `rip` past a faulting instruction) | the general registers, `rip`, `rflags`, `rsp`, `cs`, `ss` | No: the kernel checks the whole image before it writes it (`op.thread_registers_refusal`: the selectors of a program, `rip` below `USER_END`, `rsp` canonical, the flags that a program can set), and `return_frame_prepare` checks the frame again at the return ("The control of a thread": its paragraph on the check of a write). |
 
 ### 2. The first layer: the frame is made safe before each return
 
@@ -854,6 +952,8 @@ Each path that takes the `swapgs` stops the machine (an NMI, a machine check or 
 
 ## The control registers of a processor
 
+The control registers decide how a processor treats the programs that it runs: whether a read-only page is read-only for the kernel too, whether the kernel can execute or read the memory of a program by mistake, and which faults reach the program. The kernel sets each bit itself, so each machine gives a program the same rules, whatever the firmware left.
+
 The kernel writes its own control registers on each processor, the first one and the others, in `processor_setup` (`kernel/processor.odin`). It keeps no bit that the firmware set for its own reasons: such a bit would decide what a program sees. The values are constants with asserts of their bits. The first processor writes one line at boot: "kernel: control registers: cr0 ..., cr4 ...", with UMIP on or not.
 
 **CR0** is one value, `0x80050033`:
@@ -889,6 +989,8 @@ Every other bit is cleared, among them the global pages, the time stamp disable,
 
 ## The instructions of the kernel
 
+A few instructions of the kernel have no form in the language: a port read, a write of a model-specific register, a load of `cr3`. The kernel writes each one as a small template that the compiler puts inline at each call, in place of a call to a procedure in assembler. What still needs to own the stack or the frame stays in the assembler file.
+
 The small instructions of the kernel (ports, MSR, `cr3`) are `asm` templates; the cycle counter and the copy and fill of memory have the forms of sections 2 and 4. No measure of this form is recorded (section 6). The term is in `GLOSSARY.md`: instruction template. The code is `kernel/instructions.odin`; what stays in assembler is in `kernel/processor.asm`.
 
 ### 1. What a template is
@@ -910,9 +1012,9 @@ The syntax comes from the tests of the compiler (`tests/internal/test_asm_*.odin
 | `processor_self` | `mov` from `[gs:16]` | many times in each kernel entry: each lock, each operation |
 | `interrupt_table_load`, `task_register_load` | `lidt`, `ltr` | once, at the start of a processor |
 | `extended_control_register_write` | `xsetbv` | at the start of a processor |
-| `user_copy` | `stac`, `rep movsb`, `clac` | each kernel operation that reads or writes the memory of the caller |
+| `copy_bytes_upward_with_program_access`, `copy_bytes_upward` (the two forms of `user_copy`) | `stac`, `rep movsb`, `clac`; or `rep movsb` alone | each kernel operation that reads or writes the memory of the caller |
 
-Each template is `#volatile` and has `#clobber memory`: the meaning is that of the call that it replaces, which the compiler could not move and which could change any memory. The instructions with two halves (`rdmsr`, `wrmsr`, `xsetbv`) are templates with two values of 32 bits, and a procedure with `#force_inline` joins or splits the 64 bits. `in` and `out` have no operand in a template: the pinned registers `dx` and `al` are their operands, and their widths choose the form. The table of the compiler (`src/asm_tables_amd64.cpp`) lists no read and no write of a register for these two, so the checker would refuse an input that is only pinned (as unused, with `-vet`) and an output that no instruction writes. Each register is therefore an input tied to an output, and a procedure with `#force_inline` drops the outputs; `in` gets 0 as the first value of `al`, as the `xor eax, eax` of an assembler form. `user_copy` chooses between the copy with `stac` and `clac` and the copy without them by a test of `user_access_guard`, because `stac` and `clac` exist only on a processor with SMAP.
+Each template is `#volatile` and has `#clobber memory`: the meaning is that of the call that it replaces, which the compiler could not move and which could change any memory. The instructions with two halves (`rdmsr`, `wrmsr`, `xsetbv`) are templates with two values of 32 bits, and a procedure with `#force_inline` joins or splits the 64 bits. `in` and `out` have no operand in a template: the pinned registers `dx` and `al` are their operands, and their widths choose the form. The table of the compiler (`src/asm_tables_amd64.cpp`) lists no read and no write of a register for these two, so the checker would refuse an input that is only pinned (as unused, with `-vet`) and an output that no instruction writes. Each register is therefore an input tied to an output, and a procedure with `#force_inline` drops the outputs; `in` gets 0 as the first value of `al`, as the `xor eax, eax` of an assembler form. `user_copy` is a procedure with `#force_inline` that chooses between the two copy templates by a test of `user_access_guard`: `copy_bytes_upward_with_program_access` with `stac` and `clac`, or `copy_bytes_upward` without them, because `stac` and `clac` exist only on a processor with SMAP. In the same way, `port_write_8`, `port_read_8`, `model_specific_register_read` and `model_specific_register_write` are procedures with `#force_inline` over the templates that hold the instruction (`port_write_8_in_registers`, `model_specific_register_write_halves`, and the others).
 
 The names are complete words (`model_specific_register_write`, not `msr_write`). `port_write_8`, `port_read_8`, `page_flush`, `processor_self` and `user_copy` keep their names: the system library has `port_write_8` and `port_read_8` for programs, and one concept keeps one name.
 
@@ -955,6 +1057,10 @@ A template is compiled code: the check of the build (`tools/kerneltool/vector_ch
 No number of this measure is recorded yet.
 
 ## Kernel events
+
+A tool that wants to see what the kernel does (which operations take long, which locks wait, which threads switch) asks the kernel to write records of its own work. The tool gives a small table of rules; at a few fixed points the kernel compares each event with the rules and writes a record of 64 bytes into a ring that the tool reads with no kernel entry. A point with no rule costs one load and one branch.
+
+The program `kernel_events` shows it: its window shows the four rates of its measure (section 11, `docs/screenshots/kernel_events.png`).
 
 The kernel has fixed event points (kernel entry, thread switch, fault, lock take). A program with a grant gives the kernel a table of rules (kind of event, program, threshold); the kernel applies them in bounded time and writes the records in a ring. The terms are in `GLOSSARY.md`: kernel event, event point, observed kinds, event rule, event table, event ring, event record, lost count, performance counter. The code is `kernel/events.odin`, the event points in `kernel/enter.odin`, `kernel/schedule.odin`, `kernel/program.odin` (`kernel_interrupt`) and `kernel/lock.odin`, the operation `Events_Set`; the test is the program `kernel_events` (`kerneltool test kernel_events`).
 
@@ -1073,12 +1179,19 @@ The table lives from before the round to after it, and the child makes no other 
 
 | Round | Kernel entries in one second (run 1) | Run 2 | What the event point of an operation does on this path |
 |---|---|---|---|
-| No rule | ___ | ___ | one load of the observed kinds and one branch |
-| A rule that names another program | ___ | ___ | the same load and branch, then one load of the set of the program slots of the kind, a shift, an or, a test and a branch: no read of the cycle counter, no call |
-| A rule for every program that matches nothing | ___ | ___ | the two loads and branches, two reads of the cycle counter, a call of `event_record`, a third load of the observed kinds, and the test of one rule |
-| A rule that accepts each operation | ___ | ___ | all of the row above, then one record of 64 bytes and the store of the count `written` of the ring |
+| No rule | 7 418 518 | 7 350 270 | one load of the observed kinds and one branch |
+| A rule that names another program | 7 655 726 | 7 559 919 | the same load and branch, then one load of the set of the program slots of the kind, a shift, an or, a test and a branch: no read of the cycle counter, no call |
+| A rule for every program that matches nothing | 7 018 427 | 7 088 195 | the two loads and branches, two reads of the cycle counter, a call of `event_record`, a third load of the observed kinds, and the test of one rule |
+| A rule that accepts each operation | 6 806 080 (2 041 216 records, 0 lost) | 6 876 711 (2 062 464 records, 0 lost) | all of the row above, then one record of 64 bytes and the store of the count `written` of the ring |
 
-A run of two rounds, at a host load near 8, one run: no rule 8 194 476 entries in one second (the kernel without event points: 8 267 093 to 8 351 786 in the same hour: an event point with no rule costs nothing that this measure sees); one rule that matches nothing 7 992 904, about 3.1 ns more for each entry (1 / 7 992 904 - 1 / 8 194 476 s). Those 3 ns are the work before any rule is tested: the cycle counter read at the start and at the end of the operation, the call of `event_record`, the second load of the observed kinds; the test of one rule is a few compares. A run of three rounds without the set of the program slots (one run, with another check on the host): no rule 8 580 014; a rule for every program that matches nothing 7 920 332; a rule that accepts each operation 7 633 594. It did not show the set of the program slots: its rule that matches nothing is for every program, so the load child took the path that reads the cycle counter. The table above takes the four rounds, two runs; its numbers are not recorded yet.
+The two runs are the two lines of one run of `kerneltool test kernel_events` on the host of the tests (QEMU with KVM, AMD Ryzen 7 5800X), each round 300 ms. How to read them:
+
+- **A rule for another program costs nothing that this measure sees.** Its rate is above the rate with no rule in both runs (about 3 %): that difference is the noise of the host, not a gain.
+- **A rule for every program that matches nothing** costs about 8 ns for each entry (1 / 7 018 427 - 1 / 7 418 518 s in run 1; about 5 ns in run 2): the reads of the cycle counter, the call and the test of the rule.
+- **A rule that accepts each operation** costs about 4 ns more than that for each record (run 1: 1 / 6 806 080 - 1 / 7 018 427 s).
+- In both runs the records written plus the records lost equal the count of the loop, as the case checks.
+
+**Earlier runs**, with earlier builds of the measure. A run of two rounds, at a host load near 8, one run: no rule 8 194 476 entries in one second (the kernel without event points: 8 267 093 to 8 351 786 in the same hour: an event point with no rule costs nothing that this measure sees); one rule that matches nothing 7 992 904, about 3.1 ns more for each entry (1 / 7 992 904 - 1 / 8 194 476 s). Those 3 ns are the work before any rule is tested: the cycle counter read at the start and at the end of the operation, the call of `event_record`, the second load of the observed kinds; the test of one rule is a few compares. A run of three rounds without the set of the program slots (one run, with another check on the host): no rule 8 580 014; a rule for every program that matches nothing 7 920 332; a rule that accepts each operation 7 633 594. It did not show the set of the program slots: its rule that matches nothing is for every program, so the load child took the path that reads the cycle counter. The table above takes the four rounds, two runs.
 
 A rule for another program is nearly free for this one (the set of program slots of section 7). The paths of the event point of an operation, without and with the set:
 

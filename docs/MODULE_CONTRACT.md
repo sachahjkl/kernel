@@ -56,22 +56,24 @@ Each requirement is a fixed rule of the system.
 
 ## 1. The module file
 
-A module is one file:
+A module is one file that holds its code and everything needed to use it: what it imports, what it exports, the type of each parameter, and its documentation. The file is a header, a directory of tables, flat tables of fixed records, then the bytes of the segments. A reader finds each table through the directory, with no parsing.
 
 ```
 +--------------------+
-| header             |  fixed size
+| header             |  48 bytes
 +--------------------+
 | table directory    |  one entry per table: offset, count, record size
 +--------------------+
-| flat tables        |  segments, imports, exports, slots, rebases,
-|                    |  types, fields, functions, parameters, strings
+| flat tables        |  segments, imports, slots, exports, rebases,
+|                    |  functions, strings, documentation, records, fields
 +--------------------+
-| segment data       |  code, read-only data, data
+| segment data       |  code, read-only data, data; each segment on a page
 +--------------------+
 ```
 
-- **Header**: magic number, format version, a set of "the loader must understand this" feature bits, target machine.
+The code is `contract/module/format.odin`; all numbers are little-endian.
+
+- **Header** (`module.Header`): the magic number (the bytes "MODULE"), the format version (1), the size of the header, the feature bits that a reader must understand (`must_understand`), the target machine (x86-64), the count of entries of the table directory, the size of the address range of the loaded module, and the index of its entry export (0: no entry).
 - **Feature bits**: A loader that does not know a set bit refuses the module with a clear error. ELF has no such field, and old loaders crash on new files. [Load §1]
 - **Table directory**: Each entry gives the record size of its table. A table can gain fields at the end of its record. A reader that knows a shorter record ignores the rest. A reader that knows a longer record reads the missing fields as zero. [Types §4, §5]
 - **Index 0** of each table is the empty entry (ZII).
@@ -81,23 +83,25 @@ A module is one file:
 
 | Table | One record describes |
 |---|---|
-| Segments | A range of the file, its size in memory, and its protection: execute, read, or read and write |
-| Imports | One imported module: its hash |
-| Slots | One import slot: the import index and the export index in that module |
+| Segments | A range of the file, its place and size in memory, and its flags: Read, Write, Execute, and Read only after the load (the loader writes its rebases and slots, then removes Write) |
+| Imports | One imported module: the BLAKE3 hash of its file |
+| Slots | One import slot: 8 bytes of memory that receive the address of an export, named by the import index and the export index in that module |
 | Exports | One exported function: the offset of its code and the index of its function description |
-| Rebases | The locations in data that hold an address inside the module |
+| Rebases | The locations in data that hold an address inside the module, as 64-bit words in the RELR form (section 2) |
 
 ### Description tables
 
+The loader reads none of these tables: they are for a caller that must know the types (the console, a call host, the manual).
+
 | Table | One record describes |
 |---|---|
-| Types | One type: kind, size, alignment, range of fields |
-| Records | One record that an export receives or gives: name, size, range of fields |
-| Fields | One field of a record: name, offset, type, and the rights of a handle |
-| Functions | One export: name, argument record type, result record type, help text, flags |
-| Parameters | Console data for one field of an argument record: required, allowed values, completion source, accepts piped input |
-| Strings | The bytes of all names and help texts |
+| Functions | One export (`module.Function`, 104 bytes): its name, one line of help, its documentation text, the name, the type, the detail and the direction of each of its parameters (6 at most), the type and the detail of its result, and the description of its error record (0: it gives none) |
+| Records | One record that an export receives or gives: its name, its size (256 bytes at most) and the range of its fields |
+| Fields | One field of a record: its name, its offset, its type (Integer, Handle or Text), signed or unsigned, and its detail (the size of an integer or a text, the rights of a handle) |
+| Strings | The bytes of all names, help lines and documentation texts |
 | Documentation | Record 1: the documentation of the module, one line and a text |
+
+A type is one byte (`module.Type`): Integer, Text, Record, Handle, Table, and Bytes (a parameter only). The detail of a parameter says what its type needs: the index of a record description, or the rights of a handle. Section 5 gives the types.
 
 The documentation is part of the file, so it has the hash of the module: a text cannot describe another version of the code. A record of the Functions table also names the documentation text of its export. A documentation text is UTF-8 bytes. A line feed ends a line. A line is a paragraph: the reader breaks it at the width that it has. A line that starts with a space stays as it is. An empty line separates two paragraphs. No loader reads these records.
 
@@ -107,13 +111,15 @@ The model is the BTF format of Linux, changed so that all records have a fixed s
 
 ## 2. Loading
 
+The loader turns a module file into code that runs in a program. It is a library in user space (`support/system`, `load.odin`), not a part of the kernel: it asks the kernel only to create a program and to map memory. It finds each import by its hash among the files that it was granted, and it never searches a path.
+
 The loader does five steps:
 
-1. Map each segment at a random base address.
-2. Get each imported module from the module store by hash. Load it if it is not mapped.
+1. Place the module and each of its imports in the address range of the program: the module of a program at `PROGRAM_BASE`, each import after it. The design is a random base; today the base is fixed ("Addresses", below).
+2. Get each imported module from the load source by its hash, and check the hash and the tables of the file. Load it if it is not in the module space of the program yet.
 3. Rebase: add the base address to each location of the rebase table.
 4. Bind: for each slot, write the address of the export `(import, export index)`.
-5. Make the slot region read-only. Call the entry export.
+5. Map the segments with their protection: a segment with the flag Read only after the load loses Write after steps 3 and 4. The starter then starts the program at the entry export (`Header.entry_export`) with `Program_Start`.
 
 Status of the loader in user space (`support/system/load.odin`):
 
@@ -121,7 +127,7 @@ Status of the loader in user space (`support/system/load.odin`):
 - **The module space**: the modules that a loader put in one program. Each module is in it one time: two modules that import a third one call the same copy. A module that another module of the space uses stays when the caller unloads it; a module with no use leaves, and its imports lose one use.
 - **Refusals**: a missing import, an import cycle, a bad file, a replacement that fails its check, a slot that cannot be bound, no room, a kernel operation that fails. On a failure, the space is as it was before the load, and the caller has a load error (below).
 - **Shared code**: a prepared module has two parts. The code is the segments with no Write: the loader never writes them (a rebase and a slot are in a segment with Write, and the loader checks it), so their pages are the same at each base and with each binding, and the table keys them by the hash of the module only. Two programs that import one module at two places map one copy of its code. The fixed part is the segments that are read-only after the load: the loader writes their rebases and their slots, so the table keys them by the hash, the base, and the hash and the base of the module of each import. A writable segment, with its slots, is bound in the copy of each program.
-- **Addresses**: the module of a program is at `PROGRAM_BASE`, and its imports follow it, with one page with no memory between two modules. The addresses are fixed: item 1 of this section, the random base, is not done.
+- **Addresses**: the module of a program is at `PROGRAM_BASE`, and its imports follow it, with one page with no memory between two modules. The addresses are fixed: the random base of the design is not done.
 - **Module records**: after it mapped a module, the loader writes its module record in the kernel (operation `Program_Module`): its addresses, its hash, and the hash that a replacement put it in place of. The kernel does not read the module: the record is what the loader asserts. It names the module of the address of a fault with it, and `Inspect` gives the records of a program.
 
 ### The error of a load
@@ -165,6 +171,8 @@ What this design removes, compared with ELF:
 
 ## 3. Static is dynamic
 
+A program can link a library into its own file (static) or find it at load (dynamic). Here the two are one mechanism: each call to another module goes through a slot, and the only difference is when the slot is filled. Static linking is not built: no tool merges modules today, and every import is bound at load.
+
 - **One call sequence**: A call to another module is always an indirect call through a slot: `call *slot(%rip)`. This is the sequence of `-fno-plt` in ELF and of the import table in PE. [Load §2, §5]
 - **Merge**: A build tool can merge a module and some of its imports into one new module. It rewrites each call through a slot into a direct call, and removes the slot. Linkers already do this rewrite (`GOTPCRELX` relaxation). [Load §5]
 - **Result**: The compiler output is the same in both cases. "Static" is "merged before load". "Dynamic" is "bound at load". The choice is made after compilation, per import.
@@ -174,6 +182,8 @@ What this design removes, compared with ELF:
 ## 4. The call form
 
 Status: Chosen: registers, with a subset of the C convention, not the whole convention.
+
+A call to an export is an ordinary function call: its values go in the registers that the C convention of the machine uses, limited to a small subset that every compiler can produce. Because each parameter is one register, the same description lets a caller in another program send the same values as a record through a ring: the isolated call.
 
 ### The choice
 
@@ -190,6 +200,8 @@ On x86-64 this is the System V AMD64 assignment:
 | More parameters than registers | Not permitted. Use a record |
 | Variable parameter lists | Not permitted |
 | Errors | A function that can fail gives a negative integer result, and writes an error record at an address that the caller gives (section 8) |
+
+The float registers are in the call form, but not in the description today: `module.Type` has no float type, so no description names a float parameter or result, and the tool that writes the tables refuses one. `export_call` loads and saves the float registers anyway, so a float type is a new member of `module.Type` and no change of the call.
 
 ### Why this subset and not the whole C convention
 
@@ -221,7 +233,7 @@ The code is `contract/isolated/` and `programs/host`.
 - **Call host**: The caller starts one program per module: the call host. The call host receives two memory objects: the call ring and the call region. Like each program, it also has its budget and, if the caller gives it, the log. It receives no other handle. The caller maps the file of the module in the call host, read-only, with no handle. The call host checks the file and loads the module.
 - **Argument record**: One field per parameter, in order. A scalar is 8 bytes. A parameter that the direct call passes by address is the record itself: a Text is a slice of 16 bytes, `{offset, count}`. The offset is in the call region.
 - **Where it travels**: The argument record is in the call region. The command record names it: `kind` is the export index, `values[0]` is the offset of the argument record, `values[1]` is its size. Reason: 6 integers and 8 floats are 112 bytes, and a record of a ring has 56 bytes of values. One place for all argument records needs no second path.
-- **Completion record**: `kind` is a status: 0 is success, 1 is "no such export", 2 is "the argument record is not in the call region". `values[0]` and `values[1]` are the integer results; `values[2]` and `values[3]` are the float results.
+- **Completion record**: `kind` is a status (`isolated.Status`): 0 `Ok`; 1 `Bad_Export`, the module has no export with this index, or the export has no description; 2 `Bad_Arguments`, the argument record or one of its slices is not in the call region; 3 `Bad_Handle`, a handle of the argument record did not come through the call ring or lacks a right of the description ("Records and handles, as implemented"); 4 `Load_Failed`, only in the first completion of a call host, with the tag 0 (section 2, "The error of a load"). `values[0]` and `values[1]` are the integer results; `values[2]` and `values[3]` are the float results.
 - **The receiver checks**: The call host reads the types from the description in the module, not from the caller. It copies the argument record to private memory once. It checks the offset and the count of each slice against the size of the call region, with no overflow. Then it calls `export_call`.
 - **The caller checks**: The caller reads a bounded number of completion records, and ignores each record whose tag is not the tag of the call.
 - **Failure**: A fault in the module stops the call host only. The kernel wakes the caller, which holds the handle of the program. The caller reads the stop code. A call has no time limit. The caller ends a call when it closes the handle: the kernel stops a program that no handle names. The console does this when Escape is pressed. The next call starts a new call host.
@@ -538,6 +550,10 @@ Status: Decided, after the study in `research/rad_linker_rdi_study.md`.
 
 ## 8. Errors that diagnose
 
+A call that fails says why, as data: which argument was wrong, what value it had, and what the call needed. One record of seven integers carries that answer for each kind of call: a kernel operation, an export, a ring command and the loader. A program prints it as one sentence, and a test compares its fields. A call that succeeds pays nothing for it.
+
+An example: `Memory_Map` with a handle that lacks Write fails with the status `No_Right`, and its error record gives the argument (memory), the handle, the rights that it has and the rights that the operation needs. `system.error_text` writes it: "Memory_Map: the argument memory, handle 0x30004, has the rights Give Read; the operation needs Read Write". The program `errors` shows one case of each family (`docs/screenshots/errors.png`).
+
 ### The rules
 
 1. **The status stays the fast answer.** A kernel operation gives a `Status`, and an export gives its result. A call that succeeds writes no error record and reads none: the path of success has no added instruction in the kernel and no added copy in a service.
@@ -606,7 +622,7 @@ The kinds, the meaning of `limit` and `found` for each kind, and the units are i
 - **Replacement**: the check of a replacement compares the error records of the two descriptions (`Difference.Error_Record`).
 - **A service**: the storage service, the information functions of `manual` and the exports of `monitor` give it. The client library `support/storage` gives it to its program.
 
-**The loader.** `module.Load_Error` stays. It is the same form of answer: a record of values and fixed texts that the caller owns, with no pointer, zero for no error. It is larger (288 bytes): it names modules by hash and by name, and the caller of a call host does not have these names. To fit 56 bytes it loses the names. `system.load_error_text` makes its sentences.
+**The loader.** `module.Load_Error` stays. It is the same form of answer: a record of values and fixed texts that the caller owns, with no pointer, zero for no error. It is larger (392 bytes): it names modules by hash and by name, and the caller of a call host does not have these names. To fit 56 bytes it loses the names. `system.load_error_text` makes its sentences.
 
 **A ring completion.** A ring completion has the error record form of the kernel: a completion record (`contract/ring`) has the status of the contract of its ring in its kind, and when that status is not 0, its seven values are an error record (`errors.completion_record`, `errors.ring_fail`). `operation` is the command; `argument` is the number of the value of the command, from 1, or 0 for the command as a whole. Each contract of a ring names its commands and their values for the sentence (`block.command_name`, `block.argument_name`, the same in `frame` and `datagram`, `datagram.control_name`, `system.root_command_name`), and `system.ring_error_text` writes it: "block.Read: the argument first reaches 8193 blocks, past the end: there are 8192 blocks". The status stays the fast answer: a completion that succeeds writes its results in the same values.
 
@@ -670,13 +686,13 @@ An error record stays one record of 56 bytes. A call that has more than one thin
 
 #### The loader
 
-The loader has its own error form, `module.Load_Error` (288 bytes: it names modules by hash and by name). The details of a load are therefore load errors, not error records: the same rule ("a detail has the form of the error of the call"), applied to the form of the loader. `system.module_space_load` takes an optional `details: ^Table_To_Append(module.Load_Error)`. When the load fails because a file of the load source is missing (Find) or does not have its hash or is not a valid module (Read), the loader walks the whole graph of imports, in the order of the load, and appends one load error for each import that is missing or has the wrong hash, with the importer, the import and the replacement that applied (`system.load_source_problems`). The load error of the call is the first failure; it is the first detail when its stage is Find or Read. `system.load_error_text` writes each detail. The console gives a table of 16, and prints each detail after the record when there is more than one. A call host gives no details of its load yet: its completion has one place for the load error.
+The loader has its own error form, `module.Load_Error` (392 bytes: it names modules by hash and by name). The details of a load are therefore load errors, not error records: the same rule ("a detail has the form of the error of the call"), applied to the form of the loader. `system.module_space_load` takes an optional `details: ^Table_To_Append(module.Load_Error)`. When the load fails because a file of the load source is missing (Find) or does not have its hash or is not a valid module (Read), the loader walks the whole graph of imports, in the order of the load, and appends one load error for each import that is missing or has the wrong hash, with the importer, the import and the replacement that applied (`system.load_source_problems`). The load error of the call is the first failure; it is the first detail when its stage is Find or Read. `system.load_error_text` writes each detail. The console gives a table of 16, and prints each detail after the record when there is more than one. A call host gives no details of its load yet: its completion has one place for the load error.
 
 #### The call from the host
 
 The answer of `remote` carries the details of a call that failed (section "A call from the host"):
 
-- `remote.Request` has the field `details_end`: the offset of the end of the field of the table of error details in the argument record, or 0 when the export has none (an offset 0 is a valid place of a field, so the end is given: it is at least 32). `request_check` refuses a `details_end` that is not a multiple of 8, smaller than 32, or past the argument record. The Request has 112 bytes.
+- `remote.Request` has the field `details_end`: the offset of the end of the field of the table of error details in the argument record, or 0 when the export has none (an offset 0 is a valid place of a field, so the end is given: it is at least 32). `request_check` refuses a `details_end` that is not a multiple of 8, smaller than 32, or past the argument record. The Request has 104 bytes.
 - `remote.Answer.details` (the place that was `reserved`) is the count of details of the full answer that the field holds after the call, at most `max(u32)`. When the export failed, the bytes of the answer are the details: `min(count, capacity)` records from the start of the field, cut to the call region (`remote.details_bytes`). The remote service reads the field after the call, and trusts none of its numbers: the service wrote it.
 - The tool gives a table of 16 details. It reads whole records only, and at most the count that the answer names (`remote.details_shown`): bytes that are not whole records, or more records than the count, are a lie of the answer, and the tool prints the records that are sound and one line that says what was wrong. A count larger than the records that came is the Append rule: the tool says how many did not come.
 
@@ -788,7 +804,7 @@ These rules close the open questions of the contract:
 6. **Kernel entry**: the kernel ring only.
 7. **Thread-local data is not in the contract.** The loader has no support for thread-local segments. Each thread starts with the address of its thread record. The `gs` register of the thread also holds this address: the first word of the thread record is its own address, so `mov rax, [gs:0]` gives it on any stack. The kernel ring of the thread is one page after the thread record. This is the only use of `gs` (one kernel ring per thread needs a way to find the ring that does not depend on the call chain). The thread record holds no data of a module, and the loader has no thread-local segment. The `fs` register is free for the private use of a program.
 8. **No unwinding. Frame pointers are required.** No exception crosses a module boundary. An error is a status value. A fault stops the program. Every module keeps frame pointers (`rbp` on x86-64), so that a debugger or a profiler walks the stack with no tables. No contract of the system uses an exception to tell an error. An exception makes a program fail at a place that the code does not show, and it needs a runtime that unwinds the stack to give the explanation. The system needs no such runtime. A language can have exceptions inside its own module, with its own runtime in that module: the system does not control that, and does not serve it. To read the stack is not forbidden: after a fault, a tool walks the frame pointers and names the calls, and no code of the program runs for that. The kernel tool builds each module with frame pointers, and the kernel walks them into the stop report (section 8).
-9. **The kernel is a module.** The boot program contains the loader and loads the kernel as a module. The hash of the kernel module is the value that the TPM measures (P17).
+9. **The kernel is a module.** The boot program contains the loader and loads the kernel as a module. The system description names the hash of the kernel module, and the boot program has the firmware measure the system description into PCR 11 of the TPM (P17; `TRUSTED_BOOT.md`, "6. The measure"). So the measure covers the kernel through its hash.
 
 ## Open questions
 

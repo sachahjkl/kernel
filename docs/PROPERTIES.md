@@ -91,6 +91,8 @@ Three rules apply to every decision:
 
 Status: Decided.
 
+**In short.** The kernel does only what a program cannot do safely for itself, and the list of things that a program can ask it is short and counted. Each operation added to it is a cost that must be justified.
+
 - **Rule**: The kernel does four things: it isolates address spaces, it schedules processors, it owns the table of handles, and it grants access to memory and devices. All other work runs in user space. [Blow §2]
 - **Rule**: The kernel interface has a budget. The proposal is a hard limit on the number of kernel operations, written in this document, and changed only by a change of this document.
 - **Forbids**: file systems, network protocols, device drivers, window management and text formats in the kernel.
@@ -101,6 +103,8 @@ Status: Decided.
 ## 2. Sandbox by default
 
 Status: Decided.
+
+**In short.** A program starts with nothing. It can reach only the objects whose handles it was given, with the rights that came with each handle, and every gift can be taken back.
 
 - **Rule**: A new program starts with no access. It holds only the handles that its parent, or the principal through a grant, gave to it. [Blow §7]
 - **Rule**: A handle is an index and a generation into a table that belongs to the program: one value of 32 bits, 16 bits of slot and 16 bits of generation (`op.Handle`). Each entry holds an object index and a set of rights. A program can reduce rights and pass a handle. It cannot create rights.
@@ -115,6 +119,8 @@ Status: Decided.
 
 Status: Decided.
 
+**In short.** A document, a connection, a device and a memory region are different things, and each has its own operations. One table of handles names them all, but no single read and write interface pretends that they are the same.
+
 - **Rule**: A stored object, a network connection, a device queue, a timer and a memory region are different types. Each type has its own small set of operations. [Blow §4]
 - **Rule**: The handle table is uniform. The operations are not. A handle has a type, and the kernel rejects an operation that does not belong to the type.
 - **Forbids**: a universal `read`/`write`/`ioctl` interface, a `/dev` tree, a `/proc` tree, pipes as the composition mechanism, sockets as the network interface, text as the format of system state.
@@ -125,6 +131,8 @@ Status: Decided.
 ## 4. Base interface: non-blocking command buffers
 
 Status: Decided. It is the interface that Blow describes. [Blow §3]
+
+**In short.** A program asks for work by writing records into a ring in shared memory, and reads the answers from the same ring. Many requests travel in one kernel entry, and a program waits only when it chooses to.
 
 - **Rule**: A program asks for work by writing command records into a submission ring in memory that it shares with the receiver. It reads results from a completion ring. The receiver is the kernel or another program.
 - **Rule**: No operation blocks at this level. One kernel operation exists to wait: "sleep until one of these rings has entries". As built, the wait is the one entry point of the kernel with a deadline, and `Word_Wait` names the words of the rings that end it (property 6, "Wake-up").
@@ -140,6 +148,8 @@ Status: Decided. It is the interface that Blow describes. [Blow §3]
 
 Status: Decided.
 
+**In short.** The kernel sets up access once, then gets out of the way: the bytes of a disk or a network go between the program and the device, or the service, with no kernel entry for each one.
+
 - **Rule**: The kernel is the control plane. It checks the right one time and maps the device queue or the shared ring into the program. After that, data moves without a kernel entry. [Blow §5]
 - **Rule**: The network stack is a library in the program that uses the network. [Blow §5]
 - **Note, UDP**: the first layer of the network does not have this form. The network device of the first machine has one pair of queues. So the network service is the user-space multiplexer of the cost line below. It reads each frame, checks it against the grant of an endpoint, writes the headers of UDP and IPv4 and copies each datagram one time. The kernel carries no data. TCP and QUIC stay libraries in the program.
@@ -153,6 +163,8 @@ Status: Decided.
 
 Status: Decided.
 
+**In short.** Programs talk through memory that both map, with records of a fixed layout and one way to wait. The system has no pipes, signals or local sockets beside it.
+
 - **Rule**: Two programs communicate through memory that both map. The kernel creates the mapping and transfers handles. It does not carry the data. [Blow §8]
 - **Rule**: The mapping uses the ring format of property 4. A call to a service and a call to the kernel look the same.
 - **Rule**: Data in the mapping is binary structures with a fixed layout. It is not serialized text.
@@ -165,6 +177,8 @@ Status: Decided.
 ## 7. No drivers in the kernel, and fixed hardware first
 
 Status: Decided. The rules follow Blow. [Blow §5, §6]
+
+**In short.** The code that drives a device is an ordinary program, so a fault in it stops that program and not the machine. The system targets one fixed machine at a time, starting with a virtual one.
 
 - **Rule**: The kernel contains no device driver. The code that knows a device is a library or a user-space program.
 - **Rule**: The system targets one fixed machine at a time. The first machine is virtual: QEMU on x86-64 with virtio devices, UEFI firmware (OVMF) and a TPM 2.0 (property 17).
@@ -181,6 +195,8 @@ Status: Decided. The rules follow Blow. [Blow §5, §6]
 
 Status: Decided.
 
+**In short.** No tree of names exists that every program can read and write. A program sees its own store, and the objects that it was handed.
+
 - **Why**: This is a security requirement, not a preference. A shared tree that every program can read and write is a source of many security defects. A security model that fits the present time cannot keep it.
 - **Rule**: No tree of names exists that all programs see and can change. A program sees its own store and the objects that it received by handle. [Blow §7]
 - **Rule**: System code and system data are immutable and identified by content hash (property 11).
@@ -191,6 +207,8 @@ Status: Decided.
 ## 9. A storage engine with one private store per program
 
 Status: Decided. The engine is new, under MIT, and reuses ideas of bcachefs. It is not a fork of bcachefs.
+
+**In short.** Each program keeps its data in its own store, through a storage service in user space. Every change is committed when it happens, and the earlier versions are kept.
 
 The engine is the storage service in Odin: about 4 200 lines in `programs/storage`, and about 3 100 more in the libraries that it shares with the tool (`support/storage_mount`, `support/storage_tree`, `support/storage_object`, `support/storage_retention`), tests not counted. It writes by copy on write, keeps two places for the root block, and checks each block in the pointer that names it. The system holds no SQLite. One rule below is not done: objects have names in a store, not identifiers. Each commit keeps the state before it as a version, with a retention rule and thinning at the limit of the store. Clones share their blocks. A snapshot is the versions of a store at one generation.
 
@@ -219,6 +237,8 @@ Status: Decided.
 
 Status: Decided.
 
+**In short.** A program and a library are one thing: a module. The same module can be linked in or loaded, and called directly or from another program.
+
 - **Rule**: All code is position-independent. One module format exists. [Blow §9]
 - **Rule**: "Static" and "dynamic" are link-time choices on the same module. A module that was bundled keeps its identity inside the bundle, so a tool can find and replace it. [Blow §9]
 - **Rule**: A program and a library are the same thing. A module exports functions. A module that exports an entry function can be started. The `grep` program is the `grep` module with an entry function. [Blow §9]
@@ -233,6 +253,8 @@ Status: Decided.
 ## 11. Reproducible system
 
 Status: Decided. The detail below is proposed.
+
+**In short.** A module is named by the hash of its bytes, and a system is a list of such hashes. Two machines with the same list run the same code.
 
 - **Rule**: The identity of a module is the hash of its content. A module refers to another module by hash, never by path or by name.
 - **Rule**: A system is a list of hashes. Two machines with the same list run the same code.
@@ -249,6 +271,8 @@ Status: Decided. The detail below is proposed.
 
 Status: Decided. The system holds no SQLite: no base library and no index over the tables of the modules.
 
+**In short.** What a module contains and exports is written in flat tables inside the module. Programs ask questions about modules by calling functions that read those tables, never through a database.
+
 - **Rule**: The metadata of a module is a set of flat tables inside the module: arrays of fixed-size records at known offsets, valid when zero. They hold the symbols, the interfaces, the dependencies, the origin of each bundled module and the debug information. The flat tables are the source of truth, and the only format.
 - **Rule**: The loader reads the flat tables directly.
 - **Rule**: A rich and descriptive set of functions gives the information of the modules: clear functions with documentation, that a program and the console call. A question across many modules is a function that reads the tables in a line. The results are tables of records, so that the functions combine. A table also goes into a function as a parameter (property 19, "State"). No query language exists in the system.
@@ -259,6 +283,8 @@ Status: Decided. The system holds no SQLite: no base library and no index over t
 ## 13. Data-oriented kernel internals
 
 Status: Decided.
+
+**In short.** The kernel keeps its state in flat tables of fixed size, laid out for the processor caches. It names objects by index, not by pointer, and processes work in batches.
 
 - **Rule**: Kernel state is flat tables. A reference is an index with a generation, not a pointer.
 - **Rule**: Each table is split by access: fields that the fast path reads are together, cold fields are in a second table.
@@ -289,6 +315,8 @@ Status: Decided as a principle. The detail below is proposed. The name comes fro
 
 Status: Decided.
 
+**In short.** Whoever asks for work gives the memory for its result, and whoever creates an object pays for it. The kernel keeps no hidden memory that a program can fill.
+
 - **Rule**: A kernel operation writes its result into memory that the caller gives. The kernel does not allocate hidden state per call.
 - **Rule**: "Reserve address space" and "commit pages" are two cheap operations. Programs build arenas on them.
 - **Rule**: The memory that a kernel object uses is charged to the program that created it.
@@ -300,6 +328,8 @@ Status: Decided.
 
 Status: Decided. Blow names it as an unsolved problem. [Blow §11]
 
+**In short.** A program can want to run code that it does not trust. Today such code runs as its own program; a lighter form inside one address space is a direction, not a design.
+
 - **Problem**: A program wants to run a plugin that it does not trust, share data structures with it, and survive its crash. Today this needs a second process and serialization.
 - **Proposal**: A process can contain several protection domains. A domain is a set of page rights inside one address space. A switch between domains costs less than a process switch. A domain can be destroyed alone.
 - **Cost**: The hardware support differs by processor. The x86-64 memory protection keys give 16 domains and do not stop all attacks by themselves. Shared lock-free state stays the problem that Blow describes.
@@ -309,6 +339,8 @@ Status: Decided. Blow names it as an unsolved problem. [Blow §11]
 ## 16. Removed concepts
 
 Status: Decided.
+
+**In short.** Many concepts of current systems have no place here. The table names each one and what takes its role.
 
 | Concept | Replacement |
 |---|---|
@@ -330,6 +362,8 @@ Status: Decided.
 
 Status: Decided. The detail below is proposed.
 
+**In short.** Before the kernel starts, the boot program checks a signed list of the hashes of the whole system, and the TPM records which list started. With Secure Boot, the firmware checks the boot program too.
+
 - **Rule**: The boot stage is a UEFI program. It uses the firmware services before it gives control to the kernel: it reads the modules from the boot volume, gets the memory map, gets the framebuffer, gets random numbers, and talks to the TPM. The project writes no boot loader and no boot-time disk or display code.
 - **Rule**: Secure Boot verifies the boot program. The key of the principal that signs the system signs it. The firmware refuses a boot program that is not signed.
 - **Rule**: The boot is measured. The boot program extends a TPM register with the hash of the system description of property 11, before the kernel starts.
@@ -350,6 +384,8 @@ Status: Decided. The detail below is proposed.
 ## 18. One graphics interface: WebGPU with WGSL
 
 Status: Decided. The detail below is proposed.
+
+**In short.** Programs draw through one standard interface. Today a program draws on the processor into shared memory, and the compositor puts the pictures on the screen; the WebGPU interface is decided and not built.
 
 - **Rule**: Programs draw through one interface: WebGPU. They write shaders in one language: WGSL. The system exposes no other graphics interface.
 - **Why it fits**:
@@ -375,6 +411,8 @@ Status: Decided. The detail below is proposed.
 ## 19. A command is a function: no text between programs
 
 Status: Decided. The detail below is proposed.
+
+**In short.** A command is a function that a module exports, with typed parameters that its description gives. Programs pass typed values to each other and never parse each other's text.
 
 - **Rule**: Programs do not exchange text that the receiver must parse. The system has no command line arguments as strings, no text pipes, no standard input and output streams, and no environment variables.
 - **Rule**: A command line program and a library are the same thing. Both are a module that exports functions (property 10). A command is one exported function.
@@ -402,6 +440,8 @@ Status: Decided. The detail below is proposed.
 ## 20. No ambient access: the other holes to close
 
 Status: Decided.
+
+**In short.** Nothing is open to a program just because it runs: no list of other programs, no network, no screen, no clipboard. Each of these is reached through a handle that someone granted.
 
 Ambient access is access that a program has because it runs, and not because it received a handle.
 The shared file system (property 8) is one case. This property lists the other cases. Each one gets the same answer: the resource is reached only by a handle that the principal or a parent granted.
@@ -435,6 +475,8 @@ The shared file system (property 8) is one case. This property lists the other c
 ## 21. Principals: who acts, without users
 
 Status: Decided for layers 1 and 2: they are the design. Layers 3 to 5 are a direction, not a design. Built: layer 1; layer 2 in part (the record of the machine and its measure, not its key in the TPM); layer 3 in part (one named principal, its unlock by a passphrase with no seal by the TPM, its session, its stores, the lock; not its encrypted stores and not its recovery). Layers 4 and 5: not built (`PRINCIPALS.md`).
+
+**In short.** The system has no users. A program acts with the handles that it holds, and a principal, a key pair, is the one for whom it acts. Data belong to a principal, and an unlock of its key opens them.
 
 - **Rule**: The kernel has no concept of "who executes". The answer is always: a program, with the handles that it holds.
 - **Rule**: A principal is a key pair and the root handles that the key unlocks: documents, grant records, settings. A principal exists in the root service and in storage. The kernel does not know it.

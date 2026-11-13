@@ -101,6 +101,8 @@ What these rules forbid, so that nobody adds it later:
 
 ## 2. What exists, and how it maps on the model
 
+The model of section 1 is the direction; the service of today builds a part of it. The table gives each thing that exists, the concept of the model that it becomes, and how far it is built.
+
 | What the system had first | In the model | State |
 |---|---|---|
 | A private store as one table of 39 named objects (the first format; not read any more) | A store of one program: it names one tree, with trees inside it | Built: section 3 |
@@ -115,7 +117,9 @@ What these rules forbid, so that nobody adds it later:
 
 ## 3. The format on the disk
 
-Built. The format is the contract `contract/store`, `STORAGE4`. A disk of `STORAGE3` is not read: an object there is a list of blocks.
+Built. The disk is blocks of 4096 bytes. A root block names each store; a store names one tree; a tree is a B+ tree of entries; an entry names an object, whose bytes are a tree of blocks. Nothing on the disk is written in place: a commit writes new blocks, then switches the root block, so a loss of power leaves the state before or after the commit, never a mix.
+
+The format is the contract `contract/store`, `STORAGE4`. A disk of `STORAGE3` is not read: an object there is a list of blocks.
 
 ### 3.1 The blocks
 
@@ -167,7 +171,25 @@ The open of the disk at the start walks each node of each tree once, checks each
 
 ## 4. The interface of the service
 
-Built.
+Built. A program reaches its data only through the exports of the storage service, over the connection that the root service gave it. Each export names an entry by a place and a name, never by a path: a program can reach what is under its connection and nothing above it. Each change is one commit, so it is on the disk when the call returns, and the state before it is kept as a version.
+
+An example, in the console of the machine test, whose store has a limit of 3 blocks:
+
+```
+> connect("storage")
+> storage.write(0, "greeting", "kept on the disk")
+G
+> storage.read(0, "greeting")
+kept on the disk
+> storage.write(0, "second", "one block more")
+error: storage.write: the call needs 4 blocks in all, with no earlier version kept; the limit is 3 blocks (-2)
+> storage.write(0, "", "x")
+error: storage.write: the argument name is empty; it must have 1 to 64 bytes (-3)
+> storage.stores()
+console: 1 objects, 0 trees, 0 versions, 3 of 3 blocks, 0 shared, 1 connection
+```
+
+The place 0 is the root of the store of the connection. `write` gives the generation `G` of its commit. The refused write changed nothing: a change that does not fit even with every earlier version thinned is refused before any thinning (the paragraph on thinning in `ARCHITECTURE.md`, section U5). After a stop of the machine, `storage.read(0, "greeting")` gives the same bytes.
 
 ### 4.1 Places
 
@@ -189,6 +211,7 @@ A connection to the storage service is a handle on a store or on a part of it. A
 | `share(place, read_only)` | A new connection whose root is the tree of the place: two handles (its call ring and its call region) for the caller, to give to another program |
 | `unshare(share)` | Ends a connection that `share` made |
 | `usage()` | The counts of the store of the connection |
+| `stores()` | One line for each store that the caller is allowed to name (section 4.2): its objects, its trees, its versions, its blocks (a shared block counted one time), the blocks that two names share, its limit, the count of connections that hold its grant now, and its damage. A caller that does not act for a principal gets the refusal "no grant to see the stores" |
 | `open_store(store)` | A place on the root of another store, for a caller that may name that store (section 4.2). Such a place reads, restores and clones; `write`, `add`, `remove`, `rename` and `share` refuse it |
 | `versions`, `version`, `restore`, `clone`, `compare` | As before, on an object `name` under a place; no argument names a store |
 
@@ -214,7 +237,7 @@ The limit of blocks of a store holds as before: it counts the nodes of its trees
 
 ### 4.6 Large objects
 
-Built.
+Built. An object can be far larger than one call: its bytes are a tree of blocks, and a program changes a few blocks of it and commits, with no copy of the rest. A part of zero bytes costs no block. The cost of a commit follows the blocks that it changed, never the size of the object.
 
 #### The block tree
 

@@ -1,6 +1,6 @@
 # The line of the console
 
-This guide describes the line that is typed at the console: the keys that edit it, the completion list that opens while it is typed, the line history that survives a stop, and the colors of its code.
+This guide describes the line that is typed at the console: the language that the line is written in, the keys that edit it, the completion list that opens while it is typed, the line history that survives a stop, and the colors of its code.
 
 ## About this guide
 
@@ -14,6 +14,7 @@ This guide describes the line that is typed at the console: the keys that edit i
 
 | Section | What it says |
 |---|---|
+| "The language of the console" | What a line can say: values and their kinds, calls, variables, records, tables as values, how a line composes, and its errors |
 | "1. The keys" | What each key does, with the list closed, the completion list open, or the history search open |
 | "2. What the console completes" | Which names come where the caret is, and from which table |
 | "3. The fuzzy match" | How a query matches a name, and the score that orders the list |
@@ -32,7 +33,161 @@ This guide describes the line that is typed at the console: the keys that edit i
 
 The console owns the line that the input edits: its bytes, the caret, the line history, and the completion list. The terminal draws them and gives the keys. The procedures that change the line are in `support/line_editor`: they have no state of their own and make no kernel call, so host tests run each key (`support/line_editor/line_editor_test.odin`). The console uses them in `programs/console/main.odin` and `programs/console/completion.odin`.
 
+## The language of the console
+
+A line of the console is one expression of a small language, or a variable that takes the value of one. The console reads the line, calls the functions that it names with typed values, and prints the value that comes back. No program receives the text of the line: the text stops at the console, and only typed values go to the functions (`PROPERTIES.md`, "19. A command is a function: no text between programs").
+
+The code is `programs/console/language.odin` (the parser and the values), `programs/console/commands.odin` (the commands and the calls) and `programs/console/tables.odin` (the commands of tables).
+
+### The form of a line
+
+```
+line       = name "=" expression | expression
+expression = term { ("+" | "-") term }
+term       = factor { ("*" | "/" | "%") factor }
+factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" expression ")"
+```
+
+- **A name** starts with a letter or `_`, and goes on with letters, digits, `_` and `.`: `monitor.count` and `r.value` are one name each.
+- **An integer** is decimal digits. It has 64 bits with a sign; the console does not check an overflow of a number or of an operation.
+- **A text** is the bytes between two quotes. A text has no escape, so it cannot hold a quote.
+- **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them. A division by zero is an error.
+
+Examples:
+
+```
+> 6 * 7
+42
+> "abc" + "def"
+abcdef
+> length(repeat("ab", 3))
+6
+```
+
+### Values and their kinds
+
+Each value has one kind. The kinds are those of the module contract (`MODULE_CONTRACT.md`), so an export of a module takes and gives the same values as a command of the console.
+
+| Kind | What it holds | How the console prints it |
+|---|---|---|
+| `Integer` | A whole number of 64 bits | `42` |
+| `Text` | Bytes | The bytes |
+| `Record` | The bytes of one record, with the description of its record in a module | `Rectangle{x = 1, y = 2}` |
+| `Handle` | A handle that the console holds | `Handle 65541: Memory (Give, Read, Write)`: the kind of the object and the rights, which the console asks of the kernel |
+| `Table` | Records of one description, one after the other | A line of the names of the fields, a line for each row, then the count: `2 rows of Import` |
+
+A parameter has one more kind, `Bytes`: a `Text` value is its argument. A built-in command can have a parameter of the kind `Value`, which takes a value of any kind; the command checks it itself (the third parameter of `where`).
+
+A command with no result prints its answer as lines and gives no value. `help()` shows this in each signature: a command with `->` gives a value of that kind, and a command with no `->` gives nothing.
+
+### Calls
+
+A call is `name(argument, ...)`, with at most 6 arguments. Each argument is an expression: a number, a text, a variable, an operation, or another call.
+
+**Where a command comes from.** A name can be called when the command table of the console has it. A command comes from one of three places:
+
+- **The console itself**: the built-in commands. They exist before any module is loaded.
+- **A module of the boot image**, after `load("sample")` or `isolate("sample")`: each export becomes a command with the name of the export, and each record of the description of the module becomes a command that makes a record from its fields.
+- **A service that runs**, after `connect("monitor")`: each export becomes a command named `service.export`, as `monitor.count`.
+
+When two commands have one name, the command added last runs.
+
+**The check before the call.** The console checks the count of the arguments and the kind of each one against the description of the parameters, before the call. A record or a table argument must have a description equal to the description of the parameter: equal records of two modules agree. A wrong argument is refused with its number and the two types, and the call does not run:
+
+```
+> sum_values(columns(t, "sensor value"))
+error: sum_values: argument 1 is Table(Reading, Read), not Table(Reading)
+```
+
+Here `columns` made a table of another record, with fewer fields, so the export of `sample`, which reads the whole record, refuses it.
+
+**How the call runs.** A built-in command runs in the console. An export of a module that `load` added is a direct call in the memory of the console. An export of a module that `isolate` added is an isolated call to a sandboxed program, and an export of a service is a call to that service; the arguments and the results go through the call region (`MODULE_CONTRACT.md`, section 4). A record argument is a copy: the export can write in it, and the variable that gave it does not change.
+
+### Variables
+
+`name = expression` keeps a value under a name for the lines after it. A name alone gives the value back; `name.field` gives one field of a record variable.
+
+```
+> t = readings(4)
+> sum_values(where(t, "sensor", 2))
+210
+> r = row(t, 1)
+> r.value
+```
+
+The bounds:
+
+- 16 variables. A new name takes a free slot; a name that exists takes its new value.
+- A name of 16 bytes at most, and a text value of 96 bytes at most.
+- A table of 32 KiB of rows at most (`TABLE_KEPT`).
+- An expression with no value (a call of a command with no result) cannot be kept: "error: the expression has no value".
+
+`variables()` lists them. A variable lives in the memory of the console: it does not survive a stop of the console.
+
+### Records
+
+A record is a group of named fields, as a module describes it. The command with the name of a record makes one from its fields, in the order of its description. `variable.field` reads one field: an integer, a text or a handle.
+
+### Tables as values
+
+A table is the records of one description, one after the other. An export with a `Table` result gives one, and the console holds it as one value: it passes the table to the next call with no parsing. Seven built-in commands work on a table of any record, because each one reads only the description of the records:
+
+| Command | Gives |
+|---|---|
+| `where(table, field, value)` | The rows whose field has the value: an `Integer` for an integer or handle field, a `Text` for a text field |
+| `sort(table, field)` | The rows in the increasing order of a field: integers by value, texts byte by byte. Rows with one value keep their order, so two sorts give an order by two fields |
+| `join(left, right, field)` | One row for each pair of rows with one value of the field. The new record has the fields of the left record, then the fields of the right one that the left one does not have, at most 40; its name is `<left>_<right>` |
+| `columns(table, "a b c")` | The rows with only the fields that the text names, in its order. The record keeps its name |
+| `first(table, count)` | The first rows, at most the count |
+| `rows(table)` | The count of rows, as an `Integer` |
+| `row(table, number)` | One row as a `Record`, from 1 |
+
+`join` and `columns` make a new record description. The console writes it in the format of the module contract, so the next command reads it as it reads the description of a module. A command that gives a table gives a new table; the table of its argument does not change.
+
+The tables of one line share 256 KiB (`TABLE_ARENA`). When the console prints a table, a text field longer than 24 characters ends with `..`: that is a cut of the column on the screen, not of the value.
+
+![Tables as parameters: one description, three ways to call](screenshots/tables.png)
+
+### How a line composes
+
+A line composes by calls in calls. The console evaluates each argument before its call, from left to right, and the innermost call runs first. Each step takes a typed value and gives one:
+
+```
+> connect("manual")
+> columns(where(manual.running(), "module", "calendar_fixed"), "program slot module replaces")
+> join(columns(manual.running(), "program hash"), columns(manual.modules(), "hash name code exports"), "hash")
+> rows(manual.exports("")) - rows(manual.exporters("show"))
+```
+
+The first line lists the programs that run a module, keeps the rows of one module, and shows four of their fields. The second joins two tables of the service `manual` on the hash of a module. The third subtracts two counts.
+
+**What does not compose today.** A line can filter and combine only values. Of the 37 built-in commands, 23 print text and give no result: `help`, `programs`, `memory`, `modules`, `load`, `isolate`, `unload`, `connect`, `start`, `stop`, `grants`, `revoke`, `principal_create`, `lock`, `principals`, `replace`, `replacements`, `release`, `variables`, `clear`, `shutdown`, `history_clear` and `measure_completion`. So a line cannot filter, sort or count what they show: `rows(programs())` is refused, because `programs()` gives no value. An export of a module or of a service gives a table, and much of the same information comes from there as a table: `manual.running()` gives the modules of each program that runs, as rows of `Running`, which `where`, `sort` and `rows` take. The 14 other built-in commands give a value: the 7 commands of tables, and `time`, `hash`, `length`, `text`, `repeat`, `buffer` and `byte`.
+
+### Errors
+
+A line that fails prints one line that starts with `error: `, and gives no value. The first error ends the line: the rest of the line does not run, and the console prints no second error.
+
+| When | The line |
+|---|---|
+| No command has the name | `error: no command has the name x; try help()` |
+| A command named with no parentheses | `error: help is a command: write help(...)` |
+| No variable has the name | `error: no variable has the name x` |
+| A record variable has no such field | `error: Reading has no field x` |
+| The count of the arguments is wrong | `error: length takes 1 arguments, not 2` |
+| An argument has the wrong kind | `error: sum_values: argument 1 is Table(Reading, Read), not Table(Reading)` |
+| An operator on the wrong kinds | `error: "-" does not take Text and Text` |
+| A division by zero | `error: division by zero` |
+| A text with no end quote | `error: the text has no end quote` |
+| A field that the records do not have | `error: where: the records ... have no field x; their fields are ...` |
+| A value of the wrong kind for a field | `error: where: the field code is Integer, the value is Text` |
+| An export that fails | `error: manual.exports: the argument name names none of the modules (-1)`: the sentence of its error record (`MODULE_CONTRACT.md`, section 8) |
+| A call in an isolated program that faults | `error: the program agenda stopped: invalid instruction`, then the instruction and the frames of its stop report |
+
+A call that runs before the error keeps its effect: in `length(programs())`, `programs()` runs and prints its lines, then `length` refuses its argument.
+
 ## 1. The keys
+
+The keys edit one line, as in a text field. The same key does a different thing in three states: with no list open, with the completion list open, and with the history search open. The table gives each key in each state.
 
 | Key | List closed | Completion list open | History search open |
 |---|---|---|---|
@@ -54,6 +209,8 @@ A chosen name replaces the whole name at the caret, also its part after the care
 
 ## 2. What the console completes
 
+The console completes the name at the caret from what it knows at that moment: its command table, its variables, the modules of the boot image, and the programs that run. Which of these it offers depends on where the caret is.
+
 | Where the caret is | The names | From |
 |---|---|---|
 | A name with no dot | Each command (with its full name: `monitor.count`), each connected service, each variable | The command table: the commands of the console, and the exports of the modules and services, from their descriptions |
@@ -67,6 +224,8 @@ Not completed: the second argument of a call (the grant names of `revoke`), the 
 When the call at the caret is open, the line under the edit line shows its signature, dim, from the description, and marks the parameter at the caret: `write(name: Text, data: Text) -> Integer`.
 
 ## 3. The fuzzy match
+
+A few characters of a name are enough to find it: the console finds each name that holds the typed characters in their order, and puts first the names where they fall at the start of a word.
 
 The characters of the query appear in the name in their order, with gaps allowed: `mcnt` matches `monitor.count`, `stwr` matches `storage.write`. Lower and upper case are equal. The match finds the first place where the whole query has matched (a pass forward), then the latest start before it (a pass back): the shortest window that ends there. The places of that window give the score, and the list draws the same places in the accent color.
 
@@ -92,6 +251,8 @@ The tests pin these orders on real names of the system (the exports of `monitor`
 The pass back takes the latest place of each character: `set` in `manual.segments` takes the second `e`, not the `e` beside the `s`. A search of the best window costs more work for each name; the order above is the result of the bounded rule.
 
 ## 4. The bounds, and the cost of one key
+
+The names in the list come from descriptions that other programs wrote, and a hostile description can hold very many or very long names. Each bound below keeps the work of one key below a fixed count of steps, whatever the names are.
 
 Each bound holds against a description that another program wrote:
 
@@ -128,6 +289,8 @@ The status line of the terminal names the lines of the text that the view shows:
 
 ## 6. The line history across a stop
 
+The console remembers the lines that were entered, and keeps them in a small store of its own, so they come back after a stop of the console or of the machine. Up and Down walk through them; Control-R searches them.
+
 The history lives in the memory of the console: 256 lines at most in a ring of 16 384 bytes (`line_editor.History`), and fewer when the lines are long (81 lines of 200 bytes). A line never wraps at the end of the ring, so each line is one slice of it. The same line two times in a row is kept one time. It also survives a stop of the console and a stop of the machine.
 
 **Why a store of its own.** The history is the state of the console, not a file of the principal; a grant for one purpose with a small limit is what property 20 asks for; the store of the principal and its checks stay as they are.
@@ -151,6 +314,8 @@ Why after each line and not at most one write in a second: a generation counts t
 **The machine tests.** The main machine: the connection and "no line history kept" at its start; the steps of the storage service count from the generation of the first write of the principal. The persistence: the first machine types `length("kept across a stop")`, then `shutdown()`; the second one finds 4 lines ("storage: ok, generation 1027: 3 stores, 4 objects"), Up and Up give the line, Enter runs it (18), and Control-R `kept` finds it. A loss of power during the save: the settings case of `kerneltool test power` checks each object of each image after the loss, the line history with them, and gives the durable state or the state in flight, never a mix; the loss falls in the commits of `settings.repeat(1000)`, not in a commit of the history: a case that falls in a commit of the history is not built (one commit for each line makes such a case slow to reach).
 
 ## 7. The colors of the code
+
+The console colors each part of a line by what it is: a function name, a type, a number or a text. The console decides the kind of each part; the terminal decides its color, so one table sets the colors of every terminal.
 
 The edit line, the line that the console writes back when Enter is pressed, and the rows of the completion list are colored by what each part is in the language of the console. One scanner reads them: `support/console_language`. The parser of the console reads its names, numbers and texts with the same procedures (`space_end`, `name_end`, `number_end`, `text_end`), so the colors and the parser agree on where a token starts and ends. The scanner calls no allocator, keeps no state, and never stops at a fault: a byte that the language does not take is one token of the kind Unknown.
 
