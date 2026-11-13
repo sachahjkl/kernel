@@ -1,6 +1,6 @@
 // The real shortage of page frames: the frame caches of the processors
 // drained so that a take that cannot fail succeeds (docs/ARCHITECTURE.md,
-// "Rules that keep each path correct", the item "The frame caches"). This
+// "The frame caches"). This
 // program runs alone, on a machine of the test whose boot image has no
 // desktop: the root service gives it nearly all of its pages.
 //

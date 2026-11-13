@@ -550,7 +550,13 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 			if !address || result_text != "" && result_text != "i64" {
 				return describe_fail(path, declaration, "the entry has one parameter, an address, and no result or an i64 result")
 			}
-			append(list, Export_Description{name = name, file = path, line = declaration.pos.line})
+			// The entry has a comment as each export has: what this program
+			// does when the loader starts it. With no comment its text is empty.
+			entry_description := Export_Description{name = name, file = path, line = declaration.pos.line}
+			entry_description.markdown = markdown_of(declaration.docs)
+			entry_description.text = documentation_text_of_markdown(entry_description.markdown)
+			entry_description.about = about_of(entry_description.text, name)
+			append(list, entry_description)
 			continue
 		}
 

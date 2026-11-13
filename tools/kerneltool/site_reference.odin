@@ -798,7 +798,13 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 			// A summary: the first sentence of the documentation, or the help;
 			// the symbol under the table shows the whole text with its references.
 			summary := command.documentation != "" ? site_first_sentence(command.documentation) : command.about
-			site_text_cell(&b, site_source_comment_plain(site, summary))
+			// The first sentence keeps its code and its links: a name of a
+			// document in it stays a reference.
+			if command.documentation != "" {
+				site_comment_cell(site, &b, site_page_file(SITE_CONSOLE_FOLDER), summary)
+			} else {
+				site_text_cell(&b, summary)
+			}
 			strings.write_string(&b, "</tr>\n")
 		}
 		site_table_end(&b, console_table)

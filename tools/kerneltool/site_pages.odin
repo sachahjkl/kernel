@@ -498,8 +498,13 @@ site_reference_add :: proc(site: ^Site) -> bool {
 			site_escape(&b, command.name)
 			strings.write_string(&b, "</code></a></td>")
 			// A summary: the first sentence of the documentation, or the help.
-			summary := documentation[number] != "" ? site_source_comment_plain(site, site_first_sentence(documentation[number])) : command.about
-			site_cell(&b, summary)
+			// The first sentence keeps its code and its links: a name of a
+			// document in it stays a reference.
+			if documentation[number] != "" {
+				site_comment_cell(site, &b, path, site_first_sentence(documentation[number]))
+			} else {
+				site_cell(&b, command.about)
+			}
 			strings.write_string(&b, "</tr>\n")
 		}
 		site_table_end(&b, commands_table)
@@ -508,7 +513,10 @@ site_reference_add :: proc(site: ^Site) -> bool {
 			// The help is the line of `kerneltool help`; the documentation,
 			// when the source has one, is the text of the symbol.
 			help_html := strings.builder_make(context.temp_allocator)
+			// The line is what the tool prints: code, as it is.
+			strings.write_string(&help_html, "<code>")
 			site_escape(&help_html, command.about)
+			strings.write_string(&help_html, "</code>")
 			facts := []Site_Symbol_Fact{{label = "What kerneltool help prints", kind = .None, html = strings.to_string(help_html)}}
 			description := documentation[number] != "" ? documentation[number] : command.about
 			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"tool-command-", site_slug(command.name)}, context.temp_allocator), name = command.name, signature = strings.concatenate({"nix develop -c kerneltool ", command.name}, context.temp_allocator), description = description, facts = facts, page = path, source = SITE_TOOL_MAIN_FILE, line = lines[number]})
