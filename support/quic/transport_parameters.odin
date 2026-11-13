@@ -5,61 +5,138 @@ package quic
 // TLS. The bytes of the peer are hostile input: each parameter is checked
 // for its form and its value, and a failure is TRANSPORT_PARAMETER_ERROR.
 
+// The identifier of the transport parameter `original_destination_connection_id`: the Destination Connection ID of the first Initial packet of the client.
+//
+// This constant and the ones below are the identifiers of the transport parameters of QUIC version
+// 1 (RFC 9000, section 18.2), by their names there. In the encoding each parameter is its
+// identifier, a length and its value (RFC 9000, section 18). `Transport_Parameters` holds the
+// values, `transport_parameters_write` writes them and `transport_parameters_read` reads them.
+//
+// Only a server sends this one. The client compares it with the identifier that it chose, so that an
+// attacker who changed the first packet is found (RFC 9000, section 7.3).
 PARAMETER_ORIGINAL_DESTINATION_CONNECTION_ID :: 0x00
-PARAMETER_MAX_IDLE_TIMEOUT :: 0x01
-PARAMETER_STATELESS_RESET_TOKEN :: 0x02
-PARAMETER_MAX_UDP_PAYLOAD_SIZE :: 0x03
-PARAMETER_INITIAL_MAX_DATA :: 0x04
-PARAMETER_INITIAL_MAX_STREAM_DATA_BIDIRECTIONAL_LOCAL :: 0x05
-PARAMETER_INITIAL_MAX_STREAM_DATA_BIDIRECTIONAL_REMOTE :: 0x06
-PARAMETER_INITIAL_MAX_STREAM_DATA_UNIDIRECTIONAL :: 0x07
-PARAMETER_INITIAL_MAX_STREAMS_BIDIRECTIONAL :: 0x08
-PARAMETER_INITIAL_MAX_STREAMS_UNIDIRECTIONAL :: 0x09
-PARAMETER_ACK_DELAY_EXPONENT :: 0x0a
-PARAMETER_MAX_ACK_DELAY :: 0x0b
-PARAMETER_DISABLE_ACTIVE_MIGRATION :: 0x0c
-PARAMETER_PREFERRED_ADDRESS :: 0x0d
-PARAMETER_ACTIVE_CONNECTION_ID_LIMIT :: 0x0e
-PARAMETER_INITIAL_SOURCE_CONNECTION_ID :: 0x0f
-PARAMETER_RETRY_SOURCE_CONNECTION_ID :: 0x10
+PARAMETER_MAX_IDLE_TIMEOUT :: 0x01 // `max_idle_timeout`: the idle timeout of the sender, in milliseconds; 0 or absent means none.
+PARAMETER_STATELESS_RESET_TOKEN :: 0x02 // `stateless_reset_token`: 16 bytes, from a server only. This library checks its size and does not keep it.
+PARAMETER_MAX_UDP_PAYLOAD_SIZE :: 0x03 // `max_udp_payload_size`: the largest UDP payload that the sender takes; 1200 at least, 65527 when absent.
+PARAMETER_INITIAL_MAX_DATA :: 0x04 // `initial_max_data`: the first limit of the bytes of all the streams of the connection.
+PARAMETER_INITIAL_MAX_STREAM_DATA_BIDIRECTIONAL_LOCAL :: 0x05 // `initial_max_stream_data_bidi_local`: the first limit of a bidirectional stream that the sender of the parameter opens.
+PARAMETER_INITIAL_MAX_STREAM_DATA_BIDIRECTIONAL_REMOTE :: 0x06 // `initial_max_stream_data_bidi_remote`: the first limit of a bidirectional stream that the receiver of the parameter opens.
+PARAMETER_INITIAL_MAX_STREAM_DATA_UNIDIRECTIONAL :: 0x07 // `initial_max_stream_data_uni`: the first limit of a unidirectional stream. This library reads it and never writes it.
+PARAMETER_INITIAL_MAX_STREAMS_BIDIRECTIONAL :: 0x08 // `initial_max_streams_bidi`: the count of bidirectional streams that the receiver of the parameter can open; `STREAMS_LIMIT` at most.
+PARAMETER_INITIAL_MAX_STREAMS_UNIDIRECTIONAL :: 0x09 // `initial_max_streams_uni`: the same count for unidirectional streams. This library reads it and never writes it: absent means 0, no such stream.
+PARAMETER_ACK_DELAY_EXPONENT :: 0x0a // `ack_delay_exponent`: the power of 2 that scales the ACK Delay field of the sender; 3 when absent, `ACK_DELAY_EXPONENT_LARGEST` at most.
+PARAMETER_MAX_ACK_DELAY :: 0x0b // `max_ack_delay`: the longest time, in milliseconds, for which the sender holds back an acknowledgment; 25 when absent, under `MAX_ACK_DELAY_LIMIT`.
+PARAMETER_DISABLE_ACTIVE_MIGRATION :: 0x0c // `disable_active_migration`: a parameter with no value; the sender takes no packet of this connection from another address.
+PARAMETER_PREFERRED_ADDRESS :: 0x0d // `preferred_address`: another address of a server, from a server only. This library does not read its value: it does not migrate.
+PARAMETER_ACTIVE_CONNECTION_ID_LIMIT :: 0x0e // `active_connection_id_limit`: the count of connection identifiers of the peer that the sender stores; 2 at least, 2 when absent.
+PARAMETER_INITIAL_SOURCE_CONNECTION_ID :: 0x0f // `initial_source_connection_id`: the Source Connection ID of the first Initial packet of the sender. Each side must send it.
+PARAMETER_RETRY_SOURCE_CONNECTION_ID :: 0x10 // `retry_source_connection_id`: the Source Connection ID of the Retry packet of the server. A server sends it after a Retry, and only then.
 
-SMALLEST_MAX_UDP_PAYLOAD_SIZE :: 1200 // RFC 9000, section 18.2: less is invalid.
+// The least value of the transport parameter `max_udp_payload_size`: 1200 bytes.
+//
+// Each QUIC endpoint must take datagrams of 1200 bytes, the size of a datagram with an Initial
+// packet of a client. A smaller value is invalid (RFC 9000, section 18.2), and
+// `transport_parameters_read` gives `Transport_Parameter_Error` for it.
+SMALLEST_MAX_UDP_PAYLOAD_SIZE :: 1200
+
+// The largest value of the transport parameter `ack_delay_exponent`: 20 (RFC 9000, section 18.2).
+//
+// The ACK Delay field of an ACK frame counts units of 2^exponent microseconds. A larger exponent is
+// invalid: `transport_parameters_read` gives `Transport_Parameter_Error`.
 ACK_DELAY_EXPONENT_LARGEST :: 20
-MAX_ACK_DELAY_LIMIT :: 1 << 14 // Milliseconds: this value and more are invalid.
 
+// The first invalid value of the transport parameter `max_ack_delay`: 2^14 milliseconds.
+//
+// A valid value is under this limit (RFC 9000, section 18.2). `transport_parameters_read` gives
+// `Transport_Parameter_Error` for this value and for each larger one.
+MAX_ACK_DELAY_LIMIT :: 1 << 14
+
+// The transport parameters of one side of a connection, as values.
+//
+// The [transport parameters](term:transport-parameters) are what each side tells the other inside
+// the TLS handshake: its limits of flow control, its limit of streams, its timeouts and the
+// connection identifiers that it used. They go in the extension `quic_transport_parameters`, so the
+// handshake authenticates them. A connection holds two records: its own, which
+// `transport_parameters_write` encodes for `Tls_Configuration.transport_parameters`, and the one of
+// the peer, which `transport_parameters_read` decodes from
+// `Tls_Handshake.peer_transport_parameters`.
+//
+// A zero record is not the record of an absent parameter: start from
+// `transport_parameters_default`, which holds the values that RFC 9000 gives to a parameter that
+// does not come.
+//
+// **The fields that this library never sends.** `transport_parameters_write` does not write
+// `initial_max_stream_data_unidirectional`, `initial_max_streams_unidirectional`,
+// `ack_delay_exponent`, `max_ack_delay` and `active_connection_id_limit`, whatever their values:
+// the peer then uses the defaults of the RFC. These fields have a meaning in a record that
+// `transport_parameters_read` filled.
 Transport_Parameters :: struct {
-	original_destination_connection_id:        [CONNECTION_ID_LIMIT]u8, // A server only: the Destination Connection ID of the first Initial of the client.
-	original_destination_connection_id_length: int,
-	has_original_destination_connection_id:    bool,
-	initial_source_connection_id:              [CONNECTION_ID_LIMIT]u8, // The Source Connection ID of the first packet of the side.
-	initial_source_connection_id_length:       int,
-	has_initial_source_connection_id:          bool,
-	max_idle_timeout:                          u64, // Milliseconds; 0: no idle timeout from this side.
-	max_udp_payload_size:                      u64,
-	initial_max_data:                          u64,
-	initial_max_stream_data_bidirectional_local: u64, // For the bidirectional streams that the side of the parameters opens.
-	initial_max_stream_data_bidirectional_remote: u64, // For the bidirectional streams that the other side opens.
-	initial_max_stream_data_unidirectional:    u64,
-	initial_max_streams_bidirectional:         u64,
-	initial_max_streams_unidirectional:        u64,
-	ack_delay_exponent:                        u64,
-	max_ack_delay:                             u64, // Milliseconds.
-	active_connection_id_limit:                u64,
-	disable_active_migration:                  bool,
-	retry_source_connection_id:                [CONNECTION_ID_LIMIT]u8, // A server after a Retry: the Source Connection ID of its Retry.
-	retry_source_connection_id_length:         int,
-	has_retry_source_connection_id:            bool,
+	original_destination_connection_id:        [CONNECTION_ID_LIMIT]u8, // A server only: the Destination Connection ID of the first Initial packet of the client, before any Retry.
+	original_destination_connection_id_length: int, // The bytes of that identifier: 0 to `CONNECTION_ID_LIMIT`.
+	has_original_destination_connection_id:    bool, // The parameter is there. A write of a server sends it only when this is true; a read sets it, and refuses a server without it.
+	initial_source_connection_id:              [CONNECTION_ID_LIMIT]u8, // The Source Connection ID of the first Initial packet of the side. The receiver compares it with the identifier that the packets carried.
+	initial_source_connection_id_length:       int, // The bytes of that identifier: 0 to `CONNECTION_ID_LIMIT`. An identifier of no byte is valid.
+	has_initial_source_connection_id:          bool, // A read sets it, and refuses bytes without the parameter. A write does not read it: it always sends the parameter.
+	max_idle_timeout:                          u64, // Milliseconds; 0: no idle timeout from this side. The idle timeout of the connection is the smaller of the two values that are not 0.
+	max_udp_payload_size:                      u64, // The largest UDP payload that the side takes, in bytes. A read refuses a value under `SMALLEST_MAX_UDP_PAYLOAD_SIZE`.
+	initial_max_data:                          u64, // The first limit of the bytes that the other side can send on all the streams together.
+	initial_max_stream_data_bidirectional_local: u64, // The first limit of the bytes that the other side can send on a bidirectional stream that the side of the parameters opens.
+	initial_max_stream_data_bidirectional_remote: u64, // The first limit of the bytes that the other side can send on a bidirectional stream that the other side opens.
+	initial_max_stream_data_unidirectional:    u64, // The first limit of a unidirectional stream that the other side opens. Read only.
+	initial_max_streams_bidirectional:         u64, // The count of bidirectional streams that the other side can open. A read refuses a count over `STREAMS_LIMIT`.
+	initial_max_streams_unidirectional:        u64, // The count of unidirectional streams that the other side can open. Read only.
+	ack_delay_exponent:                        u64, // The power of 2 that scales the ACK Delay field of the ACK frames of the side. Read only.
+	max_ack_delay:                             u64, // Milliseconds: the longest time for which the side holds back an acknowledgment. Read only.
+	active_connection_id_limit:                u64, // The count of connection identifiers of the other side that the side stores. Read only.
+	disable_active_migration:                  bool, // The side takes no packet of this connection from another address or port.
+	retry_source_connection_id:                [CONNECTION_ID_LIMIT]u8, // A server after a Retry: the Source Connection ID of its Retry packet.
+	retry_source_connection_id_length:         int, // The bytes of that identifier: 0 to `CONNECTION_ID_LIMIT`.
+	has_retry_source_connection_id:            bool, // The parameter is there. The caller of a read checks that it is there after a Retry, and only then.
 }
 
-// transport_parameters_default gives the values that RFC 9000, section 18.2,
-// gives to a parameter that does not come.
+// transport_parameters_default gives the values that RFC 9000 gives to a parameter that does not come.
+//
+// The values of section 18.2: `max_udp_payload_size` 65527, `ack_delay_exponent` 3, `max_ack_delay`
+// 25 ms and `active_connection_id_limit` 2. Each other field is 0, false or empty: no idle timeout,
+// no byte of flow control, no stream, no identifier.
+//
+// A caller that builds the parameters of its own side starts from this record and sets its limits.
+// `transport_parameters_read` starts from it too, so a parameter that the peer did not send has its
+// default.
 transport_parameters_default :: proc "contextless" () -> Transport_Parameters {
 	return {max_udp_payload_size = 65527, ack_delay_exponent = 3, max_ack_delay = 25, active_connection_id_limit = 2}
 }
 
-// transport_parameters_write encodes the parameters of one side. Each value
-// that equals its default is not written, except the connection
-// identifiers. It gives the count of bytes, or 0 when the buffer is too small.
+// transport_parameters_write encodes the transport parameters of one side into a buffer.
+//
+// The result is the value of the extension `quic_transport_parameters`: the caller copies it into
+// `Tls_Configuration.transport_parameters` before `tls_start`. Each parameter is its identifier, the
+// length of its value and the value; an integer value is a variable-length integer in its shortest
+// encoding (RFC 9000, section 18).
+//
+// **Parameters**
+//
+// - `parameters`: the values of this side.
+// - `role`: the role of this side. Only a `Server` writes the two identifiers that a client must
+//   not send.
+// - `buffer`: where the bytes go.
+//
+// **What it writes**, in this order:
+//
+// 1. `original_destination_connection_id`: a server, when its `has_` field is true;
+// 2. `max_idle_timeout`: when it is not 0;
+// 3. `max_udp_payload_size`: when it is not 65527;
+// 4. `initial_max_data`, `initial_max_stream_data_bidi_local`,
+//    `initial_max_stream_data_bidi_remote` and `initial_max_streams_bidi`: always, a value of 0 too;
+// 5. `initial_source_connection_id`: always, with its length, which can be 0;
+// 6. `disable_active_migration`: when it is true;
+// 7. `retry_source_connection_id`: a server, when its `has_` field is true.
+//
+// It writes no other parameter: see `Transport_Parameters` for the fields that it does not send.
+//
+// **Result**: the count of bytes. **0** when the buffer has no room, or when a value is over
+// `VARIABLE_LENGTH_INTEGER_LARGEST`: the buffer then holds a part of the encoding, which the caller
+// must not send.
 transport_parameters_write :: proc "contextless" (parameters: ^Transport_Parameters, role: Tls_Role, buffer: []u8) -> int {
 	writer := Frame_Writer{bytes = buffer}
 	integer :: proc "contextless" (writer: ^Frame_Writer, identifier: u64, value: u64) {
@@ -98,12 +175,42 @@ transport_parameters_write :: proc "contextless" (parameters: ^Transport_Paramet
 	return writer.position
 }
 
-// transport_parameters_read decodes the parameters that the peer sent.
-// sender is the role of the peer. It gives No_Error, or
-// Transport_Parameter_Error for any parameter that is malformed, repeated,
-// out of its range, or that the role of the sender may not send. A
-// parameter that this library does not know is skipped (RFC 9000, section
-// 7.4.2).
+// transport_parameters_read decodes the transport parameters that the peer sent, and checks each one.
+//
+// The bytes are hostile input, although the handshake authenticated them: the peer chose them. Each
+// length is checked before a byte is read, and each value is checked against the rules of RFC 9000,
+// section 18.2. The caller closes the connection with the result when it is not `No_Error`.
+//
+// **Parameters**
+//
+// - `bytes`: the value of the extension, as `Tls_Handshake.peer_transport_parameters` holds it.
+// - `sender`: the role of the peer that sent them.
+// - `parameters`: where the values go. The read starts from `transport_parameters_default`.
+//
+// **Result**: `No_Error`, or `Transport_Parameter_Error` when:
+//
+// - an identifier or a length is cut, or a length passes the end of the bytes;
+// - a parameter that this library knows comes two times;
+// - a client sends a parameter that only a server sends: `original_destination_connection_id`,
+//   `stateless_reset_token`, `preferred_address` or `retry_source_connection_id`;
+// - a connection identifier has more than `CONNECTION_ID_LIMIT` bytes;
+// - `stateless_reset_token` does not have 16 bytes, or `disable_active_migration` has a value;
+// - an integer parameter is not one variable-length integer that fills its value;
+// - `max_udp_payload_size` is under 1200, a count of streams is over `STREAMS_LIMIT`,
+//   `ack_delay_exponent` is over 20, `max_ack_delay` is 2^14 or more, or
+//   `active_connection_id_limit` is under 2;
+// - `initial_source_connection_id` is absent, or a server did not send
+//   `original_destination_connection_id` (RFC 9000, section 7.3).
+//
+// After an error, `parameters` holds a part of the values: the caller must not use it.
+//
+// **What it skips**: a parameter with an identifier over 0x10, which this library does not know (RFC
+// 9000, section 7.4.2). Such a parameter can come two times. The value of `preferred_address` is
+// not read, and the token of `stateless_reset_token` is not kept.
+//
+// **What it does not check**: that the identifiers are those that the packets carried, and that
+// `retry_source_connection_id` is there after a Retry and only then. The transport does both with
+// the record.
 transport_parameters_read :: proc "contextless" (bytes: []u8, sender: Tls_Role, parameters: ^Transport_Parameters) -> Transport_Error {
 	parameters^ = transport_parameters_default()
 	seen: bit_set[0 ..= PARAMETER_RETRY_SOURCE_CONNECTION_ID]
