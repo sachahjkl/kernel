@@ -4,6 +4,31 @@ This guide gives the model of the stored data of the system: what a program, a p
 
 The terms are in `GLOSSARY.md`, section Storage. The versions and the date are in `ARCHITECTURE.md`, "Versions" and "The date".
 
+## About this guide
+
+**The idea in plain words.** A program never sees a disk, a path or a folder that other programs share. It holds a connection to its own store, granted by the root service with a limit of blocks. In it, it keeps objects (bytes) and trees (named entries that hold objects and other trees). Each change is a commit that a loss of power cannot cut in half, and each commit keeps the state before it as a version, so no program needs a save action or an undo file. To give a part of its data to another program, a program shares one tree, read-only or not, and can revoke the share.
+
+**For whom.** A reader who writes a program that keeps data, a reader who wants to know what another program can reach of it, and a reader who changes the storage service.
+
+**Read before.** `PROPERTIES.md`, "8. No global, mutable, shared file system" and "9. A storage engine with one private store per program". `PRINCIPALS.md`, "6. The store of a principal", for the names of the stores.
+
+**The map of this guide.**
+
+| Section | What it says |
+|---|---|
+| "1. The model" | Objects, trees and stores; installation and packages; the hard points; where the model changed |
+| "2. What exists, and how it maps on the model" | What the system had first, and where each part stands in the model |
+| "3. The format on the disk" | The blocks, an entry, the commit and the open, and the limits |
+| "4. The interface of the service" | Places, the confinement, read-only shares and revocation, the removal of a tree, budgets, large objects |
+| "5. Not built: the next steps" | The order of the next capabilities |
+| "6. The tests" | What the host tests and the machine tests check |
+
+**An example.** The console holds its line history in the store `console.history`, with a limit of 4 blocks: `storage.usage()` gives the counts of a store, and from a program that acts for the principal, `place = storage.open_store("console.history")` then `storage.versions(place, "line_history")` lists the earlier states of the object. The picture shows the private store of the console, its limit of blocks, the stores that the principal sees, and a grant that the principal revokes.
+
+![The storage service: the private store of the console, its limit of blocks, the stores that the principal sees, and a grant that the principal revokes](screenshots/storage.png)
+
+![The versions of an object: each commit keeps the state before it](screenshots/storage_versions.png)
+
 ## 1. The model
 
 The model has three things, and two concepts that the system has already.
@@ -72,17 +97,17 @@ What these rules forbid, so that nobody adds it later:
 
 - **The hash of a tree is not fixed by its entries alone.** A tree on the disk is a B+ tree of nodes, and the form of a B+ tree depends on the order of the changes. Two trees with the same entries can have two different forms. Rule: the hash of a tree is defined on its entries in the order of their names, not on its nodes; a tree that a build writes whole (a system, a package) is written in that one form. A tree in a store that changes has no hash until it is sealed. Not built: no tree has a hash today.
 - **A writable handle on a part of a store is a place, not a hash.** A tree never changes, so a handle on a tree is read only by nature. To let another program change a part of a store, the handle names the store and the names of the path from the root of the store to that part. Such a handle reaches what is under that path. If a program with a wider handle renames a tree above the path, the handle names what is at the path now: the handle follows the names, not the bytes.
-- **The versions are still kept for each named object, not for the store.** In the model, the versions of a named object are found in the history of its store. The first step keeps the versions of each object of a tree, as the store keeps them now; the history of a store is a later step (section 7).
+- **The versions are still kept for each named object, not for the store.** In the model, the versions of a named object are found in the history of its store. The first step keeps the versions of each object of a tree, as the store keeps them now; the history of a store is a later step (section 5).
 
 ## 2. What exists, and how it maps on the model
 
-| Today | In the model | State |
+| What the system had first | In the model | State |
 |---|---|---|
-| A private store: one table of 39 named objects | A store of one program: it names one tree, with trees inside it | Built: section 3 |
-| The name of an object (1 to 39 bytes) | A name of an entry of a tree (1 to 64 bytes) | Built |
-| An object of a store, with its block tree | An entry of a tree that names an object: its hash and the root of its block tree | Built: the hash is kept; the blocks are still found through the entry, not by the hash |
+| A private store as one table of 39 named objects (the first format; not read any more) | A store of one program: it names one tree, with trees inside it | Built: section 3 |
+| The name of an object (1 to 39 bytes, the first format) | A name of an entry of a tree (1 to 64 bytes) | Built |
+| An object of a store, as a list of blocks | An entry of a tree that names an object: its hash and the root of its block tree | Built: the hash is kept; the blocks are still found through the entry, not by the hash |
 | The versions of an object, their thinning | The history of a store | Kept for each object; the history of a store is not built |
-| The system description (a signed list of hashes) | The tree of the system, signed by the publisher of the system | Not built |
+| The system description (a signed list of hashes) | The tree of the system, signed by the principal that signs the system | Not built |
 | The boot image | The transport of the first objects | Not built: the image is still the one source of modules |
 | The resources of the boot image (pointer themes, glyph caches) that the root service gives | Objects of the tree of the system, granted by handle | Not built |
 | The hash of a module (P11) | The name of an object | The same BLAKE3 hash; modules are not in the store yet |

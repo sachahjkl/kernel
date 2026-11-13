@@ -4,12 +4,22 @@ These rules say how a program of this system looks. They are taken from the boot
 
 A new graphical program follows these rules. The programs of the desktop that came before do not follow all of them yet: see "State" at the end.
 
+**Why rules.** One look across the system lets a reader trust what a screen says: a value always has the font of the cells and the color of its kind, a concept always has its color, and each number on a screen names the record that it comes from. The rules live as one table of constants (`support/graphics/rules.odin`), so a change of a color changes every program and the site at once.
+
+**For whom.** A reader who writes a graphical program, and a reader who changes the desktop or the site.
+
+**Read before.** Nothing. `INTERFACE.md` gives the package that draws the elements; `FONTS.md` the fonts.
+
+**The map of this guide.** Sections 1 to 8: what is on the screen, forms, surfaces, color, text, the grid, cost, decoration. Section 9: the desktop. Section 10: the elements. Section 11: the mark. Section 12: the card of the boot image. "State": which programs follow the rules.
+
+![The boot display, the model of the rules: the stages of the start on a line of time, the memory, the machine, the boot image, the programs](screenshots/boot.png)
+
 The rules live as one table of constants in `support/graphics/rules.odin`: the grid, the surfaces, the colors of the concepts and the colors of the desktop, with `mix`, `shade`, `block` and `gradient`. The boot display, the compositor and the programs read this table. A program does not repeat a color of the rules as its own constant.
 
 ## 1. What is on the screen
 
 - Each thing on the screen is a fact of a record. A display invents nothing.
-- Each card has a caption that names its record, for example `Boot_Report.stages`. A person can find the source of each number.
+- Each card has a caption that names its record, for example `Boot_Report.stages`. A reader can find the source of each number.
 - A record that is all zero is valid. Its card says "not known yet", in the dim color. A card never shows a zero as if it was a measure.
 - A size on the screen carries a fact when it can: the width of a stage is its duration, the width of a part of a size strip is the size of its file. A form has a least width, so that it stays visible.
 - A name is whole or absent: a form that is too narrow for its name shows no name, and the name is said elsewhere when a reader needs it. A name is never cut.
@@ -103,11 +113,11 @@ The kinds that the log writes, on a dark surface (contrast on the background `0x
 
 - **Two fonts** (`docs/FONTS.md`, section 12.6):
   - **The interface font, B612** (proportional): each text that names or explains: the title and the caption of a card, a label, the name of a button, a line of a list or a menu, the title of a column, a sentence of help.
-  - **The font of the cells, Paper Mono** (monospace): each value, and each text that a person compares character by character or copies: a number in a column, a hash, an address, a text that a person types, code, the console, the terminal, a text grid.
+  - **The font of the cells, Paper Mono** (monospace): each value, and each text that a reader compares character by character or copies: a number in a column, a hash, an address, a text that is typed, code, the console, the terminal, a text grid.
   - Both draw in the line of 16 pixels of the grid, at the scales 1, 2 and 3. The places of the elements stay on the grid of 8; the letters of the interface font do not.
   - A text is measured in the font that draws it, and an element cuts a text to its box: no text passes its element in either font.
   - With no interface font (absent, refused, or the setting `font` is Spleen 8x16), each text is in the font of the cells, with the same layout rules.
-  - The compositor follows the same rule: the buttons of the bar, the lines of its menus, the titles of the windows, the names and the hints of the launcher are in the interface font; the clock, the date, the text that the person types in the launcher and the counts of the menus are in the font of the cells. The mark and its name in square cells do not change. The places of the buttons and of the lines come from the widths of their texts in the font that draws them (the bar layout).
+  - The compositor follows the same rule: the buttons of the bar, the lines of its menus, the titles of the windows, the names and the hints of the launcher are in the interface font; the clock, the date, the text that is typed in the launcher and the counts of the menus are in the font of the cells. The mark and its name in square cells do not change. The places of the buttons and of the lines come from the widths of their texts in the font that draws them (the bar layout).
   - **The boot display, by design, in two steps**: the boot program holds no glyph cache, so the first screen of the machine is in Spleen 8x16, the one font of its binary, as a text grid is. The root service then draws the same display again with the caches of the boot image: the titles of its cards and the names of its facts in the interface font, its values in the font of the cells.
 - The font of the cells: the vector font by default, drawn with a coverage for each subpixel band; Spleen 8x16 as the fallback and as the other value of the setting `font` (`docs/FONTS.md`).
 - Three sizes: lines of 1, 2 and 3 times 16 pixels; cells of 1, 2 and 3 times 8 x 16 for the font of the cells. No other size.
@@ -128,7 +138,7 @@ The kinds that the log writes, on a dark surface (contrast on the background `0x
 ## 7. Cost
 
 - Drawing is `fill` of rectangles with integer arithmetic. No floating point and no image file. The one drawn data is the glyph cache of the vector font: the kernel tool makes it at build time from the outlines, in integers, and a text draw blends its words (`docs/FONTS.md`).
-- A display does not wait so that a person can see it. A display that fails stays.
+- A display does not wait so that a reader can see it. A display that fails stays.
 - Each display has a measured draw time.
 
 ## 8. Decoration
@@ -142,7 +152,7 @@ The desktop is the screen of the compositor: the background, the bar, the window
 ### The gradient and the launcher
 
 - **The gradient** of a title bar goes from the blue of the title bar, `0x3F7CC4`, at its left to a darker blue at its right. The background of the desktop is not that blue: it is the background of the rules.
-- **The launcher** is not the menu of the programs. The menu is a list that the pointer opens from the bar. The launcher is a panel in the middle of the screen that a key opens: the person types a part of a name, and the list narrows at each key. It is the way of the keyboard to start a program. The desktop keeps the menu.
+- **The launcher** is not the menu of the programs. The menu is a list that the pointer opens from the bar. The launcher is a panel in the middle of the screen that a key opens: the input types a part of a name, and the list narrows at each key. It is the way of the keyboard to start a program. The desktop keeps the menu.
 
 ### Background and bar
 
@@ -247,7 +257,7 @@ The mark is the picture that stands for the system: a heron in pixel cells, and 
 
 ### The animations
 
-The mark has idle animations. Several animations play in turn. They play only on the large mark of the home of the site and on the icon of its tab, and they respect the choice of the person about motion.
+The mark has idle animations. Several animations play in turn. They play only on the large mark of the home of the site and on the icon of its tab, and they respect the choice of the visitor about motion.
 
 - An animation of the mark moves a few cells of the still heron. It does not draw the bird again. The data is in `support/mark/animation.odin`, beside the table of the still heron, in the same cells and letters. A cell that moves takes the gradient of its part over the box of that part in the still heron.
 
@@ -262,13 +272,13 @@ The mark has idle animations. Several animations play in turn. They play only on
 | scratch | the knee in, the pose of the leg animation (200 ms, 6); three strokes on the ground: the foot forward on the row of the ground (220 or 200 ms, 8), pulled back one column with one cell of water lifted behind it (220 ms, 9); the knee in again (200 ms, 6) | 1680 ms | 1 |
 
 - The order of play, which repeats (about 80 seconds: 64.1 s still and 15.7 s of animations): 3 s blink, 4.8 s ripple, 2.2 s blink, 4 s look, 5.2 s blink, 3.4 s preen, 2.6 s ripple, 4.4 s blink, 5.5 s dip, 3 s look, 3.7 s blink, 5 s scratch, 2.4 s leg, 4.2 s blink, 3.3 s ripple, 2.8 s leg, 4.6 s look. The owner found the first still times a little too long (2026-11-12: "un peu trop large"); they were 3 to 8 s. Each time is the still time before the animation. No animation follows itself. No random number is used.
-- The preen and the scratch were asked by the owner (2026-11-12): "une où il se gratte [...] il se plie et il se gratte le corps. Et une autre où il fait gratte-gratte sur le sol avec sa patte avant". In the scratch the body does not dip: the body, the wing and the tail one row lower change 46 cells (counted on the table), five times the cells of a stroke of the leg, and the leg reads alone.
+- The preen and the scratch: in the preen the bird bends and scratches its body; in the scratch it scrapes the ground with its front foot. In the scratch the body does not dip: the body, the wing and the tail one row lower change 46 cells (counted on the table), five times the cells of a stroke of the leg, and the leg reads alone.
 - The bounds, which the host tests hold: each animation has its limit of changed cells in the data (`animation_change_limits`): a frame differs from the still heron and from the frame before it by at most 24 cells, or 48 for the preen, which moves the whole head onto the back; a frame lasts 150 to 1000 ms, so the picture changes at most about 6 times each second; an animation lasts at most 3 s; a still time is 2 to 6 s.
 - The sprite sheets of the site hold 22 sprites: the still heron and 21 distinct frames. A sheet of the home is 4356 x 250 pixels (198 for each sprite), in one row: under the 8192 pixels that a browser decodes. The sheet of the icon is 704 x 32.
 - Where it plays: the large heron of the head of the home of the site, and the icon of the tab of the home. Not the small mark of the bar of the site, and not the desktop of the system yet.
-- Reduced motion: when the browser says that the person asks for reduced motion, nothing moves, and the still picture stays. A change of that choice while the page is open stops or starts the play.
+- Reduced motion: when the browser says that the visitor asks for reduced motion, nothing moves, and the still picture stays. A change of that choice while the page is open stops or starts the play.
 - A hidden tab: the play stops, no timer runs, and the icon is the still icon again.
-- `kerneltool logo` writes `build/mark_animations.png`: each animation as a row of its frames at cells of 8 pixels, with the durations and the order of play, for a person to look at.
+- `kerneltool logo` writes `build/mark_animations.png`: each animation as a row of its frames at cells of 8 pixels, with the durations and the order of play, for a reader to look at.
 - The desktop of the system does not play the animations. The data is ready for it: `animation_frame_cells` gives the cells of a frame, and `cells_draw` draws them. To play them, the compositor needs one picture of 24 x 24 pixels for each distinct frame, drawn at the start as the still heron is. It also needs one timer that changes the generation of the Picture record of the bar at the times of the order of play.
 
 ## 12. The card of the boot image

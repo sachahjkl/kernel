@@ -1,6 +1,36 @@
 # The line of the console
 
-The console owns the line that the person edits: its bytes, the caret, the line history, and the completion list. The terminal draws them and gives the keys. The procedures that change the line are in `support/line_editor`: they have no state of their own and make no kernel call, so host tests run each key (`support/line_editor/line_editor_test.odin`). The console uses them in `programs/console/main.odin` and `programs/console/completion.odin`.
+This guide describes the line that is typed at the console: the keys that edit it, the completion list that opens while it is typed, the line history that survives a stop, and the colors of its code.
+
+## About this guide
+
+**The idea in plain words.** The console is the program in which the principal calls the functions of the system directly, with typed values, in place of a shell that passes text to programs. Each name that it can call comes from the description of a module, so the console can complete every name and show the signature of every call while the line is typed, with no code in the called program.
+
+**For whom.** A reader who uses the console, and a reader who changes `programs/console`, `support/line_editor` or `support/terminal`.
+
+**Read before.** `PROPERTIES.md`, "19. A command is a function: no text between programs". The terms edit line, line editor, hint line, free row, completion list, chosen row, fuzzy match, line history, history search and terminal are in `GLOSSARY.md`, group Communication.
+
+**The map of this guide.**
+
+| Section | What it says |
+|---|---|
+| "1. The keys" | What each key does, with the list closed, the completion list open, or the history search open |
+| "2. What the console completes" | Which names come where the caret is, and from which table |
+| "3. The fuzzy match" | How a query matches a name, and the score that orders the list |
+| "4. The bounds, and the cost of one key" | The limits that keep one key fast against a hostile description |
+| "5. Who draws the list, and the line under the edit line" | What the console sends and what the terminal lays out |
+| "6. The line history across a stop" | The store of the history, its load, its save and who can read it |
+| "7. The colors of the code" | The kinds of the parts of a line, their colors, and the records that carry them |
+
+**An example.** Type `mcnt`: the completion list opens with `monitor.count` first, its matched characters in the accent color. Tab takes the name and adds `(`; the hint line under the edit line then shows `count(name: Text) -> Integer` with the parameter at the caret marked.
+
+![The completion list of the console, open under the edit line](screenshots/console_completion.png)
+
+![The history search of the console: Control-R and a part of a line](screenshots/console_history_search.png)
+
+## What the console owns
+
+The console owns the line that the input edits: its bytes, the caret, the line history, and the completion list. The terminal draws them and gives the keys. The procedures that change the line are in `support/line_editor`: they have no state of their own and make no kernel call, so host tests run each key (`support/line_editor/line_editor_test.odin`). The console uses them in `programs/console/main.odin` and `programs/console/completion.odin`.
 
 ## 1. The keys
 
@@ -11,12 +41,12 @@ The console owns the line that the person edits: its bytes, the caret, the line 
 | Backspace, Delete | Remove the byte before, after the caret | The same; the list follows | Backspace removes a byte of the search |
 | Tab | Opens the list (one name: it goes in at once) | Takes the chosen name | Takes the chosen line |
 | Enter | Runs the line | Takes the chosen name; if the name is already the name at the caret, runs the line | Takes the chosen line: it goes in the input, and does not run |
-| Up, Down | An older, a newer line of the history; after the newest, the line that the person typed | The choice moves | The choice moves |
+| Up, Down | An older, a newer line of the history; after the newest, the line that was typed | The choice moves | The choice moves |
 | Control-R | Opens the history search | The choice moves down (an older line in the search) | The choice moves down: the next older line of equal score |
-| Control-S | Nothing: no line is newer than the line that the person types | The choice moves up | The choice moves up |
-| Escape | Nothing | Closes the list; the next character opens it again | Closes the search; the line stays as the person typed it |
+| Control-S | Nothing: no line is newer than the line that is typed | The choice moves up | The choice moves up |
+| Escape | Nothing | Closes the list; the next character opens it again | Closes the search; the line stays as it was typed |
 
-Control-R and Control-S: the console tests the character of the key (`r`, `s`) with the modifier Control, not the code of the key. The input service gives the character of the US layout from the table of the Shift state, and gives it also when Control is held: the machine test sends `ctrl-r` and `ctrl-s` through QEMU and they work. With Shift also held the character is `R`, and the console takes the key as no search. The system has only the US layout today; with another layout, the input service gives the character of that layout, so Control-R follows the letter R wherever the layout puts it, as the person reads it on the key. A test of the code follows the place of the key instead, and breaks with such a layout.
+Control-R and Control-S: the console tests the character of the key (`r`, `s`) with the modifier Control, not the code of the key. The input service gives the character of the US layout from the table of the Shift state, and gives it also when Control is held: the machine test sends `ctrl-r` and `ctrl-s` through QEMU and they work. With Shift also held the character is `R`, and the console takes the key as no search. The system has only the US layout today; with another layout, the input service gives the character of that layout, so Control-R follows the letter R wherever the layout puts it, as it is printed on the key. A test of the code follows the place of the key instead, and breaks with such a layout.
 
 While a line runs, each key but Escape waits, in order, and the edit line shows them (`|` Enter, `<` Backspace, `>` Tab, `^` a key with no character). Escape stops an isolated call, as before.
 
@@ -27,7 +57,7 @@ A chosen name replaces the whole name at the caret, also its part after the care
 | Where the caret is | The names | From |
 |---|---|---|
 | A name with no dot | Each command (with its full name: `monitor.count`), each connected service, each variable | The command table: the commands of the console, and the exports of the modules and services, from their descriptions |
-| After `owner.` | The exports of that service | The commands that start with `owner.`. If none does, the whole name is matched against all the names |
+| After the name of a service and a dot (`storage.`) | The exports of that service | The commands whose name starts with that name and a dot. If none does, the whole name is matched against all the names |
 | Inside the quotes of the first argument of `load`, `isolate`, `start`, `replace` | The modules of the boot image | The image that the root service granted |
 | Inside the quotes of `connect`, `stop`, `grants`, `revoke` | The programs that run | `Inspect` on the machine, with the grant that the console holds. The root service has no command that lists its services: the console asks for none, and gets no new grant. With no grant to inspect, the list names the services that the console is connected to |
 | Inside the quotes of `unload` | The modules that `load` and `isolate` added | The table of the console |
@@ -43,10 +73,10 @@ The characters of the query appear in the name in their order, with gaps allowed
 | Rule | Points | Why |
 |---|---|---|
 | Each matched character | +16 | A longer query that matches says more |
-| A match at the first byte of the name | +32 | The person types names from their start |
+| A match at the first byte of the name | +32 | Names are typed from their start |
 | A match right after `.` or `_` | +24 | The start of a part of the name |
-| A match right after the match before | +16 | A run that the person typed, held as one run |
-| A gap between two matches | -3, and -1 for each byte of the gap after its first | A spread match is less likely what the person means |
+| A match right after the match before | +16 | A run that was typed, held as one run |
+| A gap between two matches | -3, and -1 for each byte of the gap after its first | A spread match is less likely what the typed text means |
 | A tie | The smaller tie order, then the shorter name, then the order of the bytes | The history gives the age as the tie order: the newest line first |
 
 The tests pin these orders on real names of the system (the exports of `monitor`, `storage`, `manual`, `compositor`, `settings`, `date`):
@@ -100,29 +130,29 @@ The status line of the terminal names the lines of the text that the view shows:
 
 The history lives in the memory of the console: 256 lines at most in a ring of 16 384 bytes (`line_editor.History`), and fewer when the lines are long (81 lines of 200 bytes). A line never wraps at the end of the ring, so each line is one slice of it. The same line two times in a row is kept one time. It also survives a stop of the console and a stop of the machine.
 
-**Why a store of its own.** The history is the state of the console, not a file of the person; a grant for one purpose with a small limit is what property 20 asks for; the store of the person and its checks stay as they are.
+**Why a store of its own.** The history is the state of the console, not a file of the principal; a grant for one purpose with a small limit is what property 20 asks for; the store of the principal and its checks stay as they are.
 
 **The history store.** The root service gives the console a second connection to the storage service, for its history only (`Root_Command.Connect_History`, the role `History_Store`, the grant `history`):
 
 - The store is named after the console with `.history` (`console.history`): the storage service names the store of a connection by the name that the root service sends with it, and no module of the boot image has a dot in its name.
-- Its limit is 4 blocks. One object of one block takes 3 blocks of a store (the table of the store, the list of the object, its data), as the store of the person shows ("3 of 4 blocks" for 20 bytes); a change needs one block more for its new data, in the commit that thins the version before. 2 blocks cannot hold the file. At its limit each commit thins the version before; the storage service says it once in a run.
+- Its limit is 4 blocks. One object of one block takes 3 blocks of a store (its store block, the leaf of its tree, and its block of data, which the entry names with no object node), as the store of the principal shows ("3 of 4 blocks" for 20 bytes); a change needs one block more for its new data, in the commit that thins the version before. 2 blocks cannot hold the file. At its limit each commit thins the version before; the storage service says it once in a run.
 - The connection has no grant to act for the principal: the store of the history and no other one. A hostile console can fill 4 blocks, as its private store lets it fill 4.
 - The form: a connection that the console asks for through its root ring, at its start, as `connect("storage")` but with its own command. Not a boot pass: the console runs the whole time, it reads its history at its start. Not a connection in its context at the start: the places of the context of the store connection (7, 8, 9) are the places of the terminal of the console, and the storage service starts at boot after the console (the boot pass of `settings` starts it); a connection in the context needs the storage service before the console, which changes the order of the boot. The root service handles the root ring of the console only after the boot pass has started, so the storage service runs when the request comes: the order of the starts is the order of before.
-- The root service keeps the connection apart: `Disconnect` of the service `storage` does not end it, a revocation of the grant `store` does not change it, and a revocation of `person` gives it its limit only. `revoke("console", "history")` ends it: the console keeps its history in its memory. A second connection of one program to one service is refused as before, for each kind.
+- The root service keeps the connection apart: `Disconnect` of the service `storage` does not end it, a revocation of the grant `store` does not change it, and a revocation of `acts_for_principal` gives it its limit only. `revoke("console", "history")` ends it: the console keeps its history in its memory. A second connection of one program to one service is refused as before, for each kind.
 
-**The load.** At its start, before it reads a key, the console asks for the connection (it waits 30 s at most: the storage service mounts the disk at boot) and reads the object `line_history`. The second thread runs no line yet, so the history has one user. One log line says what came: "console: the line history: N lines kept from before the stop", or "no line history kept", or that the file is damaged, cannot be read, has more than 4096 bytes, or is refused by a check of `history_file_read` (with its name: "its hash is wrong", "a line has a byte that is not a character", ...). Each of these gives an empty history. A line of the file goes through the bounds of a typed line (200 bytes, the bytes 32 to 126), and nothing of the file runs: a line runs only when the person takes it (Up, or Enter in the search) and presses Enter.
+**The load.** At its start, before it reads a key, the console asks for the connection (it waits 30 s at most: the storage service mounts the disk at boot) and reads the object `line_history`. The second thread runs no line yet, so the history has one user. One log line says what came: "console: the line history: N lines kept from before the stop", or "no line history kept", or that the file is damaged, cannot be read, has more than 4096 bytes, or is refused by a check of `history_file_read` (with its name: "its hash is wrong", "a line has a byte that is not a character", ...). Each of these gives an empty history. A line of the file goes through the bounds of a typed line (200 bytes, the bytes 32 to 126), and nothing of the file runs: a line runs only when the input takes it (Up, or Enter in the search) and presses Enter.
 
-**The save, and its bound.** The second thread writes the file after each line that the history added, while the line still counts as running: the first thread adds no line to the history meanwhile. One commit for each line added. A held Enter adds one line at most: an empty line and the newest line again add nothing. So the commits follow the lines that a person types, about 4 ms each (one commit of `notes` in the machine test). `shutdown()` and `stop("console")` save before they act: their save after the line never comes. A stop that the console does not see (a close of its window, a fault, a loss of power) loses the line that runs then, and no line before it. A save that fails writes one log line in a run, and the history stays in memory.
+**The save, and its bound.** The second thread writes the file after each line that the history added, while the line still counts as running: the first thread adds no line to the history meanwhile. One commit for each line added. A held Enter adds one line at most: an empty line and the newest line again add nothing. So the commits follow the lines that are typed, about 4 ms each (one commit of `notes` in the machine test). `shutdown()` and `stop("console")` save before they act: their save after the line never comes. A stop that the console does not see (a close of its window, a fault, a loss of power) loses the line that runs then, and no line before it. A save that fails writes one log line in a run, and the history stays in memory.
 
 Why after each line and not at most one write in a second: a generation counts the commits of the whole disk, of each store, and the machine tests check generations. A rule of time makes the count of commits depend on the speed of the host; a rule of lines makes it a fact of the scenario. The steps of the tool now count the generations from a base near them (the step `Generation`, `{generation+N}`), so that a line of the console before them moves nothing.
 
-**What the history holds, and who reads it.** Each line that the person entered, as typed: a line with a secret in it (a text that the person gave to a command) is in it, in the memory of the console and in its store, with the versions that the storage service keeps of the object until the next commits thin them. Who can read it: the console; and a program that acts for the principal, through the exports of the storage service that name another store (`storage.stores()` lists the store, `storage.versions("console.history", "line_history")` and `storage.version(...)` give its states). Today those are the console itself and `remote` (the host, through the person). No other program reaches it. `history_clear()` empties the history in the memory of the console and removes its object from the store, with each of its versions; the line `history_clear()` goes too.
+**What the history holds, and who reads it.** Each line that was entered, as typed: a line with a secret in it (a text that was given to a command) is in it, in the memory of the console and in its store, with the versions that the storage service keeps of the object until the next commits thin them. Who can read it: the console; and a program that acts for the principal, through the exports of the storage service that name another store (`storage.stores()` lists the store; `place = storage.open_store("console.history")` gives a place on it, then `storage.versions(place, "line_history")` and `storage.version(...)` give its states). Today those are the console itself and `remote` (the host, through the principal). No other program reaches it. `history_clear()` empties the history in the memory of the console and removes its object from the store, with each of its versions; the line `history_clear()` goes too.
 
-**The machine tests.** The main machine: the connection and "no line history kept" at its start; the steps of the storage service count from the generation of the first write of the person. The persistence: the first machine types `length("kept across a stop")`, then `shutdown()`; the second one finds 4 lines ("storage: ok, generation 1027: 3 stores, 4 objects"), Up and Up give the line, Enter runs it (18), and Control-R `kept` finds it. A loss of power during the save: the settings case of `kerneltool test power` checks each object of each image after the loss, the line history with them, and gives the durable state or the state in flight, never a mix; the loss falls in the commits of `settings.repeat(1000)`, not in a commit of the history: a case that falls in a commit of the history is not built (one commit for each line makes such a case slow to reach).
+**The machine tests.** The main machine: the connection and "no line history kept" at its start; the steps of the storage service count from the generation of the first write of the principal. The persistence: the first machine types `length("kept across a stop")`, then `shutdown()`; the second one finds 4 lines ("storage: ok, generation 1027: 3 stores, 4 objects"), Up and Up give the line, Enter runs it (18), and Control-R `kept` finds it. A loss of power during the save: the settings case of `kerneltool test power` checks each object of each image after the loss, the line history with them, and gives the durable state or the state in flight, never a mix; the loss falls in the commits of `settings.repeat(1000)`, not in a commit of the history: a case that falls in a commit of the history is not built (one commit for each line makes such a case slow to reach).
 
 ## 7. The colors of the code
 
-The edit line, the line that the console writes back when the person enters it, and the rows of the completion list are colored by what each part is in the language of the console. One scanner reads them: `support/console_language`. The parser of the console reads its names, numbers and texts with the same procedures (`space_end`, `name_end`, `number_end`, `text_end`), so the colors and the parser agree on where a token starts and ends. The scanner calls no allocator, keeps no state, and never stops at a fault: a byte that the language does not take is one token of the kind Unknown.
+The edit line, the line that the console writes back when Enter is pressed, and the rows of the completion list are colored by what each part is in the language of the console. One scanner reads them: `support/console_language`. The parser of the console reads its names, numbers and texts with the same procedures (`space_end`, `name_end`, `number_end`, `text_end`), so the colors and the parser agree on where a token starts and ends. The scanner calls no allocator, keeps no state, and never stops at a fault: a byte that the language does not take is one token of the kind Unknown.
 
 **The kinds.** The console sends kinds, not colors (`terminal.Code_Kind`). The terminal maps each kind to a class of the colors of code (`terminal.code_kind_classes`), and each class to a color of the design rules (`support/graphics/code_colors.odin`, the table that the site reads too: `docs/DESIGN.md`, section 4). One table changes the colors of every terminal.
 
@@ -140,17 +170,17 @@ The edit line, the line that the console writes back when the person enters it, 
 
 A part with no class has the color of the text around it: the tone of the line, or the text color `0xDCE4EC` in a row of the list (14.84 and 12.64). A host test computes each contrast on the background and on both colors of the card; the bound is 4.5 (`support/terminal/code_runs_test.odin`).
 
-**A line that the person types.** The console makes the runs of the edit line at each key that changes it, before it sends the line:
+**A line that is typed.** The console makes the runs of the edit line at each key that changes it, before it sends the line:
 
-- A name that is a command, an export, a record, a module or a variable has its kind at once, while the person types it.
+- A name that is a command, an export, a record, a module or a variable has its kind at once, while it is typed.
 - A name that the console does not know is Unknown only when a byte follows it. A name that ends at the caret or at the end of the line is still being typed: it has no run, and the color of the line. So a name does not change to the quiet mark and back at each key.
-- A text with no end quote is Text_Unfinished. It has the color of a text, not the color of an error: the person still types it. The error comes when the line runs ("the text has no end quote").
+- A text with no end quote is Text_Unfinished. It has the color of a text, not the color of an error: it is still being typed. The error comes when the line runs ("the text has no end quote").
 - `name = ...` at the start of a line names a variable: the name is a Variable before it exists.
 - An Unknown part is quiet (the dim class), never red: the line is not run yet.
 
 **The rows of the list.** The name has the kind of what it is: a command or an export is a Function, with its module and its dot when its name has one (`monitor.count`); a record is a Type; a service is a Module; a module or a program in quotes is a Text; a line of the history is read as a line of code. What the name is, at the right, is read as a signature: the words before the parentheses are Words, the word after "of" is the Module; in the parentheses a name before `:` is a Parameter; after `:` or `->` each name is a Type, also in the parentheses of the type (`Table(Count_Name, Read)`). The alignment of the rows does not change: the runs give colors, never places.
 
-**The marks over the colors.** The caret of the edit line is drawn over its byte, as before. A matched character of the list, and of the search of the history, has the accent over the color of its kind: the match is what the person typed. The line editor has no selection of text. The hint line stays dim, with its mark on the parameter at the caret.
+**The marks over the colors.** The caret of the edit line is drawn over its byte, as before. A matched character of the list, and of the search of the history, has the accent over the color of its kind: the match is what was typed. The line editor has no selection of text. The hint line stays dim, with its mark on the parameter at the caret.
 
 **The chosen row.** The chosen row is on `COLOR_CHOSEN` `0x3C76BB` (`docs/DESIGN.md`, section 10). White has 4.67 to 1 there, and no color of a kind keeps 4.5. The chosen row draws each part in white: the kinds show on the other rows. A matched character of the chosen row is the reverse, the chosen blue on a white cell: 4.67 to 1. The host test holds 4.5 for both.
 

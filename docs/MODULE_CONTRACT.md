@@ -10,6 +10,34 @@ The facts come from two research notes, with sources:
 - `research/module_loading_prior_art.md` (cited as [Load §n])
 - `research/interface_types_prior_art.md` (cited as [Types §n])
 
+## About this document
+
+**The idea in plain words.** In this system a program and a library are one thing: a module. A module is a file of position-independent code with flat tables that say what it exports, what it imports (by the hash of each module), and the type of each parameter of each export. Those tables are enough to call an export with no other knowledge: a program calls it as a library function in its own memory (a direct call), the console calls it by name with typed values, and an untrusted module runs as its own program and is called through a ring (an isolated call). One description serves all of these, so no program parses text from another.
+
+**For whom.** A reader who writes a module, a reader who calls modules from a program or from the console, and a reader who changes the loader or the tool that writes the tables.
+
+**Read before.** `PROPERTIES.md`, properties 10, 11, 12 and 19. The terms module, export, import, slot, loader, replacement, direct call, isolated call, call host, record description, table, error record and debug object are in `GLOSSARY.md`, groups Code and Communication.
+
+**The map of this document.**
+
+| Section | What it says |
+|---|---|
+| "Requirements" | The fixed rules that the contract obeys |
+| "1. The module file" | The header, the loader tables and the description tables |
+| "2. Loading" | How the loader maps a module and its imports, and the error of a load |
+| "3. Static is dynamic" | Why one module serves both forms of link |
+| "4. The call form" | The registers of a direct call, the isolated call through a ring, records, handles, tables and bytes as parameters, a call from the host, and the replacement of an import |
+| "5. The types" | The types that a description knows, and their layout |
+| "6. The context" | The record that a program receives at its start |
+| "7. How to build modules with existing tools" | The compiler and the linker |
+| "8. Errors that diagnose" | The error record, its three places, and the stack trace of a fault |
+| "Debug information" | The debug object of each module, and who reads it |
+| "Decisions", "Closed rules", "Open questions" | What is fixed, and what is still open |
+
+**An example.** The module `math` exports `power`. At the console, `load("math")` maps it into the console, and `math.power(2, 10)` calls it directly: the console finds the export and the type of each parameter in the tables of the module. `isolate("math")` starts the same file as its own program; the same line then sends an argument record through the call ring, and the receiver checks it against the same description.
+
+![The information of the modules: the manual shows the table of all the modules, read from their flat tables](screenshots/modules.png)
+
 ## Requirements
 
 Each requirement is a fixed rule of the system.
@@ -17,7 +45,7 @@ Each requirement is a fixed rule of the system.
 1. One format of code. A library and an executable are the same module (P10).
 2. Static linking and dynamic linking are one mechanism (P10).
 3. A module is identified by the hash of its content, and imports other modules by hash (P11).
-4. The loader reads flat tables. They are the only format of the metadata; functions give the information of the modules from them (P12: no SQLite). The functions are `support/information`; section 4, "Tables", gives the form of their results.
+4. The loader reads flat tables. They are the only format of the metadata; functions give the information of the modules from them (P12: no SQLite). The functions are `support/information`; section 4, "Tables and bytes as parameters", gives the form of their tables.
 5. An all-zero record is valid (P13, ZII).
 6. No contract depends on a feature of one language (P19).
 7. A command is an export. The module metadata is sufficient to call it (P19).
@@ -112,7 +140,7 @@ No exception and no global error state: an error is a value that the call gives 
 
 A name is 32 bytes, from the load source: the loader reads it in the entries of the boot image. A hash that the load source does not name has no name; the text then shows the hash.
 
-- **Text for a person**: `system.load_error_text` writes the record as lines, with no other data. The console prints each line after "error: ", for example "error: agenda imports calendar, and its replacement calendar_changed fails the check" and "error: export days_in_month of calendar_changed: 3 parameters, calendar has 2". The root service writes the lines on the log when a start fails.
+- **Text for a reader**: `system.load_error_text` writes the record as lines, with no other data. The console prints each line after "error: ", for example "error: agenda imports calendar, and its replacement calendar_changed fails the check" and "error: export days_in_month of calendar_changed: 3 parameters, calendar has 2". The root service writes the lines on the log when a start fails.
 - **A call host**: its first completion has the tag 0: Ok when it loaded its module, or `Load_Failed` with the record at the start of the call region. The console waits for it in `isolate`, copies the record, and reads it as values: a value out of an enumeration is shown as unknown, and a name is read up to its 32 bytes.
 - **Unload**: `module_space_release` gives `false` and the stage Unmap when the kernel refuses to remove a module.
 - **A fault in a module**: the kernel keeps a stop report for each program (`op.Stop_Report`): the stop code, the instruction, the address, and the module record of the module of the instruction, that is the module that ran (B2, not B). The holder of the program handle reads it with `Program_State`. The console prints "error: the instruction is at " and the procedure of the instruction in calendar_fixed (section "Debug information"), or "at offset ... of calendar_fixed ..." with no debug image, and "error: calendar_fixed ... runs in place of calendar ...". The log of the kernel has the same facts, as offsets.
@@ -196,7 +224,7 @@ The code is `contract/isolated/` and `programs/host`.
 - **Completion record**: `kind` is a status: 0 is success, 1 is "no such export", 2 is "the argument record is not in the call region". `values[0]` and `values[1]` are the integer results; `values[2]` and `values[3]` are the float results.
 - **The receiver checks**: The call host reads the types from the description in the module, not from the caller. It copies the argument record to private memory once. It checks the offset and the count of each slice against the size of the call region, with no overflow. Then it calls `export_call`.
 - **The caller checks**: The caller reads a bounded number of completion records, and ignores each record whose tag is not the tag of the call.
-- **Failure**: A fault in the module stops the call host only. The kernel wakes the caller, which holds the handle of the program. The caller reads the stop code. A call has no time limit. The caller ends a call when it closes the handle: the kernel stops a program that no handle names. The console does this when the person presses Escape. The next call starts a new call host.
+- **Failure**: A fault in the module stops the call host only. The kernel wakes the caller, which holds the handle of the program. The caller reads the stop code. A call has no time limit. The caller ends a call when it closes the handle: the kernel stops a program that no handle names. The console does this when Escape is pressed. The next call starts a new call host.
 - **Tests**: `odin test isolated` has a round trip, the refused cases at each limit, and 200 000 random argument records. The machine test calls a module that reads address 0, that loops with no end, and that tries to stop the machine.
 
 ### Records and handles, as implemented
@@ -211,7 +239,7 @@ The code is `contract/isolated/` and `programs/host`.
 | Table result | One more argument: the address of a buffer record `{address, capacity in records}`; the integer result is the count of records of the full table | One more field: the buffer `{offset, capacity in records}`, the rest of the call region from a multiple of 8 |
 | Table or Bytes parameter | The address of a table place `{address, count, capacity}` in memory of the caller | 32 bytes: `{start, count, capacity, memory}`: the records in the call region, or in a lent memory object (section "Tables and bytes as parameters") |
 
-- **Record description**: The tables Records and Fields. A record has a name, a size (256 bytes at most) and fields. A field has a name, an offset and a type: Integer (8 bytes), Handle (4 bytes), or Text with its size in the detail (1 to 256 bytes: UTF-8, zero bytes after the text). A record holds values only. The loader code checks each description before a use: each field is inside the record.
+- **Record description**: The tables Records and Fields. A record has a name, a size (256 bytes at most) and fields. A field has a name, an offset and a type: Integer (1, 2, 4 or 8 bytes, signed or unsigned), Handle (4 bytes), or Text with its size in the detail (1 to 256 bytes: UTF-8, zero bytes after the text). A record holds values only. The loader code checks each description before a use: each field is inside the record.
 - **A record is copied one time**: The receiver copies the bytes of the record from the call region to private memory, then gives the address of the copy to the export. The caller cannot change the record while the export reads it.
 - **A handle is lent**: The description has the rights that the export needs. The caller gives a copy of its handle to the receiver, with these rights only, through the call ring: the kernel operation `Handle_Give`, with the memory object of the call ring as the target. The receiver closes the copy when the export returns. The caller keeps its handle.
 - **The receiver proves each handle**: The number of the handle is in memory that the caller writes. The receiver asks the kernel if this handle came through the call ring (`Handle_State`), and if it has each right of the description. If not, the status of the call is 3, "bad handle", and the export does not run. Without this proof a caller names a handle that the receiver holds for itself.
@@ -243,7 +271,7 @@ Two parameter types, one direction for each parameter:
 | Type | Detail | Meaning |
 |---|---|---|
 | Table (5) | The index of the description of the record | Records of one description that follow each other. A record of a table parameter has no Handle field |
-| Bytes (6) | 0 | Bytes with no description, with a direction. A Text stays the read-only form of UTF-8 for a person |
+| Bytes (6) | 0 | Bytes with no description, with a direction. A Text stays the read-only form of UTF-8 for a reader |
 
 | Direction | Value | The callee | The count |
 |---|---|---|---|
@@ -320,7 +348,7 @@ The description is the same in the three ways (P10, P19). The source of the expo
 #### The callers
 
 - **The console**: a Table value is an argument where the description takes a Table of an equal record (`module.records_equal`), with the direction Read or Change; a Text value is an argument of Bytes with the direction Read. A Change table changes the memory of the value: a variable holds the changed rows after the call. An export with an Append table parameter, or Bytes with Change or Append, is not a command of the console: the language has no second result. The one exception is the table of error details: the console gives a table of 16 itself, the command does not show the parameter, and the console prints the details after the error. `columns` and `where` give tables that go into a call.
-- **`kerneltool call`**: a Table argument is a literal of rows, each row the values of its fields in order: `monitor.counts_named([("programs"), ("processors")])`; a Bytes argument with the direction Read is a text. The answer of `remote` has one result place: an export with an Append table parameter is refused with a sentence. The one exception is the table of error details: the tool gives it, the person does not write it, and the answer of a failed call carries the details (section 8, "The table of error details").
+- **`kerneltool call`**: a Table argument is a literal of rows, each row the values of its fields in order: `monitor.counts_named([("programs"), ("processors")])`; a Bytes argument with the direction Read is a text. The answer of `remote` has one result place: an export with an Append table parameter is refused with a sentence. The one exception is the table of error details: the tool gives it, the caller does not write it, and the answer of a failed call carries the details (section 8, "The table of error details").
 - **The text of a signature**, one form in the manual, the console, the errors and `help()`: `sum_values(readings: Table(Reading, Read)) -> Integer`, `seal(packets: Table(Packet, Change), bytes: Bytes(Change), key: Key) -> Integer`.
 
 #### What the cryptography module uses
@@ -373,12 +401,12 @@ The test tool and a developer read the state of the running system as typed reco
 - **A lost datagram.** QUIC sends it again: the tool never sends a call again, so a call of an export that changes something (`storage.write`) is made one time. A call whose answer did not come (its connection ended) may have run, and the tool says so. The tool reads at most `remote.ANSWER_LIMIT` bytes and checks that they are a header and the total that it names, inside a call region.
 - **Who can be called.** The root service decides: the remote service holds a ring to the root service that serves `Connect` and `Disconnect` only, to the services that `callable_of("remote")` names: `manual`, `monitor` and `storage`. It connects at the first call to a service, and again after a stop of the service.
 - **The principal.** The remote service acts for the principal of its session (`isolated.CALLER_ACTS_FOR_PRINCIPAL`; `docs/PRINCIPALS.md`): `manual.running()`, `monitor.programs()` and `storage.stores()` give it what the console sees. Reason: the call comes from the developer at the host, who holds the machine, and the purpose is to read the state of the system; a grant of less makes the tool see less than the console. The grant is a line of the root service (`grants_of`), and `revoke("remote", "acts_for_principal")` in the console ends it: the root service tells each service of the remote service that the grant of its connection changed, and the next call is refused with its error record.
-- **What it does not protect** (property 20): the listen grant of the remote service admits the address of the host only, and a Retry of QUIC proves that the client receives at that address. The host knows the machine by the key that it pinned, and no one on the path reads or changes a call. The remote service does not know who the client is: each program of the user of the tool on the host can reach the call socket of the peer and call as the person (`docs/QUIC.md`, section 7, "Who may call").
+- **What it does not protect** (property 20): the listen grant of the remote service admits the address of the host only, and a Retry of QUIC proves that the client receives at that address. The host knows the machine by the key that it pinned, and no one on the path reads or changes a call. The remote service does not know who the client is: each program of the user of the tool on the host can reach the call socket of the peer and call as the principal (`docs/QUIC.md`, section 7, "Who may call").
 - **A machine that runs outside the test.** `kerneltool run` starts the machine with a window, and the peer with its call socket; it prints the path of the socket. Start `remote` from the menu of the bar, or `start("remote")` in the console, and read its public key in its window. Then, in another terminal of the development shell: `kerneltool call <the 64 hexadecimal digits of the key> "monitor.programs()"`. The QUIC client of the peer pins that key. The tool reads the module files of `build/modules`: the machine must run the boot image of the same build, else the remote service refuses the hash. In the machine test the peer takes a call socket of its own and the key on the log, and the step `Call` uses the same code.
 - **The monitor** is the first service of inspection: `programs()` (a Table of `Program`: slot, name, state, pages, mapped pages, handles, threads, processor time, kernel entries, start time, from `op.Program_Report`), `counts()` (a Table of `Count`: name, value, unit, from `op.System_Report`), `count(name)` (one count as an Integer) and `served()` (a Record of the calls of the monitor itself). The first three give facts of other programs and of the machine: only to a caller that acts for the principal, else `No_Grant`. The monitor already reads these facts with the machine and the right Inspect for its window, so the exports need no new grant; the remote service does not get the machine.
 - **The second layer**. Each part is an export with a description; the request and the answer are the same as in the first layer.
   - **A lost datagram and another hash, tested.** The peer drops a datagram of `remote` when the step asks it (`lose`): QUIC sends it again, and `monitor.served()` shows that the monitor ran the call one time. A request with a changed hash (`wrong_hash`) is refused, and the tool names the hash that runs and the hash that it sent.
-  - **The compositor is a service**: `pointer()` (one row of `Pointer`: x, y, buttons, the pointer records that arrived, the menu of the bar that is open, whether the launcher is open) and `windows()` (a Table of `Window`: title, place, size, order from the front, focus, whether the keys go to it). They are facts of the screen of the person, so they need the caller to act for the principal. `pointer()` is a Table of one row and not a Record: a Record result cannot refuse (this section, "Records and handles"). The root service gives the compositor a service ring and its own file at the values 4 and 5 of its context (0 to 3 are the screen).
+  - **The compositor is a service**: `pointer()` (one row of `Pointer`: x, y, buttons, the pointer records that arrived, the menu of the bar that is open, whether the launcher is open) and `windows()` (a Table of `Window`: title, place, size, order from the front, focus, whether the keys go to it). They are facts of the screen of the principal, so they need the caller to act for the principal. `pointer()` is a Table of one row and not a Record: a Record result cannot refuse (this section, "Records and handles"). The root service gives the compositor a service ring and its own file at the values 4 and 5 of its context (0 to 3 are the screen).
   - **The confirmed place of the pointer.** Before each press of a step `Click`, `Drag`, `Launch`, `Move`, `Close` or `Front`, the tool reads `compositor.pointer()` and moves the pointer again from the place that the compositor has, until it is the place of the step (6 tries; a failure names the two places). Before `remote` runs, the tool moves the pointer with no confirmation.
   - **The log records as a table**: the program `log`, which holds the grant to read the log, serves `records(after)`: one row of `Record` for each log record from the number `after` (number, time, program, slot, level, channel, the count of its value runs, text, and in the first row the records that the kernel wrote over), and `value_runs(after)`: one row of `Value_Run` for each value run of those records (`TOOLS.md`, "The log"). The caller acts for the principal: the log has facts of all programs. The step `Record` of the test waits for a record of a program, a channel and a level with a part of a text. The serial port stays the one path that works before `remote` runs and when the network does not: the machine test reads it for each other check.
   - **Arguments from the host**: Integers, Texts, and tables to read: a literal of rows, `monitor.counts_named([("programs"), ("processors")])`, and a text for Bytes(Read). A Record argument has no text form yet: no export that `remote` reaches takes a Record. A Change or Append table is refused: the answer carries one result place, and the rows would not come back.
@@ -400,14 +428,14 @@ A module names each import by its hash. The party that starts a program can give
 - **Bind by name, one time**: the slot of A holds an export index of B. The loader translates it to the index in B2 at load. The call stays one indirect call through a slot.
 - **What the check cannot prove**: that B2 behaves as B. The party that writes the table asserts it. Later, a signature of the table by a principal carries this assertion (P9).
 - **Visible**: the identity of a program that runs is the hash of its module and the replacements that the loader applied. `programs()` and the manual show them. A report of a fault names B2, not B.
-- **Cost**: "the exact versions that were built together" is then true only for a program with no replacement. This is the purpose: the publisher of the system, not the author of A, has the last word on the code that runs.
+- **Cost**: "the exact versions that were built together" is then true only for a program with no replacement. This is the purpose: the principal that signs the system, not the author of A, has the last word on the code that runs.
 
 #### As implemented
 
 - **The table**: one page that the root service writes (`system.Replacement_Table`, 32 records of 64 bytes, `module.Replacement`). A count of versions lets a reader copy the records while the root service writes. The root service gives the records to the loader of each program that it starts. The console and the manual receive the page with the right Read (`GRANT_REPLACEMENTS`): the console reads it before each `load` and each `isolate`, and gives the records to a call host with its files.
 - **Who changes it**: a program with the role Replace (the console) asks the root service with `Root_Command.Replace`: the name of B, and the number of the entry of B2 in the boot image (two names of 32 bytes do not fit in the 56 bytes of values of a ring record). The console has `replace("calendar", "calendar_fixed")`, `replace("calendar", "")` to remove it, and `replacements()` to list the table.
 - **One step**: the loader applies one record to one import. The root service refuses a chain: a module that replaces is not replaced, and a replaced module does not replace.
-- **The check** (`module.bind`, `module.functions_compare`): for each slot whose import was replaced, the loader reads the name of the export in the file of B, finds the export with that name in B2, and compares the two descriptions: the count and the type of each parameter, the rights of each Handle, the description of each Record (`module.records_equal`), the result. The names of the parameters and the help are for a person: they can differ. The loader checks only the exports that a slot of A uses. A missing name or another description refuses the load: the load error has the export, the two modules and the first difference (section "The error of a load"). The slot receives the address of the export of B2: the call is the same indirect call.
+- **The check** (`module.bind`, `module.functions_compare`): for each slot whose import was replaced, the loader reads the name of the export in the file of B, finds the export with that name in B2, and compares the two descriptions: the count and the type of each parameter, the rights of each Handle, the description of each Record (`module.records_equal`), the result. The names of the parameters and the help are for a reader: they can differ. The loader checks only the exports that a slot of A uses. A missing name or another description refuses the load: the load error has the export, the two modules and the first difference (section "The error of a load"). The slot receives the address of the export of B2: the call is the same indirect call.
 - **The replacement is in place of an import only**: `load("calendar")` loads calendar. The table applies to each import of a load, at each level.
 - **A table that changes applies to the loads that follow.** A program that runs keeps the modules that it has. The root service does not start a program again.
 - **Visible**: the module records of the kernel (operation `Program_Module`). `programs()` in the console shows the modules of each program that has more than its module, with "in place of" for each replacement. The manual shows the imports of a module, and the replacement of the machine for each one. When a thread faults, the kernel writes the hash of the module of the instruction, its offset, and the hash that the module replaces: "in module 5d8ff6e736fda684 at offset 00000000000019c0, which replaces b1f1b875df9992f8".
@@ -452,10 +480,12 @@ Excluded: types whose size depends on the machine or the compiler (`long`, `size
 | Flags | An integer of declared width, one bit per flag | No flag |
 | Slice | `{u64 address or offset, u64 count}` | Empty |
 | String | A slice of UTF-8 bytes. No terminator | Empty |
-| Handle | `{u32 index, u32 generation}`, with the object type and the rights in the description | No object |
+| Handle | One `u32` (`op.Handle`): the low 16 bits are the slot in the handle table of the program, from 1; the high 16 bits are the generation of the slot. The object kind and the rights are in the description | No object |
 | Variant | `{u32 tag, payload of the size of the largest case}` | Tag 0 is "none" |
 | Optional | No added tag when zero can mean "absent" (handle, slice, enumeration). Otherwise a `present` byte | Absent |
 
+- **As implemented** (`contract/module/format.odin`, `Type`): the description of an export knows six types: `Integer` (a signed or unsigned integer of 64 bits, in a register), `Text` (a slice of UTF-8 bytes), `Record` (described fields: integers of 1, 2, 4 or 8 bytes, handles of 4 bytes, and texts held in the record), `Handle` (lent for the time of the call, with the rights that the callee needs), `Table` (records of one description, with a direction) and `Bytes` (bytes with no description, with a direction). Floating-point values, enumerations as their own type, variants and optional values are not built: an enumeration or a set of flags is an `Integer`.
+- A handle is an index into the handle table of one program: the same number means nothing, or another object, in another program. So an isolated call does not pass the number of the caller: it gives the receiver its own copy of each lent handle, and the field holds the handle as the receiver names it (section 4, "Records and handles, as implemented").
 - This layout is identical in C, in an Odin `struct`, in a Rust `repr(C)` struct and in a Zig `extern struct`. [Types §7]
 - **Handles in the description**: A function declares the object type and the rights of each handle that it needs. The console can ask for the grants before the call (P2, P20). Fuchsia FIDL does this. [Types §3]
 - **References across a ring**: In a direct call, a slice holds an address. In an isolated call, the same field holds an offset in a shared region. The description marks these fields. The receiver checks the bounds.
@@ -463,18 +493,19 @@ Excluded: types whose size depends on the machine or the compiler (`long`, `size
 
 ## 6. The context
 
-A program starts with one call: `entry(context)`.
-The context is one record in memory that the loader prepared:
+The context is what a program receives when it starts, in place of a command line and an environment. A program starts with one call: `entry(context)`. The context is one record in memory, at `CONTEXT_ADDRESS`, that the starter of the program wrote. It holds numbers and handles only, so a program has nothing to parse.
+
+The first design had a header, a table of handles with a role and an argument each, the kernel ring, a caller ring and an argument record. The implemented record is smaller (`op.Context` in `contract/operation/operation.odin`):
 
 | Part | Content |
 |---|---|
-| Header | Size of the context, format version |
-| Handle table | One entry per granted handle: the handle, its role (a number), and one argument |
-| Kernel ring | The ring for kernel operations |
-| Caller ring | The ring to the program that started this one |
-| Arguments | The argument record of the called export, with its type index |
+| `handles` | 16 handles (`CONTEXT_HANDLES`). The index of a handle is its role, which the starter fixes. Two roles are the same for every program: 14 the log of the kernel (`CONTEXT_LOG`), 15 the budget of the program (`CONTEXT_BUDGET`). A role that the program was not granted holds 0 |
+| `values` | 24 values of 64 bits (`CONTEXT_VALUES`). The values 0 to 8 are free for a starter and its program; the values 13 to 15 are free too, but a new role of the system never takes a number under 16. The values 9 to 12 are the random seed of the program (`CONTEXT_VALUE_SEED`, 32 bytes), and 16 its strength. The values 16 to 23 are for the roles that the system fixes for every program: 17 the boot pass of `settings`, 18 and 19 the second pointer theme of the compositor, 20 the fixed ranges that the starter mapped (`CONTEXT_VALUE_FIXED_RANGES_MAPPED`), 21 the size of the debug image |
 
-As implemented (`contract/operation/operation.odin`): the context is 16 handles and 16 values of 64 bits. The index of a handle is its role. It has no header and no text. The kernel ring is at a fixed address. For a call host, the caller ring is the call ring (role 0), and the argument records arrive in the call region (role 1).
+- **No header and no text.** A program reads its context with no allocator and no parser. The size of the record is fixed by the contract.
+- **The kernel ring is not in the context.** Each thread finds its own kernel ring one page after its thread record, through the `gs` register (rule 7 of "Closed rules").
+- **A call host**: the caller ring is the call ring (role 0), and the argument records arrive in the call region (role 1).
+- **Example**: the root service gives `compositor` the two pointer theme files as an address and a size each, in the values 6 and 7, then 18 and 19 (`programs/root/resources.odin`, `pointer_theme_choice`).
 
 - It holds no strings that the program must parse, no environment, no names.
 - A program reads it with no memory allocator and no library.
@@ -708,7 +739,7 @@ A module names its exports only. The names of its other procedures and the sourc
 ### Who names whom
 
 - **The debug object names its module**: the hash of the module file is in its header. The module names nothing, and the system description lists no debug object. Reason: a module that named its debug object would have another hash at each change of its debug object (its format, a path of a source file), and the module must be the same bytes with and without it. A reader finds the debug object of a module by the hash in the header of each object.
-- **What the hash proves**: that the tool wrote the object for that module. It does not prove that the names are true: the debug image is not verified, and a changed image gives other names. A reader shows the names to a person; no decision of the system uses them.
+- **What the hash proves**: that the tool wrote the object for that module. It does not prove that the names are true: the debug image is not verified, and a changed image gives other names. A reader program shows the names on the screen; no decision of the system uses them.
 
 ### Where the debug objects are
 

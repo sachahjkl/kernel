@@ -2,6 +2,12 @@
 
 Property 11 makes the hash of a module its identity, so one source must give one module. The flake pins the release `dev-2026-11a` of Odin, with no patch, and the compiler runs on all its threads (section 7). Sections 1 to 5 give the fault of the release `dev-2026-05` with `-thread-count:1`, its correction by a patch, and the measures.
 
+**Why it matters.** A module is named by the hash of its bytes, and a system is a list of such hashes (`PROPERTIES.md`, "11. Reproducible system"). If one source can give two different modules, the hash names a build, not a source: a third party cannot build the system again and compare, and the signed list of the system (`TRUSTED_BOOT.md`) proves less. So a nondeterministic compiler is a fault of the system, found and closed here.
+
+**For whom.** A reader who changes the compiler, its flags or the tool that builds the modules. `kerneltool repeat <module> <count>` builds one module again and again and counts the distinct results; each full check builds everything two times and compares.
+
+**The map of this document.** "1. The cause" to "5. The parallelism of the tool": the fault of the old release and its patch. "6. What is proved, and what is not". "6a. The release dev-2026-11a of the compiler" and "7. The compiler with no patch, on all its threads": the compiler of today. "8. The debug information": why `-debug` does not change the identity of a module.
+
 ## 1. The cause
 
 The analysis below is of the tag `dev-2026-05` of Odin; the line numbers are of that source. The release `dev-2026-11a` is in sections 6 and 7.
@@ -71,7 +77,7 @@ Not proved:
 - The wait for an `#soa` type with no worker. No small program of the tests reached that case, and two of them crash the stock compiler too.
 - The tool `kerneltool` itself. With the default count of threads, 6 builds gave 6 distinct files. It is not a module, and property 11 does not cover it.
 
-## 6. The release dev-2026-11a of the compiler
+## 6a. The release dev-2026-11a of the compiler
 
 `flake.nix` pins the release `dev-2026-11a` itself, by its tag and its hash; on 2026-11-11 Nixpkgs was six releases behind.
 

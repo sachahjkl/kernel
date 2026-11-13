@@ -1,6 +1,12 @@
 # Vector forms: SSE2
 
-This document says which procedures of the system compute with vectors, in which form, what stays scalar, and how a person measures each one. The terms are in `docs/GLOSSARY.md`: scalar form, vector form.
+This document says which procedures of the system compute with vectors, in which form, what stays scalar, and how to measure each one. The terms are in `docs/GLOSSARY.md`: scalar form, vector form.
+
+**The idea in plain words.** A procedure that has a vector form also keeps its scalar form, and the two must give the same bytes for every input: the vector form is only faster, never different. Host tests compare the two, so a fault of the vector form shows as a wrong byte, not as a wrong picture.
+
+**For whom.** A reader who writes or changes a vector form, and a reader who measures one.
+
+**The map of this document.** Section 1: the rule of the same bytes. Section 2: why one form, SSE2. Sections 3 to 5: the blend of a glyph, the compositor, BLAKE3. Section 6: how to measure on the machine. Section 7: limits.
 
 ## 1. The rule of the same bytes
 

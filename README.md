@@ -2,10 +2,30 @@
 
 # modus
 
-A new kernel and operating system, written in Odin.
-The system boots under QEMU to a graphical desktop with a console, a system tool and demo programs.
+An operating system in which each program reaches only what it was given.
+Programs call each other's functions with typed values, never with text to parse, and a console calls the same functions by name. Every change that a program makes is kept at once, with its earlier versions, so no program has a save action. It starts to a desktop with a console, developer tools and demonstration programs.
+
+## What makes it different
+
+Each claim names the program that shows it, and its picture below.
+
+| Claim | Shown by |
+|---|---|
+| **A program starts with nothing.** It holds only the handles that it was given, with their rights, and every gift can be taken back through each chain of copies. | `rights`: the kernel does the operations that the rights allow and refuses the others (`docs/screenshots/rights.png`). `origin`: twelve cases of copies, gifts and revocations (`docs/screenshots/origin.png`) |
+| **A command is a function.** No program parses the text of another. A module describes each export, so the console completes it, checks its arguments and calls it; the same file is a program, a service, a library and a sandboxed program. | `tally` in its four roles (`docs/screenshots/roles.png`); the completion list of the console (`docs/screenshots/console_completion.png`) |
+| **No save action.** Each change is one commit that a loss of power never cuts in half, and the state before it stays as a version. | `notes` after a restart and after a loss of power (`docs/screenshots/notes.png`, `docs/screenshots/power_loss.png`); the versions of an object (`docs/screenshots/storage_versions.png`) |
+| **A fault stops one program, never the system.** Drivers are programs too, and a module that faults in an isolated call stops alone. A program can repair its own faults from a record in memory. | An isolated call that faults or loops (`docs/screenshots/isolated.png`); the fault ring (`docs/screenshots/fault_ring.png`); the disk driver as a program (`docs/screenshots/disk.png`) |
+| **A small, counted kernel.** 33 kernel operations, asked through one ring for each thread, with no driver, file system or network code in the kernel. | `threads`, `locks` and `scheduler` (`docs/screenshots/threads.png`, `docs/screenshots/locks.png`, `docs/screenshots/scheduler.png`) |
+| **A verified start.** The boot program checks a signed list of the hashes of the system before the kernel starts, and stops with the file and its two hashes when one differs. | The boot display, and a start that fails (`docs/screenshots/boot.png`, `docs/screenshots/boot_fails.png`) |
+| **Errors that say why.** A refusal of the kernel, the loader, a module or a service is a record with the argument, its value and what was found; a fault gives its stack trace with source lines. | `errors` (`docs/screenshots/errors.png`); `inspect` on a program that faulted (`docs/screenshots/inspect_stopped.png`) |
+
+## Try it
+
+The Nix flake supplies every tool. `nix develop`, then `kerneltool run`, builds the system and starts it in a virtual machine. In the machine, type `help()` in the console, or open the menu of the programs with the button "programs" of the bar. The section "Use" lists the other commands.
 
 [`CHANGELOG.md`](CHANGELOG.md) lists what each release brings. `kerneltool release_number` prints the newest release.
+
+## Pictures
 
 ![The desktop: console, life, monitor and plasma. The title bar of the window in front goes from blue to a darker blue; the others are quiet](docs/screenshots/desktop.png)
 
@@ -85,7 +105,7 @@ Tables as parameters: one description, three ways to call (a direct call, a call
 
 ![A terminal with no escape sequence: flood writes millions of styled lines in one second, the terminal draws only the view](docs/screenshots/terminal.png)
 
-![The person holds the view while the program continues to write](docs/screenshots/terminal_held.png)
+![The view is held while the program continues to write](docs/screenshots/terminal_held.png)
 
 ![A key is a record from the terminal to its program: flood stops its lines at the key Space, and shows it in its edit line](docs/screenshots/terminal_keys.png)
 
@@ -99,7 +119,7 @@ Tables as parameters: one description, three ways to call (a direct call, a call
 
 ![The block service: a virtio disk in a program, a ring, and the data in the memory of the client; blocks in one second and kernel entries for each request](docs/screenshots/disk.png)
 
-![The storage service: the private store of the console, its limit of blocks, the stores that the person sees, and a grant that the person revokes](docs/screenshots/storage.png)
+![The storage service: the private store of the console, its limit of blocks, the stores that the principal sees, and a grant that the principal revokes](docs/screenshots/storage.png)
 
 ![A persistent program after a restart of the machine: notes finds its note and its count of 1000 commits in its private store](docs/screenshots/notes.png)
 
@@ -149,7 +169,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 - `inspect` shows one program live: its address space, its modules, its threads with the state of the scheduler, the stop report of a program that faulted, and the bytes of its own memory, from reports of the kernel that give no byte of another program.
 - The compositor owns the framebuffer. Each program draws into a surface in shared memory.
 - The console is a normal program. A command is a typed function: `hash("abc")`, `start("life")`, `programs()`.
-- The line of the console has a caret, a completion list that opens while the person types (a fuzzy match over the commands, the exports of the descriptions, the services, the variables, the modules), the signature of the call at the caret, and a history of 256 lines with Control-R and Control-S (`docs/CONSOLE.md`).
+- The line of the console has a caret, a completion list that opens while a line is typed (a fuzzy match over the commands, the exports of the descriptions, the services, the variables, the modules), the signature of the call at the caret, and a history of 256 lines with Control-R and Control-S (`docs/CONSOLE.md`).
 - `load("math")` loads a module: its exports become commands. The module describes them: the tool makes each description from the source (parameter names, types, help).
 - `isolate("probe")` runs a module in a sandboxed program with no handle. The same calls go through a ring. A module that faults, loops or tries to stop the machine does not harm the console.
 - `rings` shows communication between programs: six programs pass records through six rings in shared memory. Stop one program: its records wait in the ring. Start it again: they continue.
@@ -173,9 +193,9 @@ The repository holds no picture of the same window with the pointer theme Posy's
 
 | File | Content |
 |---|---|
-| `docs/PROPERTIES.md` | The properties that the system is built on |
-| `docs/ARCHITECTURE.md` | The key systems and how they connect |
-| `docs/MODULE_CONTRACT.md` | The module format, the loader and the call form |
+| `docs/PROPERTIES.md` | The 21 properties that the system is built on: each rule, what it forbids, what it costs, and its state |
+| `docs/ARCHITECTURE.md` | The systems of the kernel and of user space, what each owns and how they connect; then the inside of the kernel: its locks, the virtual memory of a program, the extended state, the return to a program, kernel events |
+| `docs/MODULE_CONTRACT.md` | The module format, the loader, the call form (direct, isolated, from the host), the types, the context of a program, and the errors that diagnose |
 | `docs/FIRST_MILESTONE.md` | What the code does now, the choices made, the gaps |
 | `docs/TOOLS.md` | The developer tools, and what each one reads |
 | `docs/SITE.md` | The site of the system: what `kerneltool site` writes, and where each part of the page comes from |
@@ -195,7 +215,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `docs/RANDOMNESS.md` | Where a program gets random bytes, and how the system measures the strength of its seed |
 | `docs/REPRODUCIBLE_BUILD.md` | One source gives one module: the build, and the threads of the compiler |
 | `docs/SCHEDULING.md` | The scheduling strategies: what the system takes from CFS, EEVDF and `sched_ext`, and how it changes strategy while it runs |
-| `docs/SIMD.md` | Which procedures compute with vectors, in which form, and how a person measures each one |
+| `docs/SIMD.md` | Which procedures compute with vectors, in which form, and how to measure each one |
 | `CHANGELOG.md` | What each release brings, newest first. `changelog.d/` holds the changes that are not in a release yet |
 | `docs/DECISIONS.md` | The record of the decisions of the project, the open questions and the rules of work |
 | `docs/REVIEWS.md` | The reviews: each concession found, and what removes it |
@@ -208,7 +228,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `boot/` | The boot program (UEFI) |
 | `kernel/` | The kernel. It compiles with the contract library only |
 | `runtime/` | `memory.asm`: the copy and the fill of every module, of the kernel and of the boot program (`copy_bytes_without_overlap`, `copy_bytes_with_overlap`, `fill_bytes_with_value`), with its host tests |
-| `contract/` | The source library `contract:`: what two parties agree on. `operation` (the kernel operations), `boot_info` (the record from the boot program to the kernel), `module` (the module format and the loader code), `store` (the format of the data disk), `pointer_pictures` (the pointer theme file and its validation), `blake3` (the hash), `ring` (two queues in shared memory, and the shared queue), `isolated` (the isolated call), `glyph_cache` (the drawn glyphs of the vector font), `settings` (the settings page of the person), `date` (the date page: the date of the time 0 of the system), `system_description` (the signed list of the hashes of the system, and its checks) |
+| `contract/` | The source library `contract:`: what two parties agree on. `operation` (the kernel operations), `boot_info` (the record from the boot program to the kernel), `module` (the module format and the loader code), `store` (the format of the data disk), `pointer_pictures` (the pointer theme file and its validation), `blake3` (the hash), `ring` (two queues in shared memory, and the shared queue), `isolated` (the isolated call), `glyph_cache` (the drawn glyphs of the vector font), `settings` (the settings page of the principal), `date` (the date page: the date of the time 0 of the system), `system_description` (the signed list of the hashes of the system, and its checks) |
 | `support/` | The source library `support:`: what a program compiles in. `system` (kernel operations, text, loader, grants, services), `graphics` (drawing, and the table of the design rules), `interface` (the elements of the windows as draw tables, the damage by difference), `vector_font` (the vector font: a reader of TrueType outlines, a rasterizer in fixed point with subpixel bands, the builder of the glyph cache), `display` (the protocol of the compositor), `terminal` (the terminal ring), `bootscreen`, `bar` (the names of the programs and the places of the bar, its menus and the filter of the launcher), `relay` (the records of the `rings` demonstration), `twins` (the modes of the program `twin`) |
 | `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `limits`, `processors`, `locks`, `locker`, `scheduler`, `address_space`, `shortage`, `boot`, `pages`, `frames`, `twin`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, `pointers` |
 | `resources/` | The sources of the resources of the boot image: the pointer manifests (`resources/pointers/`), the ASCII subsets of the seven candidate vector fonts with their licenses (`resources/fonts/`, `docs/FONTS.md`), and the test signing key, whose private key is published (`resources/keys/`) |
@@ -229,7 +249,7 @@ kerneltool run
 | `build` | Build the modules, the boot image and the boot program. One process for each module, as many at once as the processors; `build <processes>` sets the count |
 | `module` | `module <name> with_checks\|without_checks measure_run\|usual_run`: build one module of the table (the parallel build runs it) |
 | `run` | Build, then start the machine under QEMU, with the log of the kernel on the terminal of the host |
-| `test` | Build, start the machine, act as the person (keys, pointer), check the log, save pictures |
+| `test` | Build, start the machine, act as the input (keys, pointer), check the log, save pictures |
 | `screenshots` | `test`, then copy the pictures to `docs/screenshots/`. The pictures are compressed PNG files; `screenshots compress` compresses, with no machine, each PNG file of `docs/screenshots/` and `resources/` that is not compressed yet |
 | `film` | Build, start the machine, film the terminal, write `build/film/terminal.mp4` (not a test) |
 | `font` | Convert the BDF file of the font to `support/graphics/font.odin` |

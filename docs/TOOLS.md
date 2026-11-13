@@ -4,6 +4,28 @@ The developer tools show memory and execution.
 
 A developer tool (`GLOSSARY.md`) shows how the system runs. It reads reports of the kernel with a grant, and it changes nothing. Property 20 sets the limit: a tool inspects a program only with a handle that has the right to inspect.
 
+## About this guide
+
+**The idea in plain words.** In current systems a debugger or a task manager sees every program of the same user because it runs. Here a tool sees only what a grant lets it read: the kernel gives reports (counts, mappings, threads, modules) to a holder of the machine handle with the right **Inspect**, and gives no byte of the memory of another program. So each tool is a normal program, and its access is visible and revocable like any other.
+
+**For whom.** A reader who wants to see how the system runs, and a reader who writes a tool, a source comment or a test of the system.
+
+**Read before.** `PROPERTIES.md`, "20. No ambient access: the other holes to close" (line 2: debug access is a handle to one program). The terms developer tool, sample, folded gap, near export and confirmed place are in `GLOSSARY.md`, group Network.
+
+**The map of this guide.**
+
+| Section | What it says |
+|---|---|
+| "What each tool reads" | Each tool, its grant, and the reports that it reads |
+| "The log" | The log of the kernel: its records, its channels and levels, and who reads it |
+| "The program `inspect`" | The window that shows one program live |
+| "Names and lines", "The debugger: the design" | How an address becomes a procedure and a source line, and the debugger that is designed |
+| "What `inspect` does not read: the bytes of another program", "The cost" | The limit of the grant, and the price of a sample |
+| "The comments of the sources", "The form of a documented comment" | The rules that the tool checks on every comment, and the form of a comment that the site and the console show |
+| "The bounds of the tests" | How a test waits, and why no test asserts a speed |
+
+![The program inspect: the address space of the console as a band scaled by pages, its mappings, its modules and its threads](screenshots/inspect.png)
+
 ## What each tool reads
 
 | Tool | Grant | Reports |
@@ -15,7 +37,7 @@ A developer tool (`GLOSSARY.md`) shows how the system runs. It reads reports of 
 | `scheduler` | machine, Inspect and Schedule | `Processor_Report`, `System_Report.strategy` |
 | `manual` | machine, Inspect; boot image; replacement table | the flat tables of the modules, `Module_Report` of each slot |
 | `log` | the log records, Read | `op.Log_Record`. It serves `records(after)` and `value_runs(after)` |
-| `inspect` | machine, Inspect; boot image; debug image | `Program_Report`, `Module_Report`, and the four reports below, of the program that the person chooses. It serves `mappings()`, `threads()` and `modules()` |
+| `inspect` | machine, Inspect; boot image; debug image | `Program_Report`, `Module_Report`, and the four reports below, of the program that the principal chooses. It serves `mappings()`, `threads()` and `modules()` |
 
 ## The log
 
@@ -46,7 +68,7 @@ No text is classified by its look. A value that a writer gives as a text stays p
 
 ## The program `inspect`
 
-One window for one program that the person chooses in a list. It shows:
+One window for one program that the principal chooses in a list. It shows:
 
 1. **The address space** (`Inspect_Kind.Program_Mappings`, `op.Program_Mapping_Report`): each mapping of the program, with its address, its pages, the first page of its memory object, the pages that have a frame (a count that each mapping keeps where an entry becomes present, under the program lock: the report reads one count for each mapping, not one entry for each page), the size and the serial of the memory object, and flags: Write, Execute, Uncached, Device, Contiguous, Shared (another mapping or handle names the object), Thread_Area. The window draws one band scaled by address. A gap between two mappings is folded: it has a fixed width and lines at an angle (`DESIGN.md`, section 2: lines at an angle are a part with no measure on the scale). The kind of a mapping comes from these facts and from the module records: module code, module constants, module data, thread area, device, shared memory, memory of the program. The kernel does not know a stack: it is memory of the program.
 2. **The modules** (`Module_Report`): name (from the boot image), hash, base and size. Each address in the window is `module + offset` when a module record holds it, as the stack trace of a fault names a frame (`MODULE_CONTRACT.md`, section 8).
@@ -88,7 +110,7 @@ Not built. The console reads a stop report with names, and `Thread_Control` stop
 
 ### What the kernel lacks, and the least addition for each
 
-1. **Who may debug whom.** Property 20, line 2: "Debug access is a handle to one program. The person grants it". So the grant is a new right of a program handle, `Debug`, and a new command of the root ring, `Debug` (a name). The root service gives the handle of the program with `Debug` only to a caller that acts for the principal whose session runs that program (`PRINCIPALS.md`): never a program of another principal, and principal 0 does not debug the programs of a named principal. The grant is a record of the root service, visible in `grants()` and revocable. A thread of the program is named by its number and this handle: today only a thread handle names a thread of another program, and the root service holds no handle of a thread that a program made.
+1. **Who may debug whom.** Property 20, line 2: "Debug access is a handle to one program. The principal grants it". So the grant is a new right of a program handle, `Debug`, and a new command of the root ring, `Debug` (a name). The root service gives the handle of the program with `Debug` only to a caller that acts for the principal whose session runs that program (`PRINCIPALS.md`): never a program of another principal, and principal 0 does not debug the programs of a named principal. The grant is a record of the root service, visible in `grants()` and revocable. A thread of the program is named by its number and this handle: today only a thread handle names a thread of another program, and the root service holds no handle of a thread that a program made.
 2. **The faults of the debugged program go to the debugger.** Today a program names one of its own threads as its fault handler (`ARCHITECTURE.md`, "The fault ring"). The addition: a fourth argument of `Fault_Handler_Set`, a program handle with `Debug`. Then the handler thread of the caller receives the faults of the kinds `Debug` and `Breakpoint` of that program, before the handler of the program itself, and `Fault_Answer` takes the same handle. The ring stays in the thread record of the handler: the debugger pays for it. When the debug handler ends (the debugger stops, or `detach`), the kernel clears the breakpoints and the trap flag of each thread that waits on it and resumes them: a debugger that ends never stops the debugged program. The debugger injects no thread and no code into the program.
 3. **Breakpoints, with no write to the code.** The code of a module is shared: each program of the module maps the same pages without Write (`MODULE_CONTRACT.md`, "Shared code"). A byte `CC` in those pages would stop each program of the module. `Memory_Protect` only takes rights away, and refuses an object that another program names (`Object_Shared`). A private copy of one page for one program needs a page of a mapping that differs from its memory object: the kernel keeps the state of a page in the slots of the object, not in the mapping, so this is a new structure of the kernel. The least addition is the debug registers of the processor: two commands of `Thread_Control`, `Read_Breakpoints` and `Write_Breakpoints` (Inspect, and Inspect with Write), with four addresses of instructions for each thread. The kernel checks that each address is below `USER_END`, writes only the local enable bits of `DR7`, and loads `DR0` to `DR3` and `DR7` at the switch to a thread that has them (one flag of the thread: the others pay nothing). An instruction breakpoint is a `Debug` fault before the instruction; the record gives `DR6` in its error code, so the debugger knows which address; `Resume` sets the resume flag, so the instruction runs once. A breakpoint is of one thread: it never appears in another program. The limit: four breakpoints for each thread, and a thread that the program makes later has none until the debugger sets them.
 4. **The bytes of the debugged program.** No operation reads the memory of another program (section "What `inspect` does not read"). The addition: a command of `Thread_Control`, `Read_Memory` (Inspect and Write: a thread handle with Inspect only sees the thread, it does not read secrets), at most 4096 bytes of the program of the thread, from the pages that have a frame only (no read gives a frame to a page).
@@ -97,7 +119,7 @@ Each addition is a command or an argument of an existing operation: the count of
 
 ## What `inspect` does not read: the bytes of another program
 
-The reports give counts, places, states and the stack trace. The stack trace comes from the stack of the program: with a chain of frame pointers that the program broke, a frame holds a word of its memory, and the address of a page fault can be a value that the program computed. The holder of the program handle with Read reads the whole stop report. For a holder of the machine with Inspect, the kernel gives a frame only when a module record of the program holds its address (else the frame is zero, and the tool shows "not code"), and the address of the fault only when it is in the first page or in a module record (else 0); the report counts the values that it took out (`hidden_value_count`). So no report through Inspect gives a byte of the memory of a program. To read the bytes of another program is a stronger right than Inspect: a tool with it reads the secrets of each program (P20, line 2: "Debug access is a handle to one program. The person grants it"). The system does not have that right: the hex view shows the memory of `inspect` itself. The right, if it is built, is a right of the program handle (one program, not the machine), that the root service gives to a tool on the request of the person, visible in `grants()` and revocable.
+The reports give counts, places, states and the stack trace. The stack trace comes from the stack of the program: with a chain of frame pointers that the program broke, a frame holds a word of its memory, and the address of a page fault can be a value that the program computed. The holder of the program handle with Read reads the whole stop report. For a holder of the machine with Inspect, the kernel gives a frame only when a module record of the program holds its address (else the frame is zero, and the tool shows "not code"), and the address of the fault only when it is in the first page or in a module record (else 0); the report counts the values that it took out (`hidden_value_count`). So no report through Inspect gives a byte of the memory of a program. To read the bytes of another program is a stronger right than Inspect: a tool with it reads the secrets of each program (P20, line 2: "Debug access is a handle to one program. The principal grants it"). The system does not have that right: the hex view shows the memory of `inspect` itself. The right, if it is built, is a right of the program handle (one program, not the machine), that the root service gives to a tool on the request of the principal, visible in `grants()` and revocable.
 
 ## The cost
 

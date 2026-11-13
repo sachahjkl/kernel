@@ -4,6 +4,16 @@ The interface package (`support/interface`) is the shared logic of the interface
 
 The terms of this document are in `GLOSSARY.md`, section "Desktop": interface package, draw record, draw table, element, element identity, damage by difference, interface state.
 
+**The idea in plain words.** A program describes its window again at each frame, as a table of draw records of one size. The package compares that table with the table of the frame before, record by record, and draws only the rectangles that changed. So a program keeps no tree of widgets, and a tool can read, compare or record the table of any frame.
+
+**For whom.** A reader who writes a window, and a reader who changes `support/interface` or the compositor.
+
+**Read before.** `DESIGN.md` for the look; `FONTS.md` for the text.
+
+**The map of this document.** Section 1: what the programs drew before. Section 2: the model, the draw records and the damage. Sections 3 to 6: layout, input and focus, text, the output. Sections 7 and 8: where the package lives, and property 20 in the compositor. Section 9: the vector font. Sections 10 to 12: decisions, what came from `gui_toolkit`, and the state of the conversions.
+
+![The interface package: each element live, the draw table of the last frame, and the damage by difference](screenshots/interface_elements.png)
+
 ## 1. What the programs drew before the package
 
 Counted on 2026-11-11 (`master` `cbe3c0e`) with `grep` over `programs/*/` and `support/`:
@@ -118,7 +128,7 @@ A `Line` record draws a straight line between two points, with a thickness, in o
 
 The compositor puts each window on the grid of 8 pixels (`support/bar/window_place.odin`, procedures with no state and their host test).
 
-- A window that a person drags goes to the nearest point of the grid, then stays where 8 pixels of its title are on the screen, under the bar. At the left, the end of the title is at 8 or more, so the close button is on the screen too. Without that bound, a window dragged past an edge could not come back: the menu of the windows only brings a window to the front.
+- A window that the pointer drags goes to the nearest point of the grid, then stays where 8 pixels of its title are on the screen, under the bar. At the left, the end of the title is at 8 or more, so the close button is on the screen too. Without that bound, a window dragged past an edge could not come back: the menu of the windows only brings a window to the front.
 - A new window that fits stays at the place that the compositor chose, moved up and left until it fits. A window wider than the screen puts its close button at the right of the screen; a drag shows its left part. A window higher than the screen starts under the bar.
 
 ## 3. Layout

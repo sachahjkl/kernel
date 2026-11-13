@@ -1,6 +1,16 @@
 # Cryptography
 
-The cryptography of the system serves QUIC and TLS 1.3 (`docs/NETWORK.md`).
+The cryptography of the system serves QUIC and TLS 1.3 (`docs/NETWORK.md`), the signature of the system description at boot, and the key derivation of a named principal.
+
+**The idea in plain words.** The system writes no cryptography of its own. It takes proven code, keeps a record of its origin, and adapts it only to the forms of the system (memory of the caller, no allocation). A change of the origin fails a check until the change is read and its new hash recorded, and each primitive passes the published test vectors on the machine.
+
+**For whom.** A reader who uses the module `cryptography`, and a reader who updates its code.
+
+**Read before.** `QUIC.md`, sections 3 and 4, for the use of each primitive.
+
+**The map of this guide.** "1. The rule" and "2. The origin, and its license" give where the code comes from. "3. The layout" and "4. The proof of what changed" give how it is kept. "5. The primitives, and their tests" lists them. "6. The module `cryptography`" gives its exports, "6a. Ed25519 in the boot program" the one copy outside it, and "7. What is not done" closes.
+
+![The program cryptography_vectors: each primitive against its published test vectors](screenshots/cryptography_vectors.png)
 
 ## 1. The rule: proven code, in the forms of the system
 
@@ -49,7 +59,7 @@ The listed changes, all in `tools/kerneltool/cryptography_origin.odin` (`cryptog
 
 The check also covers the folders, not only the listed files: Odin compiles each `.odin` file of a package folder, so a new file in a folder of a copy would change the code with no line of a manifest.
 - It walks each folder of `support/cryptography`. Each `.odin` file must be a line of `origin.manifest` or a line of `system_files.manifest`, and no file is in both or two times.
-- `system_files.manifest` lists the files that the system wrote (the compatibility layer, the files in the place of a hardware dispatch, the tests), each with its BLAKE3 hash. A change of one of them fails the check until a person writes its new hash: `kerneltool cryptography-system-hashes` prints the lines.
+- `system_files.manifest` lists the files that the system wrote (the compatibility layer, the files in the place of a hardware dispatch, the tests), each with its BLAKE3 hash. A change of one of them fails the check until its new hash is written: `kerneltool cryptography-system-hashes` prints the lines.
 - An origin path starts with `core/crypto/` and holds no `..`; a file of the repository starts with `support/cryptography/` and holds no `..`. A line cannot take a file from another part of Odin or of the host.
 - A symbolic link anywhere under `support/cryptography` fails the check: a folder of a copy that points elsewhere would bring `.odin` files that no list names.
 - A file that is not a `.odin` file, a `LICENSE.*` file of the top folder or one of the two manifests fails the check: a `#load` or a `foreign import` could read it, and no list has its hash.
@@ -59,7 +69,7 @@ A new file comes with `kerneltool cryptography-take <origin> <file>`, which writ
 
 ### Listed adjustments
 
-A taken file can also have listed adjustments: `cryptography_adjustments` in `tools/kerneltool/cryptography_origin.odin` names, for one file of the origin, lines of the origin and the lines in their place. The lines of the origin must be in the origin exactly one time: when the origin changes them, the check fails and a person reads the adjustment again. The first line of an adjusted file says so.
+A taken file can also have listed adjustments: `cryptography_adjustments` in `tools/kerneltool/cryptography_origin.odin` names, for one file of the origin, lines of the origin and the lines in their place. The lines of the origin must be in the origin exactly one time: when the origin changes them, the check fails and the adjustment must be read again. The first line of an adjusted file says so.
 
 There are two groups of adjustments.
 

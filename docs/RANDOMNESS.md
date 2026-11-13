@@ -1,6 +1,18 @@
 # Randomness
 
+This guide says where a program gets random bytes, how the generator works, where the seed of the system comes from, and how strong the system claims it is.
+
 The terms are in `GLOSSARY.md`, section "Randomness": random seed, random generator, entropy report, seed strength.
+
+**The idea in plain words.** A program asks no service and no kernel for random bytes: its starter gives it a seed of 32 bytes in its context, and it draws from its own generator in its own memory. The root service gathers the seed of the system from the processor at boot, and the system says how strong that seed is, so a program that makes a key can refuse a weak one.
+
+**For whom.** A reader who needs random bytes in a program, and a reader who must know how far to trust them.
+
+**Read before.** `MODULE_CONTRACT.md`, "6. The context" (the values of the seed).
+
+**The map of this guide.** Section 1: where a program gets random bytes. Section 2: the generator. Section 3: the seed of the system, and what is claimed. Section 4: the tests. Section 5: what is not built.
+
+![The program randomness: the entropy report of the system and the speed of a draw](screenshots/randomness.png)
 
 ## 1. Where a program gets random bytes
 
