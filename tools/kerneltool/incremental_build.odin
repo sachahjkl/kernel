@@ -31,6 +31,11 @@ import "core:time"
 // The outputs are kept when the key is the same and each output is there
 // with its recorded hash. A record that is absent or damaged is no record:
 // the tool builds.
+//
+// A module has two steps, each with its key and its record: the compile
+// step, which reads no import, and the conversion, which reads the file
+// of each import. A change inside an import runs the conversion of its
+// importers only (Module_Steps, below).
 
 // A whole build ignores every build record, and writes new ones.
 // `build whole` sets it; the checks that compare two builds set it too
@@ -908,30 +913,173 @@ build_inputs_prepare :: proc() {
 	build_measure.input_bytes = build_inputs.table.hashed_bytes
 }
 
-module_record_path :: proc(name: string) -> string {
-	return join(module_build_folder, "/", name, BUILD_RECORD_SUFFIX)
-}
-
 module_dependency_file :: proc(name: string) -> string {
 	return join(module_build_folder, "/", name, "/", DEPENDENCY_FILE_NAME)
 }
 
-// module_recorded_outputs gives the outputs of a module that a later step
-// or a test reads: the module, its debug object, and the linked file (the
-// test of the stack trace reads its symbols). The LLVM IR and the object
-// are read only by the checks that compare two whole builds.
-module_recorded_outputs :: proc(build: Module_Build) -> []string {
-	outputs := make([dynamic]string, context.temp_allocator)
-	append(&outputs, module_path(build.name), join(module_build_folder, "/", build.name, "/linked.elf"))
-	if debug_information {
-		append(&outputs, debug_object_path(build.name))
-	}
-	return outputs[:]
+// The build of a module has two steps, each with its own build key and
+// its own build record (docs/TOOLS.md, "The incremental build").
+//
+// The compile step runs the compiler, llc, the assembler and the link,
+// and gives the linked file. It reads no file of an import: a source
+// names an export of an import in a `foreign` block, and the link leaves
+// the symbol not defined. So its key holds no import.
+//
+// The conversion writes the module file and the debug object from the
+// linked file. It reads the file of each import, for its hash and for the
+// numbers of its exports. So its key holds the file of each import, the
+// linked file, and the key of the compile step: the description that the
+// conversion writes comes from the sources that the compile key holds.
+//
+// A change inside an import then converts its importers, with no compiler.
+
+COMPILE_RECORD_SUFFIX :: ".compile" + BUILD_RECORD_SUFFIX
+CONVERT_RECORD_SUFFIX :: ".convert" + BUILD_RECORD_SUFFIX
+
+// What a build does with one module.
+Module_Step :: enum {
+	Kept, // No step runs: the outputs of the two steps are those of this build.
+	Converted, // The conversion runs alone: the linked file is kept.
+	Built, // The compile step runs, then the conversion.
 }
 
-// module_key_inputs gives the inputs of the build key of a module, with
-// the list of the compiler of its last build.
-module_key_inputs :: proc(build: Module_Build, source_files, load_files: []string) -> (inputs: Build_Key_Inputs, ok: bool) {
+// The reason of a conversion when the key of the conversion is not the
+// key of its record: the file of an import or the list of the imports
+// changed, or a build stopped between the two steps.
+CONVERSION_INPUT_CHANGED_REASON :: "an import or the linked file changed"
+
+// The two steps of one module: the record, the inputs and the outputs of
+// each. No field names a global of the build, so a test gives its own.
+Module_Steps :: struct {
+	compile_record_path: string,
+	convert_record_path: string,
+	// Every input of the compile step but the list of the compiler.
+	compile_inputs:      Build_Key_Inputs,
+	// The inputs of the conversion that are its own: the imports in the
+	// order of the module table (settings), and the file of each one
+	// (built_files). The compile key and the linked file are added to them
+	// (module_convert_key).
+	convert_inputs:      Build_Key_Inputs,
+	compile_outputs:     []string, // The linked file.
+	convert_outputs:     []string, // The module file, and its debug object.
+}
+
+// module_convert_key gives the build key of the conversion of a module.
+// compile_key is the key of the compile step whose outputs are
+// compiled_outputs, each with its hash.
+module_convert_key :: proc(steps: Module_Steps, compile_key: blake3.Hash, compiled_outputs: []Record_Output, table: ^Input_File_Table) -> (key: blake3.Hash, complete: bool) {
+	inputs := steps.convert_inputs
+	settings := make([dynamic]string, context.temp_allocator)
+	append(&settings, ..inputs.settings)
+	append(&settings, "the key of the compile step", hash_as_hexadecimal(compile_key))
+	inputs.settings = settings[:]
+	inputs.hashed_built_files = compiled_outputs
+	// The conversion reads no source through a list: the compile key
+	// holds each source.
+	inputs.source_files = nil
+	inputs.load_files = nil
+	return build_key(inputs, table)
+}
+
+// module_step_needed says what a build does with a module. The compile
+// step is kept when its record has the build key of its inputs as they
+// are now and the linked file has its recorded hash. The conversion is
+// kept when, with that, its record has the key of the conversion as it is
+// now (the file of each import) and each of its outputs has its recorded
+// hash. reason says why a step runs.
+module_step_needed :: proc(steps: Module_Steps, table: ^Input_File_Table) -> (step: Module_Step, reason: string) {
+	compile_record, same, why := recorded_build_has_its_key(steps.compile_record_path, steps.compile_inputs, table)
+	if !same {
+		return .Built, why
+	}
+	if !record_outputs_are_present(compile_record, steps.compile_outputs) {
+		return .Built, OUTPUT_CHANGED_REASON
+	}
+	convert_key, complete := module_convert_key(steps, compile_record.key, compile_record.outputs, table)
+	if !complete {
+		// The conversion says which import it cannot read.
+		return .Converted, "the file of an import cannot be read"
+	}
+	convert_record, recorded := build_record_read(steps.convert_record_path)
+	if !recorded {
+		return .Converted, "no build record of the conversion"
+	}
+	if convert_record.key != convert_key {
+		return .Converted, CONVERSION_INPUT_CHANGED_REASON
+	}
+	if !record_outputs_are_present(convert_record, steps.convert_outputs) {
+		return .Converted, OUTPUT_CHANGED_REASON
+	}
+	return .Kept, ""
+}
+
+// module_step_records_write writes the build records of a module after
+// its steps ran. compiled says that the compile step ran: source_files and
+// load_files are then the new list of the compiler, and the record of the
+// compile step is written. If not, they are the list of the record of
+// the compile step, which stays.
+//
+// The conversion reads the sources too (the description of the exports).
+// So the record of the conversion is written only when no input of the
+// compile step changed since the tool hashed it: with a change, the tool
+// removes the record, and the next build compiles the module.
+module_step_records_write :: proc(steps: Module_Steps, table: ^Input_File_Table, compiled: bool, source_files, load_files: []string) -> bool {
+	compile_inputs := steps.compile_inputs
+	compile_inputs.source_files = source_files
+	compile_inputs.load_files = load_files
+	compile_key, complete := build_key(compile_inputs, table, true)
+	if !complete || len(source_files) == 0 {
+		// The linked file of a compile step that ran is not the linked
+		// file of the old record: the old record must not stay beside it.
+		if compiled {
+			_ = os.remove(steps.compile_record_path)
+		}
+		_ = os.remove(steps.convert_record_path)
+		return false
+	}
+	compiled_contents := file_contents_read_in_parallel(steps.compile_outputs, context.temp_allocator)
+	compiled_outputs := make([]Record_Output, len(steps.compile_outputs), context.temp_allocator)
+	for path, index in steps.compile_outputs {
+		compiled_outputs[index] = {
+			path = path,
+			hash = compiled_contents[index].hash,
+		}
+	}
+	if compiled {
+		if !build_record_write_of_contents(steps.compile_record_path, compile_key, steps.compile_outputs, compiled_contents, source_files, load_files) {
+			_ = os.remove(steps.convert_record_path)
+			return false
+		}
+	} else {
+		for content in compiled_contents {
+			if !content.readable {
+				_ = os.remove(steps.convert_record_path)
+				return false
+			}
+		}
+	}
+	convert_key, convert_complete := module_convert_key(steps, compile_key, compiled_outputs, table)
+	if !convert_complete {
+		_ = os.remove(steps.convert_record_path)
+		return false
+	}
+	// The form of a record asks for a list of sources: the record of the
+	// conversion names those of the compile step, which its key covers.
+	return build_record_write(steps.convert_record_path, convert_key, steps.convert_outputs, source_files, load_files)
+}
+
+module_compile_record_path :: proc(name: string) -> string {
+	return join(module_build_folder, "/", name, COMPILE_RECORD_SUFFIX)
+}
+
+module_convert_record_path :: proc(name: string) -> string {
+	return join(module_build_folder, "/", name, CONVERT_RECORD_SUFFIX)
+}
+
+// module_compile_key_inputs gives the inputs of the build key of the
+// compile step of a module, without the list of the compiler. It names no
+// import: the compile step reads none (modules.odin, module_compile).
+module_compile_key_inputs :: proc(build: Module_Build) -> (inputs: Build_Key_Inputs, ok: bool) {
 	settings := make([dynamic]string, context.temp_allocator)
 	append(&settings, ..build_inputs.module_programs[:])
 	append(&settings, "the compiler")
@@ -939,74 +1087,98 @@ module_key_inputs :: proc(build: Module_Build, source_files, load_files: []strin
 	append(&settings, "the object")
 	append(&settings, ..module_object_command(build))
 	append(&settings, build.source, build.kernel ? "runs in kernel mode" : "runs in user mode", build.image ? "with the system library" : "with no system library")
+	assembly_files := module_assembly_files(build) or_return
+	inputs = {
+		subject       = join("the compile step of the module ", build.name),
+		tool_identity = build_inputs.tool_identity,
+		settings      = settings[:],
+		fixed_files   = assembly_files,
+	}
+	return inputs, true
+}
+
+// module_convert_key_inputs gives the inputs of the build key of the
+// conversion of a module that are its own: the imports in the order of
+// the module table, which is the order of the import table of the module
+// file, and the module file of each one, hashed at the time of the key.
+module_convert_key_inputs :: proc(build: Module_Build) -> Build_Key_Inputs {
+	settings := make([dynamic]string, context.temp_allocator)
+	append(&settings, debug_information ? "with a debug object" : "with no debug object")
 	built_files := make([dynamic]string, context.temp_allocator)
 	for name in build.imports {
 		append(&settings, "imports", name)
 		append(&built_files, module_path(name))
 	}
-	assembly_files := module_assembly_files(build) or_return
-	inputs = {
-		subject       = join("module ", build.name),
-		tool_identity = build_inputs.tool_identity,
-		settings      = settings[:],
-		fixed_files   = assembly_files,
-		built_files   = built_files[:],
-		source_files  = source_files,
-		load_files    = load_files,
-	}
-	return inputs, true
+	return {subject = join("the conversion of the module ", build.name), tool_identity = build_inputs.tool_identity, settings = settings[:], built_files = built_files[:]}
 }
 
-// module_is_kept says if the outputs of a module are those of this build
-// with no build: its record has the build key of the inputs as they are
-// now, and each output is there with its recorded hash. reason says why
-// the module is built.
-module_is_kept :: proc(build: Module_Build) -> (kept: bool, reason: string) {
+// module_steps_of gives the two steps of a module of the table, in the
+// folder of this build.
+module_steps_of :: proc(build: Module_Build) -> (steps: Module_Steps, ok: bool) {
+	compile_outputs := make([]string, 1, context.temp_allocator)
+	// The test of the stack trace reads the symbols of the linked file.
+	compile_outputs[0] = module_linked_file(build.name)
+	convert_outputs := make([dynamic]string, context.temp_allocator)
+	append(&convert_outputs, module_path(build.name))
+	if debug_information {
+		append(&convert_outputs, debug_object_path(build.name))
+	}
+	compile_inputs := module_compile_key_inputs(build) or_return
+	steps = {
+		compile_record_path = module_compile_record_path(build.name),
+		convert_record_path = module_convert_record_path(build.name),
+		compile_inputs      = compile_inputs,
+		convert_inputs      = module_convert_key_inputs(build),
+		compile_outputs     = compile_outputs,
+		convert_outputs     = convert_outputs[:],
+	}
+	return steps, true
+}
+
+// module_step_of_build says what this build does with a module of the
+// table: nothing, its conversion alone, or its two steps. The LLVM IR
+// and the object of a module that is not built stay from the build that
+// made its linked file: only the checks that compare two whole builds
+// read them.
+module_step_of_build :: proc(build: Module_Build) -> (step: Module_Step, reason: string) {
 	if build_whole {
-		return false, "a whole build"
+		return .Built, "a whole build"
 	}
 	if !build_inputs.usable {
-		return false, "a source of the tool cannot be read"
+		return .Built, "a source of the tool cannot be read"
 	}
-	record, recorded := build_record_read(module_record_path(build.name))
-	if !recorded {
-		return false, "no build record"
-	}
-	inputs, readable := module_key_inputs(build, record.source_files, record.load_files)
+	steps, readable := module_steps_of(build)
 	if !readable {
-		return false, "an input cannot be read"
+		return .Built, "an input cannot be read"
 	}
-	key, complete := build_key(inputs, build_inputs.table)
-	if !complete {
-		return false, "an input cannot be read"
-	}
-	if key != record.key {
-		return false, "an input changed"
-	}
-	if !record_outputs_are_present(record, module_recorded_outputs(build)) {
-		return false, "an output is absent or changed"
-	}
-	return true, ""
+	return module_step_needed(steps, build_inputs.table)
 }
 
-// module_record_write writes the build record of a module that was just
-// built. With no list of the compiler, or with an input that changed
-// during the build, it removes the record: the next build builds the
-// module.
-module_record_write :: proc(build: Module_Build) -> bool {
-	record_path := module_record_path(build.name)
-	if !build_inputs.usable {
-		_ = os.remove(record_path)
+// module_records_write writes the build records of a module of the table
+// after its steps ran: step is what the build did with it. With no list
+// of the compiler, or with an input that changed during the build, no
+// record of the conversion stays: the next build runs a step again.
+module_records_write :: proc(build: Module_Build, step: Module_Step) -> bool {
+	compile_record_path := module_compile_record_path(build.name)
+	convert_record_path := module_convert_record_path(build.name)
+	steps, readable := module_steps_of(build)
+	source_files, load_files: []string
+	listed := false
+	if step == .Built {
+		source_files, load_files, listed = dependency_list_read(module_dependency_file(build.name))
+	} else {
+		compile_record: Build_Record
+		compile_record, listed = build_record_read(compile_record_path)
+		source_files, load_files = compile_record.source_files, compile_record.load_files
+	}
+	if !build_inputs.usable || !readable || !listed {
+		if step == .Built {
+			_ = os.remove(compile_record_path)
+		}
+		_ = os.remove(convert_record_path)
 		return false
 	}
-	source_files, load_files, listed := dependency_list_read(module_dependency_file(build.name))
-	inputs, readable := module_key_inputs(build, source_files, load_files)
-	key, complete := build_key(inputs, build_inputs.table, true)
-	if !listed || !readable || !complete {
-		_ = os.remove(record_path)
-		return false
-	}
-	return build_record_write(record_path, key, module_recorded_outputs(build), source_files, load_files)
+	return module_step_records_write(steps, build_inputs.table, step == .Built, source_files, load_files)
 }
 
 // paths_outside_the_build_folder leaves out the files of the build
@@ -1045,8 +1217,13 @@ Build_Measure :: struct {
 	record_checks:        time.Duration, // The read of the records, the keys, the hash of the kept outputs.
 	record_writes:        time.Duration,
 	modules:              time.Duration, // The whole step of the modules, with the two above.
-	modules_built:        int,
+	modules_built:        int, // The two steps ran.
+	modules_converted:    int, // The conversion ran alone.
 	modules_kept:         int,
+	// The time of the processes of each step, all levels together, as a
+	// clock on the wall sees it: several processes run at once.
+	module_compile_steps: time.Duration,
+	module_conversions:   time.Duration,
 	steps:                [dynamic]Build_Step_Time,
 	volumes_built:        int,
 	volumes_kept:         int,
@@ -1082,7 +1259,7 @@ build_measure_lines :: proc(measure: Build_Measure, whole: time.Duration) -> []s
 		return time.duration_seconds(duration)
 	}
 	lines := make([dynamic]string, context.temp_allocator)
-	append(&lines, fmt.tprintf("the build %.1f s: the hash of %d input files (%d bytes) %.2f s; the modules %.1f s: %d built, %d kept (the checks of the build records %.2f s, their writes %.2f s)", seconds(whole), measure.input_files, measure.input_bytes, seconds(measure.input_hash), seconds(measure.modules), measure.modules_built, measure.modules_kept, seconds(measure.record_checks), seconds(measure.record_writes)))
+	append(&lines, fmt.tprintf("the build %.1f s: the hash of %d input files (%d bytes) %.2f s; the modules %.1f s: %d built, %d converted, %d kept (the compile steps %.2f s, the conversions %.2f s, the checks of the build records %.2f s, their writes %.2f s)", seconds(whole), measure.input_files, measure.input_bytes, seconds(measure.input_hash), seconds(measure.modules), measure.modules_built, measure.modules_converted, measure.modules_kept, seconds(measure.module_compile_steps), seconds(measure.module_conversions), seconds(measure.record_checks), seconds(measure.record_writes)))
 	for step in measure.steps {
 		append(&lines, fmt.tprintf("the build: %8.2f s: %s", seconds(step.duration), step.name))
 	}

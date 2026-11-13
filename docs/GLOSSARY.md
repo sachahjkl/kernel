@@ -5756,7 +5756,7 @@ Do not use: CI run, test suite, full test.
 
 An incremental build is a build that keeps each output of an earlier build whose inputs are the same, and builds only the others.
 
-It rests on the rule of the reproducible build: the same inputs give the same bytes, so the output of an earlier build with the same inputs is the output of this build. `kerneltool build` keeps a module when its build record has the build key of its inputs as they are now and each output has its recorded hash; it keeps each boot volume by the same rule, and builds only the boot volumes that the command boots. The tool builds in every case of doubt: no record, a damaged record, an input or an output that changed or is gone. It prints the count of the modules that it kept.
+It rests on the rule of the reproducible build: the same inputs give the same bytes, so the output of an earlier build with the same inputs is the output of this build. `kerneltool build` keeps a module when the build record of each of its two steps has the build key of its inputs as they are now and each output has its recorded hash; it runs the conversion alone when only the file of an import changed; it keeps each boot volume by the same rule, and builds only the boot volumes that the command boots. The tool builds in every case of doubt: no record, a damaged record, an input or an output that changed or is gone. It prints the count of the modules that it kept.
 
 It is not a cache of the compiler and holds no second copy of an output: the kept output is the file of the build folder itself.
 
@@ -5766,9 +5766,9 @@ Do not use: build cache, cached build, partial build.
 
 ### Build key
 
-A build key is one BLAKE3 hash over the inputs of the build of one thing (a module, or one boot volume), in a fixed order.
+A build key is one BLAKE3 hash over the inputs of the build of one thing (one step of a module, or one boot volume), in a fixed order.
 
-The inputs of a module: each source file that the compiler lists, with the files of `#load`; every other file of the folder of each of these packages; its assembly files; the module file of each import; the commands of the compiler and of `llc` with each flag; the programs of the build; and the sources of the tool. The inputs of a boot volume: the boot image and the kernel that its boot program holds, the debug image, the public key of the system, the sources of the boot program, the commands with each flag, and the tool. Two builds with the same key had the same inputs. A key is complete only when each input can be read; the tool never records and never compares a key that is not complete.
+A module has two keys, one for each step of its build. The inputs of its compile step: each source file that the compiler lists, with the files of `#load`; every other file of the folder of each of these packages; its assembly files; the commands of the compiler and of `llc` with each flag; the programs of the build; and the sources of the tool. The inputs of its conversion: the key of the compile step, the linked file, the module file of each import with the order of the imports, and the sources of the tool. The inputs of a boot volume: the boot image and the kernel that its boot program holds, the debug image, the public key of the system, the sources of the boot program, the commands with each flag, and the tool. Two builds with the same key had the same inputs. A key is complete only when each input can be read; the tool never records and never compares a key that is not complete.
 
 It is not the hash of a module, which names the output, and it is not a signing key.
 
@@ -5780,13 +5780,37 @@ Do not use: cache key, fingerprint, input hash (for the whole key).
 
 A build record is the small text file that the tool writes after it built one thing: its build key, the hash of each output, and the list of the files that the compiler read.
 
-A module has `build/modules/<name>.build_record`; a boot volume has `build/boot/<name>.build_record`. At the next build, the tool computes the build key again from the files of the recorded list as they are now, and keeps the outputs when the key is the same and each output has its recorded hash. A record that is absent or damaged is no record: the tool builds, with no error. The tool writes no record when it cannot prove that the hash and the compiler read the same bytes of each input.
+A module has one for each step of its build, `build/modules/<name>.compile.build_record` and `build/modules/<name>.convert.build_record`; a boot volume has `build/boot/<name>.build_record`. At the next build, the tool computes the build key again from the files of the recorded list as they are now, and keeps the outputs when the key is the same and each output has its recorded hash. A record that is absent or damaged is no record: the tool builds, with no error. The tool writes no record when it cannot prove that the hash and the compiler read the same bytes of each input.
 
 It is not the measure record and not the line of the reproducible build that the site quotes.
 
 The design: `docs/TOOLS.md`, "The incremental build".
 
 Do not use: cache entry, stamp, manifest (for this).
+
+### Compile step
+
+The compile step is the first of the two steps of the build of a module: the compiler, `llc`, the assembler and the link, which give the linked file of the module.
+
+It reads the sources of the module and no file of an import: a source declares an export of an import in a `foreign` block, and the link leaves that symbol not defined. So its build key holds no import, and a change inside an import does not run it. The tool runs it when a source, a command, a program of the build or the tool changed, or when the linked file is gone.
+
+It is not the whole build of a module: the conversion follows it.
+
+The design: `docs/TOOLS.md`, "The incremental build".
+
+Do not use: compile phase, compiler stage, object step.
+
+### Conversion
+
+The conversion is the second of the two steps of the build of a module: the tool writes the module file from the linked file, with the description of the exports and the hash of the file of each import, then the debug object.
+
+It is the one step that reads the file of an import, and it runs no compiler. When the file of an import changed and the sources of the importer did not, the tool runs the conversion alone: the module is converted, not built. A converted module has a new hash, so each module that imports it is converted too. Example: a change of the body of an export of a library builds the library and converts each of its importers.
+
+It is not a link: no code of the import enters the module.
+
+The design: `docs/TOOLS.md`, "The incremental build", and `docs/MODULE_CONTRACT.md`, "The steps of one module, as implemented".
+
+Do not use: relink, repackage, packaging step.
 
 ### Whole build
 

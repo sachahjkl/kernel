@@ -326,10 +326,28 @@ module_assembly_files :: proc(build: Module_Build) -> (files: []string, ok: bool
 	return assembly[:], true
 }
 
-// build_module compiles a package to objects, assembles its .asm files, links
-// all with lld into one position-independent object, and converts that
-// object into a module.
+// module_linked_file gives the path of the linked file of a module: the
+// output of its compile step, and the input of its conversion.
+module_linked_file :: proc(name: string) -> string {
+	return join(module_build_folder, "/", name, "/linked.elf")
+}
+
+// build_module runs the two steps of the build of a module, one after the
+// other: the compile step, then the conversion.
 build_module :: proc(build: Module_Build) -> bool {
+	return module_compile(build) && module_convert(build)
+}
+
+// module_compile is the compile step of a module: it compiles a package
+// to objects, assembles its .asm files, and links all with lld into one
+// position-independent object, the linked file.
+//
+// The step reads no file of an import. A source names an export of an
+// import in a `foreign` block, with no file behind it: the compiler makes
+// a call to a symbol that is not defined, and the link leaves it not
+// defined. So the linked file is the same for every file of an import,
+// and the build key of this step holds none (incremental_build.odin).
+module_compile :: proc(build: Module_Build) -> bool {
 	folder := join(module_build_folder, "/", build.name)
 	objects := join(folder, "/objects")
 	reset_folder(objects) or_return
@@ -388,7 +406,7 @@ build_module :: proc(build: Module_Build) -> bool {
 		return false
 	}
 
-	linked := join(folder, "/linked.elf")
+	linked := module_linked_file(build.name)
 	link := make([dynamic]string, context.temp_allocator)
 	append(
 		&link,
@@ -411,8 +429,18 @@ build_module :: proc(build: Module_Build) -> bool {
 	if build.kernel && !kernel_has_no_vector_instruction(linked) {
 		return false
 	}
+	return true
+}
 
-	elf := read_file(linked) or_return
+// module_convert is the conversion of a module: it writes the module file
+// from the linked file, with the description of the exports and the hash
+// of the file of each import, then the debug object.
+//
+// It is the one step that reads the file of an import: for its hash, and
+// for the number of each export that a slot names. It runs no compiler.
+module_convert :: proc(build: Module_Build) -> bool {
+	description := describe_package(build.source) or_return
+	elf := read_file(module_linked_file(build.name)) or_return
 	imports := make([dynamic]Import_File, context.temp_allocator)
 	for name in build.imports {
 		append(&imports, Import_File{name = name, file = read_file(module_path(name)) or_return})
