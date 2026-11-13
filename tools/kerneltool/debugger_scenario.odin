@@ -81,9 +81,13 @@ scenario_debugger := [?]Step {
 // - a watch on a global, which stops at the write;
 // - the detach: the program writes its line again, so it runs.
 //
-// Then who can debug which program: a program with the grant Store, which
-// the console holds; a service; a device service; and the same program
-// with Store after the grant store of the console was revoked.
+// Then who can debug which program: a program with a private store, a
+// service and a device service are refused; a program with a right of the
+// machine, which the console holds, is given. A revocation of a grant of
+// the console ends a debugging that the rule no longer gives: the machine,
+// while the console debugs that program, then the attach is refused; the
+// grant to act for the principal, while a thread is held, and the program
+// runs again.
 //
 // Then the same exports from the host, through the service `remote`: the
 // attach, a breakpoint by a file and a line, the stop, the source line
@@ -93,21 +97,23 @@ scenario_debugger := [?]Step {
 //
 // Each row is drawn through `columns` or `where`, so that the widths of
 // its columns depend only on values that the scenario knows. A wait for a
-// stop is the export `wait_stop` in the console, and the line of the stop
-// in the log for the host: no step waits a time.
+// stop is a wait for the line of the stop in the log, then `events()` or
+// `wait_stop`, which gives the stop that waits: no step waits a time. The
+// machine ends by a quit of QEMU: the console lost the machine by then.
 
 TEST_OUTPUT_DEBUGGER_COMMANDS :: BUILD_FOLDER + "/test_output_debugger_commands.txt"
 
-// The lines of the procedure add_step of programs/debug_target/main.odin:
-// its first statement, a volatile load, and its second, a volatile store.
-// A change of that file above the procedure changes them.
-DEBUG_TARGET_LINE_OF_THE_LOAD :: "78"
+// The line of the second statement of the procedure add_step of
+// programs/debug_target/main.odin, a volatile store. The compiler gives
+// the load of the first statement and the store one row of the line table,
+// with this line. A change of that file above the procedure changes it.
 DEBUG_TARGET_LINE_OF_THE_STORE :: "79"
 DEBUG_TARGET_TEXT_OF_THE_STORE :: "\tintrinsics.volatile_store(sum, before + step)"
 
 DEBUG_TARGET_RUNS :: "debug_target: 64 more rounds ran, so the program is not held: as it must"
 DEBUG_ACCESS_REFUSED_BY_THE_GRANT :: "debugger.attach: the caller has no grant for this: the debug access to this program: the program holds a grant that the caller does not hold, the grant "
 // The number of a grant in the enumeration Grant of programs/root/main.odin.
+GRANT_NUMBER_INSPECT :: "1"
 GRANT_NUMBER_SERVE :: "5"
 GRANT_NUMBER_STORE :: "7"
 GRANT_NUMBER_SYSTEM_PART :: "24"
@@ -128,8 +134,12 @@ scenario_debugger_commands := [?]Step {
 	// A breakpoint by a procedure name: the main thread stops at the first
 	// instruction of its next round, and its caller is the next frame.
 	{kind = .Type, text = "columns(break_at(\"debug_target::count_rounds\"), \"number kind place\")"},
-	{kind = .Wait, text = "[console]      0  execute  debug_target::count_rounds"},
-	{kind = .Type, text = "columns(wait_stop(60000), \"thread kind procedure offset\")"},
+	// The thread can stop before the console draws the row of the command
+	// that let it run: the stop is waited for first, and the row is looked
+	// for in the whole log.
+	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 0"},
+	{kind = .Wait, text = "[console]      0  execute  debug_target::count_rounds", any_order = true},
+	{kind = .Type, text = "columns(events(), \"thread kind procedure offset\")"},
 	{kind = .Wait, text = "[console]      0  breakpoint 0  debug_target::count_rounds       0"},
 	{kind = .Type, text = "columns(stack(0), \"frame procedure\")"},
 	{kind = .Wait, text = "[console]     0  debug_target::count_rounds"},
@@ -141,8 +151,9 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Type, text = "columns(where(break_at(\"debug_target::add_step\"), \"number\", 1), \"number kind place\")"},
 	{kind = .Wait, text = "[console]      1  execute  debug_target::add_step"},
 	{kind = .Type, text = "columns(resume(0), \"thread\")"},
-	{kind = .Wait, text = "[console]      0"},
-	{kind = .Type, text = "columns(wait_stop(60000), \"thread kind procedure offset\")"},
+	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 1"},
+	{kind = .Wait, text = "[console]      0", any_order = true},
+	{kind = .Type, text = "columns(wait_stop(3000), \"thread kind procedure offset\")"},
 	{kind = .Wait, text = "[console]      0  breakpoint 1  debug_target::add_step       0"},
 	{kind = .Type, text = "columns(stack(0), \"frame procedure\")"},
 	{kind = .Wait, text = "[console]     0  debug_target::add_step"},
@@ -156,10 +167,10 @@ scenario_debugger_commands := [?]Step {
 	// statement.
 	{kind = .Type, text = "columns(step(0), \"thread state procedure offset\")"},
 	{kind = .Wait, text = "[console]      0  stopped  debug_target::add_step       1"},
-	{kind = .Type, text = "columns(step_line(0), \"procedure line\")"},
+	{kind = .Type, text = "columns(step_line(0), \"procedure line pending\")"},
 	// The compiler gives the load and the store one row of the line table,
 	// with the line of the store: the next line after the first one is it.
-	{kind = .Wait, text = "[console] debug_target::add_step    " + DEBUG_TARGET_LINE_OF_THE_STORE},
+	{kind = .Wait, text = "[console] debug_target::add_step    " + DEBUG_TARGET_LINE_OF_THE_STORE + "        0"},
 
 	// A breakpoint by a file and a line, in the place of the second one.
 	{kind = .Type, text = "columns(break_remove(1), \"number place\")"},
@@ -167,8 +178,10 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Type, text = "columns(where(break_at(\"programs/debug_target/main.odin:" + DEBUG_TARGET_LINE_OF_THE_STORE + "\"), \"number\", 1), \"number kind\")"},
 	{kind = .Wait, text = "[console]      1  execute"},
 	{kind = .Type, text = "columns(resume(0), \"thread\")"},
-	{kind = .Wait, text = "[console]      0"},
-	{kind = .Type, text = "columns(wait_stop(60000), \"kind procedure line\")"},
+	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 1"},
+	{kind = .Wait, text = "[console]      0", any_order = true},
+	// The ends of the step and of the line above are no events: one row.
+	{kind = .Type, text = "columns(events(), \"kind procedure line\")"},
 	{kind = .Wait, text = "[console] breakpoint 1  debug_target::add_step    " + DEBUG_TARGET_LINE_OF_THE_STORE},
 
 	// The values, each by a path from a global: the fields of a record
@@ -193,8 +206,9 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Type, text = "columns(watch(\"debug_target::rounds\", 8), \"number kind length place\")"},
 	{kind = .Wait, text = "[console]      0  write       8  debug_target::rounds"},
 	{kind = .Type, text = "columns(resume(0), \"thread\")"},
-	{kind = .Wait, text = "[console]      0"},
-	{kind = .Type, text = "columns(wait_stop(60000), \"thread kind procedure\")"},
+	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: watch 0"},
+	{kind = .Wait, text = "[console]      0", any_order = true},
+	{kind = .Type, text = "columns(events(), \"thread kind procedure\")"},
 	{kind = .Wait, text = "[console]      0  watch 0  debug_target::record_round"},
 
 	// The detach: one breakpoint leaves, the held thread runs, and the
@@ -203,35 +217,58 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "[console] debug_target            1"},
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
 
-	// Who can debug which program. notes holds the grant Store, and so does
-	// the console: the access is given, inside one principal.
+	// Who can debug which program. A private store belongs to its program:
+	// the grant Store refuses, though the console holds a grant Store too.
 	{kind = .Type, text = "start(\"notes\")"},
 	{kind = .Wait, text = "compositor: surface notes"},
 	{kind = .Front, text = "console"},
-	{kind = .Type, text = "columns(debug(\"notes\"), \"program described\")"},
-	{kind = .Wait, text = "[console] notes            1"},
-	{kind = .Type, text = "columns(detach(), \"program breakpoints\")"},
-	{kind = .Wait, text = "[console] notes              0"},
+	{kind = .Type, text = "debug(\"notes\")"},
+	{kind = .Wait, text = DEBUG_ACCESS_REFUSED_BY_THE_GRANT + GRANT_NUMBER_STORE + " of the root service (-4)"},
 	// A service: refused for each caller. A device service: a grant that
 	// no caller holds.
 	{kind = .Type, text = "debug(\"storage\")"},
 	{kind = .Wait, text = DEBUG_ACCESS_REFUSED_BY_THE_GRANT + GRANT_NUMBER_SERVE + " of the root service (-4)"},
 	{kind = .Type, text = "debug(\"block\")"},
 	{kind = .Wait, text = DEBUG_ACCESS_REFUSED_BY_THE_GRANT + GRANT_NUMBER_SYSTEM_PART + " of the root service (-4)"},
-	// The grant store of the console is revoked: it is no longer a grant
-	// that the console holds, and notes is refused.
-	{kind = .Type, text = "connect(\"storage\")"},
-	{kind = .Wait, text = "root: connected console to the service storage"},
-	{kind = .Type, text = "revoke(\"console\", \"store\")"},
-	{kind = .Wait, text = "root: revoked the grant store of console, connections changed: 1"},
-	{kind = .Type, text = "columns(where(grants(\"console\"), \"grant\", \"store\"), \"grant state\")"},
-	{kind = .Wait, text = "[console] store  lost"},
-	{kind = .Type, text = "debug(\"notes\")"},
-	{kind = .Wait, text = DEBUG_ACCESS_REFUSED_BY_THE_GRANT + GRANT_NUMBER_STORE + " of the root service (-4)"},
 
-	// From the host, through the service remote: the same exports. remote
-	// holds no grant Store, so notes is refused to it; debug_target has no
-	// grant.
+	// A revocation ends a debugging that the rule no longer gives. clock
+	// holds the machine with Inspect, and so does the console: the access
+	// is given. The grant machine of the console is revoked while it
+	// debugs clock, with a thread held: the root service ends the
+	// debugging, and a new attach is refused by the grant Inspect.
+	{kind = .Type, text = "start(\"clock\")"},
+	{kind = .Wait, text = "compositor: surface clock"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "columns(debug(\"clock\"), \"program described\")"},
+	{kind = .Wait, text = "[console] clock            1"},
+	{kind = .Type, text = "columns(hold(0), \"thread state\")"},
+	{kind = .Wait, text = "[console]      0  held"},
+	{kind = .Type, text = "revoke(\"console\", \"machine\")"},
+	{kind = .Wait, text = "root: revoked the grant machine of console, holdings ended: "},
+	{kind = .Wait, text = "root: ended the debugging of clock for console: the rule no longer gives the debug access, after a revocation"},
+	{kind = .Type, text = "debug(\"clock\")"},
+	{kind = .Wait, text = DEBUG_ACCESS_REFUSED_BY_THE_GRANT + GRANT_NUMBER_INSPECT + " of the root service (-4)"},
+
+	// The grant to act for the principal is revoked while the console
+	// holds a thread of debug_target: the root service ends the debugging,
+	// the held thread runs again (the program writes its line), and the
+	// service has no session left for the console.
+	{kind = .Type, text = "columns(debug(\"debug_target\"), \"program described\")"},
+	{kind = .Wait, text = "[console] debug_target          1"},
+	{kind = .Type, text = "columns(hold(0), \"thread state\")"},
+	{kind = .Wait, text = "[console]      0  held"},
+	{kind = .Type, text = "revoke(\"console\", \"acts_for_principal\")"},
+	{kind = .Wait, text = "root: revoked the grant acts_for_principal of console, connections changed: "},
+	{kind = .Wait, text = "root: ended the debugging of debug_target for console: the rule no longer gives the debug access, after a revocation"},
+	{kind = .Wait, text = DEBUG_TARGET_RUNS},
+	// The detach needs no grant; the session ended already.
+	{kind = .Type, text = "detach()"},
+	{kind = .Wait, text = "debugger.detach: the call names none of the programs that the debugger service debugs for this caller (-2)"},
+	{kind = .Type, text = "debug(\"debug_target\")"},
+	{kind = .Wait, text = "debugger.attach: the caller has no grant for this: to act for the principal (-1)"},
+
+	// From the host, through the service remote: the same exports.
+	// debug_target has no grant; notes has a private store.
 	{kind = .Launch, text = "remote"},
 	{kind = .Wait, text = "root: started remote"},
 	{kind = .Remote_Key, text = "remote: the public key of this service: "},
@@ -248,16 +285,18 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
 	{kind = .Call, text = "debugger.attach(\"notes\")", outcome = .Failed, expected = "error: " + DEBUG_ACCESS_REFUSED_BY_THE_GRANT + GRANT_NUMBER_STORE + " of the root service (-4)"},
 
-	{kind = .Front, text = "console"},
-	{kind = .Type, text = "shutdown()"},
-	{kind = .Wait, text = "kernel: the machine stops with code 0"},
+	// The console lost the machine: QEMU ends the machine.
+	{kind = .Quit},
 }
+
+// The exit status of QEMU after a step Quit.
+QEMU_QUIT_STATUS :: 0
 
 // debugger_tests_run runs the two machines of the debugger: the contract
 // of the kernel, then the commands. The second one runs also when the
 // first one fails: each one has its own verdict.
 debugger_tests_run :: proc() -> bool {
 	kernel_contract := machine_test(scenario_debugger[:], BOOT_VOLUME, TEST_OUTPUT_DEBUGGER, MACHINE_STOP_OK, TEST_DATA_DISK)
-	commands := machine_test(scenario_debugger_commands[:], BOOT_VOLUME, TEST_OUTPUT_DEBUGGER_COMMANDS, MACHINE_STOP_OK, TEST_DATA_DISK)
+	commands := machine_test(scenario_debugger_commands[:], BOOT_VOLUME, TEST_OUTPUT_DEBUGGER_COMMANDS, QEMU_QUIT_STATUS, TEST_DATA_DISK)
 	return kernel_contract && commands
 }

@@ -160,23 +160,32 @@ The rule compares two sets of grants. It names no program:
 1. **The caller acts for the principal whose session runs the program.** The caller holds the grant to act for the principal, and the program is in the session of the same principal (`PRINCIPALS.md`). A program of the machine does not debug a program of a named principal, and a program of one principal does not debug a program of another.
 2. **Each grant of the program is a grant that the caller holds.** A debugger acts with each handle of the program that it debugs and reads each byte of it, so the right `Debug` on a program is each grant of that program. The grants of the program are those that the root service gave it at its start, which the root service keeps in the state of the program that runs (`Started.role` in `programs/root/main.odin`): the rule reads no table by the name of a program, so it holds for a program that comes from a disk as for a program of the boot image.
 3. **A revoked grant is not a grant that the caller holds.** After `revoke("console", "machine")`, the console does not debug a program that has a right of the machine.
-4. **A grant whose access is of one program alone refuses for each caller.** Two programs with such a grant do not hold the same thing. Serve: a service holds what its callers lent it and what it keeps for them. Network: an endpoint names its own remote and its own ports. Connect: the services that a program can connect to are its own list.
+4. **A grant refuses the debug access for each caller when what it reaches belongs to that one program.** Two holders of such a grant do not hold the same thing, so the caller does not hold what the program holds. The grants (`GRANTS_OF_ONE_PROGRAM` in `programs/root/main.odin`): Serve (a service holds what its callers lent it and what it keeps for them); Store and History_Store (a store of its own: a caller that acts for the principal reads each store of that principal and writes only its own, and through the registers of the program a debugger would write the store of the program); Terminal (a terminal of its own, with the keys typed in it); Network (an endpoint names its own remote and its own ports); Connect (the services that a program can connect to are its own list); Data_Disk, Scratch_Disk and Network_Device (a device service started for the program alone); Principals (a ring of its own, and the records of the principals). Each other grant reaches one thing that each of its holders reaches: the machine by its rights, the boot image, the debug image, the replacement table, the settings page, the date page, the records of the log, the commands of the root ring.
+5. **A revocation ends a debugging that the rule no longer gives.** After each revocation of a grant of a caller, the root service checks each debugging of that caller against the rule again, and ends each one that fails: the program is given back as on a detach, with no thread left stopped. So `revoke("console", "machine")` ends the debugging of `clock` by the console, and `revoke("remote", "acts_for_principal")` ends each debugging of the host. The end needs nothing of the caller. `detach()` needs no grant either.
 
 What follows from the rule:
 
 | Program | The answer for the console |
 |---|---|
-| A program with no grant (`debug_target`) | Given |
-| A program whose grants the console holds (`clock`: Inspect) | Given |
-| A program with the grant Store (`notes`) | Given: the console holds Store. A private store is named by the program and by the principal of its session, so the debugger reads data of that principal only |
-| A service (`storage`, `monitor`, `settings`) | Refused: the grant Serve |
-| A program with an endpoint of the network (`fetch`, `quic_echo`) | Refused: the grant Network |
-| A device service, the compositor, a terminal | Refused: the grant System_Part, which the root service gives to the parts of the system that it starts by itself, and which no caller holds |
-| A program with a grant that the console does not hold (Schedule, Events, Principals) | Refused: that grant |
+| A program with no grant (`debug_target`, `plasma`, `fault`, `temple`, each program that the root service gives only the log and a window) | Given |
+| A program with a right of the machine that the console holds, Inspect or Stop (`clock`, `processors`, `pages`, `flow`, `crowd`) | Given, until the grant `machine` of the console is revoked |
+| A program with the boot image, with or without Inspect (`pointers`, `rings`, `boot`, `rights`, `frames`, `locks`, `address_space`, `imports`, `return_fault`, `fault_ring`, `debugged`, `cryptography_vectors`, `interface_through_module`) | Given, until the grant `image` of the console is revoked |
+| A program with a private store (`notes`, `hierarchy`, `ranges`, `errors`, `unlock`) | Refused: the grant Store |
+| A service (`storage`, `monitor`, `inspect`, `log`, `settings`, `date`, `manual`, `server`, `debugger`, the compositor) | Refused: the grant Serve |
+| A program with a terminal (`flood`, a second console) | Refused: the grant Terminal |
+| A program with an endpoint of the network (`net`, `fetch`, `quic_echo`, `remote`) | Refused: the grant Network, or Connect |
+| A program that connects to services (`tables`) | Refused: the grant Connect |
+| A program with a device (`disk`, `network`) | Refused: the grant Scratch_Disk or Network_Device |
+| A device service, a terminal | Refused: the grant System_Part, which the root service gives to the parts of the system that it starts by itself, and which no caller holds |
+| A program with a grant that the console does not hold (`scheduler`: Schedule; `kernel_events`: Events) | Refused: that grant |
+
+The grant that a refusal names is the first one of the program that refuses, in the order of the enumeration `Grant`.
+
+**A window is not a grant.** Each program with no terminal has a window, and no grant names it, so the rule does not see it. The debugger of a program draws in the window of that program and reads the keys and the pointer events that the compositor sends to it. For the console this is the shell of the same principal, at the same screen.
 
 A refusal is an error record of the kind `No_Grant` with the unit `Debug_Access`; `found` is 1 + the number of the grant that refuses, in the enumeration `Grant` of the root service, and the root service writes the name of that grant on the log. The other refusals: `No_Grant`, `Acts_For_Principal` (rule 1); `Absent`, `Programs` (no program has the name); `Full`, `Debugged_Programs` (another caller debugs the program).
 
-The grant is a record of the root service: `debug` in `grants()`, a grant of the caller. `revoke` ends each handle that came from it, and the kernel ends the debugging with the last handle. The handle also ends when the connection of the caller to the service ends, and when the caller stops. After `detach()`, the service tells the root service that the debugging ended, with the same command.
+The grant is a record of the root service: `debug` in `grants()`, a grant of the caller. `revoke` ends each handle that came from it, and the kernel ends the debugging with the last handle. The handle also ends when the connection of the caller to the service ends, when the caller stops, and when a revocation of another grant of the caller takes the access away (rule 5). After `detach()`, the service tells the root service that the debugging ended, with the same command.
 
 The creator of a program also has the right `Debug` on the handle that the creation gave it (`ARCHITECTURE.md`, "The debugger of a program"). The root service gives the right to no program at its start.
 
@@ -199,11 +208,11 @@ Each export gives a table, or a negative number with an error record. A caller t
 | `break_at(place)` | An execute breakpoint at a procedure (`fault::three`) or at a file and a line (`programs/fault/main.odin:15`). One row for each breakpoint |
 | `watch(place, length)` | A data breakpoint on 1, 2, 4 or 8 bytes that the program writes, at an address or at a global. One row for each breakpoint |
 | `breaks()`, `break_remove(number)` | The breakpoints of the debugger; remove one |
-| `step(thread)` | One instruction. The row of the thread at its new instruction |
-| `step_line(thread)` | Instructions until the source line changes, 4096 at most. The row of the thread |
+| `step(thread)` | One instruction. The row of the thread at its new instruction; `pending` 1 when the step did not end in 1000 ms |
+| `step_line(thread)` | Instructions until the source line changes, at most 4096 and 2000 ms. The row of the thread; `pending` 1 when the line did not change yet |
 | `memory(place, count)` | At most 4096 bytes from an address or from a global, 16 in each row: the address, the bytes in hexadecimal, their printable characters |
 | `events()` | One row for each stop of a thread since the last call: the thread, the kind (`breakpoint N`, `watch N`, `step`, `int3`, `int1`), the instruction, its module, its procedure, its offset, its file and its line |
-| `wait_stop(milliseconds)` | Wait for the next stop, at most the given time and 60 seconds, then the rows of `events()` |
+| `wait_stop(milliseconds)` | Wait for the next stop, at most the given time and 3000 ms, then the rows of `events()` |
 
 **The errors.** Each failure is an error record (`MODULE_CONTRACT.md`, section 8):
 
@@ -228,7 +237,18 @@ Each export gives a table, or a negative number with an error record. A caller t
 
 **The breakpoints.** The debugger has four breakpoints, for execute breakpoints and watches together: they are the debug registers of a thread. The service writes them in each thread of the program when one is set or removed, and at `continue_all()`; a thread that the program makes later has none until then. A thread that runs is held for the write, then released. A watch does not see an access that the kernel makes for the program.
 
-**A step.** The service writes the trap flag in the registers of the thread and lets it run; the record of the step comes after one instruction, and the service clears the flag at the next stop of the thread. A thread that waits in the kernel runs its next instruction only when its wait ends: `step` waits 5 seconds at most, then gives the row of a thread that runs, and the stop comes later as an event. `step_line` enters a procedure that the line calls.
+**A step.** The service writes the trap flag in the registers of the thread and lets it run; the record of the step comes after one instruction, and the service clears the flag at the next stop of the thread. The end of a step that its export waited for is the result of the export, not an event. A thread that waits in the kernel runs its next instruction only when its wait ends: `step` waits 1000 ms at most, then gives the row of a thread that runs, with `pending` 1, and the stop comes later as an event of the kind `step`. `step_line` enters a procedure that the line calls; at its bound of 4096 instructions or 2000 ms it gives the row of where the thread is, with `pending` 1, and the caller calls it again.
+
+**The bounds of the exports.** The service has one thread and serves each caller of each principal, and the debugged program chooses how long one of its instructions takes. So no export waits longer than a stated bound, and each bound is under the 5000 ms after which `remote` ends a call:
+
+| Export | What it waits for | Bound |
+|---|---|---|
+| `attach` | The answer of the root service | 2000 ms. A later answer is taken when it comes: the service closes the handle and tells the root service that the access ended |
+| `step` | The record of one step | 1000 ms |
+| `step_line` | The records of its steps, together | 2000 ms, and 4096 instructions |
+| `wait_stop` | The next stop | 3000 ms, whatever the caller gives |
+| `hold`, `break_at`, `watch`, `break_remove`, `continue_all` | The kernel, which waits until a thread on another processor left it | No wait of the service: one kernel operation for each thread |
+| `detach`, and each other export | Nothing | No wait: the end command to the root service is sent with no wait for its answer |
 
 **One program in two places.** The service finds the reports of the program by its name and by the hash of its module, which the root service gives with the handle. When two programs that run have that name and that module, the service cannot tell which one its handle names: the attach is refused (`Bad_Value`, `Programs`). The kernel gives no slot for a program handle; a result of `Handle_State` that gives it would end this limit.
 
@@ -254,7 +274,7 @@ A table of the debugger is a table as any other: `columns(stack(0), "frame proce
 ```
 > debug("debug_target")
 > break_at("debug_target::add_step")
-> wait_stop(60000)
+> wait_stop(3000)
 > columns(stack(0), "frame procedure")
 frame  procedure
     0  debug_target::add_step
@@ -282,14 +302,15 @@ frame  procedure
 Debugging from another machine needs no mechanism of its own.
 
 - **The service `remote` carries the exports.** `remote` carries a call of an export over QUIC from another machine to a service that it can connect to (`QUIC.md`, section 7). `debugger` is one of them. On the host, `kerneltool call <key> "debugger.attach(\"clock\")"` calls an export against a machine that `kerneltool run` started, and prints its table.
-- **Who the caller is.** The caller is `remote`: the root service applies the rule of "Who can debug which program" to `remote`, with the principal of the session of `remote`. `remote` holds the grant to act for the principal, and no grant that a program can share with it: so a developer on another machine debugs a program with no grant, in the session where `remote` runs. A program with a private store, with a right of the machine, with the boot image or with an endpoint of the network is refused to `remote`, and so is each service. The connection adds no right, and `revoke("remote", "acts_for_principal")` ends the debug access of the host.
-- **The time of a call.** `remote` ends a call that takes more than 5 seconds. A caller on another machine gives `wait_stop` a shorter time, or reads `events()` after the line of the stop in the log.
+- **Who the caller is.** The caller is `remote`: the root service applies the rule of "Who can debug which program" to `remote`, with the principal of the session of `remote`. `remote` holds the grant to act for the principal, a grant Network and a grant Connect, which reach things of `remote` alone: so a developer on another machine debugs exactly the programs with no grant, in the session where `remote` runs. Each other program is refused to `remote`. The connection adds no right, and `revoke("remote", "acts_for_principal")` ends each debugging of the host: the root service ends it at the revocation.
+- **What the host can do.** For a program with no grant, a host that holds the key of `remote` reads each byte of its memory and each register, writes its registers, and so chooses what the program runs. With the handles of that program it draws in its window and reads the keys and the pointer events that the compositor sends to it. Each client of `remote` is the one caller `remote`: two clients share one debugging, and one can steer or detach the debugging of the other (`QUIC.md`, section 7, "Who may call").
+- **The time of a call.** `remote` ends a call that takes more than 5000 ms, and with it its connection to the service: the root service then ends the debugging. Each export of the service has a bound under that time ("The bounds of the exports"). `wait_stop` waits 3000 ms at most: a caller on another machine calls it again, or reads `events()` after the line of the stop in the log.
 - **The source line.** `kerneltool call` prints, after a table whose record has the fields `path`, `line` and `hash`, the text of each line from the file of the repository, only when the file has that hash: "source: programs/debug_target/main.odin:79: ...". With another hash it says that the file changed since the build. A path that is absolute, that has a part `..` or that names a file of the compiler is not read.
 - **Where the debug objects are.** In the debug image of the debugged machine: the service names each address there. A caller on another machine can also read raw values (`registers`, `memory`) and name them with its own debug objects, by the hash of the module.
 
 ### The test
 
-`kerneltool test debugger` runs two machines. The first one is the contract of the kernel (the program `debugged`). The second one is the commands: the console starts the program `debug_target`, which has no grant and values that the test knows, and waits for exact rows: a breakpoint by a procedure name and by a file and a line, the frames of the stack, a local variable of a caller, the fields of a record inside a record, an element of an array, the name of an enumeration value, a text, one step, one line, a watch of a global, and the detach. Then the refusals: a service, a device service, and a program with the grant Store after the grant store of the console was revoked. Then the same exports from the host through `remote`, with the source line that the tool reads in the repository. The parts with no kernel operation have host tests (`support/debugging`).
+`kerneltool test debugger` runs two machines. The first one is the contract of the kernel (the program `debugged`). The second one is the commands: the console starts the program `debug_target`, which has no grant and values that the test knows, and waits for exact rows: a breakpoint by a procedure name and by a file and a line, the frames of the stack, a local variable of a caller, the fields of a record inside a record, an element of an array, the name of an enumeration value, a text, one step, one line, a watch of a global, and the detach. Then the rule: a program with a private store, a service and a device service are refused; a program with a right of the machine is given, the revocation of the grant `machine` of the console ends its debugging, and a new attach is refused; the revocation of the grant to act for the principal, while a thread is held, gives the program back. Then the same exports from the host through `remote`, with the source line that the tool reads in the repository. The parts with no kernel operation have host tests (`support/debugging`).
 
 ## The debugger: the design
 
@@ -312,7 +333,7 @@ Four additions, each a right, a command or an argument of an operation that exis
 
 The right **Inspect** on the machine shows how every program runs, but it must not show what a program holds: its keys, its documents, its passwords. So the kernel removes from a report each value that can come from the memory of the program. The rule and its reason follow.
 
-The reports give counts, places, states and the stack trace. The stack trace comes from the stack of the program: with a chain of frame pointers that the program broke, a frame holds a word of its memory, and the address of a page fault can be a value that the program computed. The holder of the program handle with Read reads the whole stop report. For a holder of the machine with Inspect, the kernel gives a frame only when a module record of the program holds its address (else the frame is zero, and the tool shows "not code"), and the address of the fault only when it is in the first page or in a module record (else 0); the report counts the values that it took out (`hidden_value_count`). So no report through Inspect gives a byte of the memory of a program. To read the bytes of another program is a stronger right than Inspect: a tool with it reads the secrets of that program (property 20, line 2: "Debug access is a handle to one program. The principal grants it"). That right is `Debug`, a right of the program handle (one program, not the machine), that the root service gives to a tool on the request of the principal, visible in `grants()` and revocable ("The debugger: the design"). `inspect` does not have it: its hex view shows the memory of `inspect` itself.
+The reports give counts, places, states and the stack trace. The stack trace comes from the stack of the program: with a chain of frame pointers that the program broke, a frame holds a word of its memory, and the address of a page fault can be a value that the program computed. The holder of the program handle with Read reads the whole stop report. For a holder of the machine with Inspect, the kernel gives a frame only when a module record of the program holds its address (else the frame is zero, and the tool shows "not code"), and the address of the fault only when it is in the first page or in a module record (else 0); the report counts the values that it took out (`hidden_value_count`). So no report through Inspect gives a byte of the memory of a program. To read the bytes of another program is a stronger right than Inspect: a tool with it reads the secrets of that program (property 20, line 2: "Debug access is a handle to one program. The program that created a program holds it for that program [...] For each other program, the principal grants it"). That right is `Debug`, a right of the program handle (one program, not the machine), that the creator of a program holds on its handle, and that the root service gives to the debugger service on behalf of a caller, visible in `grants()` and revocable ("Who can debug which program"). `inspect` does not have it: its hex view shows the memory of `inspect` itself.
 
 ## The cost
 

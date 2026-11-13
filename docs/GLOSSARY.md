@@ -1593,7 +1593,7 @@ Do not use: debug server, debug agent, gdbserver, debug stub.
 
 The debug access is the handle of one program with the right **Debug**, which the root service gives to the debugger service on behalf of a caller.
 
-The root service gives it by one rule over grants, with no name of a program: the caller acts for the principal whose session runs the program; each grant that the program received at its start is a grant that the caller holds and that was not revoked from it; and a grant whose access is of one program alone (a service, an endpoint of the network, a list of services to connect to) refuses for each caller. So a program with no grant can be debugged, and a service cannot. The access is the grant `debug` of the caller in `grants()`: `revoke` ends it, and so does the end of the connection of the caller to the debugger service.
+The root service gives it by one rule over grants, with no name of a program: the caller acts for the principal whose session runs the program; each grant that the program received at its start is a grant that the caller holds and that was not revoked from it; and a grant refuses for each caller when what it reaches belongs to that one program (a service, a private store, a terminal, an endpoint of the network, a list of services to connect to, a device). So a program with no grant can be debugged, and a service or a program with a private store cannot. The access is the grant `debug` of the caller in `grants()`: `revoke` ends it, and so do the end of the connection of the caller to the debugger service and a revocation of another grant after which the rule no longer gives the access.
 
 It is not the right Debug of the creator of a program, which the kernel gives on the handle of the creation.
 
@@ -1609,7 +1609,7 @@ A watch is a data breakpoint that the debugger service sets on 1, 2, 4 or 8 byte
 
 It takes one of the four breakpoints of the debugger, as an execute breakpoint does. It names its bytes by an address or by the path of a global. It does not see an access that the kernel makes for the program.
 
-Example: `watch("debug_target::rounds", 8)`, then `wait_stop(60000)` gives a row with the kind `watch 0` and the procedure that wrote the count.
+Example: `watch("debug_target::rounds", 8)`, then `wait_stop(3000)` gives a row with the kind `watch 0` and the procedure that wrote the count.
 
 The design: `docs/TOOLS.md`, "The exports of the service".
 

@@ -224,7 +224,7 @@ debugger_commands_start :: proc "contextless" () {
 	// instruction with its procedure and its line.
 	command("events", {}, .Table, "the stops of the debugged program: debugger.events()", debug_events)
 	// Waits until a thread of the debugged program stops, at most the
-	// given milliseconds (60 seconds at most), and gives the rows of
+	// given milliseconds (3000 at most), and gives the rows of
 	// `events`.
 	//
 	// - `milliseconds`: the longest wait.

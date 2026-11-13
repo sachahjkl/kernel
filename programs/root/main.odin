@@ -1436,21 +1436,22 @@ grants_held :: proc "contextless" (item: ^Started) -> bit_set[Grant] {
 //   (Started.role) is a grant that the caller holds itself and that was not
 //   revoked from it (grants_held): the caller then gains nothing that this
 //   service did not give it;
-// - a grant whose access is of one program alone refuses for each caller
-//   (GRANTS_OF_ONE_PROGRAM): the same grant of the caller names another
-//   thing, so the caller does not hold what the program holds.
+// - a grant refuses the debug access for each caller when what it reaches
+//   belongs to that one program (GRANTS_OF_ONE_PROGRAM): the same grant of
+//   the caller reaches another thing, so two holders of the grant do not
+//   hold the same thing.
 //
-// What follows, with no list: a program with no grant can be debugged; a
-// service, a device service, the compositor, a terminal, a program with an
-// endpoint of the network, and a program with a device or a data grant
-// that the caller lacks cannot.
+// What follows, with no list: a program with no grant can be debugged, and
+// a program whose grants reach only what the caller reaches by the same
+// grants (the machine, the boot image); a service, a device service, the
+// compositor, a terminal, and a program with a private store, an endpoint
+// of the network, a terminal or a device cannot.
 // The rule reads the state of the program that runs, so it holds for a
 // program that came from a disk as for one of the boot image.
 //
-// A program with the grant Store and a caller with the same grant: the
-// store of a program is named by the program and by the principal of its
-// session (principals.store_name_write), and `debug` gives the access only
-// inside one principal, so the debugger reads data of that principal only.
+// A window is not a grant: each program with no terminal has one. The
+// debugger of a program draws in its window and reads the input that the
+// compositor sends to it.
 debug_refusing_grant :: proc "contextless" (caller: ^Started, target: ^Started) -> (grant: Grant, refuses: bool) {
 	held := grants_held(caller)
 	for candidate in Grant {
@@ -1461,13 +1462,26 @@ debug_refusing_grant :: proc "contextless" (caller: ^Started, target: ^Started) 
 	return .Root_Ring, false
 }
 
-// The grants whose access is of one program alone, so that two programs
-// with the grant do not hold the same thing:
+// The grants that refuse the debug access for each caller: what the grant
+// reaches belongs to the one program that holds it, so two holders of the
+// grant do not hold the same thing.
 // - Serve: a service holds what its callers lent it and what it keeps for
 //   them;
+// - Terminal: a terminal of its own, with the keys typed in it;
+// - Store, History_Store: a store of its own. A caller that acts for the
+//   principal reads each store of that principal, and writes only its own:
+//   through the registers of the program, a debugger would write the store
+//   of the program;
+// - Data_Disk, Scratch_Disk, Network_Device: a device service that this
+//   service started for the program alone, and its ring;
 // - Network: an endpoint names its own remote and its own ports;
-// - Connect: the services that a program can connect to are its own list.
-GRANTS_OF_ONE_PROGRAM :: bit_set[Grant]{.Serve, .Network, .Connect}
+// - Connect: the services that a program can connect to are its own list;
+// - Principals: a ring of its own, and the records of the principals.
+// Each other grant reaches one thing that each of its holders reaches: the
+// machine by its rights, the boot image, the debug image, the replacement
+// table, the settings page, the date page, the records of the log, the
+// commands of the root ring.
+GRANTS_OF_ONE_PROGRAM :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Network, .Connect, .Principals}
 
 // debug gives the debugger service the handle of the program with a name,
 // with the right Debug and no other, on behalf of one of its callers:
@@ -1595,6 +1609,38 @@ debug_end :: proc "contextless" (target: ^Started) -> (count: u64) {
 // (Handle_Revoke). What the program gave to other programs ends too.
 // values is the completion of Root_Command.Revoke.
 revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> system.Status {
+	status := revoke_grant(name, grant, values)
+	if status == .Ok {
+		if item := find(name); item != nil {
+			debug_check_again(item)
+		}
+	}
+	return status
+}
+
+// debug_check_again ends each debugging that runs for a caller and that
+// the rule no longer gives it, after a grant of the caller was revoked: a
+// grant that the caller lost must not stay in its hands through the
+// registers of a program that holds it. The program is given back as on a
+// detach: the kernel resumes each thread that the debugger held. The end
+// needs nothing of the caller, so a caller that lost the grant to act for
+// the principal leaves no thread stopped.
+debug_check_again :: proc "contextless" (caller: ^Started) {
+	for &other in started {
+		if other.program == 0 || other.debug_for != caller {
+			continue
+		}
+		_, refuses := debug_refusing_grant(caller, &other)
+		if refuses || .Acts_For_Principal not_in grants_held(caller) {
+			debug_end(&other)
+			system.log_in("programs", .Info, "root: ended the debugging of ", system.Module_Name{system.name_of(other.name[:])}, " for ", system.Module_Name{system.name_of(caller.name[:])}, ": the rule no longer gives the debug access, after a revocation")
+		}
+	}
+}
+
+// revoke_grant is revoke, before the check of the debuggings of the
+// program.
+revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> system.Status {
 	item := find(name)
 	if item == nil {
 		return .Bad_Handle

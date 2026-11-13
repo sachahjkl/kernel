@@ -45,7 +45,7 @@ source_line_of_content :: proc(content: string, line: int) -> (text: string, fou
 // stays under the root of the repository: not absolute, no part "..", and
 // no file of the compiler ("base:", "core:").
 source_path_is_of_the_repository :: proc(path: string) -> bool {
-	if path == "" || path[0] == '/' || strings.index_byte(path, ':') >= 0 {
+	if path == "" || !debug_object.name_bytes_valid(path) || path[0] == '/' || strings.index_byte(path, ':') >= 0 {
 		return false
 	}
 	return !debug_object.path_has_parent_part(path)
@@ -55,6 +55,11 @@ source_path_is_of_the_repository :: proc(path: string) -> bool {
 // place: the text of the line when the content has the hash, else why not.
 // `content_read` is false when the repository has no such file.
 source_line_sentence :: proc(path: string, line: int, hash_text: string, content: []u8, content_read: bool) -> string {
+	// The path comes from the machine: a control byte in it would change
+	// or forge a line of the terminal of the host.
+	if !debug_object.name_bytes_valid(path) {
+		return fmt.tprintf("source: line %d of a file whose path has a byte that is not a visible character: not shown", line)
+	}
 	if !source_path_is_of_the_repository(path) {
 		return fmt.tprintf("source: %s:%d: not a file of the repository: its line is not shown", path, line)
 	}

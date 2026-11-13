@@ -33,6 +33,10 @@ call_source_path_stays_in_the_repository :: proc(t: ^testing.T) {
 		testing.expectf(t, !source_path_is_of_the_repository(path), "%q is refused", path)
 		testing.expect(t, strings.contains(source_line_sentence(path, 1, "", nil, false), "not a file of the repository"))
 	}
+	// A path with a control byte is not printed: it would forge a line of
+	// the terminal of the host.
+	forged := source_line_sentence("programs/a\x1b[2J.odin", 1, "", nil, false)
+	testing.expect(t, !strings.contains(forged, "\x1b") && strings.contains(forged, "not a visible character"), forged)
 }
 
 @(test)
@@ -47,18 +51,15 @@ call_source_line_of_content :: proc(t: ^testing.T) {
 	testing.expect(t, !found)
 }
 
-// The lines of add_step that the scenario of the debugger names are the
-// lines of the file.
+// The line of add_step that the scenario of the debugger names is the
+// line of the store in the file.
 @(test)
-debugger_scenario_names_the_lines_of_debug_target :: proc(t: ^testing.T) {
+debugger_scenario_names_the_line_of_debug_target :: proc(t: ^testing.T) {
 	content, read := read_file("programs/debug_target/main.odin")
 	if !testing.expect(t, read, "programs/debug_target/main.odin is read") {
 		return
 	}
-	load, load_found := source_line_of_content(string(content), 78)
-	store, store_found := source_line_of_content(string(content), 79)
-	testing.expect_value(t, DEBUG_TARGET_LINE_OF_THE_LOAD, "78")
 	testing.expect_value(t, DEBUG_TARGET_LINE_OF_THE_STORE, "79")
-	testing.expect(t, load_found && load == "\tbefore := intrinsics.volatile_load(sum)", load)
+	store, store_found := source_line_of_content(string(content), 79)
 	testing.expect(t, store_found && store == DEBUG_TARGET_TEXT_OF_THE_STORE, store)
 }

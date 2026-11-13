@@ -38,6 +38,7 @@ Thread_Row :: struct {
 	offset:      i64, // The offset of the instruction in the procedure, or in the module with no procedure.
 	file:        [64]u8,
 	line:        i64, // 0: no source line.
+	pending:     i64, // `step` and `step_line`: 1 when the export reached its bound before the step ended or the line changed: call again, or wait for the stop of the thread. 0 else.
 }
 
 // One register of a held thread: registers().
@@ -166,7 +167,7 @@ thread_row_fill :: proc "contextless" (row: ^Thread_Row, item: ^op.Thread_Report
 
 // thread_rows writes the rows of the threads of the program: each one, or
 // the one with the number `only`. It gives the count of rows.
-thread_rows :: proc "contextless" (result: ^[]Thread_Row, only: i64 = -1) -> i64 {
+thread_rows :: proc "contextless" (result: ^[]Thread_Row, only: i64 = -1, pending: i64 = 0) -> i64 {
 	total := 0
 	for &item in report_threads.threads[:min(report_threads.count, op.THREAD_REPORT_CAPACITY)] {
 		if only >= 0 && i64(item.number) != only {
@@ -174,6 +175,7 @@ thread_rows :: proc "contextless" (result: ^[]Thread_Row, only: i64 = -1) -> i64
 		}
 		if total < len(result^) {
 			thread_row_fill(&result[total], &item)
+			result[total].pending = pending
 		}
 		total += 1
 	}
@@ -232,6 +234,8 @@ attach :: proc "c" (program: ^string, result: ^[]Attached, error: ^errors.Error_
 	}
 	completion, answered := root_debug(name, caller.ring_memory)
 	if !answered {
+		// The request stays: when its completion comes, the handle is
+		// closed and the root service is told (root_completion_take).
 		return errors.fail(error, ERROR_REFUSED, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
 	}
 	if system.Status(completion.kind) != .Ok {
@@ -244,13 +248,14 @@ attach :: proc "c" (program: ^string, result: ^[]Attached, error: ^errors.Error_
 	// handle with Debug that came through the ring to the root service.
 	handle := system.Handle(completion.values[0])
 	if kind, rights, through := system.handle_state(handle, requests_memory); kind != .Program || .Debug not_in rights || !through {
+		root_debug_end(name, caller.ring_memory)
 		return refused(error, .Bad_Handle)
 	}
 	hash := transmute([32]u8)[4]u64{completion.values[1], completion.values[2], completion.values[3], completion.values[4]}
 	slot, program_serial, matches := slot_find(name, hash)
 	if matches != 1 {
 		system.close(handle)
-		root_debug(name, caller.ring_memory, true)
+		root_debug_end(name, caller.ring_memory)
 		if matches == 0 {
 			return errors.fail(error, ERROR_ENDED, .Absent, .Programs, 1)
 		}
@@ -265,7 +270,7 @@ attach :: proc "c" (program: ^string, result: ^[]Attached, error: ^errors.Error_
 	}
 	if status := system.debug_attach(handle); status != .Ok {
 		system.close(handle)
-		root_debug(name, caller.ring_memory, true)
+		root_debug_end(name, caller.ring_memory)
 		return refused(error, status)
 	}
 	session = {
@@ -310,7 +315,7 @@ attach :: proc "c" (program: ^string, result: ^[]Attached, error: ^errors.Error_
 // ```
 @(export, link_name = "detach")
 detach :: proc "c" (result: ^[]Detached, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
+	if failure := session_of_caller(error, false); failure != 0 {
 		return failure
 	}
 	breakpoints, held := 0, 0
@@ -1107,10 +1112,10 @@ break_remove :: proc "c" (number: i64, result: ^[]Break_Row, error: ^errors.Erro
 
 // step_one runs one instruction of a thread that is held or stopped: it
 // writes the trap flag in its registers, lets it run, and waits for its
-// next stop. `stepped` is false when the thread did not stop in time: a
-// thread in a wait of the kernel runs its next instruction only when its
-// wait ends; its stop then comes as an event.
-step_one :: proc "contextless" (number: u64) -> (stepped: bool, status: system.Status) {
+// next stop until a deadline. `stepped` is false when the thread did not
+// stop in time: a thread in a wait of the kernel runs its next instruction
+// only when its wait ends; its stop then comes as an event.
+step_one :: proc "contextless" (number: u64, deadline: u64) -> (stepped: bool, status: system.Status) {
 	image_of_thread: op.Thread_Registers
 	image_of_thread, status = system.thread_registers_read(session.program, number)
 	if status != .Ok {
@@ -1126,13 +1131,12 @@ step_one :: proc "contextless" (number: u64) -> (stepped: bool, status: system.S
 	if status != .Ok {
 		return false, status
 	}
-	deadline := system.time() + STEP_WAIT_MILLISECONDS
 	for {
 		record, came := system.fault_record_next(deadline)
 		if !came {
 			return false, .Ok
 		}
-		record_keep(record)
+		record_keep(record, record.thread == number)
 		if record.thread == number {
 			return true, .Ok
 		}
@@ -1144,8 +1148,9 @@ step_one :: proc "contextless" (number: u64) -> (stepped: bool, status: system.S
 // The debugger writes the trap flag in the registers of the thread and
 // lets it run: the processor stops it after one instruction. A thread
 // that waits in the kernel runs its next instruction only when its wait
-// ends: the export waits 5 seconds at most, then gives the row of a
-// thread that runs, and the stop comes later as an event.
+// ends: the export waits 1000 ms at most, then gives the row of a thread
+// that runs, with `pending` 1, and the stop comes later as an event. The
+// end of a step that the export waited for is its result, and no event.
 //
 // - **thread**: the number of a thread that is held or stopped.
 //
@@ -1165,18 +1170,24 @@ step :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Recor
 	if failure != 0 {
 		return failure
 	}
-	if _, status := step_one(number); status != .Ok {
+	stepped, status := step_one(number, system.time() + STEP_WAIT_MILLISECONDS)
+	if status != .Ok {
 		return refused(error, status)
 	}
-	return thread_rows(result, thread)
+	return thread_rows(result, thread, i64(stepped ? 0 : 1))
 }
 
 // step_line runs a thread that is held or stopped until the source line of its instruction changes, and gives its row there.
 //
 // It runs one instruction at a time, until the instruction has a source
 // line that is not the line of the start, in the same file or in another:
-// it enters a procedure that the line calls. It runs 4096 instructions at
-// most, and ends earlier when the thread does not stop in time (`step`).
+// it enters a procedure that the line calls. The whole export has two
+// bounds: 4096 instructions, and 2000 ms, because the debugged program
+// chooses how long one of its instructions takes and the service serves
+// each caller with one thread. At a bound the row has `pending` 1: the
+// line did not change yet. When its state is `stopped`, call `step_line`
+// again; when the thread runs (it waits in the kernel), its stop comes as
+// an event.
 //
 // - **thread**: the number of a thread that is held or stopped.
 //
@@ -1199,9 +1210,14 @@ step_line :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 		return refused(error, status)
 	}
 	start := place_of_address(image_of_thread.rip).place
+	deadline := system.time() + STEP_LINE_WAIT_MILLISECONDS
+	pending: i64 = 1
 	for _ in 0 ..< STEP_LINE_INSTRUCTION_LIMIT {
+		if system.time() >= deadline {
+			break
+		}
 		stepped: bool
-		stepped, status = step_one(number)
+		stepped, status = step_one(number, deadline)
 		if status != .Ok {
 			return refused(error, status)
 		}
@@ -1214,10 +1230,11 @@ step_line :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 		}
 		now := place_of_address(image_of_thread.rip).place
 		if now.line != 0 && (now.line != start.line || now.file != start.file) {
+			pending = 0
 			break
 		}
 	}
-	return thread_rows(result, thread)
+	return thread_rows(result, thread, pending)
 }
 
 // memory gives the bytes of the program from an address, sixteen in each row: the address, the bytes in hexadecimal, and their printable characters.
@@ -1314,6 +1331,10 @@ event_rows :: proc "contextless" (result: ^[]Event_Row) -> i64 {
 
 // events gives one row for each stop of a thread since the last call: the thread, the kind (`breakpoint N`, `watch N`, `step`, `int3` or `int1`), and the instruction where the thread goes on, with its module, its procedure, its file and its line.
 //
+// The end of a step that `step` or `step_line` waited for is the result of
+// that export, and not an event; a step that ended after its export
+// stopped waiting is an event of the kind `step`.
+//
 // A thread that stopped waits for the debugger: `release`, `step` or
 // `continue_all` lets it run. After an execute breakpoint the instruction
 // is the one of the breakpoint, which did not run; after a watch and after
@@ -1333,21 +1354,23 @@ events :: proc "c" (result: ^[]Event_Row, error: ^errors.Error_Record) -> i64 {
 	return event_rows(result)
 }
 
-// wait_stop waits until a thread of the program stops, at most the given milliseconds, and gives the rows of `events`.
+// wait_stop waits until a thread of the program stops, at most the given milliseconds and 3000, and gives the rows of `events`.
 //
 // A caller learns of a stop with this export, with no loop of `events()`:
 // the call returns at once when a stop waits already, at the next stop,
 // or with no row when the time ends. The service serves no other call
-// while it waits, so the time is 60 seconds at most. A call through the
-// service `remote` ends after 5 seconds: such a caller gives a shorter
-// time, or reads `events()` after the line of the stop in the log.
+// while it waits, and the service `remote` ends a call and its connection
+// after 5000 ms: so the wait is 3000 ms at most, whatever the caller
+// gives. A caller that waits longer calls again, or reads `events()` after
+// the line of the stop in the log.
 //
-// - **milliseconds**: the longest wait; 0 or less does not wait.
+// - **milliseconds**: the longest wait; 0 or less does not wait; more than
+//   3000 is 3000.
 //
 // **Errors**: as for `events`.
 //
 // ```
-// debugger.wait_stop(5000)
+// debugger.wait_stop(3000)
 // ```
 @(export, link_name = "wait_stop")
 wait_stop :: proc "c" (milliseconds: i64, result: ^[]Event_Row, error: ^errors.Error_Record) -> i64 {

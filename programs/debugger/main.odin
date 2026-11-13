@@ -84,9 +84,17 @@ BREAK_CAPACITY :: op.THREAD_BREAKPOINT_CAPACITY // The breakpoints of the debugg
 EVENT_CAPACITY :: 32 // The stops that the service keeps until `events()` gives them.
 PLACE_TEXT_SIZE :: 96 // The bytes of the place of a breakpoint.
 TEXT_ARGUMENT_LIMIT :: 160 // The bytes of a text argument: a path, a place.
-ROOT_ANSWER_MILLISECONDS :: 3000 // The wait for the root service: it only ends a hang.
-STEP_WAIT_MILLISECONDS :: 5000 // The wait for the record of one step: a thread in a wait of the kernel steps only when its wait ends.
-WAIT_STOP_LIMIT_MILLISECONDS :: 60_000 // The longest `wait_stop`: the service serves no other call while it waits.
+// The bounds of the exports that wait. The service has one thread and
+// serves each caller, and the debugged program chooses how long one of its
+// instructions takes: so no export waits longer than a stated bound. Each
+// bound is under the 5000 ms after which the service `remote` ends a call
+// and its connection (CALL_LIMIT in programs/remote), with room for the
+// work around the wait.
+ROOT_ANSWER_MILLISECONDS :: 2000 // `attach`: the wait for the answer of the root service. A later answer is taken when it comes (root_completion_take).
+STEP_WAIT_MILLISECONDS :: 1000 // `step`: the wait for the record of one step. A thread in a wait of the kernel steps only when its wait ends: its stop then comes as an event.
+STEP_LINE_WAIT_MILLISECONDS :: 2000 // `step_line`: the whole export, for each of its steps together.
+WAIT_STOP_LIMIT_MILLISECONDS :: 3000 // `wait_stop`: the longest wait, whatever the caller asks.
+ROOT_REQUEST_CAPACITY :: 8 // The commands to the root service whose completion did not come yet.
 STEP_LINE_INSTRUCTION_LIMIT :: 4096 // The instructions of one `step_line`.
 MEMORY_COUNT_LIMIT :: op.THREAD_MEMORY_READ_LIMIT // The bytes of one `memory`.
 
@@ -142,6 +150,21 @@ debug_names: system.Debug_Names
 service: system.Service
 requests: ring.Ring
 request_count: u32
+
+// One command Debug that this service sent to the root service, until its
+// completion comes: the wait for a completion is state, so a completion
+// that comes after the export stopped waiting is still taken.
+Root_Request :: struct {
+	tag:        u32, // The tag of the command. 0: the place is free.
+	name:       [32]u8, // The program.
+	name_count: int,
+	ring:       system.Handle, // The call ring of the caller.
+	end:        bool, // The command ends a debug access; else it asks for one.
+	abandoned:  bool, // No export waits for the completion.
+	unsent:     bool, // The root ring was full: the loop of the entry sends it again.
+}
+
+root_requests: [ROOT_REQUEST_CAPACITY]Root_Request
 session: Session
 // The reports of the program of the session, read again at each export.
 report_modules: op.Module_Report
@@ -173,37 +196,136 @@ refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Statu
 	return errors.fail(error, ERROR_REFUSED, .Refused, .None, 0, 0, 0, i64(status))
 }
 
-// root_debug asks the root service for the handle of a program with the
-// right Debug, on behalf of the caller of the connection with a call ring;
-// with `end`, it tells the root service that the debugging of the program
-// ended. answered is false when the root service gave no completion in
-// time.
-root_debug :: proc "contextless" (name: string, connection_ring: system.Handle, end := false) -> (completion: ring.Record, answered: bool) {
+// root_request_send sends one command Debug to the root service and keeps
+// it until its completion comes. With `end`, the command tells the root
+// service that the debugging of the program ended for the caller: no
+// export waits for its completion, and a command that the ring has no room
+// for is sent again later. tag is 0 when the table of the requests is
+// full, or when a command that asks for an access was not sent.
+root_request_send :: proc "contextless" (name: string, connection_ring: system.Handle, end: bool) -> (tag: u32) {
 	if requests.head == nil {
+		return 0
+	}
+	free: ^Root_Request
+	for &item in root_requests {
+		if item.tag == 0 {
+			free = &item
+			break
+		}
+	}
+	if free == nil {
+		system.log("debugger: ", u64(ROOT_REQUEST_CAPACITY), " commands wait for the root service: no room for one more")
+		return 0
+	}
+	request_count += 1
+	free^ = {tag = request_count, ring = connection_ring, end = end, abandoned = end}
+	free.name_count = copy(free.name[:], name)
+	if !root_request_put(free) {
+		if !end {
+			free^ = {}
+			return 0
+		}
+		free.unsent = true
+	}
+	return free.tag
+}
+
+// root_request_put writes the command of a request in the root ring.
+root_request_put :: proc "contextless" (request: ^Root_Request) -> bool {
+	packed := system.name_pack(string(request.name[:request.name_count]))
+	return system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Debug), tag = request.tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(request.ring), 5 = u64(request.end)}})
+}
+
+// root_completion_take takes a completion that no export waits for. The
+// completion of an end needs nothing. A completion that gives a debug
+// access after its export stopped waiting: the handle is closed, and the
+// root service is told that the access ended, so that no handle and no
+// record of the root service stays.
+root_completion_take :: proc "contextless" (record: ring.Record) {
+	for &item in root_requests {
+		if item.tag == 0 || item.tag != record.tag {
+			continue
+		}
+		request := item
+		item = {}
+		if request.end || system.Status(record.kind) != .Ok {
+			return
+		}
+		handle := system.Handle(record.values[0])
+		if kind, _, through := system.handle_state(handle, requests_memory); kind == .Program && through {
+			system.close(handle)
+		}
+		name := string(request.name[:request.name_count])
+		system.log("debugger: the root service answered the attach to ", system.Module_Name{name}, " after the export stopped waiting: the debug access is given back")
+		root_request_send(name, request.ring, true)
+		return
+	}
+}
+
+// root_completions_take reads each completion of the root ring. It gives
+// the completion with the tag `wanted`, when it is there; each other one
+// goes to root_completion_take.
+root_completions_take :: proc "contextless" (wanted: u32) -> (completion: ring.Record, found: bool) {
+	for _ in 0 ..< ring.CAPACITY {
+		record, has_record := system.receive(&requests.completions)
+		if !has_record {
+			break
+		}
+		if wanted != 0 && record.tag == wanted {
+			for &item in root_requests {
+				if item.tag == wanted {
+					item = {}
+				}
+			}
+			return record, true
+		}
+		root_completion_take(record)
+	}
+	return {}, false
+}
+
+// root_requests_send_again sends each end that the root ring had no room
+// for.
+root_requests_send_again :: proc "contextless" () {
+	for &item in root_requests {
+		if item.tag != 0 && item.unsent && root_request_put(&item) {
+			item.unsent = false
+		}
+	}
+}
+
+// root_debug asks the root service for the handle of a program with the
+// right Debug, on behalf of the caller of the connection with a call ring,
+// and waits for the answer at most ROOT_ANSWER_MILLISECONDS. answered is
+// false when no completion came in that time: the request stays, and its
+// completion is taken when it comes.
+root_debug :: proc "contextless" (name: string, connection_ring: system.Handle) -> (completion: ring.Record, answered: bool) {
+	tag := root_request_send(name, connection_ring, false)
+	if tag == 0 {
 		return {}, false
 	}
-	packed := system.name_pack(name)
-	request_count += 1
-	system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Debug), tag = request_count, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(connection_ring), 5 = u64(end)}})
 	limit := system.time() + ROOT_ANSWER_MILLISECONDS
 	for {
-		// A completion with another tag answers a command that this
-		// program waits for no more.
-		for _ in 0 ..< ring.CAPACITY {
-			record, has_record := system.receive(&requests.completions)
-			if !has_record {
-				break
-			}
-			if record.tag == request_count {
-				return record, true
-			}
+		if record, found := root_completions_take(tag); found {
+			return record, true
 		}
 		wait: system.Wait
 		system.wait_records(&wait, &requests.completions)
 		if system.wait_end(&wait, limit) >= limit {
+			for &item in root_requests {
+				if item.tag == tag {
+					item.abandoned = true
+				}
+			}
 			return {}, false
 		}
 	}
+}
+
+// root_debug_end tells the root service that the debugging of a program
+// ended for a caller. It does not wait for the answer.
+root_debug_end :: proc "contextless" (name: string, connection_ring: system.Handle) {
+	root_request_send(name, connection_ring, true)
 }
 
 // slot_find gives the slot of the program with a name whose module records
@@ -245,9 +367,8 @@ session_end :: proc "contextless" (why: string) {
 	system.log("debugger: the debugging of ", system.Module_Name{session_name()}, " ended: ", why)
 	system.close(session.program)
 	// The root service forgets the debug access: another caller can then
-	// ask for this program. With no answer, the access ends with the
-	// connection of the caller.
-	root_debug(session_name(), session.caller_ring, true)
+	// ask for this program.
+	root_debug_end(session_name(), session.caller_ring)
 	session = {}
 	for {
 		if _, more := record_next_ready(); !more {
@@ -260,17 +381,21 @@ session_end :: proc "contextless" (why: string) {
 // caller that attached, and that the program and the debug access are
 // still there; it reads the reports of the program again, and takes the
 // records of the fault ring. A failure gives the result of the export.
-session_of_caller :: proc "contextless" (error: ^errors.Error_Record) -> (failure: i64) {
-	caller := system.service_caller()
-	if caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
-	}
+// `needs_the_grant` is false for the detach: a caller that lost the grant
+// to act for the principal can still end its debugging, so that no thread
+// of the program stays stopped.
+session_of_caller :: proc "contextless" (error: ^errors.Error_Record, needs_the_grant := true) -> (failure: i64) {
 	if session.attached {
 		// The root service revokes the handle when the grant `debug` of
-		// the caller is revoked, and when the caller disconnects or stops.
+		// the caller is revoked, when another revocation takes the debug
+		// access away, and when the caller disconnects or stops.
 		if kind, _, _ := system.handle_state(session.program); kind != .Program {
 			session_end("the debug access was revoked")
 		}
+	}
+	caller := system.service_caller()
+	if caller == nil || needs_the_grant && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	if !session.attached || session.caller_ring != caller.ring_memory {
 		return errors.fail(error, ERROR_NOT_ATTACHED, .Absent, .Debugged_Programs)
@@ -349,23 +474,27 @@ records_take :: proc "contextless" () {
 }
 
 // record_keep notes that the thread of a record waits for its answer, and
-// keeps the stop as an event. The trap flag that the service wrote for a
+// keeps the stop as an event, with one line of the log. `awaited_step`:
+// the export `step` or `step_line` waits for this record; the end of its
+// step is its result, not an event. The trap flag that the service wrote for a
 // step leaves the thread at its next stop, of any kind: the thread goes on
 // freely at its next answer.
-record_keep :: proc "contextless" (record: op.Fault_Record) {
+record_keep :: proc "contextless" (record: op.Fault_Record, awaited_step := false) {
 	if record.thread >= THREAD_CAPACITY {
 		return
 	}
 	hold := &session.threads[record.thread]
 	hold.waits = true
 	hold.record = record
-	after_step := hold.stepping
 	if hold.stepping {
 		hold.stepping = false
 		if registers, status := system.thread_registers_read(session.program, record.thread); status == .Ok {
 			registers.rflags &~= FLAG_TRAP
 			system.thread_registers_write(session.program, record.thread, registers)
 		}
+	}
+	if awaited_step && record.kind == .Debug && record.error_code & op.DEBUG_STATUS_BREAKPOINTS == 0 {
+		return
 	}
 	if session.event_count == EVENT_CAPACITY {
 		session.events_lost += 1
@@ -396,11 +525,9 @@ record_keep :: proc "contextless" (record: op.Fault_Record) {
 		system.write_part(&writer, "int1")
 	}
 	event.kind_count = len(system.written(&writer))
-	// One line of the log for each stop that no step of the debugger made:
-	// a reader of the log, and a caller that waits with no call, see it.
-	if !after_step {
-		system.log("debugger: the thread ", record.thread, " of ", system.Module_Name{session_name()}, " stopped: ", string(event.kind[:event.kind_count]))
-	}
+	// One line of the log for each event: a reader of the log, and a
+	// caller that waits with no call, see it.
+	system.log("debugger: the thread ", record.thread, " of ", system.Module_Name{session_name()}, " stopped: ", string(event.kind[:event.kind_count]))
 }
 
 // thread_stopped says if the registers of a thread can be read: the
@@ -691,10 +818,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// do: a stop is taken, and written on the log, when it comes.
 		wait: system.Wait
 		system.service_wait(&wait, &service)
+		if requests.head != nil {
+			system.wait_records(&wait, &requests.completions)
+		}
 		written := intrinsics.atomic_load(&own.fault_written)
 		if written == intrinsics.atomic_load(&own.fault_read) {
 			system.wait_word(&wait, &own.fault_written, written)
 			system.wait_end(&wait)
+		}
+		// The completions that no export waited for, and the ends that
+		// the root ring had no room for.
+		if requests.head != nil {
+			root_completions_take(0)
+			root_requests_send_again()
 		}
 		if session.attached {
 			records_take()

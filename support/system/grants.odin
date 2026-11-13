@@ -140,8 +140,11 @@ Root_Command :: enum u32 {
 	// gives the handle only when the caller acts for the principal whose
 	// session runs that program, and when each grant of the program is a
 	// grant that the caller holds itself: a debugger acts with each handle
-	// of the program that it debugs. A service, and a program with an
-	// endpoint of the network, are refused for each caller.
+	// of the program that it debugs. A grant refuses for each caller when
+	// what it reaches belongs to that one program: a service, a private
+	// store, a terminal, an endpoint of the network. After a revocation of
+	// a grant of the caller, the root service ends each debugging that the
+	// rule no longer gives.
 	// The completion: values[0] the handle, values[1..4] the hash of the
 	// file of the program, values[5] its principal. A refusal has the kind
 	// `No_Grant` with the unit `Debug_Access`, and `found` is 1 + the grant

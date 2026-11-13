@@ -382,6 +382,8 @@ The debugger is the service `debugger` (`TOOLS.md`, "The debugger"). The console
 
 Three short names are not the name of their export, because the console has a command with that name: `resume` (`release` closes a handle of the console), `debug_memory` (`memory` gives the memory of the machine), and `debug`, the word for the act. The command that holds one thread is `hold`: `stop` stops a whole program by its name. No command of the debugger takes the name of a command that the console had.
 
+**A loaded module can take a short name.** When two commands have one name, the command added last runs ("Calls"). `load` and `isolate` add each export of a module under its own name, with no prefix: a module with an export `debug`, `threads` or `stack` takes that name from the debugger, as it takes `programs` or `time`, until `unload`. `help()` then has two rows with the name, and `describe` gives the one that runs. The full name is never taken: `connect` adds the exports of a service as `service.export`, and a module cannot export a name with a period, so `debugger.attach(...)` always calls the service.
+
 After `connect("debugger")`, each export is also a command with its full name: `debugger.threads()`. Escape during `wait_stop` closes the connection to the service, which ends the debugging.
 
 ## 1. The keys
