@@ -517,9 +517,9 @@ site_document_file_outline :: proc(site: ^Site, path: string) -> Site_Document_O
 // site_document_outline gives the title, the headings and the items of a
 // document. A guide has the ids of its rendered page; a heading of a guide
 // that is not rendered yet has no id, and a label of it does not resolve.
-// The glossary is rendered after the guides: the id of one of its headings
-// is its slug, as the renderer gives it, when no other heading has that
-// slug. A working record is a file of the repository: its places are
+// The glossary is rendered after the guides: the id of a heading of a group
+// is its slug, when no other group has that slug, and the id of a term is
+// its anchor. A working record is a file of the repository: its places are
 // lines.
 site_document_outline :: proc(site: ^Site, path: string) -> Site_Document_Outline {
 	if site == nil {
@@ -535,14 +535,21 @@ site_document_outline :: proc(site: ^Site, path: string) -> Site_Document_Outlin
 	}
 	outline := Site_Document_Outline{title = file.title, page = page, found = true}
 	if path == SITE_GLOSSARY_FILE {
+		// A heading of level 3 is a term: its id is the anchor of the term,
+		// as glossary_read gives it.
 		slugs := make(map[string]int, context.temp_allocator)
 		for heading in file.headings {
-			slugs[site_slug(heading.text)] += 1
+			if heading.level != 3 {
+				slugs[site_slug(heading.text)] += 1
+			}
 		}
+		term_ids := make(map[string]int, context.temp_allocator)
 		headings := make([]Site_Document_Heading, len(file.headings), context.temp_allocator)
 		for heading, index in file.headings {
 			headings[index] = heading
-			if slugs[site_slug(heading.text)] == 1 {
+			if heading.level == 3 {
+				headings[index].id = glossary_term_id(site_term_name(heading.text), &term_ids)
+			} else if slugs[site_slug(heading.text)] == 1 {
 				headings[index].id = site_slug(heading.text)
 			}
 		}
@@ -702,8 +709,8 @@ site_document_targets :: proc(site: ^Site, path: string, labels: []string) -> []
 	}
 	unresolved := whole
 	unresolved.resolved = false
-	// A quoted label of the glossary is first a term: its row has the
-	// anchor of the term. Else it is a heading of the glossary.
+	// A quoted label of the glossary is first a term: its entry has the
+	// anchor of the term. Else it is a heading of a group of the glossary.
 	if path == SITE_GLOSSARY_FILE && len(labels) == 1 {
 		key, quoted := site_label_key(labels[0])
 		for term in site.terms {

@@ -145,6 +145,13 @@ pre code { padding: 0; background: none; overflow-wrap: normal; }
 a { color: var(--text); text-decoration: underline; text-decoration-color: var(--line); text-decoration-thickness: 2px; text-underline-offset: 4px; }
 a:hover { background: var(--track); }
 a.term { text-decoration-style: dotted; text-decoration-thickness: 1px; }
+/* The glossary: each entry is a term, its short definition set apart by a
+   rule at its left, its explanation, then the words that it replaces, dim. */
+.term-entry { border-top: 1px solid var(--track); margin-top: 24px; padding-top: 8px; }
+.term-entry h3 { margin-top: 0; }
+.term-definition { border-left: 2px solid var(--line); padding-left: 16px; font-weight: 600; }
+.term-avoided { color: var(--dim); }
+.term-avoided-label { font-weight: 700; margin-right: 8px; }
 :focus-visible { outline: 2px solid var(--line); outline-offset: 2px; }
 h1 { font-size: 32px; line-height: 40px; margin: 32px 0 16px; font-weight: 700; }
 h2 { font-size: 24px; line-height: 32px; margin: 40px 0 16px; font-weight: 700; }

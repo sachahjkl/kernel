@@ -127,7 +127,7 @@ COMMANDS :: [?]Command {
 	{name = "news", about = "new <subject> | check: the news entries of " + NEWS_FOLDER + ", dated reports in prose of what a person can now see or use, for the page of the news of the site", run = run_news},
 	{name = "site", about = "write the site of the system in " + SITE_FOLDER + ": the pages from the documents, the code, the news, the pictures and the logs of the last machine tests, an index and one small script for the search, and the feed of the news; no request to another server", run = run_site},
 	{name = "release_number", about = "print the release number of the system: the newest release of " + CHANGELOG_FILE, run = run_release_number},
-	{name = "check", about = "odin check -vet and odin test of the host code, the checks of the sources (among them the rule on comments), changelog check, news check, then test", run = run_check},
+	{name = "check", about = "odin check -vet and odin test of the host code, the checks of the sources (among them the rule on comments and the form of the glossary), changelog check, news check, then test", run = run_check},
 	{name = "key", about = "key new <folder outside the repository>: write a new signing key of the system description (the private key, readable by its owner only, and the public key); `key show`: print the public key that the build uses (" + SIGNING_KEY_VARIABLE + ", or the test signing key)", run = run_key},
 }
 
@@ -584,6 +584,9 @@ run_check :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	if !comment_rule_check() {
+		return EXIT_FAILURE
+	}
+	if !glossary_check() {
 		return EXIT_FAILURE
 	}
 	if !changelog_check() {
