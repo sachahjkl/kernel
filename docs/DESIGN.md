@@ -27,6 +27,8 @@ The rules live as one table of constants in `support/graphics/rules.odin`: the g
 
 ## 2. Forms
 
+Forms are rectangles by preference, because a rectangle can carry a measure (its width or its height) and aligns on the grid. Other forms are allowed where they say more.
+
 - Rectangular forms are the preference of the design, not an absolute rule. A form is a rectangle unless another form says more. Any geometry can be drawn, sparingly; a round form can be right in some cases. The look to avoid: everything is a rounded blob.
 - A point or a mark is a square.
 - A line is a rectangle that is 1 or 2 pixels thick.
@@ -34,6 +36,8 @@ The rules live as one table of constants in `support/graphics/rules.odin`: the g
 - There is no shadow and no transparency.
 
 ## 3. Surfaces
+
+A surface is a level of depth: the background, a card on it, and a track inside a card. The only sign of depth is a gradient from lighter at the top to darker at the bottom: no shadow.
 
 There are three levels. Each is a constant of the package.
 
@@ -48,6 +52,8 @@ There are three levels. Each is a constant of the package.
 - A full part of a bar goes from 120 to 130 % of its color at the top to 78 % at the bottom.
 
 ## 4. Color
+
+Color carries meaning, so each color names one concept of the system: the kernel is always blue, a program always green, a failure always coral. The table is in `support/graphics/rules.odin`, and every program reads it.
 
 One color is one concept, as one term is one concept.
 
@@ -131,11 +137,15 @@ The kinds that the log writes, on a dark surface (contrast on the background `0x
 
 ## 6. Grid
 
+Every place and size sits on a grid of 8 pixels, so that the elements of different programs line up and a reader's eye can follow a column.
+
 - The unit is 8 pixels. A position and a size are multiples of 8, or of 4 inside a form.
 - A line of text is 16 pixels.
 - The space between two cards is 8 pixels. The margin inside a card is 16 pixels. The title of a card takes 40 pixels.
 
 ## 7. Cost
+
+Drawing must stay cheap and the same on every machine: integers, rectangles, and no image file to decode.
 
 - Drawing is `fill` of rectangles with integer arithmetic. No floating point and no image file. The one drawn data is the glyph cache of the vector font: the kernel tool makes it at build time from the outlines, in integers, and a text draw blends its words (`docs/FONTS.md`).
 - A display does not wait so that a reader can see it. A display that fails stays.
@@ -146,6 +156,8 @@ The kinds that the log writes, on a dark surface (contrast on the background `0x
 Three things carry no fact: the grid of points on the background, the blue of the head of the boot display, which goes darker toward the right, and the same blue on the title bar of the window in front (section 9). No other decoration exists.
 
 ## 9. The desktop
+
+This section applies the rules of sections 1 to 8 to the screen that a principal sees first: its sizes, colors and behaviour, element by element.
 
 The desktop is the screen of the compositor: the background, the bar, the windows, the two menus of the bar and the launcher. It follows sections 1 to 8.
 
@@ -158,7 +170,7 @@ The desktop is the screen of the compositor: the background, the bar, the window
 
 - The background is `COLOR_BACKGROUND` with the grid of points of section 3. The compositor computes it once, at its start.
 - The bar is 32 pixels high, at the top of the screen. It has the surface of a card (`COLOR_CARD_TOP` to `COLOR_CARD_BOTTOM`) and a line of 1 pixel in `COLOR_TRACK` at its bottom.
-- The bar holds, from the left: the mark of the system (the heron with cells of 1 pixel, 24 by 24, at (16, 4): section 11); the button `programs`; the button `windows`; at the right, the key of the launcher ("launcher: super") and the time since the start of the machine.
+- The bar holds, from the left: the mark of the system (the heron with cells of 1 pixel, 24 by 24, at (16, 4): section 11); the button `programs`; the button `windows`; at the right, the key of the launcher ("launcher: super") and the clock: the date and the time of day in UTC (`contract/date`), or the time since the start of the machine while the system has no date.
 - A button is 24 pixels high, in `COLOR_TRACK`. The button of an open menu is in `COLOR_TITLE`, with its label in white.
 
 ### Menus
@@ -174,7 +186,7 @@ The desktop is the screen of the compositor: the background, the bar, the window
 - The title bar of the window that has the focus goes from `COLOR_TITLE` (`0x3F7CC4`) at its left column to `COLOR_TITLE_END` (`0x162C45`, the same blue at 36 %) at its right column. Its top line is 125 % of these colors: the sign of depth of section 3. The bottom border has the colors of the title bar; the left border is the start color, the right border the end color.
 - The title bar of another window is quiet: it goes from `COLOR_TITLE_QUIET` (`0x2A3442`) to `COLOR_TITLE_QUIET_END` (`0x161D27`), and its title is in the dim color. So the gradient also says which window has the keyboard. Its title also says it: a title in white has the focus.
 - The close button is a square of 24 x 24 pixels at the right end of the title bar, with the character `x` of the font in white. Its color is the concept "stop a program": a deep red `COLOR_STOP_PROGRAM` (`0xB82232`), not the coral of "failed", because to close a window is not a failure. It has the sign of depth of the rules: a block from 118 % of the red at the top to 82 % at the bottom, and a top line at 150 %. When the pointer is over it, the red is brighter (`0xE0343F`). On a window that is not in front, the red is quiet (`0x4E2229`) and the `x` is a dim pink (`0xC09098`). The button shows the character `x`, not a cross of squares of 2 pixels: the two lines of such a cross do not meet on one square at the centre, and the cross does not match the title.
-- The compositor places a new window at (60, 52), and each next one 36 pixels to the right and 30 pixels lower, for 8 windows. These numbers are not on the grid: the machine test presses places in windows at these numbers (see "State").
+- The compositor places a new window at (64, 56), and each next one 40 pixels to the right and 32 pixels lower, for 8 windows (`PLACE_X`, `PLACE_Y`, `PLACE_STEP_X`, `PLACE_STEP_Y` in `programs/compositor/main.odin`). Each of these places is on the grid. `bar.new_window_place` then moves a window that does not fit up and left, on the grid (`docs/INTERFACE.md`, section 2.6).
 - Cost: the compositor computes the colors of one line of a title bar once, for the columns that the frame shows, with a fixed-point step for each channel (no division for each pixel), then copies them to the 24 lines. At its start it measures three forms of a title bar of 1024 pixels, 64 times each, and writes them on the log. On 10 machines of one check: one color takes 1.6 to 2.7 us, a mix for each pixel 65 to 87 us, one row of colors then copies 5.7 to 6.8 us. The gradient costs about 4 us for each window that a frame draws.
 - At 8 bits for each channel, the gradient has 41 levels of red, 80 of green and 126 of blue over the width of a window. The picture shows no band, so there is no dithering.
 
@@ -187,7 +199,7 @@ The desktop is the screen of the compositor: the background, the bar, the window
 
 - The key super (the left key with the logo, `display.KEY_SUPER`) opens and closes the launcher. No program uses this key: the compositor keeps it, and the program that has the focus never receives it.
 - While the launcher is open, it takes each key: a character adds to the typed part, backspace removes the last one, up and down move the choice (from the last line to the first, and back), Enter starts the chosen program, Escape closes the launcher. A press of the pointer closes it. The program that has the focus receives no key and no pointer event while the launcher is open.
-- The panel is a card of 384 pixels in the middle of the screen, on the grid. It has the title `LAUNCHER`, the caption `bar.names`, and the count of the names that match, "6 of 31".
+- The panel is a card of 384 pixels in the middle of the screen, on the grid. It has the title `LAUNCHER`, the caption `bar.names`, and the count of the names that match. The compositor writes the same count on the log at each key: "compositor: the launcher lists 11 of 50 for "p": pages, plasma, paint, ...".
 - The input line is a field of 24 pixels in `COLOR_TRACK`, with a line of 2 pixels in `COLOR_TITLE` under it. It shows the typed part in white and a caret of 2 x 16 pixels in `COLOR_TITLE`. When it is empty, it says "type a part of a name" in the dim color.
 - The list shows 10 lines. A name matches if it contains the typed part, without the case of the letters. The names that start with the typed part come first, then the others; each group is in the order of `bar.names`. A line of 2 pixels is under the typed part in each name. The chosen line is a chosen row: `COLOR_CHOSEN`, with its name and "enter: start" at its right in white (section 10). If more than 10 names match, a bar at the right says which part of the list the panel shows.
 - With no match, the list says `no program has "xyz" in its name`, and Enter starts nothing.
@@ -223,6 +235,8 @@ A chosen row is the chosen line of a list, of a menu of the bar, of the launcher
 - An element that takes input can take the focus, and the keyboard reaches it: Tab, Enter, Space, the arrows (`docs/INTERFACE.md`, section 4).
 
 ## 11. The mark
+
+The mark is drawn from data, not from a file: one table of cells in `support/mark` gives the icons of the repository, the head of the boot display and the mark in the bar.
 
 The mark is the picture that stands for the system: a heron in pixel cells, and the name "modus".
 
@@ -271,7 +285,7 @@ The mark has idle animations. Several animations play in turn. They play only on
 | preen | the head three rows lower, the neck curved (250 ms, 43); the head turned back, the beak above the body (250 ms, 43); the head folded on the back, the tip of the beak on the body (300 ms, 47); two strokes: the tip leaves the body and a feather lifts (180 ms, 47), back in the feathers (180 ms, 47); then the same poses up (250 ms each) | 2090 ms | 1 |
 | scratch | the knee in, the pose of the leg animation (200 ms, 6); three strokes on the ground: the foot forward on the row of the ground (220 or 200 ms, 8), pulled back one column with one cell of water lifted behind it (220 ms, 9); the knee in again (200 ms, 6) | 1680 ms | 1 |
 
-- The order of play, which repeats (about 80 seconds: 64.1 s still and 15.7 s of animations): 3 s blink, 4.8 s ripple, 2.2 s blink, 4 s look, 5.2 s blink, 3.4 s preen, 2.6 s ripple, 4.4 s blink, 5.5 s dip, 3 s look, 3.7 s blink, 5 s scratch, 2.4 s leg, 4.2 s blink, 3.3 s ripple, 2.8 s leg, 4.6 s look. The owner found the first still times a little too long (2026-11-12: "un peu trop large"); they were 3 to 8 s. Each time is the still time before the animation. No animation follows itself. No random number is used.
+- The order of play, which repeats (about 80 seconds: 64.1 s still and 15.7 s of animations): 3 s blink, 4.8 s ripple, 2.2 s blink, 4 s look, 5.2 s blink, 3.4 s preen, 2.6 s ripple, 4.4 s blink, 5.5 s dip, 3 s look, 3.7 s blink, 5 s scratch, 2.4 s leg, 4.2 s blink, 3.3 s ripple, 2.8 s leg, 4.6 s look. Each time is the still time before the animation. No animation follows itself. No random number is used.
 - The preen and the scratch: in the preen the bird bends and scratches its body; in the scratch it scrapes the ground with its front foot. In the scratch the body does not dip: the body, the wing and the tail one row lower change 46 cells (counted on the table), five times the cells of a stroke of the leg, and the leg reads alone.
 - The bounds, which the host tests hold: each animation has its limit of changed cells in the data (`animation_change_limits`): a frame differs from the still heron and from the frame before it by at most 24 cells, or 48 for the preen, which moves the whole head onto the back; a frame lasts 150 to 1000 ms, so the picture changes at most about 6 times each second; an animation lasts at most 3 s; a still time is 2 to 6 s.
 - The sprite sheets of the site hold 22 sprites: the still heron and 21 distinct frames. A sheet of the home is 4356 x 250 pixels (198 for each sprite), in one row: under the 8192 pixels that a browser decodes. The sheet of the icon is 704 x 32.
@@ -296,7 +310,7 @@ With the boot image of the last build (77 modules and 9 resources), the card nam
 ## State
 
 - The boot display follows all rules.
-- The desktop (the compositor: background, bar, menus, windows, pointer, launcher) follows all rules, with one exception: the places of new windows are not on the grid. The main scenario of the machine test presses fixed places in windows at these places; to move them to the grid is to measure each of these places again.
+- The desktop (the compositor: background, bar, menus, windows, pointer, launcher) follows all rules. The pointer pictures of the theme "Posy's Cursor" are the one exception of their own (section 9, "Pointer"). New windows and windows that the pointer drags are on the grid of 8.
 - `clock`, the window of `remote`, the launcher of the compositor, `interface_elements`, `vector_glyphs` and `settings` are built with the interface package (section 10). `errors`, `locks` and `net` take all their colors from `support/graphics`. `log` and `pages` take the background, the text and the dim color from it.
 - Each other program takes from `support/graphics` the colors that have a role of the rules: the background, the card (a panel or a band), the text, the dim color, the track (the empty part of a bar), an expected answer (`COLOR_PROGRAM`) and a failure (`COLOR_FAILED`), where its own color had that role. The colors that mean something of one program stay in it: a refusal that the program expects, an answer that is not the expected one (`0xE0B040` in eight programs), the measures of `flow`, `crowd`, `disk` and `clock`, the bars of `budget` and `processors`, the states of `rings`, `threads` and `terminal`, the headings of `manual`, the count of `tally`, the marble of `temple`, the paper of `paint`, the levels of `log`, the kinds of pages of `pages`. Some of them have the value of a rule color with another meaning (`0xE0A040` for kernel entries): a color of the rules for them is a change of meaning, which is not done.
 - The windows below the level of the boot display, `remote` and `scheduler`, from the farthest: `temple` (marble and ink, no rule color), `paint` (a light paper), `manual` (its own colors for headings, no cards), `monitor` (one list, no cards), the tables of `budget`, `rights`, `origin`, `limits`, `frames`, `imports`, `processors` (one size of text, bands but no cards and no captions), the measures of `clock`, `crowd`, `flow`, `disk`, then `rings`, `threads`, `workers`, `tally`, `notes`, `life`, and the text of `console` and `terminal`.

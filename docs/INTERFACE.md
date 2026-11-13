@@ -16,6 +16,8 @@ The terms of this document are in `GLOSSARY.md`, section "Desktop": interface pa
 
 ## 1. What the programs drew before the package
 
+Before the package, each program drew its window by hand with `support/graphics`, and repeated the same cards, bars and tables. This section counts that repetition: it is the reason for the package. The counts are those of the day before the package; section 12 gives the state after the conversions.
+
 Counted on 2026-11-11 (`master` `cbe3c0e`) with `grep` over `programs/*/` and `support/`:
 
 | Fact | Count |
@@ -133,6 +135,8 @@ The compositor puts each window on the grid of 8 pixels (`support/bar/window_pla
 
 ## 3. Layout
 
+Layout places the elements of a window. The package has no solver: a program takes rows from a column and splits a row into columns, in one pass, with sizes that it states before it draws. The windows of the system have fixed sizes, so this one pass covers them.
+
 - The unit is the grid of 8 pixels (`DESIGN.md`, section 6). An `Area` is a rectangle of the surface.
 - **A column** gives areas from the top of its area to the bottom: `column_take(&column, height)`. The height of a line of text is 16, a line of a table 24.
 - **A row** splits an area into columns in one pass: the caller gives the sizes of all the columns before it draws in them, so the row knows each width at once. A size is `Pixels` (a fixed width), `Characters` (a count of characters of the font: the width that the text measure gives) or `Share` (a part of what the fixed sizes leave, in proportion to its value). A gap is between two columns.
@@ -141,17 +145,23 @@ The compositor puts each window on the grid of 8 pixels (`support/bar/window_pla
 
 ## 4. Input and focus
 
+The package gives each element its input with no callback: the program passes the events of the frame, and each element returns what happened to it. Only the focus, the element under the pointer and the pressed element live from frame to frame, by the identity of the element.
+
+An example from the launcher of the compositor: `identity("launcher list")` names its list in each frame, so the list keeps the focus while its rows change.
+
 - The program gives each frame an `Input` record, filled from the `display.Event` records of the frame: the place of the pointer, a press and a release of the left button, and the keys pressed in this frame (at most 16).
 - **Element identity**: an element that takes input has an identity, a u64 that the caller makes from a text with `identity("launcher list")` (the 64-bit FNV-1a hash of the text). The identity must stay the same from one frame to the next for one element. Two elements with one text have one identity: `identity_with(base, row)` and `identity_in(parent, name)` make them two, and `Frame.identity_collisions` counts the elements of a frame that repeat an identity (a host test).
 - The order of Tab holds 64 elements (`FOCUS_ORDER_CAPACITY`); an element after them takes a press but not Tab, and `Frame.focus_overflow` counts them.
-- **The interface state** (memory of the caller, 2 KiB) keeps between frames: the element that has the focus, the element under the pointer, the element pressed and not yet released, and the order of the elements that can take the focus in the last frame.
+- **The interface state** (`Interface_State`, memory of the caller, 544 bytes: three identities, the order of 64 identities and its count) keeps between frames: the element that has the focus, the element under the pointer, the element pressed and not yet released, and the order of the elements that can take the focus in the last frame.
 - **The keyboard is a first path**: Tab and Shift+Tab move the focus in the order of the elements of the last frame; Enter and Space press the button that has the focus; up and down move the choice of a list that has the focus; a text input that has the focus takes the characters and Backspace. The launcher of the compositor is the model: each thing that the pointer does, a key does.
 - **The pointer**: an element under the pointer is "under the pointer" (the close button of a window is brighter); a press and a release on one element press it. A press on an element gives it the focus.
 
 ## 5. Text
 
-- **The interface of the text** is two functions and one record: `Font` (`kind`, `scale`), `text_width(font, text) -> pixels` and the record `Text` of section 2.1 with `text_scale` and `text_subpixel_x`, with the scales 1, 2 and 3.
-- **The font of the system** (`docs/FONTS.md`): the vector font by default, from the glyph cache that the root service maps, with a coverage for each subpixel band; Spleen 8x16 as the fallback and as the other value of the setting `font`. Both are monospace on cells of 8 x 16, so `text_width` and the layout do not change with the setting, and `text_subpixel_x` stays 0 on the grid. `execute` draws a text record with `graphics.text_scaled`: the package does not know which font draws.
+A program asks for a font and a scale, measures a text, and writes a text record; the package and `support/graphics` draw it. Two fonts exist: the font of the cells (monospace, 8 x 16) for values, and the interface font (proportional) for the words that name and explain (`docs/FONTS.md`).
+
+- **The interface of the text** is two functions and one record: `Font` (`kind`, `scale`), `text_width(font, text) -> pixels` and the records `Text` and `Interface_Text` of section 2.1, with `text_scale` (1, 2 or 3) and, for an `Interface_Text`, `text_origin_thirds`.
+- **The font of the system** (`docs/FONTS.md`): the vector font by default, from the glyph cache that the root service maps, with a coverage for each subpixel band; Spleen 8x16 as the fallback and as the other value of the setting `font`. Both are monospace on cells of 8 x 16, so `text_width` and the layout do not change with the setting, and a `Text` record of the cells stays on whole pixels. `execute` draws a text record with `graphics.text_scaled`: the package does not know which font draws.
 - **A change of the setting** comes as the display event `Settings_Changed`: `window_events` marks the window as not drawn, and the next frame draws it whole (each draw record is the same, each pixel of text is not).
 - **The interface font** (`docs/FONTS.md`, section 12): the second `kind`, `Interface`, beside `Cells_8x16`. A `Draw_Table` names the interface font of its program (`interface_font`: the caches that `display` validated at `open`; `nil`: none); `window_frame_begin` sets it, so a program that draws its window with the package takes it with no change of its code. A table that a program builds itself (the compositor, the measures) has none unless the program names it.
 - **A text is measured in the font that draws it**: `font_in_use` gives the font of a text of a table: the interface font only when the table has it, the setting is the vector font, and the text has at most 256 bytes; else the font of the cells. `text_measured_width`, `texts_measure` (many texts in one call: the lines of a list), `measured_size` (a column of a row, rounded up to the grid of 8) and `text_fit` (the longest start of a text that fits a room) all go through it.
@@ -160,11 +170,15 @@ The compositor puts each window on the grid of 8 pixels (`support/bar/window_pla
 
 ## 6. The output and its execution
 
+The draw table is the whole output of a frame. Execution turns it into pixels in the canvas of the program, either whole or only in the damage rectangles; both give the same pixels.
+
 - `execute(table, canvas)` draws each record into a canvas of the program (its surface), in order: `Rectangle` is a `fill`, `Vertical_Gradient` is the `block` of the rules, `Horizontal_Gradient` is the `gradient` row of the title bar, `Text` is the font of the system.
 - `execute_in_rectangles(table, canvas, rectangles)` draws, for each rectangle, the records that touch it, cut to it.
 - **A later back end** (property 18, WebGPU): the same table is the input of a GPU pass: one instance for each record, the gradients in the vertex colors, the text from an atlas or from outlines (section 9). The format has no pointer and no field that only the processor can read.
 
 ## 7. Where it lives: a `support` package now, a module when the contract can describe its calls
+
+Shared code in this system is a module, loaded once and named by its hash. The interface package is compiled into each program today, because the module contract cannot yet carry every call of the package. This section weighs the two forms and shows a module that already works for part of the package.
 
 Two forms were weighed:
 
@@ -238,6 +252,8 @@ Refused:
 
 ## 12. State of the conversions
 
+Most programs now draw their window with the package. This section lists the invariants that the host tests hold, each converted program with its counts before and after, what the pictures showed, and the programs that are not converted.
+
 ### Invariants and what holds them
 
 | Invariant | Where | What holds it |
@@ -258,7 +274,7 @@ Refused:
 | A table that does not cover its surface leaves no stale pixel | Each damage rectangle of a surface is painted with the background first (`draw_damage_on_surface`), a whole frame starts from the background, with no rule for the caller | Host test `a_gone_record_leaves_no_pixel` |
 | Names are complete words | `raster.odin`: `start_x`, `signed_height`, `width_inverse`, `first_x`, ...; `parse.odin`: `start_read`, `end_read`, `glyph_bytes`; `vector_glyphs`: `pixel_x`, `pixel_y`; `bar`: `full_width`; the launcher: `name_index`, `line_number`. The TrueType tags stay | Read |
 
-The package has 24 host tests (`support/interface/interface_test.odin`), the font prototype 4.
+The package has 49 host tests (45 in `support/interface/interface_test.odin`, 4 in `interface_font_test.odin`), and `support/vector_font` has 22.
 
 ### The converted windows
 

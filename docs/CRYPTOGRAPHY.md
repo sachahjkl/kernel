@@ -32,6 +32,8 @@ What it means here:
 
 ## 3. The layout
 
+The taken code keeps the folders and the names of its origin, so that its imports need one rule. Beside it lie the compatibility layer that the system wrote and the manifest that names the origin of each file.
+
 | Path | What it is |
 |---|---|
 | `support/cryptography/<name>/` | The files that are taken, with the folder names of the origin (`_chacha20`, `chacha20`, `_subtle`, ...), so that the import paths of the origin need one rule only |
@@ -44,6 +46,8 @@ What it means here:
 - The origin used a volatile `memset` and a fence: that is also not removable, but it depends on how the compiler treats volatile stores.
 
 ## 4. The proof of what changed
+
+A reader must be able to trust that the cryptography is the code of its origin, with only the changes that the project lists. A check proves it at each `kerneltool check`: it applies the listed changes to the origin and compares the result with the file of the repository, byte for byte.
 
 `kerneltool cryptography-origin` (also in `kerneltool check`) reads the manifest. For each file:
 
@@ -79,7 +83,9 @@ There are two groups of adjustments.
 
 ## 5. The primitives, and their tests
 
-40 files are taken, in 23 packages. Each line of the table has a host test with its published vectors (`support/cryptography/vectors`), and the module runs the same vectors on the machine (section 6).
+Each primitive passes the published vectors of its standard, on the host and on the machine. The table names each primitive, the packages of the origin that hold it, and its vectors.
+
+40 files are taken, in 22 package folders (`support/cryptography/origin.manifest`). Each line of the table has a host test with its published vectors (`support/cryptography/vectors`), and the module runs the same vectors on the machine (section 6).
 
 | Primitive | Origin packages | Vectors |
 |---|---|---|
@@ -111,6 +117,10 @@ So the code that runs is the portable code of the origin: the bitsliced, constan
 
 ## 6. The module `cryptography`
 
+Programs reach the primitives through one module, `cryptography`, so the code is shared by hash and a key never leaves the program that holds it: the module runs in that program. Its exports take only bytes of the caller, read each byte once, and erase every secret that they leave behind.
+
+A call from `support/quic`, through its procedure table `quic.Cryptography`: the seal of a 1-RTT packet is one call of `seal_with_chacha20_poly1305` with the key, the nonce, the header as additional data, the frames, and the place of the result.
+
 `modules/cryptography` is one module of code with exports, a description and a hash. A program imports it through its import slots, as `agenda` imports `calendar`; the console can call it.
 
 | Export | Parameters | Result |
@@ -119,7 +129,7 @@ So the code that runs is the portable code of the origin: the bitsliced, constan
 | `open_with_chacha20_poly1305`, `open_with_aes_128_gcm` | key, nonce, additional data, sealed text, result, error | The text, or `Not_Authentic` with no byte |
 | `sha256`, `hmac_sha256` | text (and key), result | 32 bytes |
 | `hkdf_sha256_extract`, `hkdf_sha256_expand` | salt and input, or key, info and length; result, error | 32 bytes, or `length` bytes (1 to 8160) |
-| `x25519` | scalar, point, result, error | 32 bytes; a result of zeros (a point of small order) is `Not_Authentic` |
+| `x25519` | scalar, point, result, error | 32 bytes; a point of small order, whose shared secret is 32 zero bytes, is `Bad_Value` for argument 2 |
 | `ed25519_public_key`, `ed25519_sign`, `ed25519_verify` | private key or public key, message, signature, error | 32 bytes, 64 bytes, or 0 / `Not_Authentic` |
 | `argon2id` | password (1024 bytes at most), salt (8 to 64), the cost (a record `Argon2id_Cost`: the KiB of the blocks, 8 for each lane at least; the passes, 1 to 64; the lanes, 1 to 16, computed one after the other; the bytes of the key, 4 to 64), the blocks (Bytes of the caller), result, error | The key: the bytes that the cost names. `unlock` derives the key of the passphrase of a named principal with it (`PRINCIPALS.md`): 19456 KiB, 2 passes, 1 lane, 32 bytes |
 | `header_protection_mask_with_aes_128`, `header_protection_mask_with_chacha20` | key (16 or 32 bytes), sample (16 bytes), result, error | The 5 bytes of the QUIC header protection mask (RFC 9001, sections 5.4.3 and 5.4.4; `docs/QUIC.md`) |

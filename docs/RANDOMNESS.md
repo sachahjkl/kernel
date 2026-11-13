@@ -19,14 +19,14 @@ The terms are in `GLOSSARY.md`, section "Randomness": random seed, random genera
 A program draws random bytes from its own random generator, a record of fixed size in its own memory (property 14). A draw makes no kernel entry and no call. The generator starts from the random seed of the program: 32 bytes that its starter writes in the context values 9 to 12 (`op.CONTEXT_VALUE_SEED`).
 
 - **The root service** has no starter. At its start, before it starts any program, it gathers its own seed from the sources of the processor (section 3).
-- **Each starter** (root, `console`, `errors`, `imports`, `frames`, `locks`, `rings`) gives each child 32 bytes of its own stream (`random.values_with_seed`). `system.program_start` refuses a start whose seed is 32 zero bytes: a starter cannot forget it.
+- **Each starter** (root, `console`, `errors`, `imports`, `frames`, `locks`, `rings`, `address_space`, `fault_ring`, `kernel_events`, `return_fault`) gives each child 32 bytes of its own stream (`random.values_with_seed`). `system.program_start` refuses a start whose seed is 32 zero bytes: a starter cannot forget it.
 - **The program** reads its seed once (`random.generator_from_context`), which erases it in the context.
 
 The forms that the system can take, weighed against the properties:
 
 | Option | Against the properties | Chosen |
 |---|---|---|
-| A kernel operation that gives random bytes | Property 1: the kernel has 27 counted operations; this one needs no kernel: a program runs `rdrand` with no handle, and the root service can give a seed. A kernel entry for each draw is also a cost on a hot path (QUIC draws a connection ID and a nonce for each handshake) | No |
+| A kernel operation that gives random bytes | Property 1: the kernel has 33 counted operations; this one needs no kernel: a program runs `rdrand` with no handle, and the root service can give a seed. A kernel entry for each draw is also a cost on a hot path (QUIC draws a connection ID and a nonce for each handshake) | No |
 | A service `random` that answers each request | Property 5: a call for each draw. The pool of a service is one shared state for all programs | No |
 | A seed for each program at its start, and a generator in the program | Property 14 (the state is memory of the program), property 20 (no ambient access: the seed is a value of the context, which only the starter writes), property 5 (no call and no kernel entry for a draw) | Yes |
 

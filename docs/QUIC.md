@@ -14,6 +14,8 @@ QUIC (RFC 9000) carries the streams of a connection over UDP, and protects each 
 
 ## 1. Where QUIC runs
 
+QUIC needs no new part of the kernel. The network service carries UDP datagrams, as for any program, and the whole protocol, with its keys, runs inside the program that holds the connection. The table says where each part is, and why.
+
 | Part | Where | Why |
 |---|---|---|
 | The datagrams | An endpoint of the network service, as for UDP today. A server needs datagrams from any remote on one port: a listen grant of UDP, with admitted remotes, as for TCP (section 6) | The service multiplexes the one pair of queues of the device (the note of property 5 in `PROPERTIES.md`) |
@@ -25,6 +27,8 @@ QUIC (RFC 9000) carries the streams of a connection over UDP, and protects each 
 **No kernel change is needed.** QUIC uses the operations that UDP uses today (rings, memory, waits). The changes are in the network service and its contract (a listen grant of UDP, section 6), not in the kernel.
 
 ## 2. The form of the library
+
+`support/quic` is written as `support/tcp` is: the caller owns every byte of state, and the library only reads and writes it. So the same code runs in a program of the system and in the tool on the host, and a test can drive it with a fake clock.
 
 The same form as `support/tcp`:
 - pure code over memory of the caller, with no allocation and no kernel call;
@@ -41,6 +45,8 @@ The same form as `support/tcp`:
 So no byte is checked in one place and used from another, and the result of each export of the module is private memory, as section 6 of `docs/CRYPTOGRAPHY.md` asks.
 
 ## 3. Packet protection (the first layer, built)
+
+Each QUIC packet is encrypted and authenticated, and even its header is masked. This layer reads a packet of the network as hostile input, removes the protection, and opens it; and it does the reverse for a packet to send. It knows nothing of connections.
 
 `support/quic`, files `integers.odin`, `keys.odin`, `packets.odin`:
 
@@ -118,6 +124,8 @@ The values of appendix A were copied from the text of the RFC by a script that i
 
 ## 4. TLS 1.3 for QUIC (the second layer, built)
 
+TLS 1.3 gives the two sides of a connection their keys, and proves to the client that it speaks to the server whose key it expects. This layer is a small TLS: one group, one signature, two cipher suites, and a raw public key in place of a certificate.
+
 `support/quic/tls_key_schedule.odin` and `tls_handshake.odin`: both sides of the handshake as one state machine over bytes in memory of the caller, with no allocation. QUIC carries the messages in CRYPTO frames at their encryption level; there is no record layer (RFC 9001, section 4).
 
 **What it does, and nothing more:**
@@ -167,9 +175,13 @@ The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 841
 
 ## 5. The transport of one connection (the third layer, built)
 
-`support/quic`, files `connection.odin`, `connection_receive.odin`, `connection_send.odin`, `recovery.odin`, `frames.odin`, `transport_parameters.odin`, `ranges.odin`. One `Connection` record in memory of the caller holds all of the state: no allocation, no kernel call. It has about 214 KiB, most of it the two stream buffers of 64 KiB.
+`support/quic`, files `connection.odin`, `connection_receive.odin`, `connection_send.odin`, `recovery.odin`, `frames.odin`, `transport_parameters.odin`, `ranges.odin`. One `Connection` record in memory of the caller holds all of the state of the connection: no allocation, no kernel call. It has about 88 KiB. The streams are apart, in a table of `quic.Stream` records that the caller gives (below): each stream record holds two buffers of 64 KiB and has about 129 KiB. The log line of `quic_echo` prints the real sizes: "a table of 16 connections of 88 KiB, each with 4 streams of 129 KiB".
+
+This layer is the protocol of one QUIC connection: the handshake, the acknowledgements, the losses, the streams and the timers. A program feeds it datagrams and the time, and takes from it datagrams to send and the bytes of its streams. The sections below give the calls, then what the layer does, the frames, what it does not do, and its tests.
 
 **Where a `Connection` record lives.** Never on a stack: the main thread of a program has 256 KiB of stack, and a record there leaves too little room for the frames of the module `cryptography` and the 16 KiB that it erases below them. A record goes in the global memory of the program or in a mapping that the program owns. No check enforces this: on the host the heap and the stacks of threads are both mappings, so an address test would refuse good records, and a program of the system has no call that gives the bounds of its stack.
+
+### The calls of a connection
 
 **The calls of the caller:**
 - `connection_start_client`, `connection_start_server`: a server starts its handshake at the first Initial packet of the client. Each one takes a table of stream records in memory of the caller (below).
@@ -178,6 +190,8 @@ The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 841
 - `connection_deadline(connection)` and `connection_time_passes(connection, now)`: the timers. Time is a count of microseconds that the caller gives; the tests give a fake clock.
 - `stream_open` (a client), `stream_write`, `stream_read`, `stream_reset`, `stream_stop_sending`: the streams, each named by its identifier. `stream_of` gives the record of an open stream; a caller walks `connection.streams` to find the streams that the peer opened.
 - `connection_close(connection, code, now)`: a close of the application.
+
+### What the transport does
 
 **What it does:**
 - **The three packet number spaces**, each with its keys, its packet numbers, its ACK ranges and its packets in flight. The Initial keys go when the client sends its first Handshake packet and when the server opens one; the Handshake keys go when the handshake is confirmed (RFC 9001, section 4.9).
@@ -192,7 +206,7 @@ The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 841
 - **The data of a lost packet goes again**: the CRYPTO and STREAM ranges, HANDSHAKE_DONE, MAX_DATA, MAX_STREAMS, STREAMS_BLOCKED, and the MAX_STREAM_DATA, RESET_STREAM and STOP_SENDING of its stream (with their values of now). A packet carries one STREAM frame and the control frames of one stream at most, so its record names one stream for each. A PATH_RESPONSE does not go again. Data or a frame of a stream that ended since the packet went is not sent again.
 - **A fixed congestion window** of 12 000 bytes (the initial window of RFC 9002, section 7.2). Probes go past it.
 - **Streams** (`support/quic/streams.odin`): bidirectional streams, which only the client opens. Unidirectional streams are not allowed (a limit of 0 each way).
-  - **The table of stream records.** The caller gives a table of `quic.Stream` records with the connection, in memory of the caller (a record has 2 × 64 KiB of buffers and about 2 KiB of state: about 130 KiB). Its count is the most streams that are open at one time.
+  - **The table of stream records.** The caller gives a table of `quic.Stream` records with the connection, in memory of the caller (a record has 2 × 64 KiB of buffers and about 1 KiB of state: about 129 KiB). Its count is the most streams that are open at one time.
   - **The limit of streams.** A server gives the client a limit equal to its records (MAX_STREAMS in the transport parameters), and one more each time a stream of the client ended, with a MAX_STREAMS frame: the limit never promises a stream that has no record. A server opens no stream: it would take a record that the limit promised. A client that reaches the limit sends STREAMS_BLOCKED.
   - **The implicit open.** A frame that names a stream of the client that is not open yet opens it, and each lower stream of the client (RFC 9000, section 3.2). The limit bounds that count, so a stream number far ahead within the limit takes records that exist, and one past the limit is STREAM_LIMIT_ERROR before any record is taken.
   - **The end of a stream.** A stream ends when both directions ended: this side's last byte (all bytes and the end acknowledged) or its RESET_STREAM acknowledged; and the end of the peer read by the application (its last byte, or its reset). Its record is then free, the part of its rings that it used is written with zeros, and its identifier never names a stream again: a later frame for it is dropped. A program must read each stream to its end: a stream that it never reads keeps its record for the life of the connection, and a server then gives the client no stream in its place.
@@ -220,6 +234,8 @@ The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 841
 - **Datagrams of 1200 bytes**: a datagram with an Initial packet of the client, or an ack-eliciting Initial packet of the server, is padded to 1200 bytes. A server drops a client Initial in a smaller datagram, or with a Destination Connection ID under 8 bytes; a client drops a server Initial with a token.
 - **The close**: a side that closes sends CONNECTION_CLOSE and answers each later datagram with it, for 3 probe timeouts (closing). A side that receives it sends nothing for 3 probe timeouts (draining). An application close before the 1-RTT keys goes as APPLICATION_ERROR, with no code of the application.
 
+### The frames
+
 **The frames, each read as hostile input:** each field is read with its length checked first. A frame that is cut, a length past the packet, an end past 2^62 - 1, a count of streams over 2^60 or a type that does not exist is FRAME_ENCODING_ERROR. A type that is not in its shortest form, or a frame at a level where it may not go (RFC 9000, section 12.4), is PROTOCOL_VIOLATION.
 
 | Frame | What this layer does |
@@ -239,6 +255,8 @@ The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 841
 | PATH_RESPONSE, DATA_BLOCKED, STREAM_DATA_BLOCKED, STREAMS_BLOCKED | Read and not used (STREAM_DATA_BLOCKED checks its stream as STREAM does) |
 | NEW_TOKEN | A client reads it and keeps no token; to a server, PROTOCOL_VIOLATION |
 
+### What the transport does not do yet
+
 **What this layer does not do yet:**
 - NewReno: the congestion window does not grow and does not shrink after a loss; there is no persistent congestion.
 - Pacing, ECN, and a path MTU larger than 1200 bytes.
@@ -249,6 +267,8 @@ The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 841
 - A packet number shorter than 4 bytes on the wire.
 - Packets of a level whose keys are not ready are dropped, not kept: the peer sends them again.
 - A STREAM frame of the peer may write over bytes that came and were not read yet, with other bytes: RFC 9000 allows PROTOCOL_VIOLATION there, and this layer takes the new bytes. Only the authenticated peer can do it, and it can send any bytes at a new offset anyway.
+
+### The tests of the transport
 
 **Tests** (`support/quic/transport_test.odin`, host): two connections in memory, joined by a channel that the test controls (loss, reorder by delay, duplicates, a delay of 10 ms one way), with a fake clock and fixed seeds:
 - a handshake: both connected with ChaCha20-Poly1305, the client confirmed, the Initial and Handshake keys dropped, the parameters applied;
@@ -275,7 +295,7 @@ The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 841
   - the rings of a stream record are zero after its stream ended;
   - a stream that the client resets and stops: the server reads the reset, answers with RESET_STREAM and the code of the STOP_SENDING, both records end, and the 3000 bytes that the server never read count as read for the window of the connection;
   - hostile frames: a stream far ahead within the limit opens each lower one; one past the limit, and a number near 2^62, are STREAM_LIMIT_ERROR with no record taken; data within the limit of each stream and past the limit of the connection is FLOW_CONTROL_ERROR; a reset under the data, or that changes the end, is FINAL_SIZE_ERROR; STOP_SENDING ends the sending part; a server opens no stream;
-- the corrections of the third read, each with a test that failed before it:
+- the corrections found by a review, each with a test that failed before it:
   - STREAM data in 40 islands: the 8 past the 32nd are not acknowledged, and once the holes and those 8 come, the 8000 bytes are read once, in order; the same for CRYPTO data;
   - a sent packet whose data has no place stays in flight;
   - a random datagram shaped as an Initial does not take the server, and the real client connects after it;
@@ -287,7 +307,11 @@ The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 841
 
 ## 6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)
 
+This layer puts the library on the network: one program serves many QUIC clients on one UDP port. Most of it is defence: a server on a network gets datagrams from addresses that anyone can forge, so it must spend no memory and little work on a client until the client proves its address.
+
 **Where it runs.** QUIC runs in the program, as TCP does in `server` and `fetch`: `support/quic` over a datagram endpoint of the network service. The network service sees UDP datagrams; it reads no QUIC header and keeps no QUIC state.
+
+### The listen grant of UDP
 
 **The listen grant of UDP in the datagram contract.** A QUIC server needs datagrams from any client on one port. A UDP endpoint with a client grant names one remote, and the network service drops each datagram of another remote. So the listen grant has a UDP form (`contract/datagram`, `programs/network`), with the rules of the TCP form:
 
@@ -308,7 +332,9 @@ The root service names the grant by the name of the program: `quic_echo` has the
 
 **What the kernel does: nothing new.** No kernel code changed. The endpoint uses the rings, the memory objects and the waits that UDP uses today.
 
-**The records.** A server has a table of `quic.Connection` records (connection records) in memory of the program: one mapping, never a stack (section 5). `quic_echo` has 16 records of about 85 KiB, 4 stream records of about 130 KiB for each record, and an echo buffer of 16 KiB for each stream: about 2770 pages (10.8 MiB) in one mapping, within its budget of 4096 pages (`programs/root/main.odin`). These sizes are computed from the declarations: the log line "listening on the UDP port 4433" prints the real sizes of a record and of a stream record. `quic.server_init` takes the stream records of all records in one table, 4 for each record in its order.
+### The server of several connections
+
+**The records.** A server has a table of `quic.Connection` records (connection records) in memory of the program: one mapping, never a stack (section 5). `quic_echo` has 16 records of about 88 KiB, 4 stream records of about 129 KiB for each record, and an echo buffer of 16 KiB for each stream: about 2670 pages (10.4 MiB) in one mapping (`TABLE_PAGES` in `programs/quic_echo/main.odin`), within its budget of 4096 pages (`programs/root/main.odin`). These sizes are computed from the declarations: the log line "listening on the UDP port 4433" prints the real sizes of a record and of a stream record. `quic.server_init` takes the stream records of all records in one table, 4 for each record in its order.
 
 **The server of several connections** (`support/quic/server.odin`, `quic.Server`). The caller gives each datagram with its remote address and port; the server chooses the record:
 
@@ -328,6 +354,8 @@ The root service names the grant by the name of the program: `quic_echo` has the
 7. The work of datagrams of unknown identifiers has budgets (below). A datagram over a budget is dropped before any cryptography. The datagrams of known records have no budget. `quic_echo` decides the order of each batch once (`server_batch_order`, which reads the header of each datagram one time): the datagrams of known records first, then the others, each one given once. A second datagram of a new client in the same batch then goes to the record that the first one took. Before, the order was decided again in each of two passes, and that second datagram was in neither pass.
 8. A record whose address is validated asks the caller to validate its remote (`validate_remote`) at each datagram, until the caller gives a result of 1 for its `Validate` (`server_validation_confirmed`; one bit in the record). The case: the program releases a remote after its Retry, the client comes back before the network service handled the Release, and the `Validate` of the new record comes after the Release and gives 0. The next datagram of the client of 1200 bytes admits the remote again, and the next `Validate` works. Before, nothing validated it again, and the connection stayed under the limit of 3 times for its life. The tag of each `Validate` carries the place and the low 27 bits of the generation of the record: a result that comes after its record ended and the place was taken again confirms nothing.
 
+### The token of a Retry
+
 **The token of a Retry.** An AEAD value: ChaCha20-Poly1305 of the module `cryptography`, under a key of 32 bytes that the server makes at its start from its generator (`fill_for_a_key`, the least strength of the server). The nonce is a counter of the server, never used two times with one key. It seals:
 - the original Destination Connection ID of the client, which the server sends back in the transport parameter `original_destination_connection_id`;
 - the Source Connection ID of the Retry, which the client must use as its next Destination Connection ID, and which the server sends in `retry_source_connection_id`;
@@ -342,6 +370,8 @@ The additional data is the remote address and port. The token has 62 bytes. It d
 - An attacker on the path can do worse (drop the datagrams of the client). An attacker off the path gets nothing.
 
 Why a table of used counters, and not a window of bits over the counter (the anti-replay window of IPsec): the counter grows with each Retry, not with each record. A window must cover every Retry of 10 s: 200 000 counters at 20 000 Retries a second, 25 KiB, and a flood of Retries beyond it would push the token of a real client out of the window, and refuse it. The table keeps 64 × 24 bytes, only for tokens that took a record, and a flood of Retries does not touch it.
+
+### The budgets of work
 
 **The budget of Initial checks of one address.** A host with one real address takes one Retry, so it has a valid token for 10 s, and can send Initials with it that pass the token check but do not open. If each of them spent one check of the shared budget, 500 in a second would stop every new client. So each address whose token opened has its own budget: 4 Initial checks at once, then 1 in each second. A client needs one, and one more for each Initial that the network loses. Only an address whose token opened gets a place: a forged source never does.
 
@@ -363,7 +393,7 @@ What remains: a host with 1024 real addresses, each with a valid token, can hold
 
 | Limit | Value | Why |
 |---|---|---|
-| Records | 16 | 16 × 214 KiB and their echo fit the budget of the program |
+| Records | 16 | 16 records of 88 KiB, their 64 stream records of 129 KiB and their echo buffers fit the budget of 4096 pages of the program |
 | Connections of one remote address | 8 | Half the table: one host cannot take all of it |
 | Connections in the handshake of one remote address | 2 | A host with authentic Initials of its own holds 2 records for 10 s at most |
 | Connections in the handshake at once | 8 | Half the table stays for connections that completed |
@@ -390,6 +420,8 @@ Before the budgets, each forged Initial cost the 11 exports (about 30 us), with 
 
 **The budgets are token buckets.** Each budget holds at most its depth of units of work (a tenth of a second of its rate), and gains its rate in each second, continuously; each Retry, token check or Initial check takes one unit. A burst takes the depth at once, then the rate: no window has a boundary where a burst gets the budget of two seconds in one millisecond, as the fixed window of one second did. The rates are a share of one processor, by the costs above: when a flood spends every budget, the work of new identifiers takes about 350 ms of each second of one processor (200 for Retries, 90 for token checks, 60 for Initial checks). The costs are computed from the speeds of the module, not measured on these calls: the host test `the_cost_of_the_work_of_new_connections` (`support/quic/server_speed_test.odin`) measures them, and the rates follow the measure.
 
+### What a flood can do
+
 **What a flood can do after this round, and what it cannot.**
 - It cannot take a record from a forged address: a record needs a token that came back to the address. It cannot make the server open an Initial without a valid token, or spend more than the budgets on cryptography.
 - **A flood above a shared budget stops new clients for its duration.** To spend the budget of Retries, it brings more than 20 000 Initials with no token in each second (24 MB/s, from any forged sources); to spend the budget of token checks, more than 30 000 Initials with a token (36 MB/s). For as long as it lasts, a new client meets an empty budget at most of its tries, and ends at its handshake deadline. The connections that completed go on: their datagrams have no budget and come first. No server without a defence based on addresses avoids this: a forged Initial and the first Initial of a real client look the same until the Retry comes back.
@@ -399,6 +431,8 @@ Before the budgets, each forged Initial cost the 11 exports (about 30 us), with 
 - It can fill the 96 places that `quic_echo` posts for datagrams, and the 64 admitted remotes of the network service, faster than the program empties them. Then the network service drops datagrams with no place, those of real connections too: the order of known datagrams first works only on the datagrams that reached the program. A flood that outruns one pass of the program is a limit of the device and of the network service (one pair of queues), not of QUIC.
 - A host with a real address can take records within the limits of one address (2 in the handshake, 8 in all) for the handshake deadline or the idle timeout, from each address that it really has.
 - An attacker on the path can replay a token (above), or drop datagrams.
+
+### Other rules of the server
 
 **A NAT that changes the address or the port of a client ends its connection.** The server finds a record by its identifier and its remote, and sends `disable_active_migration`: a datagram with the identifier of a record from another address or port is dropped. RFC 9000, section 9, allows this. A client behind a NAT that gives it another port after a silence (often 30 s or more) loses its connection until the idle timeout. Later: validate the new path with PATH_CHALLENGE for a datagram that opens.
 
@@ -413,6 +447,8 @@ Before the budgets, each forged Initial cost the 11 exports (about 30 us), with 
 **The stateless reset: not done.** A server that restarts forgets its connections; their clients end at their idle timeout.
 
 
+### The key of the server and the programs
+
 **The key of a server.** `quic_echo` makes an Ed25519 key at its start from its own generator (`random.fill_for_a_key`, the strength "processor" at least). The private key stays in the memory of the program: in the configuration of its `quic.Server`, which copies it into each handshake, and each handshake erases its copy. The public key goes on the log ("quic_echo: the public key of this server: " and 64 hexadecimal digits) and in the window; a client pins it. A new start makes a new key, which the client must pin again: a key that lasts needs a store of the program and a grant, which is not built.
 
 **A weak seed.** A seed weaker than "processor" makes no key (`Seed_Too_Weak`): `quic_echo` writes "the random seed of this program is weak: it makes no key of a server, and listens on nothing" on the log and in its window, and opens no endpoint. This is the rule of `docs/RANDOMNESS.md`: the program chooses what it accepts.
@@ -420,6 +456,8 @@ Before the budgets, each forged Initial cost the 11 exports (about 30 us), with 
 **The programs.**
 - `programs/quic_echo`: the server. A client opens up to 4 streams at one time; on each one each byte goes back, then the end of the stream after the end of the client, or a reset with the code of the client after its reset. The bytes in and out of a connection on the log and in the window are the sums of its streams. Its window shows its public key, its connections (remote, state, bytes in and out, smoothed round-trip time) and its counts (accepted, ended, not authentic, refused by a limit). It writes each new connection and each end on the log (50 lines in one second at most), and its counts once in a second when they change.
 - The client: the peer of the tool on the host (`tools/kerneltool/peer_quic.odin`). It links `support/quic` and the module `cryptography` compiled for the host, and pins the key that the machine printed. It sends its datagrams as the gateway 10.0.2.2, through the network device of the machine, so the network service of the machine is on the path. A client inside the machine would need a second program with a client grant of UDP to the local address; the network service sends no datagram to its own address (no loopback), so this is not possible today.
+
+### The tests of the server
 
 **The tests.**
 - On the host (`support/quic/server_test.odin`, `retry_test.odin`):
@@ -446,6 +484,8 @@ Before the budgets, each forged Initial cost the 11 exports (about 30 us), with 
   - Whether the sandbox of the flake has `/dev/kvm` is not settled by reading. The derivation `kernel-boot-test` does not ask for the system feature `kvm`. The run that failed shows the speed of KVM (378 KB hashed in 311 µs, a round trip of 0.4 ms): that run had it. The step no longer depends on it.
   The machine of the weak seed starts `quic_echo` too (`random_scenario.odin`).
 
+### A stack that this project did not write
+
 **A stack that this project did not write** (`kerneltool test quic-real`, `tools/kerneltool/quic_real.odin`). OpenSSL has a QUIC client since 3.2, with raw public keys of a server (`openssl s_client -quic`, `-enable_server_rpk`); the nixpkgs of the flake has OpenSSL 3.6.5, now in the development shell. What the manual and the source of `apps/s_client.c` (tag openssl-3.6.0) say:
 - `-quic` needs `-alpn`.
 - `-enable_server_rpk` offers the server certificate types {raw public key, X.509}; this server accepts a list that has the raw public key.
@@ -463,7 +503,7 @@ The thread of the peer runs the relay. `peer_run` reads each frame of the machin
 
 The machine starts `quic_echo`; the step Quic_Key reads its key; the step Openssl_Quic runs:
 ```
-printf '%s\n{fin}\n' 'an echo through QUIC, from the OpenSSL of the host' | timeout 20 openssl s_client -quic -alpn kernel-remote -enable_server_rpk -groups X25519 -sigalgs ed25519 -ciphersuites TLS_CHACHA20_POLY1305_SHA256 -adv -connect 127.0.0.1:<port of the relay> 2>&1
+(printf '%s\n{fin}\n' 'an echo through QUIC, from the OpenSSL of the host'; sleep 3) | timeout 20 openssl s_client -quic -alpn kernel-remote -enable_server_rpk -groups X25519 -sigalgs ed25519 -ciphersuites TLS_CHACHA20_POLY1305_SHA256 -adv -connect 127.0.0.1:<port of the relay> 2>&1
 ```
 The output must have "Server-to-client raw public key negotiated", the key of the log in the 64 hexadecimal digits after "pub:", and the line back. On a failure, the step prints:
 - all that OpenSSL printed, with its error queue;
@@ -513,6 +553,8 @@ The run passes: OpenSSL takes the Retry, completes the handshake with the raw pu
 
 ## 7. `remote` over QUIC (built)
 
+`remote` is the door of the host into the machine: `kerneltool call` sends one call of the language of the console, and `remote` makes it as an isolated call and sends the answer back. QUIC protects each call on the path and proves to the host which machine answers.
+
 **What it is.** The service `remote` is a QUIC server, as `quic_echo`, and its own transport of datagrams is gone. The host calls an export of a service through it (`docs/MODULE_CONTRACT.md`, "A call from the host"); each call is one call stream.
 
 **The transport.**
@@ -520,6 +562,8 @@ The run passes: OpenSSL takes the Retry, completes the handshake with the raw pu
 - It makes an Ed25519 key at its start from its own generator, with the strength "processor" at least, as `quic_echo`. The public key goes on the log ("remote: the public key of this service: " and 64 hexadecimal digits) and in its window. A seed weaker than "processor" makes no key: `remote` says so, and listens on nothing.
 - Its application protocol (ALPN) is `remote.APPLICATION_PROTOCOL`, "modus-remote-call". A client that offers another one fails the handshake.
 - It has the Retry and the budgets of work of section 6, with the limits of `quic_echo` for a table of 2 records: one address may hold both records, in the handshake too.
+
+### One call, one stream
 
 **One call, one stream.**
 1. The host opens a bidirectional stream, and writes the call request: the `remote.Request` header of 104 bytes, then the bytes of the call region (its `arguments` field), then the end of the stream.
@@ -530,7 +574,11 @@ The run passes: OpenSSL takes the Retry, completes the handshake with the raw pu
 
 The stream names the call: the headers have no request number, and the answers in parts are gone. A lost datagram is sent again by QUIC, so a call is never sent again by the host: a call whose answer did not come may have run, and the tool says so.
 
-**Several calls at once.** `remote` has 2 connection records of 8 stream records each (`remote.CONNECTION_CAPACITY`, `remote.CALLS_AT_ONCE`): 8 calls at once on one connection. A host that opens a 9th stream is not refused: its client sends STREAMS_BLOCKED and waits for MAX_STREAMS, which comes when one of the 8 ends. `remote` makes one isolated call at a time, in the order in which the requests became whole: its connection to a service has one call region. While an isolated call runs (5 s at most), `remote` runs no QUIC; the client sends again what it does not see acknowledged. After an isolated call of 100 ms or more (`SLOW_CALL_MILLISECONDS`), the next call waits 50 ms (`EXCHANGE_AFTER_SLOW_CALL_MILLISECONDS`), in which `remote` only moves datagrams: the handshake of a second connection, or the next flight of a stream, goes as far as the round trips of that time allow. A call of 5 s then waits 1 % more at most; a fast call adds no wait. The limit: a handshake needs about three round trips, and the deadline of a handshake is 10 s of the machine, which counts the time of the isolated calls. A client whose round trip is more than about 15 ms needs more than one window, and during a row of calls of 5 s each its handshake can pass its deadline. On the test network a round trip is under 1 ms. The answers come back in any order; the host matches each one to its call by its stream. The memory: 2 records of about 85 KiB, 16 stream records of about 130 KiB, and a buffer of about 64 KiB for each stream (the request, then the answer), about 3.2 MiB in one mapping of the program.
+### Several calls at once
+
+**Several calls at once.** `remote` has 2 connection records of 8 stream records each (`remote.CONNECTION_CAPACITY`, `remote.CALLS_AT_ONCE`): 8 calls at once on one connection. A host that opens a 9th stream is not refused: its client sends STREAMS_BLOCKED and waits for MAX_STREAMS, which comes when one of the 8 ends. `remote` makes one isolated call at a time, in the order in which the requests became whole: its connection to a service has one call region. While an isolated call runs (5 s at most), `remote` runs no QUIC; the client sends again what it does not see acknowledged. After an isolated call of 100 ms or more (`SLOW_CALL_MILLISECONDS`), the next call waits 50 ms (`EXCHANGE_AFTER_SLOW_CALL_MILLISECONDS`), in which `remote` only moves datagrams: the handshake of a second connection, or the next flight of a stream, goes as far as the round trips of that time allow. A call of 5 s then waits 1 % more at most; a fast call adds no wait. The limit: a handshake needs about three round trips, and the deadline of a handshake is 10 s of the machine, which counts the time of the isolated calls. A client whose round trip is more than about 15 ms needs more than one window, and during a row of calls of 5 s each its handshake can pass its deadline. On the test network a round trip is under 1 ms. The answers come back in any order; the host matches each one to its call by its stream. The memory: 2 records of about 88 KiB, 16 stream records of about 129 KiB, and a buffer of about 64 KiB for each stream (the request, then the answer), about 3.2 MiB in one mapping of the program.
+
+### Errors and ends of a call
 
 **Errors and ends of a call.** An error of one call ends its stream with RESET_STREAM and a stream error code (`remote.Stream_Error`), never a close of the connection: the other calls go on. The tool prints the code by its name.
 
@@ -547,13 +595,17 @@ The stream names the call: the headers have no request number, and the answers i
 
 A host that vanishes while `remote` holds a stream of it (an answer whose end it did not acknowledge) is ended by the bounds of the stream before its idle timeout: the reset of the answer 10 s after the call, then CONNECTION_CLOSE 10 s later, each with its log line; a host that vanishes with no stream open is ended at the idle bound. Each bound is in milliseconds of the machine, from the start of its phase, and the wait of `remote` ends at the nearest one. A bound counts only the time in which the stream could move: after each isolated call, `remote` moves the start of the bound of each stream that is reading, answering or discarding later by the time of that call (`call_bounds_pause`). Each reset and each close by a bound writes a line on the log with the time that it took and its verdict: "held" when the time is at least the bound, else "did NOT hold". How late after the bound it came depends on the load of the host: the line gives the time, and the verdict does not check it. A connection that ends at its idle timeout writes the line of `quic_echo` ("the idle end held its bound").
 
+### Who may call
+
 **Who may call.** The rule that holds is the rule of the datagrams before: the address of the host.
 - The listen grant admits the address 10.0.2.2 only. The network service drops a datagram of another address. The root service names the grant; the principal reads it with `grants` and ends it with `revoke`.
 - What QUIC adds: the host knows that it speaks to the machine whose key it pinned, and no one on the path reads a call or an answer, changes one, or plays one again. A Retry validates the address: a datagram with the address of the host that comes from elsewhere takes no record, because its sender does not receive the Retry. Before, one forged datagram with the address and the port of the host made a call.
 - What it does not protect: `remote` does not know who the client is. Whoever sends and receives the datagrams of 10.0.2.2 (the gateway of the network of the machine) can make a connection and call as the principal. QUIC adds nothing there.
   - On the test network the gateway is the peer of the tool. The peer takes the calls of the tool on a Unix socket in a folder of the user with the mode 0700. So each program of the same user on the host can call as the principal; a program of another user cannot.
   - With QEMU user networking, a forward of a UDP port of the host to the port 7100 (`hostfwd=udp:...-:7100`) would give each forwarded datagram the address 10.0.2.2. Then each sender that reaches the port of the host could call as the principal. The tool forwards no such port, and it refuses to start a machine whose network device has one (`network_device_problem`). Whoever adds such a forward by hand opens `remote` to whoever reaches that port.
-- What would protect it: the host proves a key of its own (a raw public key of a client in TLS), and the root service gives that key to `remote` as a grant that the principal reads and revokes. That is a principal of property 21, which is not built.
+- What would protect it: the host proves a key of its own (a raw public key of a client in TLS), and the root service gives that key to `remote` as a grant that the principal reads and revokes. Principals exist (`docs/PRINCIPALS.md`): `remote` acts for the principal of its session through the grant `acts_for_principal`. But no principal has a key that a client proves over QUIC, so `remote` cannot tell one client from another: a principal on another machine is layer 5 of `docs/PRINCIPALS.md`, "9. Not built".
+
+### The client of the tool
 
 **The tool.** The peer of the tool is the QUIC client (`tools/kerneltool/peer_remote.odin`).
 - It pins the key that `remote` logged (the step Remote_Key of the machine test), or the key that `kerneltool call <key> "..."` names, read in the window of `remote`. A new key closes the connection; the next call makes a new one.
@@ -562,6 +614,8 @@ A host that vanishes while `remote` holds a stream of it (an answer whose end it
 - The header of a call on the call socket has a fixed mark and the count of the bytes of the request. A header that is not at the start of the bytes, or a request that is cut, fails the call with what the peer read; it never becomes a call with another key or another request.
 - The tool gives each call to the peer on its call socket: a header with the key, the bytes of the request, the end of the sending; the peer writes the outcome, the bytes of the answer, and the end. The call socket is a Unix socket in `$XDG_RUNTIME_DIR/kerneltool`, or in `/tmp/kerneltool-<user number>` when that variable is not set. The tool makes that folder with the mode 0700, and uses it only when it is a folder of this user (not a link) with no right for the group and the others. A folder under the repository is not used: a repository can be readable by its group. `kerneltool run` takes the socket `calls-run.socket` and prints its path; `kerneltool call` finds it by the same rule. A machine test takes a socket with the number of its process and of its peer, and the step Call uses the same code.
 - One connection carries the calls of a session. At a call, a connection whose last packet came more than 20 s ago is closed, and a new one is made: under the idle timeout of `remote` (30 s), so that no call goes on a connection that `remote` may have ended. A connection that ended (its idle timeout, a close of `remote`, a new start of `remote` with a new key) fails the calls that were open on it, with the reason; the next call makes a new connection.
+
+### The tests of `remote`
 
 **The tests.**
 - On the host (`contract/remote/remote_test.odin`): the request and the answer written and read again, from no result to a whole call region; each refusal of `request_check`; the answer that `answer_check` refuses (shorter than its total, longer, a total over a call region); the framing of a stream (`stream_progress`: a request of `REQUEST_LIMIT` bytes is whole, one byte more is Too_Large before the end of the stream, an empty stream is a request that `request_check` refuses); the name of each stream error code; random requests.
@@ -572,7 +626,7 @@ A host that vanishes while `remote` holds a stream of it (an answer whose end it
 1. **The transport, second part**:
    - NewReno congestion control, from the ideas and the tests of the Reno of `support/tcp`;
    - connection identifiers, the validation of a new path (NAT rebinding), the stateless reset, DATA_BLOCKED and STREAM_DATA_BLOCKED.
-2. **The authentication of the client of `remote`** (section 7, "Who may call"), when principals exist.
+2. **The authentication of the client of `remote`** (section 7, "Who may call"): a key of the client that the root service gives to `remote` as a grant of the principal.
 
 ## 9. What is not built, and will not be in version 1 of this library
 
