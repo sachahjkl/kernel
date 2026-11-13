@@ -124,7 +124,28 @@ test_debug_objects :: proc() -> bool {
 	if debug_object.check(object[:len(object) - 1]) != .Size_Differs {
 		return fail("an object one byte short is not refused")
 	}
+	// The tie to the module: the object is the one of this module file,
+	// and of no other.
+	other_hash := hash
+	other_hash[0] ~= 1
+	if !debug_object.describes_module(object, hash) || debug_object.describes_module(object, other_hash) {
+		return fail("it does not say that it describes its module only")
+	}
+	// The source file of the first instruction has the hash of the file
+	// of the repository.
+	source, has_source := debug_object.source_line_of(object, three.start)
+	source_file := read_file("programs/fault/main.odin") or_return
+	if !has_source || source.path != "programs/fault/main.odin" || !source.content_hash_known || source.content_hash != blake3.hash(source_file) {
+		return fail("the source file of fault::three is %s, and its hash is not the hash of programs/fault/main.odin", source.path)
+	}
+	// The parameter of fault::three and its type.
+	address, has_address := debug_object.variable_by_name_at(object, three.start, "address")
+	address_type, has_type := debug_object.type_by_index(object, address.type)
+	if !has_address || address.role != .Parameter || !has_type || address_type.name != "uintptr" || address_type.kind != .Unsigned_Integer || address_type.size != 8 {
+		return fail("the parameter address of fault::three is not a parameter of the type uintptr of 8 bytes: found %v, %v %v", has_address, address, address_type)
+	}
 	parts, _ := debug_object.tables(object)
 	test_passed_print("the debug object of fault names fault::three at %x to %x, its first instruction at %s:%d; %d procedures, %d files, %d rows; a changed object is refused", three.start, three.start + three.size, first.file, first.line, len(parts.procedures), len(parts.files) - 1, len(parts.lines))
+	test_passed_print("the debug object of fault describes its module only, has the hash of programs/fault/main.odin, and gives the parameter address of fault::three as a uintptr, place %v, register %d, offset %d; %d types, %d globals, %d variables in %d ranges", address.location, address.register, address.offset, len(parts.types) - 1, len(parts.globals), len(parts.variables), len(parts.ranges))
 	return true
 }

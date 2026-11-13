@@ -9,7 +9,7 @@ import "core:testing"
 object_with_path :: proc(path: string) -> []u8 {
 	procedures := []Debug_Procedure{{start = 0x1000, size = 0x10, name = "fault::three"}}
 	rows := []Debug_Row{{address = 0x1000, path = path, line = 15}, {address = 0x1010}}
-	object, error := debug_object_encode(procedures, rows, 0x2000, {})
+	object, error := debug_object_encode(procedures, rows, 0x2000, {}, nil, {})
 	return error == "" ? object : nil
 }
 

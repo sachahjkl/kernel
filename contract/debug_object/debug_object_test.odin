@@ -17,6 +17,7 @@ object_of :: proc(procedures: []Procedure, files: []File, lines: []Line) -> []u8
 		procedures  = procedures,
 		files       = files,
 		lines       = lines,
+		types       = make([]Type, 1, context.temp_allocator), // The type 0.
 		strings     = transmute([]u8)string(STRINGS),
 	}
 	bytes := make([]u8, encoded_size(parts), context.temp_allocator)
@@ -92,10 +93,11 @@ a_hostile_object_is_refused :: proc(t: ^testing.T) {
 		{object[:size_of(Header) - 1], .Too_Small},
 		{object[:len(object) - 1], .Size_Differs},
 		{changed(object, 0, 0x12345678), .Not_A_Debug_Object},
-		{changed(object, 8, 2), .Version},
+		{changed(object, 8, VERSION + 1), .Version},
 		{changed(object, 12, PROCEDURE_CAPACITY + 1), .Too_Many},
 		{changed(object, 12, 3), .Size_Differs}, // One more procedure than the bytes hold.
-		{changed(object, 60, 1), .Reserved},
+		{changed(object, 60, TYPE_CAPACITY + 1), .Too_Many},
+		{changed(object, 60, 0), .Size_Differs}, // No type 0, with the bytes of one.
 		{changed(object, procedures_at + size_of(Procedure), 0x1480), .Procedure_Order}, // Starts inside the procedure before it.
 		{changed(object, procedures_at + 4, 0), .Procedure_Order}, // No byte.
 		{changed(object, procedures_at + 8, 60), .Procedure_Name}, // A name past the strings.
@@ -131,7 +133,7 @@ an_empty_object_is_valid :: proc(t: ^testing.T) {
 @(test)
 a_name_or_a_path_with_a_control_byte_is_refused :: proc(t: ^testing.T) {
 	object := sample_object()
-	strings_at := size_of(Header) + 2 * size_of(Procedure) + 3 * size_of(File) + 5 * size_of(Line)
+	strings_at := size_of(Header) + 2 * size_of(Procedure) + 3 * size_of(File) + 5 * size_of(Line) + size_of(Type)
 	with_bytes :: proc(source: []u8, offset: int, bytes: []u8) -> []u8 {
 		copy_of := make([]u8, len(source), context.temp_allocator)
 		copy(copy_of, source)

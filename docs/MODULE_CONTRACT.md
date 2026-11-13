@@ -842,14 +842,14 @@ Rule 8 below requires frame pointers. The kernel walks them when a thread faults
 
 ## Debug information
 
-A module names its exports only. The names of its other procedures and the source lines of its code are debug information: they are in the debug object of the module (`GLOSSARY.md`), a separate file. Built: the debug objects, the debug image, and the names in the stop reports of `console`, `errors` and `inspect`. Not built: the debugger (`TOOLS.md`, "The debugger: the design").
+A module names its exports only. The names of its other procedures, the source lines of its code, its types, its global variables and the variables of its procedures are debug information: they are in the debug object of the module (`GLOSSARY.md`), a separate file. Built: the debug objects with these tables, the debug image, and the names in the stop reports of `console`, `errors` and `inspect`. Not built: the debugger that reads the variables (`TOOLS.md`, "The debugger: the design").
 
 ### What the compiler writes, and what the system reads
 
 - **The compiler** writes DWARF. The kernel tool compiles each module with `-debug`: Odin writes the line program in the LLVM IR, `llc -O3` keeps it in the object, and `lld` keeps the sections `.debug_*` in the linked file `build/modules/<name>/linked.elf`. The DWARF stays there, for a debugger of the host.
 - **The module has no byte of it.** The converter copies the segments of the linked file only (section 7). `kerneltool check` builds each module a third time with no `-debug`, in a folder of its own, and compares each module byte for byte with the module of the build ("N modules are the same bytes with and without debug information"). So the hash of a module does not depend on its debug information.
 - **The line table survives `-O3`.** LLVM keeps a debug location on each instruction that it moves, and gives the line 0 to an instruction that it merged from two lines (the guide of LLVM "How to Update Debug Info"). Code that the compiler inlined has the line of its own source and the name of the procedure that holds it. The test of the build checks the line of the first instruction of `fault::three`; the machine test checks the lines 15 and 20 of `programs/fault/main.odin` in the stack of `fault`.
-- **The system reads no DWARF.** The tool reads the linked file at the build, and writes the debug object, a format of the system (`contract/debug_object`): the procedure table from the function symbols of the symbol table, and the line table from the line program of `.debug_line` (DWARF 2 to 5). Reason: a parser of DWARF is a large parser of hostile input (forms, LEB128 numbers, a state machine with operations of its own). The tool runs it once, at the build, on its own output; a program reads sorted tables of fixed records with a binary search, no allocator, and a check of every bound.
+- **The system reads no DWARF.** The tool reads the linked file at the build, and writes the debug object, a format of the system (`contract/debug_object`): the procedure table from the function symbols of the symbol table, the line table from the line program of `.debug_line` (DWARF 2 to 5), and the types and the variables from the entries of `.debug_info` (DWARF 2 to 4; the compiler of the build writes the version 4), with `.debug_abbrev`, `.debug_str`, `.debug_loc` and `.debug_ranges`. Reason: a parser of DWARF is a large parser of hostile input (forms, LEB128 numbers, a state machine with operations of its own). The tool runs it once, at the build, on its own output; a program reads sorted tables of fixed records with a binary search, no allocator, and a check of every bound.
 
 ### The debug object
 
@@ -857,31 +857,125 @@ A module names its exports only. The names of its other procedures and the sourc
 
 | Part | Size | What it holds |
 |---|---|---|
-| Header | 64 bytes | `DEBUGOBJ`, the version, the BLAKE3 hash of the module file, the count of each table, the bytes of the strings |
+| Header | 88 bytes | `DEBUGOBJ`, the version (2), the BLAKE3 hash of the module file, the count of each table, the bytes of the strings |
 | Procedures | 16 bytes each | The start and the size of a procedure in the memory of the module, its name in the strings (`fault::three`), the bytes of its package (`fault`). By their start, with no overlap |
-| Files | 8 bytes each | The path of a source file in the strings: from the root of the repository (`programs/fault/main.odin`), or from the root of the Odin installation with its library as a prefix (`base:runtime/core.odin`, `core:...`). The file 0 is "no file" |
+| Files | 40 bytes each | The path of a source file in the strings: from the root of the repository (`programs/fault/main.odin`), or from the root of the Odin installation with its library as a prefix (`base:runtime/core.odin`, `core:...`). Then the BLAKE3 hash of the content of the file at the build, 32 bytes. The file 0 is "no file" |
 | Lines | 8 bytes each | An offset, then one word: the file in its high 12 bits and the line in its low 20 bits. The code from the offset up to the next row comes from that line. By their offset. A row with the file 0 says that the code after it has no line; the last row is one |
+| Types | 28 bytes each | One type that a variable uses. The type 0 is "no type". Section "The types and the variables" |
+| Fields | 20 bytes each | The fields of each record, union, slice and string |
+| Enumeration values | 16 bytes each | The named values of each enumeration |
+| Globals | 16 bytes each | The global variables. By their address, then their name |
+| Variables | 16 bytes each | The parameters and the local variables of each procedure: name, role, type, and the first of its ranges. By their procedure, then their name |
+| Variable ranges | 12 bytes each | The ranges of instructions of each variable, each with its variable location. The ranges of one variable are together, by their start |
 | Strings | | The bytes of the names and of the paths |
+
+The parts are in this order, with no byte between them and no byte after the strings. Each record has fields of 4 bytes at most, and each part starts at a multiple of 4 bytes.
 
 - **The check** (`debug_object.check`) refuses each other form: a size that is not the size of the tables, a count over its bound, a procedure that starts inside the one before it or has no byte, a name or a path outside the strings, a byte of a name or a path that is not a visible character of ASCII (0x21 to 0x7E: no control byte, no space, no byte of UTF-8, so a hostile name cannot change or forge a line of the log or of the terminal of the host), a path with a part `..`, a package that is not followed by `::`, a row that does not come after the row before it, a row that names a file that the table does not have, a table with no last row with the file 0. A reader checks an object once, before its first lookup: `system.Debug_Names` keeps the verdict of each module that it searched (its object, or none), so a stop report of many frames checks each object one time. A search walks at most 4096 entries of the image, and skips an entry whose object does not start on a page. With an object that did not pass, the lookup still reads only inside the object.
 - **The log has no control byte**: `system.log_in` and `system.log_text` write `?` in place of each byte below 0x20 and the byte 0x7F of a text, so a text that a program took from data cannot change a line of the serial log, whatever check came before.
 - **The lookup** (`debug_object.place_of`): the procedure that holds an offset and its offset in it, and the file and the line of the instruction. Two binary searches.
-- **The bounds**: 2^20 procedures, 4095 files, lines below 2^20, 2^24 rows and 64 MiB of strings. The tool refuses a module past one of them. The rows are most of the bytes: the file and the line share one word, so a row has 8 bytes.
+- **The bounds**: 2^20 procedures, 4095 files, lines below 2^20, 2^24 rows, 2^20 types, 2^22 fields, 2^22 enumeration values, 2^20 globals, 2^22 variables, 2^24 variable ranges and 64 MiB of strings. The tool refuses a module past one of them. The rows are most of the bytes: the file and the line share one word, so a row has 8 bytes.
 - **Paths**: the tool joins the directory of each file of the line program with the compilation directory of its unit (the attribute `DW_AT_comp_dir` of `.debug_info`: the directory 0 of a line program of DWARF 2 to 4 is only there), then removes the folder of the build (the compiler runs at the root of the repository) or the folder of the Odin installation (`odin root`). A debug object holds no path of the build host: the tool refuses to write one with an absolute path of a file, or with the folder of the build anywhere in its bytes. So the same source gives the same debug object in another folder or on another machine.
 - **The line 0**: the optimizer gives the line 0 to an instruction that it merged from two lines or made with no line. The tool writes no row for it: the instruction takes the line of the row before it. Two rows in a row with the same file and line are one row.
+
+### The types and the variables
+
+The header, 88 bytes: the magic number (8 bytes), the version (4), the count of procedures (4), the hash of the module file (32), then the counts, 4 bytes each: files, rows, bytes of strings, types, fields, enumeration values, globals, variables, variable ranges, and a reserved word of zero.
+
+A type, 28 bytes:
+
+| Offset | Size | Field | What it holds |
+|---|---|---|---|
+| 0 | 4 | `name_offset` | The name, in the strings |
+| 4 | 4 | `name_count` | The bytes of the name. 0: the type has no name of its own (a pointer, an array) |
+| 8 | 4 | `size` | The bytes of a value |
+| 12 | 4 | `kind` | The kind, below |
+| 16 | 4 | `element` | A type: what a pointer points to, the element of an array or a slice, the integer of an enumeration. 0 for each other kind |
+| 20 | 4 | `count` | An array: its elements. A record, a union, a slice, a string: its fields. An enumeration: its named values |
+| 24 | 4 | `first` | The first field in the field table, or the first value in the enumeration value table |
+
+| Kind | Name | What a value is |
+|---|---|---|
+| 0 | `None` | Only the type 0: what `rawptr` points to |
+| 1 | `Signed_Integer` | `size` bytes, two's complement |
+| 2 | `Unsigned_Integer` | `size` bytes |
+| 3 | `Boolean` | `size` bytes; 0 is false |
+| 4 | `Float` | 2, 4 or 8 bytes, IEEE 754 |
+| 5 | `Pointer` | The address of a value of the type `element`; `element` 0: of any type |
+| 6 | `Array` | `count` values of the type `element` |
+| 7 | `Slice` | An address and a count of values of the type `element`; its two fields, `data` and `len`, are in the field table |
+| 8 | `String` | An address and a count of bytes; its two fields are in the field table |
+| 9 | `Record` | `count` fields from the field `first` |
+| 10 | `Union` | As a record; its fields share their bytes, and its field `tag` says which one holds the value |
+| 11 | `Enumeration` | An integer of the type `element`, with `count` named values from the value `first` |
+| 12 | `Procedure_Address` | The address of the code of a procedure |
+| 13 | `Other` | A type that the table does not describe: only its size and its name are true |
+
+A field, 20 bytes: `name_offset` (4), `name_count` (4), `offset` (4: the bytes from the start of the value), `type` (4), `bit_shift` (2), `bit_size` (2). With `bit_size` 0 the field is whole bytes. With another `bit_size` the field has that count of bits, from the bit `bit_shift` of the byte at `offset`, the least bit first.
+
+An enumeration value, 16 bytes: `name_offset` (4), `name_count` (4), `value_low` (4), `value_high` (4). The value is the 64 bits of a two's complement integer.
+
+A global, 16 bytes: `address` (4: the offset of its first byte in the memory of the module), `type` (4), `name_offset` (4), `name_count` (4). The name has its package (`errors::UNIT_NAMES`). A static variable of a procedure is a global. A variable of a thread is not in the table.
+
+A variable, 16 bytes:
+
+| Offset | Size | Field | What it holds |
+|---|---|---|---|
+| 0 | 4 | `name_offset` | The name, in the strings |
+| 4 | 2 | `name_count` | The bytes of the name |
+| 6 | 1 | `role` | 0: a local variable. 1: a parameter |
+| 7 | 1 | `reserved` | Zero |
+| 8 | 4 | `type` | In the type table. 0: no type |
+| 12 | 4 | `first_range` | The first of its records in the variable range table. Its ranges end where those of the next variable start |
+
+A variable range, 12 bytes:
+
+| Offset | Size | Field | What it holds |
+|---|---|---|---|
+| 0 | 4 | `start` | The offset in the memory of the module of the first instruction of the range |
+| 4 | 4 | `offset` | Signed: the bytes to add to the register |
+| 8 | 2 | `size` | The bytes of the range, 1 to 65535, inside the procedure of the variable |
+| 10 | 1 | `location` | The kind of the variable location, below |
+| 11 | 1 | `register` | The register of the variable location |
+
+| Location | Name | Where the value is |
+|---|---|---|
+| 0 | `Not_Readable` | The table does not say. `register` and `offset` are 0 |
+| 1 | `Frame_Pointer_Offset` | In memory, at `rbp` plus `offset`. `register` is 6 |
+| 2 | `Stack_Pointer_Offset` | In memory, at `rsp` plus `offset`. `register` is 7 |
+| 3 | `Register` | In the register `register`: its low bytes. `offset` is 0 |
+| 4 | `Register_Offset` | In memory, at the value of the register `register` plus `offset` |
+
+- **The registers** have the order of `operation.Thread_Registers`: `rax` 0, `rbx` 1, `rcx` 2, `rdx` 3, `rsi` 4, `rdi` 5, `rbp` 6, `rsp` 7, `r8` to `r15` 8 to 15, `rip` 16. A reader takes the register `n` as the n-th word of the register image of the thread.
+- **One variable, its ranges.** A variable is one procedure, one name, one role and one type. A variable that the compiler moves (a register, then the stack) has one range for each variable location. A reader takes the variables of the procedure that holds the next instruction of the thread (`variable_range_of_offset`: three binary searches), then, for each one, the range that holds that instruction (`variable_at`).
+- **Visible, and readable.** A variable is visible at an instruction that one of its ranges holds. A range of the kind `Not_Readable` says where the variable is visible. A range of another kind that holds the same instruction says where its value is, and a reader takes that one; of two such ranges, the shortest.
+- **The merge rules of the tool.** (1) Two ranges of one variable with the same variable location that touch or overlap are one range; a gap keeps them apart. (2) The ranges of a variable that are not readable become one range, from the first of their starts to the last of their ends; it is not written when one readable range covers it. So a variable that is readable nowhere is one range: the debugger shows that it exists and cannot be read. (3) A variable of a procedure that the compiler put inside its caller keeps its readable ranges only: it is visible where it has a value, and such a variable that is readable nowhere is not written. Two such variables of one procedure with the same name, role and type (the same small procedure, put in several places) are one variable. (4) A range longer than 65535 bytes is several ranges in a row.
+- **Why these rules.** Before them the build of 84 modules wrote 522 885 records of 32 bytes, 16.7 MB of a debug image of 21.2 MB. 53 % of the records were not readable, and 37 % belonged to variables that are readable nowhere. In `console`, 85 % of the variables of the procedures are variables of procedures that the compiler put inside others, and 55 % of those are readable nowhere.
+- **Not readable is a kind, never a guess.** The tool takes a variable location from a location expression of DWARF only when the expression is one operation: a register (`DW_OP_reg0` to `DW_OP_reg31`, `DW_OP_regx`), a register plus a constant (`DW_OP_breg0` to `DW_OP_breg31`, `DW_OP_bregx`), the frame base plus a constant (`DW_OP_fbreg`, when the procedure names `rbp` as its frame base), or one fixed address (`DW_OP_addr`: a global). Each other expression is `Not_Readable`: a value that the compiler computes (`DW_OP_stack_value`), a variable in several pieces (`DW_OP_piece`: a string with its address in one register and its count in another), the value of a register at the entry of the procedure, a vector register, a variable of a thread. A variable with no location in a range where it is visible is also `Not_Readable`. The tool runs no expression.
+- **A procedure inside another one.** A variable of a procedure that the compiler put inside its caller is a variable of the procedure that holds its instructions. Two variables can have one name at one instruction (another role or another type); `variable_by_name_at` takes a readable one first, then the shortest range.
+- **The types.** A typedef is a copy of its type with its own name. An array with several dimensions is one array whose count is the product. An array with no size has the size of its elements. The type table holds only the types that a global or a variable uses, and those that they name.
+- **A type can name itself** through a pointer. A reader that follows `element` or the types of the fields bounds its depth.
+- **The names** of a type, a field, an enumeration value, a global and a variable hold only printable characters of ASCII (0x20 to 0x7E). A space is allowed there, because the compiler names a type `enum u8 {Info=0,Debug=1}`. A name is in the strings once.
+- **The fixed order.** The tool sorts the types by a text made of their content (kind, size, count, name, element, fields, values), and two types with the same text are one type. It sorts the globals by their address, their name, then their type, the variables by their procedure, their name, their role, then their type, and the ranges of a variable by their start. Two equal records are one record. So the order of the entries of DWARF changes no byte, and two builds of one source give the same debug object.
+- **A range is cut to its procedure.** The tool gives a range to the procedure of the procedure table that holds its start, and cuts it at the end of that procedure. A range in no procedure (code that the link dropped) and a global outside the sections that the module keeps in memory are not written.
+- **The check** refuses: a type table with no type 0 or with a type 0 that is not all zero; a kind, a role or a location that the format does not have; a name outside the strings or with a byte that is not printable; a type index that the table does not have; fields or values outside their table; a global below the one before it; a variable with no range or with ranges outside their table; a range with no byte, before the range before it, in no procedure, in a procedure before the one of the variable before it, or outside the procedure of the first range of its variable; a reserved field that is not zero; a register above 16; a register or an offset that its kind of location does not use.
+- **The frames.** Each procedure that the compiler wrote keeps the frame pointer (rule 8 of "Closed rules"; `llc --frame-pointer=all`): the word at `rbp` is the frame pointer of the caller, and the word at `rbp` + 8 is the return address. A debugger walks the frames with these two words and no table. The debug object has no table for a procedure with no frame pointer (a procedure of an assembler file), and no table that gives the registers of a frame of a caller: for such a frame only `rbp` and the return address are known, so only a location of the kind `Frame_Pointer_Offset` is readable there. In the first instructions of a procedure, before it sets `rbp`, and in its last ones, a location from `rbp` is not yet or no longer true when the compiler gave the variable one location for its whole scope.
+- **The parser of the tool** reads each section with a bound on every read. A section that is cut, an abbreviation code that its table does not have, a form that the tool does not read, a reference outside its section, a unit of another version, or entries more than 256 deep is an error of the build with the offset. The host tests give it each of these, and the sample with each byte changed.
 
 ### Who names whom
 
 - **The debug object names its module**: the hash of the module file is in its header. The module names nothing, and the system description lists no debug object. Reason: a module that named its debug object would have another hash at each change of its debug object (its format, a path of a source file), and the module must be the same bytes with and without it. A reader finds the debug object of a module by the hash in the header of each object.
+- **A reader uses a debug object only for its module.** `debug_object.describes_module` compares the hash of the header with the hash of the module file. `system.debug_object_of` finds an object by that hash, so a stop report never has names of another build. A debugger does the same before it reads a variable: the tables of another build give other variable locations, and a wrong location reads other memory. With no object for the hash of a loaded module, the debugger shows addresses and says that the module has no debug object.
+- **The debug object names the content of each source file**: the BLAKE3 hash of the bytes of the file when the tool built the module. The tool reads the file where the compiler read it, and a file that it cannot read stops the build. `debug_object.source_line_of` gives the path, the hash and the line of an instruction. A reader that shows the text of a line hashes the file that it holds: with the same hash it shows the line; with another hash it shows the path and the line number only, and says that the source changed since the build. A hash of zeros means that the object has no hash for the file.
 - **What the hash proves**: that the tool wrote the object for that module. It does not prove that the names are true: the debug image is not verified, and a changed image gives other names. A reader program shows the names on the screen; no decision of the system uses them.
 
 ### Where the debug objects are
 
 - **The debug image** (`build/debug.image`): the debug object of each module of the build, in the form of a boot image: a header, one entry for each object (the name of the module, the hash of the object, its offset and its size), each object on a page. The tool prints its size at each build.
 - **On the boot volume, beside the boot program**: the tool writes it as the file `DEBUG/OBJECTS.IMG`. It is not in the boot image: the boot image, the boot program, the system description and the measure of the trusted boot are the same bytes with and without it, so a debug object changes no signature and no measure. The boot image stays the transport of what the machine starts.
-- **The boot program** reads the file if the volume has it, through the file system protocol of the firmware, into pages of the boot, after its last allocation that stops the machine when it fails: the debug image never takes the memory that the start needs. It does not verify it: no code comes from it. A volume with no such file, an empty file, a file over `DEBUG_IMAGE_LIMIT` (32 MiB, about 14 times the debug image of the build), or a read that fails (its pages go back to the firmware) starts with no names.
+- **The boot program** reads the file if the volume has it, through the file system protocol of the firmware, into pages of the boot, after its last allocation that stops the machine when it fails: the debug image never takes the memory that the start needs. It does not verify it: no code comes from it. A volume with no such file, an empty file, a file over `DEBUG_IMAGE_LIMIT` (32 MiB), or a read that fails (its pages go back to the firmware) starts with no names.
 - **The kernel** checks the range that the boot program gives: on a page, inside the bound, and inside one range of the memory of the boot. Then it gives these pages to the root service as a memory object with Read (`op.ROOT_DEBUG_IMAGE`, its size at `op.ROOT_VALUE_DEBUG_IMAGE_SIZE`). A refused range is one line of the log and no debug image, never a stop. It reads none of the bytes.
-- **Who pays**: no budget. The pages are memory of the boot, as the boot image: the kernel never gives them as free frames, and they stay taken for the whole run of the machine (2.3 MiB for the build of today). Each program that maps the debug image pays, from its own budget, the page tables of its mapping, as for each mapping.
+- **Who pays**: no budget. The pages are memory of the boot, as the boot image: the kernel never gives them as free frames, and they stay taken for the whole run of the machine (the build prints its size: "kerneltool: the debug image has ..."). Each program that maps the debug image pays, from its own budget, the page tables of its mapping, as for each mapping.
 - **The root service** maps it read-only at the fixed range `Debug_Image` in each program with the grant `Debug_Image` (`console`, `inspect`, `errors`), with its size at the value 21 of the context (`op.CONTEXT_VALUE_DEBUG_IMAGE_SIZE`). A program finds it with `system.debug_image_of`, and the object of a module with `system.debug_object_of`.
 - **Why not the data disk**: an object of the storage service has at most 32 blocks (128 KiB) (`STORAGE.md`, section 3.4); the debug object of `console` is larger. **Why not the network**: a reader would need a network grant to show a stop report.
 - **When modules load from storage** (`STORAGE.md`, section 5, step 4): a debug object is an object of the tree of the system or of its package, beside its module, and the reader finds it by the hash of the module, as today. The boot program then reads no debug image, and `system.debug_object_of` takes the object from the store. The format and the lookup do not change. Large objects (step 1) come before it.
@@ -894,7 +988,8 @@ A module names its exports only. The names of its other procedures and the sourc
 
 ### What the debug information does not give
 
-- The names of the local variables, their places, and the types: the tool keeps the line program only. A debugger of the host reads them in the DWARF of the linked file.
+- The value of a variable whose location is not readable (section "The types and the variables"). With `-o:speed` these are many: the compiler keeps a string or a slice in two registers, and removes a variable that it no longer needs. A debugger of the host reads the whole expressions in the DWARF of the linked file.
+- The registers of a frame of a caller: the debug object has no call frame information. Only the frame pointer and the return address of such a frame are known.
 - A frame of a procedure that keeps no `rbp`: the stack trace stops there (section 8).
 - A proof that the names are true (above).
 - The memory of the debug image: its pages stay taken from the boot on (section "Where the debug objects are", "Who pays").

@@ -114,6 +114,11 @@ A stop report gives addresses, and a reader wants the name of a procedure and a 
 
 The kernel gives an address of a stop report as an address in a module record. The module names its exports only. The names of its other procedures and its source lines are in its debug object (`GLOSSARY.md`; `MODULE_CONTRACT.md`, "Debug information").
 
+The debug object also holds what a debugger shows: the types, the global variables, and the parameters and the local variables of each procedure with their variable locations (`MODULE_CONTRACT.md`, "The types and the variables"). The names and the lines come from the symbol table and from the line program of the linked file; the types and the variables come from the entries of its DWARF. A program reads all of them through `contract/debug_object`, with no parser of DWARF.
+
+- **One module, one debug object**: the debug object holds the BLAKE3 hash of its module file. A reader uses it only for a loaded module with that hash (`debug_object.describes_module`).
+- **The source of a line**: the debug object holds, for each source file, its path from the root of the repository and the BLAKE3 hash of its content at the build. `debug_object.source_line_of` gives the path, the hash and the line of an instruction. A reader shows the text of the line only from a file with that hash, and says so when the hash differs.
+
 - **Who names**: a program with the grant `Debug_Image` of the root service: `console`, `inspect` and `errors`. The root service maps the debug image read-only into each of them (the fixed range `Debug_Image`). The kernel reads no debug object: its line of the log stays "in module <hash> at offset X".
 - **The form of a frame**: `procedure + offset in module (file:line)`. Frame 0 is the instruction. Each next frame is a return address: the procedure and the line are those of the call, the byte before the return address. The offset is the distance of the address from the start of the procedure.
 - **The console**: a call host that stops on a fault prints "error: the instruction is at " and the name of its instruction, then one line "error: frame N: ..." for each frame (`fault_print`). A frame that no procedure of the debug object holds stays `module + offset`.
@@ -144,6 +149,9 @@ Not built. The console reads a stop report with names, and `Thread_Control` stop
 | `stop(thread)`, `resume(thread)` | Holds a thread, lets it run | `Thread_Control` `Stop`, `Resume`: built |
 | `registers(thread)` | A table of the 16 general registers, `rip` with its name, `rflags` | `Read_Registers`: built |
 | `stack(thread)` | The frames from `rbp`, each with its procedure and its line | `Read_Memory` (below) for the words of the stack; the debug image |
+| `locals(thread, frame)` | A table of the parameters and the local variables that live at the instruction of the frame: name, type, value or "not readable" | The variable table and the type table of the debug object; `Read_Registers`; `Read_Memory` |
+| `value(thread, frame, "pair.next")` | One variable or one global, with its fields, the elements of its array, the name of its enumeration value | The same, and the global table |
+| `source(thread, frame)` | The source lines around the instruction of the frame | The file table of the debug object with the hash of each file; the source files, where the debugger has them |
 | `break("fault::three")`, `break("programs/fault/main.odin:15")` | A breakpoint at the first offset of the procedure, or at the first row of the line table with that file and line | The debug object (a search by name, a search by line); the breakpoints (below) |
 | `step(thread)` | One instruction: the trap flag in `rflags`, then `Resume` | `Write_Registers`: built (the trap flag is allowed); the delivery of the trap (below) |
 | `continue()` | Resumes each held thread | `Resume`: built |
@@ -151,6 +159,27 @@ Not built. The console reads a stop report with names, and `Thread_Control` stop
 | `detach()` | Removes each breakpoint, clears the trap flag, resumes each thread, closes the handle | The end of the debug handler (below) |
 
 The console already has a command `stop`, which stops a whole program by its name. The command that holds one thread needs a name of its own when it is built.
+
+### The variables and the types
+
+The data is built: the debug object of each module holds its types, its global variables and the variables of each procedure (`MODULE_CONTRACT.md`, "The types and the variables"). The commands that show them are not built.
+
+- **The object of a module.** The debugger takes the hash of each module of the program from the module report, and uses only the debug object with that hash. With no such object it shows addresses, and says that the module has no debug object.
+- **A variable of the innermost frame.** The debugger takes the variables of the procedure that holds `rip` (`debug_object.variable_range_of_offset`), keeps those that are visible at `rip` (`debug_object.variable_at`), and reads each value by its variable location: a register of the register image, or memory at a register plus an offset. A variable whose range there is of the kind `Not_Readable` is shown as "not readable". A variable of a procedure that the compiler put inside its caller is shown only where it has a value. The debugger computes no location that the table does not give.
+- **A variable of a frame of a caller.** The instruction is the byte before the return address. Only the frame pointer of that frame is known, so only a variable location from the frame pointer is read; each other one is shown as "not readable in this frame".
+- **A value by its type.** The debugger reads the bytes of the size of the type and shows them by the kind: an integer, a boolean, a float, the address of a pointer, the fields of a record (`debug_object.field_of_type`), the elements of an array, the name of an enumeration value, the bytes of a string (a second read of memory, with a bound). It follows a pointer only when asked, and bounds the depth of a type that names itself.
+- **A global.** Its address is the address where the module is mapped plus the address of the global table (`debug_object.global_by_name`).
+- **The stack.** Each procedure that the compiler wrote keeps the frame pointer: the word at `rbp` is the frame pointer of the caller and the word at `rbp` + 8 is the return address. The walk needs no table. It ends at a frame pointer of 0, at an address that the program does not map, at a frame pointer that is not above the one before it, or after a fixed count of frames. A procedure of an assembler file can keep no frame pointer: the walk skips its caller or ends there.
+- **The source lines.** The debugger shows a line only from a source file whose BLAKE3 hash is the hash of the file table (`debug_object.source_line_of`). With another hash it shows the path and the line number, and says that the source changed since the build. The debug object holds no source text.
+
+### Debugging from another machine
+
+Debugging from another machine needs no mechanism of its own.
+
+- **The commands are exports.** The commands of the debugger are exports of a debugger service. The console calls them, and a window can call the same exports.
+- **The service `remote` carries them.** `remote` already carries a call of an export over QUIC from another machine to a program that holds the grant (`QUIC.md`, section 7). A debugger on another machine calls the exports of the debugger service through it. The grant of the debugger service decides who debugs what, as for a local caller; the connection adds no right.
+- **Where the debug objects are.** They stay on the machine of the developer, or in the debug image of the debugged machine. The debugger service reads a debug object by the hash of the module. A caller on another machine can also ask for raw values (registers, bytes of memory, the hash of each module) and name them with its own debug objects, by the same hash.
+- **The serial port is not used.** The serial port is the log of the kernel. A second protocol on it would be a second way into the machine, with no grant and no connection that proves who calls.
 
 ### What the kernel lacks, and the least addition for each
 
