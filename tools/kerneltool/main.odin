@@ -564,8 +564,13 @@ run_test :: proc(args: []string) -> int {
 		fmt.eprintfln("kerneltool: %s", problem)
 		return EXIT_USAGE
 	}
-	if code := run_build(nil); code != 0 {
-		return code
+	// The times of the test are measures: the report never changes the result.
+	test_started := time.tick_now()
+	defer test_times_report(test_started)
+	build_code := run_build(nil)
+	test_times_build_end(test_started)
+	if build_code != 0 {
+		return build_code
 	}
 	if !reset_folder(SCREENSHOT_FOLDER) {
 		return EXIT_FAILURE

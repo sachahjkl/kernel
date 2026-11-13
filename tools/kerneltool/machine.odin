@@ -2292,6 +2292,7 @@ Machine :: struct {
 	forward:     Forward, // QEMU user networking: the port of hostfwd and the listener of guestfwd.
 	started_at:  time.Tick, // When QEMU started: the first Wait says how long the boot took.
 	started_unix: i64, // When QEMU started, in seconds since 1970: no date that the machine prints is before it.
+	times:       Machine_Step_Times, // The times of the step that runs (test_times.odin).
 }
 
 monitor_send :: proc(machine: ^Machine, parts: ..string) {
@@ -2371,6 +2372,8 @@ key_pause_without_confirmation :: proc() -> time.Duration {
 // With the wait, the tool never sends a key before the last one arrived.
 // Before remote runs, the tool waits a fixed time, as before.
 key_send :: proc(machine: ^Machine, name: string) -> bool {
+	key_started := time.tick_now()
+	defer test_times_key_note(machine, key_started)
 	if !machine.confirm {
 		monitor_send(machine, "sendkey ", name, " 20")
 		time.sleep(key_pause_without_confirmation())
@@ -2612,7 +2615,9 @@ log_read :: proc(machine: ^Machine) -> string {
 	if err != nil {
 		return ""
 	}
-	return string(log[:strings.last_index_byte(string(log), '\n') + 1])
+	text := string(log[:strings.last_index_byte(string(log), '\n') + 1])
+	test_times_first_line_note(machine, len(text))
+	return text
 }
 
 // windows_line gives the line of the last window with a title in the menu
@@ -2641,6 +2646,8 @@ windows_line :: proc(machine: ^Machine, title: string, from: int) -> (line: int,
 }
 
 log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := HANG_BOUND) -> bool {
+	wait_started := time.tick_now()
+	defer test_times_wait_note(machine, wait_started)
 	start := time.now()
 	for time.since(start) < limit {
 		log := log_read(machine)
@@ -2662,6 +2669,8 @@ log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := H
 // text_found when text came first. It does not move the place of the log:
 // the Wait that follows finds text there at once.
 log_wait_or_failure :: proc(machine: ^Machine, text, failure: string, limit: time.Duration) -> (failure_line: string, text_found: bool) {
+	wait_started := time.tick_now()
+	defer test_times_wait_note(machine, wait_started)
 	start := time.now()
 	for time.since(start) < limit {
 		log := log_read(machine)
@@ -2698,12 +2707,15 @@ log_last_line :: proc(machine: ^Machine, text: string) -> string {
 
 // screen_save saves the screen of the machine as a PNG file.
 screen_save :: proc(machine: ^Machine, name: string) -> bool {
+	picture_started := time.tick_now()
 	time.sleep(400 * time.Millisecond) // The compositor shows the last change.
 	_ = os.remove(SCREEN_DUMP)
 	monitor_send(machine, "screendump ", SCREEN_DUMP)
 	for dump_start := time.tick_now(); time.tick_since(dump_start) < HANG_BOUND; {
 		time.sleep(100 * time.Millisecond)
+		read_started := time.tick_now()
 		dump, err := os.read_entire_file(SCREEN_DUMP, context.temp_allocator)
+		read_ended := time.tick_now()
 		if err != nil {
 			continue
 		}
@@ -2728,6 +2740,7 @@ screen_save :: proc(machine: ^Machine, name: string) -> bool {
 		}
 		path := join(SCREENSHOT_FOLDER, "/", name, ".png")
 		file, encode_error := png_encode(width, height, 3, dump[position:][:width * height * 3])
+		conversion_ended := time.tick_now()
 		if encode_error != nil {
 			fmt.eprintfln("kerneltool: cannot encode %s: %v", path, encode_error)
 			return false
@@ -2736,6 +2749,7 @@ screen_save :: proc(machine: ^Machine, name: string) -> bool {
 			fmt.eprintfln("kerneltool: cannot write %s: %v", path, write_error)
 			return false
 		}
+		test_times_picture_note(machine, {settle = time.tick_diff(picture_started, dump_start), dump = time.tick_diff(dump_start, read_started), read = time.tick_diff(read_started, read_ended), conversion = time.tick_diff(read_ended, conversion_ended), write = time.tick_since(conversion_ended)})
 		fmt.printfln("kerneltool: screen saved: %s (%dx%d, %d bytes)", path, width, height, len(file))
 		return true
 	}
@@ -2746,6 +2760,7 @@ screen_save :: proc(machine: ^Machine, name: string) -> bool {
 // machine_test runs a scenario on a boot volume. It passes when each step
 // passes and QEMU ends with the status exit_status.
 machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual) -> bool {
+	machine_test_started := time.tick_now()
 	// The software TPM runs before QEMU and ends after it, with a folder of
 	// its own for each machine.
 	tpm: Tpm_Process
@@ -2796,6 +2811,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		disk_server = disk_server,
 	}
 	passed := scenario_run(&machine, steps)
+	scenario_ended := time.tick_now()
 	if !passed && firmware != .Usual {
 		// While QEMU still runs: what the firmware shows and wrote.
 		firmware_failure_report(&machine, output)
@@ -2852,6 +2868,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 			fmt.eprintln("   ", line)
 		}
 	}
+	test_times_machine_end(&machine, passed, machine_test_started, machine.started_at, scenario_ended)
 	return passed
 }
 
@@ -2907,6 +2924,10 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 	generation_base: i64 = -1 // The number that the last step Generation read; -1: none.
 	for given_step, index in steps {
 		step := given_step
+		// The time of the step, for a step that passes and for one that fails.
+		step_started := time.tick_now()
+		test_times_step_start(machine)
+		defer test_times_step_end(machine, index, given_step, step_started)
 		if index > 0 && remote_starts_or_ends(steps[index - 1]) && machine.peer != nil && machine.peer.remote != nil {
 			// The step before started or closed `remote`: its key of the
 			// start before is forgotten, and the tool no longer reads the

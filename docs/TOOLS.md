@@ -22,7 +22,7 @@ A developer tool (`GLOSSARY.md`) shows how the system runs. It reads reports of 
 | "Names and lines", "The debugger: the design" | How an address becomes a procedure and a source line, and the debugger that is designed |
 | "What `inspect` does not read: the bytes of another program", "The cost" | The limit of the grant, and the price of a sample |
 | "The comments of the sources", "The form of a documented comment" | The rules that the tool checks on every comment, and the form of a comment that the site and the console show |
-| "The commands of the tool" | The commands of `kerneltool`, and the parts of the machine test that `kerneltool test` runs alone |
+| "The commands of the tool" | The commands of `kerneltool`, the parts of the machine test that `kerneltool test` runs alone, and the times of a test |
 | "The bounds of the tests" | How a test waits, and why no test asserts a speed |
 
 ![The program inspect: the address space of the console as a band scaled by pages, its mappings, its modules and its threads](screenshots/inspect.png)
@@ -288,7 +288,7 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `module <name> ...` | Builds one module of the table, and its debug object. The parallel build runs it; run it by hand to see the errors of one module alone |
 | `run [without_checks]` | Builds, then starts the machine under QEMU in a window, with the log of the kernel on the terminal. The data disk stays from run to run. It starts the peer that takes the calls of `kerneltool call` |
 | `call <key> "<call>"` | Calls an export of a service of the machine that `run` started, through the program `remote` over QUIC, and prints the typed result |
-| `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "kerneltool: all tests passed" |
+| `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "kerneltool: all tests passed", then the times of the test (below) |
 | `measure ...` | A machine that measures with no other load: the locks, `scheduler N`, `windows`, `address_space`, `shortage`. The numbers are measures, never conditions |
 | `screenshots` | The whole test and a second build, then the measure record and the copy of the pictures to `docs/screenshots` and to the development log. `screenshots compress` compresses the PNG files that are stored with no compression |
 | `check` | `odin check -vet` and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the changelog, the news), then `test` and a second build that must give the same bytes |
@@ -327,6 +327,35 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `trusted_boot` | The volumes of the trusted boot; `trusted_boot tpm` adds the two machines with a software TPM |
 
 The persistence and the self tests of the kernel have no part of their own: only the whole run starts them. An argument that is not a part is refused before the build: the command prints the parts that it knows and ends with the exit code 2.
+
+### The times of a test
+
+`kerneltool test` reads the monotonic clock of the host at the start and at the end of the build, of each machine and of each step. At the end of a test that ran a machine, passed or failed, it writes `build/test_times.txt` and prints a summary. Each number is a measure: no test reads one, and no time makes a test fail ("The bounds of the tests").
+
+The file has one line for each machine: its log file, its result, its whole time, the time from the start of QEMU to the first line of its log, the time of its steps and the time of its stop. Under it, one line for each step, in the order of the run, in fixed columns:
+
+| Column | What it holds |
+|---|---|
+| `step` | The number of the step in its scenario, from 1 |
+| `kind` | The kind of the step (`Wait`, `Type`, `Launch`, `Shot`, `Call`, ...) |
+| `duration` | The time of the step, in seconds |
+| `waited` | The part of that time in a wait for a line of the log |
+| `keys`, `key_time` | The keys that the step sent, and the time in their sends, with the wait for each key |
+| `pictures` | The pictures of the screen that the step saved |
+| `text` | The first 60 bytes of the text of the step |
+
+The last step of a machine that failed is the step that failed, when a step failed.
+
+The summary is a list of lines that start with `kerneltool: measure:`:
+
+- the whole test, the build, and the machines (the start to the first line of the log, the steps, the stops);
+- for each kind of step, the count of its steps and the sum of their durations;
+- the count of the keys and the time in their sends;
+- the count of the pictures and their time, in five parts: the fixed wait before the picture, the `screendump` of QEMU, the read of the file, the conversion to PNG, the write;
+- the time waited for lines of the log, added by the program of the line. The program is the first word of the text of the step before its first `:` (`clock`, `scheduler`, `[console]`);
+- the 25 slowest steps, with their text.
+
+The time of a wait says how late the line came after the step before, not what the program did: a program that runs during several steps has its time in the step that waits for its line.
 
 ## The bounds of the tests
 
