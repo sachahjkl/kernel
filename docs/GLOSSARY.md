@@ -948,9 +948,9 @@ Do not use: runqueue, ready list.
 
 ### Strategy
 
-A strategy is the rule that orders the ready threads of each run queue: a table of six functions of the kernel over fixed fields of the thread and of the run queue.
+A strategy is the rule that orders the ready threads of each run queue: six procedures of the kernel over fixed fields of the thread and of the run queue.
 
-The six functions are ready, pick, tick, stopping, wake preemption and move. The machine has one strategy at a time: round robin, fair or EEVDF. A strategy owns no memory: its state is fields of the thread and of the queue, zero when the strategy has not placed the thread.
+The six procedures are ready, pick, tick, stopping, wake preemption and move. The kernel calls them through a `switch` on the strategy of the queue, with a direct call in each case: the strategies are a closed set, and the kernel keeps no table of procedure addresses for them. The machine has one strategy at a time: round robin, fair or EEVDF. A strategy owns no memory: its state is fields of the thread and of the queue, zero when the strategy has not placed the thread.
 
 A program with the right Schedule on the machine changes the strategy while the system runs (`Strategy_Set`): each queue converts under its run lock, and no thread stops or is lost. The root service gives that right only to the program `scheduler`. The limit of a budget is not a strategy: it holds under each one.
 

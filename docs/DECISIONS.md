@@ -355,7 +355,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-13. Decided by: the owner, on a contradiction that a reading of the guides against the code found.
 - Decision: property 13 forbids tables of function pointers on fast paths, and the scheduler calls one table of six functions for each strategy, under the run lock. The property is amended: this one table is allowed, fixed at build time, with no function of a program in it. The change of strategy while the system runs stays.
 - Words: "Amender la propriété"
-- State: done.
+- State: replaced by D-226: the table is gone, and the exception left property 13.
 - Where: `PROPERTIES.md`, property 13; `kernel/strategy.odin`; `SCHEDULING.md`.
 
 ## 2. The way of working
@@ -818,8 +818,8 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-13. Decided by: the owner, on an explanation of the coordinator.
 - Decision: the scheduler is not a module and no module replaces it. It runs at each tick, each wake and each wait, under the run lock; a module is another address space, the thread that serves it must itself be scheduled, and a scheduler that fails stops the machine. The strategy still changes while the machine runs, among the strategies that the kernel contains (D-089, D-091). Because the set is closed, the table of functions of D-223 is to be replaced by a `switch` with direct calls, and the exception of property 13 then leaves.
 - Words: "vu que le [scheduler] c'est littéralement la pièce chaude du [kernel] ça vaut pas la peine de le mettre dans un module et de le rendre du coup surchargeable pour toi faudrait que ce soit [built in] on est d'accord" [dictated; the words in brackets are the coordinator's reading]; then: "il faut que ce soit proche dans le code et qui est pas du dispatch virtuel etc c'est ça dans ce cas là je pense que [...] un switch ce serait bien"
-- State: decided. The `switch` is not written: it waits for the end of the pause.
-- Where: `SCHEDULING.md`; `FIRST_MILESTONE.md`, "Next steps".
+- State: done. The `switch` is written, and property 13 has no exception.
+- Where: `SCHEDULING.md`; `FIRST_MILESTONE.md`, choice 705.
 
 ### D-227 The policy of scheduling is outside the kernel, the mechanism inside; no compiler in the kernel
 - 2026-11-13. Decided by: the owner, after a discussion of an embedded compiler for a small verified language in the kernel (the idea of eBPF).

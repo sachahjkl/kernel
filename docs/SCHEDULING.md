@@ -2,13 +2,13 @@
 
 Status: built. The kernel runs three strategies (`kernel/strategy.odin`), and this guide is their design, with the research behind it. The system takes ideas from CFS, EEVDF and `sched_ext`, and it can change from one strategy to another while it runs.
 
-**The idea in plain words.** A scheduling strategy decides which ready thread runs next on a processor. This system has three behind one table of six functions (round robin, fair, EEVDF), and a program with the right **Schedule** on the machine changes the strategy of the whole machine while it runs, with no stop.
+**The idea in plain words.** A scheduling strategy decides which ready thread runs next on a processor. This system has three (round robin, fair, EEVDF), each as six procedures of the kernel, and a program with the right **Schedule** on the machine changes the strategy of the whole machine while it runs, with no stop.
 
 **For whom.** A reader who wants to know how the system shares the processors, and a reader who changes `kernel/strategy.odin`.
 
 **Read before.** `ARCHITECTURE.md`, "K3. Scheduler" and, for the locks, "Rules that keep each path correct". After this guide, the picture of the program `scheduler`.
 
-**The map of this note.** "1. What Linux does" describes CFS, EEVDF and `sched_ext`. "2. What this system takes" gives the table of six functions, and the weight and the request that a program sets for a thread. "3. Design details" gives the virtual time, the queue clock and the lag. "4. Measured" and "5. What this system refuses, and why" close.
+**The map of this note.** "1. What Linux does" describes CFS, EEVDF and `sched_ext`. "2. What this system takes" gives the six procedures of a strategy, and the weight and the request that a program sets for a thread. "3. Design details" gives the virtual time, the queue clock and the lag. "4. Measured" and "5. What this system refuses, and why" close.
 
 ![The scheduling strategies side by side, with the wakes, the delay of a wake, the shares of spinners with weights, and the strategy in use](screenshots/scheduler.png)
 
@@ -58,11 +58,11 @@ The BPF verifier proves that each callback is memory safe and ends. The kernel k
 
 ## 2. What this system takes
 
-### A strategy is a table of six functions over the data of a run queue
+### A strategy is six procedures over the data of a run queue
 
-From `sched_ext`: a strategy is a small set of callbacks. Here it is a record of six function addresses in the kernel (`kernel/strategy.odin`):
+From `sched_ext`: a strategy is a small set of callbacks. Here it is six procedures of the kernel (`kernel/strategy.odin`):
 
-| Callback | When | It decides |
+| Procedure | When | It decides |
 |---|---|---|
 | `ready` | a thread becomes runnable: new, woken, or back after its turn | its virtual time and deadline |
 | `pick` | a processor needs a thread | the next thread of a queue, among the threads that a budget lets run |
@@ -70,6 +70,16 @@ From `sched_ext`: a strategy is a small set of callbacks. Here it is a record of
 | `stopping` | a thread leaves its processor | the charge of the last time; the lag of a thread that waits |
 | `wake_preempts` | a thread woke and each processor is busy | if the woken thread preempts the thread that runs on its home |
 | `move` | a processor takes a thread from the queue of another processor | the virtual time of the thread in the new queue |
+
+The kernel calls a procedure of a strategy through a `switch` on the strategy of the queue, with a direct call in each case (`queue_strategy_ready`, `queue_strategy_pick`, `queue_strategy_tick`, `queue_strategy_stopping`, `queue_strategy_wake_preempts`, `queue_strategy_move`). The kernel has no table of procedure addresses for its strategies. The reasons:
+
+- The set of strategies is closed: the kernel contains each one, and no program supplies a procedure.
+- Each call is direct: the processor reads no address of a procedure from memory at a pick, a wake or a tick.
+- The compiler sees the procedure that each case calls, and can put it in the place of the call.
+- Property 13 forbids tables of function pointers on fast paths, and it holds here with no exception.
+- A `switch` names each strategy and has no default case: a new strategy does not build until each of the six procedures has its call.
+
+The strategy of a queue is one word of the run queue (`Run_Queue.strategy`), which the `switch` reads under the run lock of the queue. The change of strategy while the machine runs writes that word ("The change at run time").
 
 The data stays in the kernel tables, in fixed fields (property 13, property 14: no allocation). A strategy owns no memory: its state is the fields of the thread record and of the run queue that the table of `ARCHITECTURE.md` names. All strategies share one list per queue; only `pick` decides the order.
 
@@ -243,6 +253,6 @@ Each item is an idea of Linux that the system does not take, or does not take ye
 - **A tree for the queue** (CFS, EEVDF): refused for now. A scan of a small queue in one table is fewer lines (property 13); a measure decides when a queue becomes large.
 - **The nice value**: refused. A weight is a number from 1 to 1024 that a program can only lower (property 20), not a level that a privileged program raises.
 - **A program of the principal as the strategy** (`sched_ext`): not built. The kernel must stay off the hot path (property 5) and must not run code that it did not verify; a program that answers each pick through a ring puts a round trip between programs on each switch. What it needs: (1) a form of strategy code that the kernel can check before it runs it: a small language of callbacks over the fixed fields (a verifier, as BPF), or a module that the kernel runs only after a proof of bounded time and of the fields that it reads and writes; (2) the six callbacks, which are already the whole interface; (3) a watchdog: a thread that is ready and does not run for a time ends the strategy, as the kernel of Linux does; (4) the fallback: `Strategy_Set` to round robin, which already works without a stop; (5) a right: the same right `Schedule` on the machine. What exists for it: the six callbacks, the state in fixed fields that a strategy owns and that a change resets to zero, the change at run time without a stop, and the counts that a watchdog reads.
-- **Groups** (the CFS groups, the cgroups of Linux): not built. A share for each budget needs a virtual time for each budget in each queue: a strategy can add it with the same six callbacks. It is the next layer of the policy that a program holds, after the schedule of a live thread: a program with the right would write the weight of a budget as it writes the weight of a thread.
+- **Groups** (the CFS groups, the cgroups of Linux): not built. A share for each budget needs a virtual time for each budget in each queue: a strategy can add it with the same six procedures. It is the next layer of the policy that a program holds, after the schedule of a live thread: a program with the right would write the weight of a budget as it writes the weight of a thread.
 - **The deferred dequeue of Linux** (a sleeping thread stays in the queue so that its lag decays): refused. It keeps a thread that waits in a structure of threads that are ready; here the lag is clamped at the sleep and the change of strategy resets it.
 - **Per-thread affinity**: not built. A move keeps the virtual time or the lag; the balance stays the one of the lock split. The placement of a thread on the processors is a layer of the policy that a program holds, as the schedule of a live thread is: a set of processors for a thread, which the pick and the move of each queue would read. No command writes it yet.

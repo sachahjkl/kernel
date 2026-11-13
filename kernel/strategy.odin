@@ -3,17 +3,24 @@ package kernel
 import "base:intrinsics"
 import op "contract:operation"
 
-// The scheduling strategies (docs/SCHEDULING.md). A strategy is a table of
-// six functions over the data of one run queue. The generic code of
+// The scheduling strategies (docs/SCHEDULING.md). A strategy is six
+// procedures over the data of one run queue. The generic code of
 // schedule.odin keeps the list of each queue, the run locks, the balance
 // between processors and the budgets; a strategy decides only the order.
+//
+// The generic code calls a procedure of the strategy of a queue through one
+// of the six queue_strategy procedures below: a switch on the strategy of
+// the queue, with a direct call in each case. The strategies are a closed
+// set that the kernel contains, so no address of a procedure is read from
+// memory on these paths, and the compiler can put a strategy procedure in
+// the place of its call.
 //
 // The state of a strategy is in fixed fields: in the thread record (the
 // hot line: virtual, virtual_deadline, lag, placed) and in the run queue
 // (virtual, weight). Zero is valid in each field for each strategy: a
 // thread that is not placed is placed by `ready` with the kind New.
 //
-// Each function runs under the run lock of the queue that it receives.
+// Each procedure runs under the run lock of the queue that it receives.
 // A thread that it reads is in that queue, or runs on the processor of
 // that queue (its home is that processor): its fields are under the same
 // lock. `move` holds the run locks of the two queues.
@@ -29,33 +36,94 @@ Ready_Kind :: enum u8 {
 	Back, // The thread that ran: its turn ended and it is still ready.
 }
 
-Strategy_Table :: struct {
-	// A thread becomes ready in the queue of its home. It is not yet in
-	// the list: the generic code puts it at the end after this call.
-	ready:         proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread, kind: Ready_Kind),
-	// The next thread of a queue, among the threads that a budget lets
-	// run, or nil. The generic code takes it out of the list.
-	pick:          proc "contextless" (queue: ^Run_Queue, home: u32) -> ^Thread,
-	// The tick on the processor that runs the thread: cycles is the time
-	// since the last charge. true: the turn ends.
-	tick:          proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Thread, cycles: u64) -> bool,
-	// The thread leaves its processor: cycles since the last charge. waits:
-	// it waits, or it ends; else it goes back to the queue (ready, Back).
-	stopping:      proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Thread, cycles: u64, waits: bool),
-	// A thread woke in the queue (it is in the list now) while `running`
-	// runs on the processor of the queue. true: the turn of running ends.
-	wake_preempts: proc "contextless" (queue: ^Run_Queue, home: u32, running: ^Thread, woken: ^Thread) -> bool,
-	// A processor takes a thread from the queue `from` to run it: its home
-	// becomes `to`. The thread is still in the list of `from`.
-	move:          proc "contextless" (from: ^Run_Queue, from_home: u32, to: ^Run_Queue, to_home: u32, thread: ^Thread),
+// A switch below names each member of the enumeration, with no default
+// case: a new strategy does not build until each of the six has its call.
+// A queue with no strategy runs as round robin.
+
+// queue_strategy_ready: a thread becomes ready in the queue of its home. It
+// is not yet in the list: the generic code puts it at the end after this
+// call.
+queue_strategy_ready :: #force_inline proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread, kind: Ready_Kind) {
+	switch queue.strategy {
+	case .None, .Round_Robin:
+		round_robin_ready(queue, home, thread, kind)
+	case .Fair:
+		fair_ready(queue, home, thread, kind)
+	case .Eevdf:
+		eevdf_ready(queue, home, thread, kind)
+	}
 }
 
-@(rodata)
-STRATEGIES := [op.Strategy]Strategy_Table {
-	.None        = ROUND_ROBIN,
-	.Round_Robin = ROUND_ROBIN,
-	.Fair        = FAIR,
-	.Eevdf       = EEVDF,
+// queue_strategy_pick gives the next thread of a queue, among the threads
+// that a budget lets run, or nil. The generic code takes it out of the list.
+queue_strategy_pick :: #force_inline proc "contextless" (queue: ^Run_Queue, home: u32) -> (picked: ^Thread) {
+	switch queue.strategy {
+	case .None, .Round_Robin:
+		picked = round_robin_pick(queue, home)
+	case .Fair:
+		picked = fair_pick(queue, home)
+	case .Eevdf:
+		picked = eevdf_pick(queue, home)
+	}
+	return
+}
+
+// queue_strategy_tick: the tick on the processor that runs the thread:
+// cycles is the time since the last charge. true: the turn ends.
+queue_strategy_tick :: #force_inline proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Thread, cycles: u64) -> (turn_ends: bool) {
+	switch queue.strategy {
+	case .None, .Round_Robin:
+		turn_ends = round_robin_tick(queue, cpu, thread, cycles)
+	case .Fair:
+		turn_ends = fair_tick(queue, cpu, thread, cycles)
+	case .Eevdf:
+		turn_ends = eevdf_tick(queue, cpu, thread, cycles)
+	}
+	return
+}
+
+// queue_strategy_stopping: the thread leaves its processor: cycles since
+// the last charge. waits: it waits, or it ends; else it goes back to the
+// queue (ready, Back).
+queue_strategy_stopping :: #force_inline proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Thread, cycles: u64, waits: bool) {
+	switch queue.strategy {
+	case .None, .Round_Robin:
+		round_robin_stopping(queue, cpu, thread, cycles, waits)
+	case .Fair:
+		fair_stopping(queue, cpu, thread, cycles, waits)
+	case .Eevdf:
+		eevdf_stopping(queue, cpu, thread, cycles, waits)
+	}
+}
+
+// queue_strategy_wake_preempts: a thread woke in the queue (it is in the
+// list now) while `running` runs on the processor of the queue. true: the
+// turn of running ends.
+queue_strategy_wake_preempts :: #force_inline proc "contextless" (queue: ^Run_Queue, home: u32, running: ^Thread, woken: ^Thread) -> (turn_ends: bool) {
+	switch queue.strategy {
+	case .None, .Round_Robin:
+		turn_ends = round_robin_wake_preempts(queue, home, running, woken)
+	case .Fair:
+		turn_ends = fair_wake_preempts(queue, home, running, woken)
+	case .Eevdf:
+		turn_ends = eevdf_wake_preempts(queue, home, running, woken)
+	}
+	return
+}
+
+// queue_strategy_move: a processor takes a thread from the queue `from` to
+// run it: its home becomes `to`. The thread is still in the list of `from`.
+// The strategy is the one of `from`: the caller moves a thread this way
+// only when the two queues have the same strategy.
+queue_strategy_move :: #force_inline proc "contextless" (from: ^Run_Queue, from_home: u32, to: ^Run_Queue, to_home: u32, thread: ^Thread) {
+	switch from.strategy {
+	case .None, .Round_Robin:
+		round_robin_move(from, from_home, to, to_home, thread)
+	case .Fair:
+		fair_move(from, from_home, to, to_home, thread)
+	case .Eevdf:
+		eevdf_move(from, from_home, to, to_home, thread)
+	}
 }
 
 // The strategy at boot: EEVDF, for its wake preemption (docs/SCHEDULING.md).
@@ -152,14 +220,8 @@ queue_convert :: proc "contextless" (queue: ^Run_Queue, home: u32, target: op.St
 	}
 	intrinsics.atomic_store(&queue.strategy, target) // A report reads it with no lock.
 	for index := queue.head; index != 0; index = threads[index].queue_next {
-		strategy_of(queue).ready(queue, home, &threads[index], .New)
+		queue_strategy_ready(queue, home, &threads[index], .New)
 	}
-}
-
-// strategy_of gives the table of the strategy of a queue. The caller holds
-// its run lock.
-strategy_of :: #force_inline proc "contextless" (queue: ^Run_Queue) -> ^Strategy_Table {
-	return &STRATEGIES[queue.strategy]
 }
 
 // strategy_clear gives the strategy fields of a thread their zero values.
@@ -193,7 +255,7 @@ strategy_clear :: proc "contextless" (thread: ^Thread) {
 strategy_weight_raised :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread) {
 	strategy_clear(thread)
 	if thread.queued {
-		strategy_of(queue).ready(queue, home, thread, .New)
+		queue_strategy_ready(queue, home, thread, .New)
 	}
 }
 
@@ -216,7 +278,7 @@ strategy_leaves_list :: proc "contextless" (queue: ^Run_Queue, home: u32, thread
 		return
 	}
 	if queue.strategy != .Eevdf {
-		strategy_of(queue).stopping(queue, processors[home], thread, 0, true)
+		queue_strategy_stopping(queue, processors[home], thread, 0, true)
 		return
 	}
 	lag: i64
@@ -240,11 +302,10 @@ strategy_leaves_list :: proc "contextless" (queue: ^Run_Queue, home: u32, thread
 strategy_tick :: proc "contextless" (cpu: ^Processor, thread: ^Thread, cycles: u64) -> bool {
 	queue := &run_queues[cpu.index]
 	lock_take(&queue.lock, .Run)
-	strategy := strategy_of(queue)
 	if !thread.placed {
-		strategy.ready(queue, cpu.index, thread, .New)
+		queue_strategy_ready(queue, cpu.index, thread, .New)
 	}
-	ended := strategy.tick(queue, cpu, thread, cycles)
+	ended := queue_strategy_tick(queue, cpu, thread, cycles)
 	lock_free(&queue.lock, .Run)
 	cpu.slice_left -= min(cpu.slice_left, 1)
 	return ended || cpu.slice_left == 0
@@ -252,15 +313,8 @@ strategy_tick :: proc "contextless" (cpu: ^Processor, thread: ^Thread, cycles: u
 
 // The round robin: the queue in its order, a time slice of TIME_SLICE
 // ticks (strategy_tick), no wake preemption. The behavior of the kernel
-// before the strategies.
-ROUND_ROBIN :: Strategy_Table {
-	ready         = round_robin_ready,
-	pick          = round_robin_pick,
-	tick          = round_robin_tick,
-	stopping      = round_robin_stopping,
-	wake_preempts = round_robin_wake_preempts,
-	move          = round_robin_move,
-}
+// before the strategies. A procedure with an empty body stays, so that each
+// strategy has the same six procedures.
 
 round_robin_ready :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread, kind: Ready_Kind) {}
 
@@ -327,14 +381,6 @@ clock_advance :: #force_inline proc "contextless" (queue: ^Run_Queue, virtual: u
 // is the target latency divided by weight, at least the least turn. A
 // woken thread is at most the credit under the queue clock, and preempts
 // when its virtual time is less by more than the wake granularity.
-FAIR :: Strategy_Table {
-	ready         = fair_ready,
-	pick          = fair_pick,
-	tick          = fair_tick,
-	stopping      = fair_stopping,
-	wake_preempts = fair_wake_preempts,
-	move          = fair_move,
-}
 
 // A thread that is placed (new, or placed again after a change of
 // strategy: the two cases are one, so each thread of a change starts equal)
@@ -411,14 +457,6 @@ fair_move :: proc "contextless" (from: ^Run_Queue, from_home: u32, to: ^Run_Queu
 // The deadline is the virtual time plus the request in weighted cycles.
 // The lag (V minus the virtual time) is kept across a wait, within two
 // requests (at least one tick), and across a move.
-EEVDF :: Strategy_Table {
-	ready         = eevdf_ready,
-	pick          = eevdf_pick,
-	tick          = eevdf_tick,
-	stopping      = eevdf_stopping,
-	wake_preempts = eevdf_wake_preempts,
-	move          = eevdf_move,
-}
 
 // eevdf_slice gives the request of a thread in weighted cycles: at most
 // 2^39 (REQUEST_LIMIT at 5 GHz, weight 1).
