@@ -17,7 +17,7 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ## Groups
 
-1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191, D-205, D-214 to D-217
+1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191, D-205, D-214 to D-217, D-223
 2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213, D-218, D-219
 3. [The kernel](#3-the-kernel): D-071 to D-083, D-220
 4. [Memory](#4-memory): D-084 to D-088
@@ -350,6 +350,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "je comprends pas ces délires de \"personnes\" faut arrêter, ce qui dois être dans le TPM NORMALEMENT y va et c'est tout"
 - State: done in the documents.
 - Where: `PROPERTIES.md`, properties 17 and 21; `TRUSTED_BOOT.md`; `GLOSSARY.md`, "Publisher".
+
+### D-223 The strategy table of the scheduler is an exception to property 13
+- 2026-11-13. Decided by: the owner, on a contradiction that a reading of the guides against the code found.
+- Decision: property 13 forbids tables of function pointers on fast paths, and the scheduler calls one table of six functions for each strategy, under the run lock. The property is amended: this one table is allowed, fixed at build time, with no function of a program in it. The change of strategy while the system runs stays.
+- Words: "Amender la propriété"
+- State: done.
+- Where: `PROPERTIES.md`, property 13; `kernel/strategy.odin`; `SCHEDULING.md`.
 
 ## 2. The way of working
 

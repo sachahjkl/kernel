@@ -293,6 +293,7 @@ Status: Decided.
 - **Rule**: The kernel processes batches. A function takes an array of work, not one item.
 - **Rule**: The cache line size is a build parameter. It is 64 bytes on x86-64 and can be 128 bytes on other machines. [Notes `data_oriented_kernel.md` §2]
 - **Forbids**: linked lists and pointer trees on fast paths, a reference count per object that every reader writes, tables of function pointers on fast paths.
+- **Exception**: the strategy of the scheduler is one table of functions, fixed at build time, with one row for each strategy of the system. A run queue calls the row of its strategy when it picks a thread, when a thread wakes and at a tick. The system changes strategy while it runs by changing which row a queue names. No program supplies a function of that table, and the kernel has no other such table on a fast path. (2026-11-13: the property forbade every table of function pointers on a fast path, and the scheduler had one.)
 - **Cost**: Fixed tables need sizes. A table that grows needs a reserve of address space (property 14).
 - **Reuse**: The research found no kernel that applies these rules to its whole object model. Linux, seL4 and others apply them to single paths. This part is new work. [Notes `data_oriented_kernel.md` §3, §5]
 
