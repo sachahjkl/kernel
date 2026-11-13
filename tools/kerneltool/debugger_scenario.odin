@@ -116,7 +116,7 @@ DEBUG_ACCESS_REFUSED_BY_THE_GRANT :: "debugger.attach: the caller has no grant f
 GRANT_NUMBER_INSPECT :: "1"
 GRANT_NUMBER_SERVE :: "5"
 GRANT_NUMBER_STORE :: "7"
-GRANT_NUMBER_SYSTEM_PART :: "24"
+GRANT_NUMBER_SYSTEM_PART :: "25" // After the grant Palette.
 
 @(rodata)
 scenario_debugger_commands := [?]Step {
