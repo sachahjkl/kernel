@@ -70,6 +70,14 @@ strategy_changes: u64
 // kernel measured its frequency before (timer_calibrate).
 fair_latency, fair_least_turn, fair_wake, fair_credit, tick_cycles: u64
 
+// The most that a thread owes under EEVDF, in weighted cycles: the longest
+// turn (the time slice and one tick) at the weight 1. No thread owes more
+// after a turn, at any weight and with any request, so the bound cuts
+// nothing that a thread ran; and no value that a program writes is in it.
+// At most 2^44 (KEY_LIMIT): 11 ticks at 5 GHz and the weight 1 are below
+// 2^36.
+eevdf_owing_limit: i64
+
 FAIR_LATENCY :: 6000 // Microseconds: the time in which each thread of a queue runs one time.
 FAIR_LEAST_TURN :: 750 // Microseconds: the shortest turn.
 FAIR_WAKE :: 1000 // Microseconds: a woken thread preempts if its virtual time is less by more than this.
@@ -83,6 +91,7 @@ strategy_start :: proc "contextless" () {
 	fair_wake = microseconds_to_cycles(FAIR_WAKE)
 	fair_credit = microseconds_to_cycles(FAIR_CREDIT)
 	tick_cycles = cycle_frequency / TICKS_PER_SECOND
+	eevdf_owing_limit = min(i64((TIME_SLICE + 1) * tick_cycles * op.WEIGHT_FULL), KEY_LIMIT)
 	strategy_chosen = STRATEGY_START
 	for &queue in run_queues {
 		queue.strategy = STRATEGY_START
@@ -171,42 +180,59 @@ strategy_clear :: proc "contextless" (thread: ^Thread) {
 	thread.placed = false
 }
 
-// strategy_schedule_changed keeps the strategy fields of a thread right
-// after its weight or its request changed (thread_schedule_write). The
-// caller holds the run lock of the home of the thread, whose queue this is,
-// and wrote the new values; old_weight is the weight before the write.
+// The invariant of a write of a schedule (docs/SCHEDULING.md, "The
+// schedule of a live thread"). Each strategy has one quantity that says
+// where a thread is against the other threads of its queue:
+// - round robin: none; the order of the list;
+// - fair: the virtual time of the thread minus the queue clock;
+// - EEVDF: the lag of the thread against the other threads, the average
+//   virtual time of the OTHER threads of the queue minus its own virtual
+//   time. Above 0 the thread is owed time; below 0 it owes time: it is
+//   eligible again after the others ran that much, whatever its own
+//   weight.
+// No weight and no request of the thread is in that quantity. A write of a
+// schedule leaves it as it is when the thread owes, and can only make it
+// smaller when the thread is owed, in every state of the thread: in the
+// list, on a processor, in a wait, held by a stop. The state must not
+// matter, because a program chooses the state in which each write lands (a
+// Stop takes a thread from the list to a hold; a wake or a Resume puts it
+// back). So each state holds the same quantity in its own form: a thread
+// in the list or on a processor holds its virtual time, a thread that
+// waits or is held holds that lag itself (`lag`), and the two changes
+// of form (stopping, ready) convert with no factor that a write can
+// change. Then a write has nothing to convert.
 //
-// What a write keeps: the position of the thread against the other
-// threads, so that a thread that owes time still owes it, and no write
-// makes larger what a thread is owed.
+// The bounds follow the same rule. What a thread is owed is cut to the
+// bound of its values, which a write can make smaller: that is against
+// the thread. What a thread owes is cut only by a bound that no written
+// value changes (eevdf_owing_limit), so no write of a short request or of
+// a large weight takes away what a thread owes.
 //
-// What each strategy holds that depends on the two values:
-// - Round robin reads neither.
-// - The fair strategy reads the weight only to charge a run and to size a
-//   turn, at the moment of each. Its virtual time, and the distance to the
-//   queue clock that a waiting thread keeps, have no weight in them: they
-//   stay, and the next charge uses the new weight.
-// - EEVDF, a thread in the list or on the processor: the virtual time
-//   stays. Two values come from the old weight and the old request: the
-//   largest lag of the thread, and its virtual deadline. The thread is kept
-//   within its new bound under the queue clock, as each pick does for the
-//   list: a thread that was owed much virtual time under a small weight is
-//   not owed that much under a large one. Its deadline is at most one new
+// A sequence of writes that ends with the first weight and the first
+// request therefore leaves a thread owing what it owed, and owed at most
+// what it was owed.
+
+// strategy_schedule_changed applies the bounds of the new values after the
+// weight or the request of a thread changed (thread_schedule_write). The
+// caller holds the run lock of the home of the thread, whose queue this
+// is, and wrote the new values.
+//
+// - Round robin and the fair strategy: nothing. Their quantity has no
+//   bound that depends on the two values; the next charge and the next
+//   turn use the new weight.
+// - EEVDF: what the thread is owed is cut to the bound of the new values.
+//   A thread in the list or on the processor is raised to that bound under
+//   the queue clock, as each pick does for the list; a thread that waits
+//   or is held has its lag cut to it. What it owes is not touched.
+//   The virtual deadline of a thread in the list is at most one new
 //   request after its virtual time, and never later than it was: a shorter
-//   request counts at once, and a write gives no later end to a turn.
-// - EEVDF, a thread that waits or that a stop holds: its kept lag is not a
-//   plain distance. The average at the stop counted the thread with its
-//   weight, and the place at the wake scales the lag back with the weight
-//   that the thread has then (eevdf_place). With one weight the two cancel.
-//   With two they do not: a lag kept under the full weight and placed under
-//   the weight 1 is about half the distance, so a thread would lose half of
-//   its debt at each wait. So the write converts the lag
-//   (eevdf_lag_converted), then keeps it within the new bound.
+//   request counts at once, and a write gives no later end to a turn. The
+//   deadline orders the eligible threads; it is not in the lag.
 // A thread that is not placed has zero fields: nothing to keep.
 //
 // The time that a running thread used since its last charge is charged at
 // the new weight, at its next tick or when it leaves: at most one tick.
-strategy_schedule_changed :: proc "contextless" (queue: ^Run_Queue, thread: ^Thread, old_weight: u32) {
+strategy_schedule_changed :: proc "contextless" (queue: ^Run_Queue, thread: ^Thread) {
 	if queue.strategy != .Eevdf || !thread.placed {
 		return
 	}
@@ -218,33 +244,8 @@ strategy_schedule_changed :: proc "contextless" (queue: ^Run_Queue, thread: ^Thr
 			thread.virtual_deadline = latest
 		}
 	} else {
-		thread.lag = clamp(eevdf_lag_converted(thread.lag, old_weight, thread.weight), -i64(bound), i64(bound))
+		thread.lag = min(thread.lag, i64(bound))
 	}
-}
-
-// eevdf_lag_converted gives the lag that a thread which waits keeps after
-// its weight changed. The lag times the weight is the processor time that
-// the thread owes (below 0) or is owed (above 0): the conversion keeps that
-// time, lag * old / new, with one exception.
-//
-// The exception: what a thread is owed does not grow in virtual time when
-// its weight goes down. A thread in the list keeps its virtual time across
-// a write, so a larger lag under a small weight, then the full weight
-// written again after the wake, would be time that the thread never
-// waited for: a thread that sleeps a little and writes its weight down
-// and up would run before each other thread at each wake. So a write
-// keeps what a thread owes, exactly in both directions, and can only
-// make smaller what it is owed.
-//
-// The lag is at most 2^40 (eevdf_bound; it is clamped again here, also for
-// a value that another strategy left) and a weight at most 2^10: the
-// product is below 2^51.
-eevdf_lag_converted :: proc "contextless" (lag: i64, old_weight, new_weight: u32) -> i64 {
-	if old_weight == new_weight || lag > 0 && new_weight < old_weight {
-		return lag
-	}
-	LAG_LIMIT :: i64(1) << 40
-	return clamp(lag, -LAG_LIMIT, LAG_LIMIT) * i64(max(old_weight, 1)) / i64(max(new_weight, 1))
 }
 
 // strategy_leaves_list keeps the position of a thread that leaves the list
@@ -253,26 +254,10 @@ eevdf_lag_converted :: proc "contextless" (lag: i64, old_weight, new_weight: u32
 // Resume places the thread as a woken thread, so a thread that owes time
 // still owes it after a Stop and a Resume. The caller holds the run lock
 // of the queue; the thread is still in the list.
-//
-// The average of EEVDF does not count a thread of the list whose budget
-// has no time left, and `stopping` takes the average with the thread in
-// it. For such a thread the lag is taken against the other threads and
-// scaled as the average would scale it, so the place at the wake gives the
-// same distance back.
 strategy_leaves_list :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread) {
-	if !thread.placed {
-		return
+	if thread.placed {
+		strategy_of(queue).stopping(queue, processors[home], thread, 0, true)
 	}
-	if queue.strategy == .Eevdf && budget_spent(thread.budget) {
-		average, total := eevdf_average(queue, home)
-		lag := eevdf_lag(thread, average) // At most 2^40; the weights sum to at most 2^18.
-		if total != 0 {
-			lag = lag * total / (total + i64(thread.weight))
-		}
-		thread.lag = lag
-		return
-	}
-	strategy_of(queue).stopping(queue, processors[home], thread, 0, true)
 }
 
 // strategy_tick charges the time of the thread that runs on this processor
@@ -457,8 +442,10 @@ fair_move :: proc "contextless" (from: ^Run_Queue, from_home: u32, to: ^Run_Queu
 // on its processor; a thread is eligible when its virtual time is not
 // above V; among the eligible threads, the earliest virtual deadline runs.
 // The deadline is the virtual time plus the request in weighted cycles.
-// The lag (V minus the virtual time) is kept across a wait, within two
-// requests (at least one tick), and across a move.
+// The lag of a thread against the other threads (their average minus its
+// virtual time) is kept across a wait and across a move: what it is owed
+// within two requests (at least one tick), what it owes within
+// eevdf_owing_limit.
 EEVDF :: Strategy_Table {
 	ready         = eevdf_ready,
 	pick          = eevdf_pick,
@@ -483,9 +470,10 @@ eevdf_bound :: #force_inline proc "contextless" (thread: ^Thread) -> u64 {
 // eevdf_average gives V for a queue: the threads of the list that a budget
 // lets run, and the thread that runs on the processor of the queue, each
 // with its weight; and the sum of their weights. A thread that is not
-// placed does not count. The keys are clamped (KEY_LIMIT): a product is at
-// most 2^54, the sum of 256 threads at most 2^62.
-eevdf_average :: proc "contextless" (queue: ^Run_Queue, home: u32) -> (average: u64, weight: i64) {
+// placed does not count, and `without` does not count: the average of the
+// other threads of a thread. The keys are clamped (KEY_LIMIT): a product
+// is at most 2^54, the sum of 256 threads at most 2^62.
+eevdf_average :: proc "contextless" (queue: ^Run_Queue, home: u32, without: ^Thread = nil) -> (average: u64, weight: i64) {
 	clock := queue.virtual
 	sum: i64
 	add :: #force_inline proc "contextless" (thread: ^Thread, clock: u64, sum: ^i64, weight: ^i64) {
@@ -496,14 +484,14 @@ eevdf_average :: proc "contextless" (queue: ^Run_Queue, home: u32) -> (average: 
 		}
 	}
 	for index := queue.head; index != 0; index = threads[index].queue_next {
-		if !budget_spent(threads[index].budget) {
+		if &threads[index] != without && !budget_spent(threads[index].budget) {
 			add(&threads[index], clock, &sum, &weight)
 		}
 	}
 	// A processor that starts runs schedule before the first processor
 	// puts its record in `processors`: no record, no thread on it.
 	if cpu := processors[home]; cpu != nil {
-		if running := cpu.current; running != 0 {
+		if running := cpu.current; running != 0 && &threads[running] != without {
 			add(&threads[running], clock, &sum, &weight)
 		}
 	}
@@ -513,25 +501,33 @@ eevdf_average :: proc "contextless" (queue: ^Run_Queue, home: u32) -> (average: 
 	return clock + u64(sum / weight), weight
 }
 
-// eevdf_place puts a thread that is not in the list at V minus its lag,
-// scaled by (W + w) / W so that V does not move when the thread joins: a
-// lag of at most 2^40 times at most 2^18 + 2^10. Its deadline is one
-// request after.
+// eevdf_place puts a thread that is not in the list, and does not run on
+// the processor of the queue, at its lag from the average of the
+// queue: the threads of that average are its other threads. No weight of
+// the thread is in the place, so a weight written during a wait changes
+// nothing of it. Its deadline is one request after.
 eevdf_place :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread, lag: i64) {
-	average, total := eevdf_average(queue, home)
-	scaled := lag
-	if total != 0 {
-		scaled = lag * (total + i64(thread.weight)) / total
-	}
-	thread.virtual = average - u64(scaled)
+	average, _ := eevdf_average(queue, home)
+	thread.virtual = average - u64(lag)
 	thread.virtual_deadline = thread.virtual + eevdf_slice(thread)
 	thread.placed = true
 }
 
-// eevdf_lag gives the lag of a thread against an average, within its bound.
-eevdf_lag :: #force_inline proc "contextless" (thread: ^Thread, average: u64) -> i64 {
-	bound := i64(eevdf_bound(thread))
-	return clamp(i64(average - thread.virtual), -bound, bound)
+// eevdf_lag_against_others gives the lag of a thread of a queue against
+// the other threads: their average minus its virtual time. The thread is in the list
+// or runs on the processor of the queue; the average leaves it out, and
+// never reads its budget, so a thread whose budget has no time left has
+// the same lag as another. With no other thread the lag is 0:
+// a thread owes nothing to an empty queue.
+//
+// What the thread is owed is cut to the bound of its values. What it owes
+// is cut only to eevdf_owing_limit, which no written value changes.
+eevdf_lag_against_others :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread) -> i64 {
+	average, others := eevdf_average(queue, home, thread)
+	if others == 0 {
+		return 0
+	}
+	return clamp(i64(average - thread.virtual), -eevdf_owing_limit, i64(eevdf_bound(thread)))
 }
 
 eevdf_ready :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread, kind: Ready_Kind) {
@@ -590,13 +586,13 @@ eevdf_tick :: proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^T
 	return queue.count != 0
 }
 
-// A thread that waits keeps its lag: V is taken while the thread is still
-// the thread that runs on its home.
+// A thread that waits keeps its lag against the others. The thread still runs on its
+// home, or is still in the list (strategy_leaves_list): the average of
+// the others leaves it out in both cases.
 eevdf_stopping :: proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Thread, cycles: u64, waits: bool) {
 	charge(thread, cycles)
 	if waits {
-		average, _ := eevdf_average(queue, cpu.index)
-		thread.lag = eevdf_lag(thread, average)
+		thread.lag = eevdf_lag_against_others(queue, cpu.index, thread)
 	}
 }
 
@@ -613,9 +609,8 @@ eevdf_wake_preempts :: proc "contextless" (queue: ^Run_Queue, home: u32, running
 	return before(woken.virtual_deadline, running.virtual_deadline) || before(average, running.virtual)
 }
 
-// A move keeps the lag: V of the old queue (the thread is still in its
-// list), then a place in the new one.
+// A move keeps the lag against the others: the one of the old queue (the thread is
+// still in its list), then a place in the new one.
 eevdf_move :: proc "contextless" (from: ^Run_Queue, from_home: u32, to: ^Run_Queue, to_home: u32, thread: ^Thread) {
-	average, _ := eevdf_average(from, from_home)
-	eevdf_place(to, to_home, thread, eevdf_lag(thread, average))
+	eevdf_place(to, to_home, thread, eevdf_lag_against_others(from, from_home, thread))
 }

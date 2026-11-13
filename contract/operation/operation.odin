@@ -1020,8 +1020,8 @@ Operation :: enum u32 {
 	//   and **Write** too for a write of the registers or of the extended state; **Control** for
 	//   `Write_Schedule`. Or 0, and then `number` names a live thread of this program
 	//   (`Thread_Record.number`, `Fault_Record.thread`). Or, for `Read_Schedule` and `Write_Schedule`
-	//   only, the machine handle with **Schedule** (and **Inspect** too for `Read_Schedule`,
-	//   `thread_control_machine_rights`), and then `number` names any thread of the machine. A
+	//   only, the machine handle with **Schedule** and **Inspect**
+	//   (`thread_control_machine_rights`), and then `number` names any thread of the machine. A
 	//   thread of another program needs a handle.
 	// - `number`: the number of the thread when `thread` is 0; the machine number of the thread
 	//   (`Thread_Report.machine_number`) when `thread` is the machine handle.
@@ -1101,7 +1101,7 @@ REQUEST_LIMIT :: 100_000
 // values in use, never 0.
 //
 // The weight limit is the most that the weight of the thread can be. Only
-// a write through the machine handle with **Schedule** sets it; a write
+// a write through the machine handle with **Schedule** and **Inspect** sets it; a write
 // through 0 or through a thread handle does not read `weight_limit`, and
 // gives `Bad_Operation` for a weight above the limit that the thread has.
 // A write of a limit below the weight lowers the weight to the limit. A
@@ -1510,8 +1510,8 @@ Thread_Control_Command :: enum u64 {
 	// value; for the weight that is the weight limit of the thread.
 	// Bad_Operation for a weight above the weight limit of the thread or a
 	// request above REQUEST_LIMIT: nothing changes. A thread handle needs
-	// Control; the machine handle with Schedule names any thread by its
-	// machine number, and its write sets the weight limit too: a weight
+	// Control; the machine handle with Schedule and Inspect names any thread
+	// by its machine number, and its write sets the weight limit too: a weight
 	// above the new limit becomes the limit.
 	Write_Schedule       = 8,
 }
@@ -1538,16 +1538,17 @@ thread_control_rights :: proc "contextless" (command: Thread_Control_Command) ->
 // thread_control_machine_rights says if a command of Thread_Control also
 // takes the machine handle, with a machine number in place of a thread
 // handle, and gives the rights that the machine handle then needs. The two
-// commands of the schedule only: Schedule for a write; Schedule and Inspect
-// for a read, because each report of the machine needs Inspect, and a read
-// by machine number is one: it gives values of any thread, and says which
-// machine numbers name a thread.
+// commands of the schedule only, each with Schedule and Inspect. A read by
+// machine number is a report of the machine, and each report needs
+// Inspect: it gives values of any thread, and says which machine numbers
+// name a thread. A write through the machine handle gives the three values
+// of the record, also the weight limit: its holder reads the schedule
+// first to keep what it does not change, and it gets the machine numbers
+// from a report. So Schedule with no Inspect names no thread.
 thread_control_machine_rights :: proc "contextless" (command: Thread_Control_Command) -> (rights: Rights, taken: bool) {
 	#partial switch command {
-	case .Read_Schedule:
+	case .Read_Schedule, .Write_Schedule:
 		return {.Schedule, .Inspect}, true
-	case .Write_Schedule:
-		return {.Schedule}, true
 	}
 	return {}, false
 }

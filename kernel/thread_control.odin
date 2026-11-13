@@ -49,8 +49,10 @@ import op "contract:operation"
 // Inspect and a write Control, because a holder that can end a thread can
 // also give it a smaller share. The machine handle with the right Schedule
 // names any thread of the machine by its machine number, for these two
-// commands only; a read through it needs Inspect too, as each report of
-// the machine does.
+// commands only. It needs Inspect too, for a read as each report of the
+// machine does, and for a write because a write gives the three values of
+// the record: its holder must read the schedule to keep the values that
+// it does not change.
 //
 // Each thread has a weight limit, the full weight at first. Only a write
 // through the machine handle sets it; each other write gives a weight up
@@ -290,11 +292,11 @@ thread_schedule_read :: proc "contextless" (thread: ^Thread) -> (schedule: op.Th
 // thread of the list leaves it and the new one enters it. The list keeps
 // its order, and the thread keeps its state, its home and its processor.
 //
-// The history of the thread stays (strategy_schedule_changed): the fields
-// are not given their zero values here, as a change of strategy does. A
-// thread that ran more than its share owes time, and zero values would
-// forgive that debt: a thread that wrote its own schedule again and again
-// would run before threads that waited longer.
+// The history of the thread stays (strategy.odin, the invariant of a
+// write): the fields are not given their zero values here, as a change of
+// strategy does. A thread that ran more than its share owes time, and
+// zero values would take that away: a thread that wrote its own
+// schedule again and again would run before threads that waited longer.
 thread_schedule_write :: proc "contextless" (thread: ^Thread, schedule: op.Thread_Schedule, sets_limit: bool) -> (status: op.Status, weight_limit: u32) {
 	home := run_lock(thread)
 	defer run_unlock(home)
@@ -323,7 +325,7 @@ thread_schedule_write :: proc "contextless" (thread: ^Thread, schedule: op.Threa
 	intrinsics.atomic_store(&thread.weight, weight)
 	intrinsics.atomic_store(&thread.request, request)
 	intrinsics.atomic_store(&thread.weight_limit, weight_limit)
-	strategy_schedule_changed(queue, thread, old_weight)
+	strategy_schedule_changed(queue, thread)
 	return .Ok, weight_limit
 }
 

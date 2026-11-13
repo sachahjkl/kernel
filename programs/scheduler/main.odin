@@ -26,7 +26,8 @@
 // lose no thread; the schedule of a thread of another program is read and
 // written through the machine handle; a weight limit that the machine
 // handle wrote holds against the writes of the thread and against its new
-// threads.
+// threads; the lag that the kernel reports for a held thread never grows
+// by a write, and a lag below 0 stays the same.
 //
 // The program needs the machine with the rights Inspect and Schedule.
 //
@@ -886,7 +887,7 @@ schedule_refusals :: proc "contextless" () -> bool {
 	kept, kept_status := system.thread_schedule_read(spinner, 0)
 	unchanged := kept_status == .Ok && kept == op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL}
 	// The machine with no right Schedule; the machine with Schedule and no
-	// Inspect, which does not read; a thread handle with Inspect and no
+	// Inspect, which names no thread; a thread handle with Inspect and no
 	// Control, which reads and does not write.
 	no_schedule, no_inspect, no_control := system.Status.Ok, system.Status.Ok, system.Status.Ok
 	reads := false
@@ -894,8 +895,10 @@ schedule_refusals :: proc "contextless" () -> bool {
 		no_schedule = system.thread_schedule_write(copy, numbers[0], {weight = 1})
 		system.close(copy)
 	}
+	blind_write := system.Status.Ok
 	if copy, status := system.give(0, machine, {.Schedule}); status == .Ok {
 		_, no_inspect = system.thread_schedule_read(copy, numbers[0])
+		blind_write = system.thread_schedule_write(copy, numbers[0], {weight = 1})
 		system.close(copy)
 	}
 	if copy, status := system.give(0, spinner, {.Inspect}); status == .Ok {
@@ -909,8 +912,8 @@ schedule_refusals :: proc "contextless" () -> bool {
 	// The spinner ends: its machine number names no thread.
 	spinners_stop(0, 1)
 	ended := system.thread_schedule_write(machine, numbers[0], {weight = 1})
-	as_it_must := too_heavy == .Bad_Operation && too_long == .Bad_Operation && unchanged && no_schedule == .No_Right && no_inspect == .No_Right && no_control == .No_Right && reads && other_command == .Bad_Handle && ended == .Bad_State
-	system.log("scheduler: refused writes of a schedule: a weight above the full weight ", op.STATUS_NAMES[too_heavy], ", a request above the limit ", op.STATUS_NAMES[too_long], ", and the schedule stayed: ", u64(unchanged), "; the machine handle with no right Schedule ", op.STATUS_NAMES[no_schedule], "; a read through the machine handle with Schedule and no Inspect ", op.STATUS_NAMES[no_inspect], "; a thread handle with Inspect and no Control ", op.STATUS_NAMES[no_control], ", and it reads: ", u64(reads), "; another command with the machine handle ", op.STATUS_NAMES[other_command], "; the machine number of a thread that ended ", op.STATUS_NAMES[ended], as_it_must ? string(": as it must") : string(": WRONG"))
+	as_it_must := too_heavy == .Bad_Operation && too_long == .Bad_Operation && unchanged && no_schedule == .No_Right && no_inspect == .No_Right && blind_write == .No_Right && no_control == .No_Right && reads && other_command == .Bad_Handle && ended == .Bad_State
+	system.log("scheduler: refused writes of a schedule: a weight above the full weight ", op.STATUS_NAMES[too_heavy], ", a request above the limit ", op.STATUS_NAMES[too_long], ", and the schedule stayed: ", u64(unchanged), "; the machine handle with no right Schedule ", op.STATUS_NAMES[no_schedule], "; a read and a write through the machine handle with Schedule and no Inspect ", op.STATUS_NAMES[no_inspect], " and ", op.STATUS_NAMES[blind_write], "; a thread handle with Inspect and no Control ", op.STATUS_NAMES[no_control], ", and it reads: ", u64(reads), "; another command with the machine handle ", op.STATUS_NAMES[other_command], "; the machine number of a thread that ended ", op.STATUS_NAMES[ended], as_it_must ? string(": as it must") : string(": WRONG"))
 	return as_it_must
 }
 
@@ -1031,6 +1034,117 @@ weight_limits :: proc "contextless" () -> bool {
 	restored_right := raised == .Ok && restored_status == .Ok && restored == full
 	system.log("scheduler: under the weight limit ", u64(LIMIT), ": a new thread with the weight ", u64(LIMIT + 1), " ", op.STATUS_NAMES[too_heavy], "; a new thread with the weight 0 has the weight ", u64(limited_child.schedule.weight), " and the limit ", u64(limited_child.schedule.weight_limit), ", and its own write of the full weight ", op.STATUS_NAMES[limited_child.raise], "; after the machine handle wrote the full limit the first thread has the weight ", u64(restored.weight), child_right && restored_right ? string(": as it must") : string(": WRONG"))
 	return first_right && rounds_right && child_right && restored_right
+}
+
+// No gain by writes, on what the kernel reports (docs/SCHEDULING.md, "The
+// schedule of a live thread"). The thread report gives the distance that
+// EEVDF keeps for a thread that is held (`Thread_Report.lag`): below 0 the
+// thread owes time, above 0 it is owed time. A write must never make that
+// number larger, and must leave a number below 0 as it is. The conditions compare
+// numbers of the kernel in their order: no time and no share is in them.
+OWING_ROUNDS :: 200
+
+// What the rounds saw: the last three values are measures.
+Owing_Result :: struct {
+	rounds:  u64, // Rounds where each operation gave Ok and the thread was held.
+	grew:    u64, // Writes after which the reported lag was larger.
+	forgave: u64, // Writes after which a thread that owed time did not owe the same time.
+	owing:   u64, // Rounds where the held thread owed time.
+	owed:    u64, // Rounds where it was owed time.
+	largest: u64, // The most that it owed, in weighted cycles.
+}
+
+// held_lag gives the lag that the kernel reports for a thread of this
+// program that a stop holds. false: the report does not show it held.
+held_lag :: proc "contextless" (number: u32) -> (lag: i64, held: bool) {
+	if self_slot == 0 || !threads_of(self_slot, self_serial) {
+		return 0, false
+	}
+	for &item in thread_table.threads[:min(thread_table.count, op.THREAD_REPORT_CAPACITY)] {
+		if item.number == number && item.state != .Stopped {
+			return item.lag, item.processor == 0 && item.queued == 0
+		}
+	}
+	return 0, false
+}
+
+// owing_step writes a schedule to the held thread and compares the lag
+// with the lag before: larger is a gain; a lag below 0 that changed is
+// time that the thread owed and no longer owes, or the reverse. It gives the lag after the write.
+owing_step :: proc "contextless" (result: ^Owing_Result, thread: system.Handle, number: u32, schedule: op.Thread_Schedule, lag_before: i64, round_right: ^bool) -> i64 {
+	status := system.thread_schedule_write(thread, 0, schedule)
+	lag, held := held_lag(number)
+	if status != .Ok || !held {
+		round_right^ = false
+		return lag_before
+	}
+	if lag > lag_before {
+		result.grew += 1
+	}
+	if lag_before < 0 && lag != lag_before {
+		result.forgave += 1
+	}
+	return lag
+}
+
+// owing_kept: one spinner more than the processors, so that a queue has
+// two threads. In each round the first spinner gets the weight 1 while it
+// runs or is in a list, then a Stop holds it; in the hold it gets the full
+// weight, the request 1 us, the longest request, the weight 1 and the full
+// weight again; then a Resume. These are the sequences that take a thread
+// through both forms of its position: a weight down in the list and up in
+// the hold, and a short request around a hold.
+owing_kept :: proc "contextless" (processors: u64) -> bool {
+	result: Owing_Result
+	before, set_status := system.strategy_set(machine, .Eevdf)
+	if set_status != .Ok {
+		return false
+	}
+	count := min(int(processors) + 1, SPINNER_LIMIT)
+	numbers: [SPINNER_LIMIT]u64
+	started := spinners_start(0, count, full_weight) && spinner_machine_numbers(0, count, &numbers)
+	thread := spinner_threads[0].handle
+	long := op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_LIMIT}
+	started &&= system.thread_schedule_write(thread, 0, long) == .Ok
+	for _ in 0 ..< OWING_ROUNDS {
+		if !started {
+			break
+		}
+		number := intrinsics.atomic_load(&spinners[0].number) - 1
+		round_right := system.thread_schedule_write(thread, 0, {weight = 1, request = op.REQUEST_LIMIT}) == .Ok
+		_, stop_status := system.call(.Thread_Control, u64(thread), 0, u64(op.Thread_Control_Command.Stop))
+		if stop_status == .Ok {
+			lag, held := held_lag(number)
+			round_right &&= held
+			first := lag
+			lag = owing_step(&result, thread, number, long, lag, &round_right)
+			lag = owing_step(&result, thread, number, {weight = op.WEIGHT_FULL, request = 1}, lag, &round_right)
+			lag = owing_step(&result, thread, number, long, lag, &round_right)
+			lag = owing_step(&result, thread, number, {weight = 1, request = op.REQUEST_LIMIT}, lag, &round_right)
+			_ = owing_step(&result, thread, number, long, lag, &round_right)
+			_, resume_status := system.call(.Thread_Control, u64(thread), 0, u64(op.Thread_Control_Command.Resume))
+			round_right &&= resume_status == .Ok
+			if first < 0 {
+				result.owing += 1
+				result.largest = max(result.largest, u64(-first))
+			} else if first > 0 {
+				result.owed += 1
+			}
+		} else {
+			round_right = false
+		}
+		result.rounds += u64(round_right)
+		// The spinner runs again before the next round. The pause is no
+		// condition: a round where the thread owes nothing is counted, not
+		// refused.
+		system.sleep(system.time() + 1)
+	}
+	spinners_stop(0, count)
+	system.strategy_set(machine, before)
+	as_it_must := started && result.rounds == OWING_ROUNDS && result.grew == 0 && result.forgave == 0
+	system.log("scheduler: ", u64(OWING_ROUNDS), " rounds on a spinner under EEVDF: the weight 1 written while it ran, a Stop, then in the hold the full weight, the request 1 us, the longest request, the weight 1 and the full weight, a Resume: the lag that the kernel reports grew after ", result.grew, " writes, and a lag below 0 changed after ", result.forgave, " writes", as_it_must ? string(": as it must") : string(": WRONG"))
+	system.log("scheduler: in these rounds the kernel reported the held spinner with a lag below 0 ", result.owing, " times and above 0 ", result.owed, " times; the lowest lag was minus ", result.largest, " weighted cycles (measures)")
+	return as_it_must
 }
 
 // refusals: Strategy_Set with a copy of the machine handle that has no
@@ -1343,6 +1457,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if self_machine_number == 0 || !weight_limits() {
 		fail("a weight limit did not hold")
+	}
+	if !owing_kept(processors) {
+		fail("a write of a schedule changed what a held thread owes or is owed")
 	}
 	for index in 0 ..< STRATEGY_COUNT {
 		measure(index, processors)

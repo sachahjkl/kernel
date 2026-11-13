@@ -577,8 +577,8 @@ handles_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 		case .Thread_Control:
 			// The right depends on the command: Write for a write of the
 			// registers, Control for a write of the schedule. A command of
-			// the schedule also takes the machine handle, with Schedule,
-			// and with Inspect too for a read.
+			// the schedule also takes the machine handle, with Schedule
+			// and Inspect.
 			if n == 0 && v[2] <= u64(max(op.Thread_Control_Command)) {
 				command := op.Thread_Control_Command(v[2])
 				rights = op.thread_control_rights(command)

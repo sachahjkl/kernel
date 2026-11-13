@@ -677,7 +677,7 @@ thread_schedule_read :: proc "contextless" (thread: Handle, number: u64, error: 
 // the thread, 0: that limit) and a request in microseconds (1 to
 // op.REQUEST_LIMIT, 0: op.REQUEST_DEFAULT), also while the thread runs.
 // The thread is named as for thread_schedule_read; a thread handle needs
-// the right Control, the machine handle the right Schedule. Only a write
+// the right Control, the machine handle the rights Schedule and Inspect. Only a write
 // through the machine handle reads `weight_limit` (0: op.WEIGHT_FULL) and
 // sets the weight limit of the thread: such a write gives the three
 // values, so read the schedule first to change one of them.

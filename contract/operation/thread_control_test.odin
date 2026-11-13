@@ -118,8 +118,9 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 		case .Write_Schedule:
 			testing.expect_value(t, rights, Rights{.Control})
 		}
-		// The machine handle: the schedule only. Schedule alone writes; a
-		// read is a report of the machine, and needs Inspect too.
+		// The machine handle: the schedule only, with Schedule and Inspect
+		// for each: a read is a report of the machine, and a write gives the
+		// three values, so its holder reads first.
 		machine_rights, by_machine_number := thread_control_machine_rights(command)
 		#partial switch command {
 		case .Read_Schedule:
@@ -127,7 +128,7 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 			testing.expect_value(t, machine_rights, Rights{.Schedule, .Inspect})
 		case .Write_Schedule:
 			testing.expect(t, by_machine_number)
-			testing.expect_value(t, machine_rights, Rights{.Schedule})
+			testing.expect_value(t, machine_rights, Rights{.Schedule, .Inspect})
 		case:
 			testing.expect(t, !by_machine_number)
 			testing.expect_value(t, machine_rights, Rights{})

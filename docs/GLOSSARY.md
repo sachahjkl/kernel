@@ -951,7 +951,7 @@ Do not use: min_vruntime.
 
 The lag of a thread, under EEVDF, is the average virtual time of its queue minus its own virtual time: what the thread is owed.
 
-A positive lag makes the thread eligible. The lag is kept across a wait, within a bound of two requests (at least one tick), so a thread that slept is neither punished nor paid for its sleep without limit.
+A positive lag makes the thread eligible. Across a wait the kernel keeps the lag against the other threads: their average minus the virtual time of the thread. The weight of the thread is not in that number, so a weight written during the wait changes nothing of it. Above 0 it is kept within two requests (at least one tick); below 0 within the longest turn at the weight 1, a bound that no written value changes. So a thread that slept is neither punished nor paid for its sleep without limit, and a write of its schedule takes nothing away that it owes.
 
 Do not use: debt, credit.
 
@@ -983,7 +983,7 @@ Who can read and write it:
 
 - a program, for its own threads, by number;
 - the holder of a thread handle: **Inspect** reads, **Control** writes, because a holder that can end a thread can also give it a smaller share;
-- the holder of the machine handle with **Schedule**, for any thread, by its machine number; a read through it needs **Inspect** too. Only this holder writes the weight limit.
+- the holder of the machine handle with **Schedule** and **Inspect**, for any thread, by its machine number. Only this holder writes the weight limit.
 
 A write keeps what the thread owes to the other threads, and never makes larger what it is owed. So a thread gains nothing by writing its own thread schedule again and again. It is not the placement of a thread on the processors, and not a share for a budget: neither is built.
 
@@ -997,7 +997,7 @@ Do not use: scheduling parameters, scheduling attributes, priority.
 
 A weight limit is the most that the weight of one thread can be: a number from 1 to 1024, and 1024, the full weight, for a thread that nobody limited.
 
-It makes a lowered weight last. Without it, the program of a thread writes the full weight back in one operation, and the holder of the right **Schedule** decides nothing. Only a write of the thread schedule through the machine handle with **Schedule** sets the limit; a weight above the new limit becomes the limit in the same write. A write of a program for its own thread, or through a thread handle, does not read the limit of the record, and its weight is refused above the limit of the thread (`Bad_Operation`). A new thread gets the weight limit of the thread that creates it, and the first thread of a new program gets the limit of the thread that starts it: a program does not leave a limit by a new thread.
+It makes a lowered weight last. Without it, the program of a thread writes the full weight back in one operation, and the holder of the right **Schedule** decides nothing. Only a write of the thread schedule through the machine handle with **Schedule** and **Inspect** sets the limit; a weight above the new limit becomes the limit in the same write. A write of a program for its own thread, or through a thread handle, does not read the limit of the record, and its weight is refused above the limit of the thread (`Bad_Operation`). A new thread gets the weight limit of the thread that creates it, and the first thread of a new program gets the limit of the thread that starts it: a program does not leave a limit by a new thread. The limit is a value of each thread: a thread created just before a write of the limit keeps the old one until the holder writes it too.
 
 It is not a share for a program: a program under a limit that creates more threads has more threads of that weight.
 
@@ -1013,7 +1013,7 @@ A machine number is the number that names one thread among all the threads of th
 
 A thread number names a thread inside its program only, and a thread handle names one thread that its program gave. The machine handle with **Schedule** needs a name for any thread: the thread report of `Inspect` gives the machine number of each thread, and thread control takes it for the two commands of the thread schedule. The low 32 bits are the place of the thread in the thread table of the kernel; the high 32 bits change for each new thread in that place. So the machine number of a thread that ended names no later thread: the kernel gives `Bad_State` for it.
 
-It is not a handle: it gives no right. Only the holder of the machine handle with **Inspect** reads it, and only the machine handle with **Schedule** makes the kernel take it (with **Inspect** too for a read).
+It is not a handle: it gives no right. Only the holder of the machine handle with **Inspect** reads it, and only the machine handle with **Schedule** and **Inspect** makes the kernel take it.
 
 The design: `docs/SCHEDULING.md`, "The schedule of a live thread".
 
