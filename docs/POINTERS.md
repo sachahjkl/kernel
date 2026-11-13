@@ -4,6 +4,14 @@ The system has its own format for the pictures of the pointer, simple to manage 
 
 The terms are in `GLOSSARY.md`: pointer, pointer shape, pointer picture, hot spot, nominal size, pointer theme, pointer theme file, pointer manifest, resource, caret. The system says "pointer", never "cursor". The caret of a text input is another thing.
 
+**For whom.** A reader who makes or changes a pointer theme, and a reader who wants to know how the compositor chooses and draws the pointer.
+
+**The map of this guide.** "1. What exists" compares Xcursor, hyprcursor and the others. "2. What this system needs" gives the requirements. "3. The format of the system: one pointer theme file" and "4. The manifest" give the two formats. "5. The two themes", "6. The license of the Posy theme" and "7. The place of the Posy theme" say what the system carries. "8. Measures" closes.
+
+**An example.** The compositor chooses the shape `move` while the pointer drags a window by its title bar, and blends its picture at its hot spot. The program `pointers` shows each shape of each theme.
+
+![The pointer pictures: each shape of the pointer theme of the system, at 24 and 48 pixels, with the lines of its hot spot](screenshots/pointers_system.png)
+
 ## 1. What exists
 
 ### The Xcursor format (X11, and Wayland compositors that read X themes)
@@ -51,7 +59,7 @@ One enum of the system, `Pointer_Shape` in `contract/pointer_pictures`, with one
 | 0 | `arrow` | `default` | the desktop, the bar, the frame of a window, a surface by default |
 | 1 | `text` | `text` | the input line of the launcher; the surface of the terminal (a request of the program) |
 | 2 | `pointing_hand` | `pointer` | the close button of a window, the buttons of the bar, a line of an open menu |
-| 3 | `move` | `move` | a title bar, and a window while the person moves it |
+| 3 | `move` | `move` | a title bar, and a window while the pointer moves it |
 | 4 | `grab` | `grab` | a request of a program |
 | 5 | `grabbing` | `grabbing` | a request of a program |
 | 6 | `wait` | `wait` | a request of a program; animated |
@@ -119,7 +127,7 @@ source    = file name                       a file of the Xcursor folder; the fi
 
 - **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository): the 15 shapes as grids of squares, in the style of the arrow of `DESIGN.md`, at the sizes 24 (squares of 2 pixels) and 48 (squares of 4 pixels, for a later screen with twice the pixels). `wait` and `busy_with_arrow` have 4 frames of 250 ms. It is always in the boot image, as the resource `pointers_system`.
 - **The Posy theme** (`resources/pointers/posy.manifest`): "Posy's Cursor" from the build input `posy-cursors` of `flake.nix` (the package of nixpkgs, pinned by `flake.lock`). The flake gives its folder to the tool as `POINTER_THEME_SOURCE`. The tool converts it at each build into `build/pointers/posy.pointers`, which the boot image holds as the resource `pointers_posy`. No file of that theme and no file made from its pixels is in the repository (section 6). Sizes: 32 (the smallest size of the theme) and 64 for the later screen; the two animated shapes keep 32 only (77 frames: 315 KiB at 32, 1.26 MiB more at 64).
-- **The choice of the compositor**: the Posy theme is the default when the build has its input; the theme of the system is the fallback. The root service gives the compositor the themes of the boot image in order: `pointers_posy` when the boot image has it, then `pointers_system` (`pointer_theme_choice` in `programs/root/resources.odin`: the one place of this order). The setting `pointer_theme` of the person chooses one of them (`docs/FONTS.md`, "The setting"). With no build input, the tool makes the theme of the system only, and the system works the same.
+- **The choice of the compositor**: the Posy theme is the default when the build has its input; the theme of the system is the fallback. The root service gives the compositor the themes of the boot image in order: `pointers_posy` when the boot image has it, then `pointers_system` (`pointer_theme_choice` in `programs/root/resources.odin`: the one place of this order). The setting `pointer_theme` of the principal chooses one of them (`docs/FONTS.md`, "7. The setting"). With no build input, the tool makes the theme of the system only, and the system works the same.
 - **How a resource enters the boot image and reaches a program**: `docs/ARCHITECTURE.md`, U2b.
 
 ## 6. The license of the Posy theme

@@ -2,6 +2,16 @@
 
 The first layer of the network is the base: the frame service, the network service, endpoints of datagrams. `GLOSSARY.md` defines the terms.
 
+**The idea in plain words.** No program opens a connection because it runs. The root service gives a program a grant that names what it can reach: one remote (a client grant) or one port on which it answers whoever comes (a listen grant). The network service checks each datagram and segment against that grant; the protocol itself, TCP or QUIC, is a library inside the program, so a fault in it harms only that program.
+
+**For whom.** A reader who writes a program that uses the network, and a reader who changes the network service or the TCP library.
+
+**Read before.** `PROPERTIES.md`, "5. Kernel off the data path" and "20. No ambient access: the other holes to close" (line 3). `ARCHITECTURE.md`, "U7. Network steering service". After this guide, `QUIC.md`.
+
+**The map of this guide.** "The principles" and "The parts" give the model and the programs. "The segment endpoint" is the grant of TCP and its checks. "The TCP library" is the protocol in the program. "The tests" and "The HTTP server" show it at work. "The listen grant of UDP" and "QUIC: what it reuses, and what it needs" lead to `QUIC.md`.
+
+![TCP in the program: server serves one table of connections from one thread, while the peer of the test drops, reorders and repeats frames](screenshots/server.png)
+
 ## The principles
 
 - The network stack is a library in the program that uses the network (property 5).
@@ -33,7 +43,7 @@ The library writes the segments directly in the places of the datagram region, s
 
 ### The grant of a segment endpoint
 
-The root service names the grant by the name of the program, as for UDP (`endpoint_of`). The person reads it with `grants` and revokes it with `revoke`. Two forms exist:
+The root service names the grant by the name of the program, as for UDP (`endpoint_of`). The principal reads it with `grants` and revokes it with `revoke`. Two forms exist:
 
 | Form | Local TCP ports | Remotes | Use |
 |---|---|---|---|
@@ -170,7 +180,7 @@ A third network machine (`scenario_tcp`) has the peer of the tool on `-netdev dg
 
 - **The reading of a head** is `support/web.request_read`, for hostile input: a bound for each part, and a problem with its status (400, 405, 408, 413, 414, 431, 501, 505) for each rule that a head breaks.
 - **Connections** stay open after an answer; "Connection: close" or HTTP/1.0 ends them. The bytes after a head stay in the input: they are the body, or the next request (pipelining). The answers go in the order of the requests.
-- **What it serves** comes from its grants (property 20): its own counts (`/`, `/counts.json`), and the pages of its private store (property 9). A person changes the pages from the console through its exports (property 19): `server.put`, `server.remove`, `server.pages`, `server.served`. PUT and DELETE over HTTP stay off: without TLS the network is not authenticated.
+- **What it serves** comes from its grants (property 20): its own counts (`/`, `/counts.json`), and the pages of its private store (property 9). The principal changes the pages from the console through its exports (property 19): `server.put`, `server.remove`, `server.pages`, `server.served`. PUT and DELETE over HTTP stay off: without TLS the network is not authenticated.
 - **Limits** against a client that makes no progress (without them, one host could keep each record): 10 s with no request, 408 for a head after 10 s (also a head that starts after an answer), no byte of a body in 10 s, a body and the bytes to send under 4096 bytes in one second over a period of 10 s (also after this server closed), 24 connections for each remote address.
 - **The pages and their origin**: an answer of a page keeps the generation of its place, and a page that changes during it ends the connection with a RST. `put` and `remove` change the store first. The pages, `/` and `/counts.json` share one origin, and a page of the store runs script on it by design: the origin holds no secret, no cookie and no authority. Each answer says `X-Content-Type-Options: nosniff`.
 - **No Date field**: the system has no clock of the day, and a server with no clock sends none (RFC 9110 6.6.1).
@@ -182,7 +192,7 @@ Written for QUIC (`docs/QUIC.md`, section 6); `kerneltool test quic` and `kernel
 
 - The table of admitted remotes is the one of TCP (`network.Admitted`): 64 places, the oldest place with no traffic for 120 s serves again, `Release` forgets a remote.
 - A UDP listen grant can name one remote address (`datagram.Grant.address`): then a datagram of another address is never admitted, whatever its size, and the endpoint counts it (`Not_Granted`). The port of the remote is not named: a QUIC client takes a new port for each connection. The grant of `remote` names the address of the host, 10.0.2.2: that address is the rule of who may call (`docs/QUIC.md`, section 7). A TCP listen grant names no address.
-- With QEMU user networking, each datagram that a `hostfwd` of UDP gives to the machine comes from 10.0.2.2. A forward of a UDP port of the host to the port 7100 would then let each sender that reaches that port call `remote` as the person. The tool refuses a machine with such a forward (`network_device_problem` in `tools/kerneltool/main.odin`).
+- With QEMU user networking, each datagram that a `hostfwd` of UDP gives to the machine comes from 10.0.2.2. A forward of a UDP port of the host to the port 7100 would then let each sender that reaches that port call `remote` as the principal. The tool refuses a machine with such a forward (`network_device_problem` in `tools/kerneltool/main.odin`).
 - A UDP listen port is not a port PORT_FIRST + n of a client grant, and no other UDP listen grant has it.
 - A Send goes only to an admitted remote. To a remote that the program did not validate, the network service sends at most 3 times the bytes that came from it (status `Amplification`, error kind `Over_Limit`); the command `Validate` lifts that limit for a remote that proved its address to the program (`docs/QUIC.md`, section 6, says what a program that validates every remote gains). A send does not keep a place alive: only a datagram of the remote does.
 - `Resolve` and `Echo` are refused, as for each listen grant: the program answers, but it does not reach.

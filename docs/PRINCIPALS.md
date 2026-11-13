@@ -4,6 +4,31 @@ A principal is a key pair and the root handles that the key unlocks (`PROPERTIES
 
 This guide says what is built, how it works, and what is not built.
 
+## About this guide
+
+**The idea in plain words.** Current systems ask "which user runs this program?" and give the program every right of that user. This system asks two other questions. *Who executes?* Always a program, with the handles that it holds: the kernel knows nothing more. *For whom does it run?* A principal: a key pair, and the stores and grants that its key unlocks. A program does not inherit a principal; it only runs in the session of one, and that fact is recorded, visible and limited to what the root service grants.
+
+**For whom.** A reader who wants to know how the system separates the data of the machine from the data of a named principal, how the unlock works, and which program can see which store.
+
+**Read before.** `PROPERTIES.md`, "21. Principals: who acts, without users" (the rule and its layers) and "20. No ambient access: the other holes to close". The terms principal, named principal, session, unlock, lock of a session, passphrase and acts for the principal are in `GLOSSARY.md`, group Access.
+
+**The map of this guide.**
+
+| Section | What it says |
+|---|---|
+| "1. The layers, and what is built" | The five layers of the design, and the state of each |
+| "2. Principal 0: the machine" | The principal that the system programs belong to |
+| "3. A named principal" | Its keys, its file, the key derivation and the passphrase |
+| "4. The unlock and the lock" | How a session starts and ends |
+| "5. The session" | Which principal each program runs for, and the grant of a connection |
+| "6. The store of a principal" | How storage names and separates the stores of each principal |
+| "7. The commands" | The commands of the root ring and of the console |
+| "8. The tests", "9. Not built" | What the tests prove, and what remains |
+
+**An example.** At the console, `principal_create("alice")` starts the program `unlock`, whose window asks for the passphrase two times. After it, `notes` started from the menu of the desktop runs in the session of alice, and the log says "root: started notes, in the session of principal 1 "alice"". Its store is `notes.principal.1`, which the console, acting for principal 0, cannot open.
+
+![The window of unlock: the passphrase of a named principal, shown as dots](screenshots/principals_unlock.png)
+
 ## 1. The layers, and what is built
 
 | Layer | What it is | State |

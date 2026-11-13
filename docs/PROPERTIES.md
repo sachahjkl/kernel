@@ -1,8 +1,26 @@
 # Kernel properties
 
-This document gives the properties on which the kernel is built.
+This document gives the 21 properties on which `modus` is built: the rules that every part of the system obeys, what each rule forbids, and what it costs. They are the fundamental concepts of the system: a design that breaks one is wrong until the property itself changes.
 
 ## How to read this document
+
+**For whom.** A reader who wants to know why the system is the way it is, before they read how a part works. A reader who proposes a change compares it with these properties first.
+
+**Read before.** Nothing. Each term is in `GLOSSARY.md`; on the site, the first use of a term on the page links to it. After this document, `ARCHITECTURE.md` shows the systems that apply these rules.
+
+**The map of this document.**
+
+| Section | What it says |
+|---|---|
+| "Objective", "Assumptions" | What the system aims at, and the three rules of every decision |
+| "Summary" | The 21 properties in one table, with their status |
+| "1. Small kernel with a small, counted interface" to "21. Principals: who acts, without users" | One section for each property |
+| "Tensions between properties" | Where two properties pull against each other, and the answer |
+| "Reuse list", "Open decisions", "First milestone" | What the system takes from others, what is still open, and the first end-to-end system |
+
+**An example of how a property reads.** Property 2 says that a new program starts with no access. Its **Rule** is that a program holds only the handles that it received. Its **Forbids** is a global name that any program can open. Its **Cost** is that the desktop must give access through actions of the principal, such as a picker. The program `rights` shows the rule at work: the kernel refuses each operation for which the program lacks a right.
+
+![The program rights: each kernel operation that needs a right that the program lacks is refused](screenshots/rights.png)
 
 Each property has a status:
 
@@ -35,7 +53,7 @@ Three rules apply to every decision:
 
 1. **One mechanism for one concept.** If two mechanisms do the same work, delete one.
 2. **Reuse proven software where it fits.** Do not write again what is small, correct and permissively licensed.
-3. **No foreign interface in the system.** The system does not implement POSIX, Win32, or the Linux system call interface: no program of the system and no kernel operation has their concepts. A foreign system can run whole inside a guest: a machine that a program of the system runs, and that holds only what that program was granted. The properties hold at the boundary of the guest; inside it, the foreign system keeps its own concepts. (2026-11-12: the rule said "No compatibility goal" before; a guest was not considered then.)
+3. **No foreign interface in the system.** The system does not implement POSIX, Win32, or the Linux system call interface: no program of the system and no kernel operation has their concepts. A foreign system can run whole inside a guest: a machine that a program of the system runs, and that holds only what that program was granted. The properties hold at the boundary of the guest; inside it, the foreign system keeps its own concepts.
 
 ## Assumptions
 
@@ -84,14 +102,14 @@ Status: Decided.
 
 Status: Decided.
 
-- **Rule**: A new program starts with no access. It holds only the handles that its parent or the user gave to it. [Blow §7]
-- **Rule**: A handle is an index and a generation into a table that belongs to the process. Each entry holds an object index and a set of rights. A program can reduce rights and pass a handle. It cannot create rights.
+- **Rule**: A new program starts with no access. It holds only the handles that its parent, or the principal through a grant, gave to it. [Blow §7]
+- **Rule**: A handle is an index and a generation into a table that belongs to the program: one value of 32 bits, 16 bits of slot and 16 bits of generation (`op.Handle`). Each entry holds an object index and a set of rights. A program can reduce rights and pass a handle. It cannot create rights.
 - **Rule**: The sandbox is the base model. No operation exists that works without a handle.
 - **Forbids**: global names that any program can open, user identifiers as the access model, access control lists on a shared namespace, a "root" user.
 - **Cost**: The desktop must give access through user actions. A file picker that runs outside the program and returns a handle is the standard solution. Programs that need broad access, such as a backup tool or a file manager, need an explicit grant model.
 - **Reuse**: Zircon handles with rights. Capsicum. The "powerbox" file picker pattern. [Notes `existing_kernels_good_ideas.md` §3, §4]
 - **Revocation**: the kernel keeps the origin of each handle and each mapping. `Handle_Revoke` ends what came from a handle, through each chain of gifts.
-- **Open**: how the person sees and revokes grants on the desktop. The console has `grants` and `revoke`. No window shows the grants. Blow gives no design for the desktop part. [Blow §7]
+- **Open**: how the principal sees and revokes grants on the desktop. The console has `grants` and `revoke`. No window shows the grants. Blow gives no design for the desktop part. [Blow §7]
 
 ## 3. No "everything is a file"
 
@@ -109,7 +127,7 @@ Status: Decided.
 Status: Decided. It is the interface that Blow describes. [Blow §3]
 
 - **Rule**: A program asks for work by writing command records into a submission ring in memory that it shares with the receiver. It reads results from a completion ring. The receiver is the kernel or another program.
-- **Rule**: No operation blocks at this level. One kernel operation exists to wait: "sleep until one of these rings has entries".
+- **Rule**: No operation blocks at this level. One kernel operation exists to wait: "sleep until one of these rings has entries". As built, the wait is the one entry point of the kernel with a deadline, and `Word_Wait` names the words of the rings that end it (property 6, "Wake-up").
 - **Rule**: A blocking call is a library function above the rings.
 - **Rule**: Data is not copied through the kernel. A command refers to memory that both sides map.
 - **Forbids**: one kernel entry per operation as the normal path, blocking kernel operations, hidden copies.
@@ -174,7 +192,7 @@ Status: Decided.
 
 Status: Decided. The engine is new, under MIT, and reuses ideas of bcachefs. It is not a fork of bcachefs.
 
-The engine is the storage service in Odin, about 800 lines. It writes by copy on write, keeps two places for the root block, and checks each block in the pointer that names it. The system holds no SQLite. One rule below is not done: objects have names in a store, not identifiers. Each commit keeps the state before it as a version, with a retention rule and thinning at the limit of the store. Clones share their blocks. A snapshot is the versions of a store at one generation.
+The engine is the storage service in Odin: about 4 200 lines in `programs/storage`, and about 3 100 more in the libraries that it shares with the tool (`support/storage_mount`, `support/storage_tree`, `support/storage_object`, `support/storage_retention`), tests not counted. It writes by copy on write, keeps two places for the root block, and checks each block in the pointer that names it. The system holds no SQLite. One rule below is not done: objects have names in a store, not identifiers. Each commit keeps the state before it as a version, with a retention rule and thinning at the limit of the store. Clones share their blocks. A snapshot is the versions of a store at one generation.
 
 - **Rule**: Storage is a transactional object store in user space. Objects have identifiers, not paths. A directory is an optional index, not the base structure.
 - **Rule**: Each program gets a private store. A copy-on-write clone is the way to give a copy of an object. A snapshot gives versions of a store.
@@ -189,13 +207,13 @@ The engine is the storage service in Odin, about 800 lines. It writes by copy on
 Status: Decided.
 
 - **Rule**: A program sends each change of a document to the storage service when the change occurs. The document in storage is always current. The system has no "save" action.
-- **Rule**: The storage service keeps the earlier versions of each object. A program or the person can read an object as it was at an earlier time.
+- **Rule**: The storage service keeps the earlier versions of each object. A program, or the principal through a program, can read an object as it was at an earlier time.
 - **Guarantee**: A document is never lost and never half written. A power loss or a program failure loses at most the change that was in progress.
 - **Interface that this requires from storage**: "apply this change atomically" and "give me this object at time T". Not "replace the whole object".
 - **Why it is cheap**: A copy-on-write store writes new blocks and keeps the old ones. The earlier versions exist already. The system exposes them and does not discard them.
 - **Result**: Protection against lost work and a history are supplied one time, by the system, to all programs. A program writes no code for them.
 - **Cost**: Disk space. A retention rule deletes old versions, for example: keep all versions for one day, then one per hour, then one per day.
-- **Open**: who sets the retention rule (the service applies one fixed rule: each version for 10 minutes, then one an hour for a day, then one a day). How a program groups small changes into one step that the person can undo. A later option above this model is a program whose full state returns after a restart.
+- **Open**: who sets the retention rule (the service applies one fixed rule: each version for 10 minutes, then one an hour for a day, then one a day). How a program groups small changes into one step that the principal can undo. A later option above this model is a program whose full state returns after a restart.
 
 ## 10. One code module
 
@@ -313,7 +331,7 @@ Status: Decided.
 Status: Decided. The detail below is proposed.
 
 - **Rule**: The boot stage is a UEFI program. It uses the firmware services before it gives control to the kernel: it reads the modules from the boot volume, gets the memory map, gets the framebuffer, gets random numbers, and talks to the TPM. The project writes no boot loader and no boot-time disk or display code.
-- **Rule**: Secure Boot verifies the boot program. The key of the publisher of the system signs it. The firmware refuses a boot program that is not signed.
+- **Rule**: Secure Boot verifies the boot program. The key of the principal that signs the system signs it. The firmware refuses a boot program that is not signed.
 - **Rule**: The boot is measured. The boot program extends a TPM register with the hash of the system description of property 11, before the kernel starts.
 - **Why property 11 makes this cheap**: A system is one list of hashes. One measurement of that list covers every module of the system. Current systems must measure a kernel, an initial disk image, a command line and many files separately.
 - **Uses of the TPM**:
@@ -321,10 +339,10 @@ Status: Decided. The detail below is proposed.
   2. Hold the key that signs the name table of property 11, or the key that verifies it.
   3. Prove to a remote party which system list runs (attestation).
   4. Give a hardware source of random numbers at boot.
-- **Rule**: After boot, the TPM is a device like the others. A user-space service owns its queue. Programs reach it by handle (properties 2 and 7).
+- **Rule**: After boot, the TPM is a device like the others. A user-space service owns its queue. Programs reach it by handle (properties 2 and 7). Not built: no service of the TPM runs after boot.
 - **Forbids**: an unsigned code path from firmware to kernel, a boot loader with a configuration language, kernel arguments as free text.
-- **Cost**: A key that is sealed to exact measurements becomes unreadable after each upgrade. The standard solution is to seal to a signed policy in place of exact values: the TPM releases the key to any system list that the key of the publisher of the system signed. A rollback to an old signed list with a known defect must be prevented by a counter in the TPM.
-- **Cost**: The system needs a key management story for the publisher of the system: creation, enrolment in the firmware, backup, loss.
+- **Cost**: A key that is sealed to exact measurements becomes unreadable after each upgrade. The standard solution is to seal to a signed policy in place of exact values: the TPM releases the key to any system list that the key of the principal that signs the system signed. A rollback to an old signed list with a known defect must be prevented by a counter in the TPM.
+- **Cost**: The system needs a key management story for the principal that signs the system: creation, enrolment in the firmware, backup, loss.
 - **Reuse**: UEFI firmware services. OVMF and a software TPM under QEMU give Secure Boot and a TPM 2.0 on the first machine. The TCG TPM 2.0 specification. A small permissive TPM command library, to be selected.
 - **Open**: the exact meaning of "rich boot". This text reads it as "do as much boot work as possible with UEFI services in a UEFI program". How much the boot program does before it leaves firmware services. Which registers hold which measurements.
 - **State**: the signed system description, the measure and Secure Boot are built (`docs/TRUSTED_BOOT.md`). Before the kernel starts, the boot program verifies the description signature and the hash of the kernel and of each file of the boot image, then the firmware extends PCR 11 with the SHA-256 hash of the system description. With Secure Boot on, the firmware verifies the boot program with the certificate of the firmware signing key, an RSA key: UEFI cannot verify Ed25519. Not built: the counter against an older signed system, a sealed key, the read of PCR 4 and PCR 7.
@@ -352,6 +370,7 @@ Status: Decided. The detail below is proposed.
 - **Rule**: The project writes the WebGPU implementation from nothing. It does not port wgpu or Dawn. Graphical code is a program of this system and uses no existing toolkit.
 - **Order**: No GPU at first. First: the boot program passes the UEFI framebuffer; a surface is a shared memory region of pixels with a "present" command that names the changed rectangles; the compositor copies surfaces to the framebuffer; programs draw on the CPU. Second: the first WebGPU subset with a software back end that renders into the same surfaces. Third: virtio-gpu. Fourth: one real GPU. A surface is the way to share pixels, not a second drawing interface. See `research/webgpu_from_nothing_study.md`.
 - **Open**: The role of the kernel: the proposal is none beyond the mapping of device queues (property 5). How the compositor shares surfaces with programs; shared memory of property 6 is the proposal.
+- **State**: the first step of the order is built: a surface is shared memory of pixels, the compositor copies the changed rectangles to the framebuffer, and programs draw on the processor (`support/graphics`, `support/interface`, `INTERFACE.md`). No WebGPU subset, no virtio-gpu and no real GPU are built.
 
 ## 19. A command is a function: no text between programs
 
@@ -359,14 +378,15 @@ Status: Decided. The detail below is proposed.
 
 - **Rule**: Programs do not exchange text that the receiver must parse. The system has no command line arguments as strings, no text pipes, no standard input and output streams, and no environment variables.
 - **Rule**: A command line program and a library are the same thing. Both are a module that exports functions (property 10). A command is one exported function.
-- **Rule**: The metadata of a module (property 12) describes each exported function completely: its name, the name and type of each parameter, the type of each result, and a text for the person. This description is sufficient to call the function with no other knowledge of the module.
+- **Rule**: The metadata of a module (property 12) describes each exported function completely: its name, the name and type of each parameter, the type of each result, and a text for a reader. This description is sufficient to call the function with no other knowledge of the module.
 - **Rule**: A started program receives no `argc` and no `argv`. At the minimum, it receives one structured context: a typed record with a fixed layout.
 - **Content of the context** (proposed): the typed arguments of the called function, the handles that the caller grants (property 2), and the rings to the caller and to the kernel (property 4). The context holds no strings that the program must parse.
+- **State of the context**: built as 16 handles and 24 values of 64 bits, whose index is their role; the kernel ring is not in it, because each thread finds its own (`MODULE_CONTRACT.md`, "6. The context").
 - **Rule**: No contract of the system depends on a feature of one programming language. The context, the module format, the calling convention, the type description and the ring layouts are defined as memory layouts and numbers. A program in any language that can read and write memory at fixed offsets can use them.
 - **Consequence**: The context is a plain record of the system. It is not the implicit `context` of Odin or Jai. A language binding can copy its fields into a language feature; the system does not know about it.
 - **Consequences**:
   1. The console reads the metadata and calls the function directly, with typed values. Completion, help and argument checks come from the metadata, not from code in each program.
-  2. A program calls the same function as a library call. The person and the program use one interface.
+  2. A program calls the same function as a library call. The principal at the console and the program use one interface.
   3. The output of a function is typed data: records and tables. The console displays it. The next function receives it with no parsing.
   4. Other front ends can be generated from the same metadata: a form in the desktop, a remote call, a test.
 - **Why**: Text between programs forces each program to write a parser and a printer, and each pair of programs to agree on a format that no tool checks. Errors appear at run time and in the data. Blow's "a program is a library" gives the mechanism. [Blow §3]
@@ -377,22 +397,22 @@ Status: Decided. The detail below is proposed.
 - **Cost**: Streams of data with no known end (logs, audio, large results) need a typed stream form above rings, not one return value.
 - **Prior art to study**: PowerShell (objects in pipelines), Nushell (typed tables), Lisp machines and Oberon (commands are exported procedures), COM and WinRT metadata, the WebAssembly component model (language-independent interface types).
 - **State**: a table of records and a range of bytes are parameters, each with a direction (Read, Change, Append), in memory of the caller (P14). One description serves a direct call with no copy, a call host and a service. A table too large for the call region goes in a lent memory object whose rights are the direction (P20). The program `tables` shows the same answers in the three ways; `MODULE_CONTRACT.md`, "Tables and bytes as parameters".
-- **Open**: the set of base types (no float, no record in a record). How a function declares the handles that it needs (property 2), so that the console can ask the person before the call. Versioning of a function whose description changes.
+- **Open**: the set of base types (no float, no record in a record). How a function declares the handles that it needs (property 2), so that the console can ask the principal before the call. Versioning of a function whose description changes.
 
 ## 20. No ambient access: the other holes to close
 
 Status: Decided.
 
 Ambient access is access that a program has because it runs, and not because it received a handle.
-The shared file system (property 8) is one case. This property lists the other cases. Each one gets the same answer: the resource is reached only by a handle that a person or a parent granted.
+The shared file system (property 8) is one case. This property lists the other cases. Each one gets the same answer: the resource is reached only by a handle that the principal or a parent granted.
 
 | # | Hole in current systems | Rule in this system |
 |---|---|---|
 | 1 | A program lists and inspects all other programs | A program sees no other program. It sees only the programs that it started |
-| 2 | A program debugs or reads the memory of another program of the same user | Debug access is a handle to one program. The person grants it |
+| 2 | A program debugs or reads the memory of another program of the same user | Debug access is a handle to one program. The principal grants it |
 | 3 | Any program opens network connections to any host | No network at start. A grant names the hosts or the ports. Name resolution is a part of the grant |
 | 4 | Any program listens on the local machine, and local services trust local callers | No shared "localhost". Two programs talk only through a ring that someone gave to both |
-| 5 | Any program reads the clipboard | The clipboard belongs to the compositor. A program receives the content only at a paste action of the person |
+| 5 | Any program reads the clipboard | The clipboard belongs to the compositor. A program receives the content only at a paste action of the principal |
 | 6 | Any program reads the screen or the windows of other programs | A program sees only its own surfaces. Screen capture is a grant, with a visible indicator |
 | 7 | Any program reads all keyboard input, or sends false input | Input goes only to the program that has focus. Synthetic input is a grant |
 | 8 | A program draws a false system dialog (picker, password prompt) | The compositor marks trusted surfaces in a way that a program cannot copy. One key combination always goes to the system |
@@ -405,10 +425,10 @@ The shared file system (property 8) is one case. This property lists the other c
 | 15 | An update or an installer runs code with full access | No installer. A module is data identified by hash. It runs only in the sandbox (properties 8, 11) |
 | 16 | A program consumes all memory, processor time or storage | Each resource is a handle with a limit. A program divides its limit among its children |
 | 17 | Precise clocks and shared caches leak data between programs (side channels) | Not solved by handles. Reduce: a precise clock is a grant; the scheduler can keep two programs off the same core |
-| 18 | One administrator account can do everything | No root. The root service holds all handles at boot and gives them out. The person, present at the machine, is the only source of new grants |
+| 18 | One administrator account can do everything | No root. The root service holds all handles at boot and gives them out. The principal, present at the machine, is the only source of new grants |
 
 - **Test for every new interface**: "Can a program with zero handles use it?" If yes, the interface is a defect.
-- **Cost**: The person receives more requests for access. Too many requests train the person to accept all of them. The design must prefer grants that follow from an action (the person chooses a document, the person pastes) over questions.
+- **Cost**: The principal receives more requests for access. Too many requests train the principal to accept all of them. The design must prefer grants that follow from an action (the principal chooses a document, the principal pastes) over questions.
 - **Cost**: Programs that manage the system (task manager, backup, debugger, screen reader) need broad grants. These grants must be rare, visible and revocable.
 - **Open**: line 17. Blow says that isolation of untrusted code inside one program is not solved. [Blow §7] Side channels between programs are a similar limit.
 
@@ -441,7 +461,7 @@ The "user" of current systems does six jobs. This system splits them:
   6. Removal of a user leaves data behind. Here the root handle is dropped and the whole tree goes with it.
 - **Layers** (grow in this order; the zero case follows ZII):
   1. No principal. The root service is the only source of grants.
-  2. Principal 0 is the machine. Its key is in the TPM and never leaves it: it proves to another machine which system runs. The TPM measures the system and seals the keys of storage to that measure. The publisher of the system signs the system description, with a key that is not in the TPM (property 17). A dedicated machine stops here: no login, and the TPM unlocks storage at boot. (2026-11-12: the layer said before that the key of the TPM signs the system description.)
+  2. Principal 0 is the machine. Its key is in the TPM and never leaves it: it proves to another machine which system runs. The TPM measures the system and seals the keys of storage to that measure. The principal that signs the system signs the system description, with a key that is not in the TPM (property 17). A dedicated machine stops here: no login, and the TPM unlocks storage at boot.
   3. One human principal. The unlock decrypts its documents. The lock discards the key.
   4. Several principals on one machine: disjoint handle trees, no kernel change.
   5. One principal on several machines, and sharing between principals: the principal key signs each machine key; signed grants carry access between machines.
@@ -449,7 +469,7 @@ The "user" of current systems does six jobs. This system splits them:
 - **Proposed rule for concessions**: A concession is made in the desktop shell, as a default grant that is data: visible, recorded, and revocable. A concession is never made in the kernel, in a contract, or as a new form of ambient access. The base system stays strict; the desktop chooses how much it grants without a question.
 - **Forms of concession** (proposed; some doors can stay open so that the system is not painful to use):
   1. A remembered grant: the system asks one time, then renews the grant with no question.
-  2. A grant that follows from an action: the person opens, drops or pastes a document. No question is shown.
+  2. A grant that follows from an action: the principal opens, drops or pastes a document. No question is shown.
   3. A default set of grants for a kind of program, given at first start.
   4. A broad grant for a trusted program, such as a document manager or a backup program.
   In each form, the grant is still a record that the principal can see and revoke.
@@ -463,7 +483,7 @@ The "user" of current systems does six jobs. This system splits them:
 - **Sandbox (2) against direct device access (5)**: Direct access is safe only when the hardware isolates queues. On the first machine the hypervisor does this. On real hardware an IOMMU is a requirement.
 - **Per-program network stack (5) against shared network identity**: Several programs share one address. A small user-space service must assign ports and steer packets to queues. It stays off the data path.
 - **Replaceable modules (10) against speed**: Calls through a table cost one indirect call. The bundle is the place where a developer trades replaceability for inlining.
-- **No global file system (8) against the desktop**: A person thinks in documents, not in programs. The document store service must exist before the first real desktop program.
+- **No global file system (8) against the desktop**: The principal thinks in documents, not in programs. The document store service must exist before the first real desktop program.
 - **Small interface (1) against typed resources (3)**: Types multiply operations. The ring of property 4 solves this: the kernel has few entry operations, and the typed commands are records in a ring.
 - **New storage engine (9) against reliability**: The engine is small and each commit is tested against a stop of the machine. SQLite is not used.
 
@@ -503,3 +523,5 @@ The first milestone is the smallest end-to-end system that shows the model:
 This milestone uses properties 1, 2, 4, 6, 10, 13 and 17 in their smallest form. It needs no storage, no network and no graphics.
 Secure Boot and the TPM measurement come after it, because they need only the boot program.
 Each later step adds one capability to a system that already works.
+
+**State**: reached. The system has since grown past it; the order of the next steps is in `FIRST_MILESTONE.md`, section "Next steps".
