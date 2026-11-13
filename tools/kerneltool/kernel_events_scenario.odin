@@ -20,7 +20,7 @@ package kerneltool
 // stops kernel_events while its table is given: the kernel ends the table
 // with its owner; the second run of kernel_events gives its first table
 // with Ok (a table that the kernel had kept, of another program now, would
-// be refused). In the second run, the person revokes the grant machine in
+// be refused). In the second run, the scenario revokes the grant machine in
 // the console: the table ends with the right, no record comes after, and
 // Events_Set is refused.
 

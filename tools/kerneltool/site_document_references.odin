@@ -1,6 +1,6 @@
 // The references from a page to a document of docs/ (docs/SITE.md, "The
 // references to documents"). A comment of the source names a document for
-// a person who reads the code: "(docs/ARCHITECTURE.md, "Kernel systems")".
+// a developer who reads the code: "(docs/ARCHITECTURE.md, "Kernel systems")".
 // On a page, that pointer is a link with the title of the document and the
 // text of the heading that it names, in a style of its own: a path and a
 // label such as "U3" or "section 8" mean nothing to a reader of the site.

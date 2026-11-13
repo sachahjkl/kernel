@@ -164,7 +164,7 @@ scenario_tcp_real := [?]Step {
 	{kind = .Type, text = "server.remove(\"hello.txt\")"},
 	{kind = .Wait, text = "server: the page /hello.txt is out of the store"},
 	{kind = .Http, text = "missing hello.txt"},
-	// The person revokes the store of server: a put and a remove
+	// The scenario revokes the store of server: a put and a remove
 	// are refused, and the page that is served does not change.
 	{kind = .Type, text = "server.put(\"kept.txt\", \"the first text\")"},
 	{kind = .Wait, text = "server: the page /kept.txt is in the store: 14 bytes"},

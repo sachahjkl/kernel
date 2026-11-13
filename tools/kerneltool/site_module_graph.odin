@@ -396,7 +396,7 @@ site_graph_importer_count :: proc(layout: Site_Graph_Layout, node: int) -> (coun
 	return count
 }
 
-// site_graph_size_text gives the size of a module for a person.
+// site_graph_size_text gives the size of a module for a reader.
 site_graph_size_text :: proc(size: u64) -> string {
 	return size == 0 ? "size not known" : fmt.tprintf("%d bytes", size)
 }

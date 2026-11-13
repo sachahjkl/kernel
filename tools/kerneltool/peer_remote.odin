@@ -104,7 +104,7 @@ Peer_Remote :: struct {
 	// starts or closes `remote` (peer_remote_unpin).
 	pinned:           bool,
 	// The peer of `kerneltool run` takes the key that a call names (the
-	// person reads it in the window); the peer of a machine test takes the
+	// developer reads it in the window); the peer of a machine test takes the
 	// key of the log only, and refuses a call that names another one.
 	keys_from_calls:  bool,
 	// `remote` presented another key than the pinned one: each call fails at

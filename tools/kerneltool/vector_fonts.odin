@@ -620,7 +620,7 @@ glyph_cache_of :: proc(font_bytes: []u8, font_name: string, grid_fit: bool, scal
 // build_glyph_caches writes the glyph caches of the default font, with the
 // grid fit and without it, and of its bold weight at scale 1, and gives
 // them as resources of the boot image. The setting "grid_fit" of the
-// person chooses one of the first two at run time.
+// setting chooses one of the first two at run time.
 build_glyph_caches :: proc() -> (resources: [5]Resource_File, ok: bool) {
 	make_folder(VECTOR_FONT_BUILD_FOLDER)
 	builds := [3]struct {

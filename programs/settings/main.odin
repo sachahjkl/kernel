@@ -1,4 +1,4 @@
-// The settings of the person (docs/FONTS.md, "The setting"): the font of
+// The settings of the system (docs/FONTS.md, "The setting"): the font of
 // the system, the order of the color stripes of the screen, the pointer
 // theme and the grid fit of the vector font. The window shows each setting
 // as a row of buttons and the text of the system at its three sizes; the

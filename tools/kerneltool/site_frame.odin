@@ -3,7 +3,7 @@
 // its front door, the guides are the documents of docs/, the reference is
 // tables that the tool generates from the code. Each page is generated
 // from files of the repository and from the logs of the last machine tests;
-// no page holds a text that a person must remember to update.
+// no page holds a text that a developer must remember to update.
 //
 // This file holds the record of the site, the command, the frame of every
 // page (the bar, the breadcrumbs, the foot) and the checks of the pages.
@@ -249,7 +249,7 @@ site_page_file :: proc(folder: string) -> string {
 // site_page_link gives the link from one page to another page (its file,
 // as site_page_file gives it, with an anchor or none). With a site address
 // the link names the folder of the page with a final slash: the host
-// serves the index.html of a folder, and that is the address that a person
+// serves the index.html of a folder, and that is the address that a reader
 // sees and shares. With no address the link names the index.html: a
 // browser that opens the site from a disk shows a folder as a list of its
 // files, not as its index.html.

@@ -178,7 +178,7 @@ module_build_worker :: proc(data: rawptr) {
 }
 
 // The command module: build one module of the table in this process. The
-// parallel build runs it; a person can run it to build one module.
+// parallel build runs it; a developer can run it to build one module.
 run_module :: proc(args: []string) -> int {
 	if len(args) != 4 || (args[1] != "with_checks" && args[1] != "without_checks") || (args[2] != "measure_run" && args[2] != "usual_run") || (args[3] != "with_debug_information" && args[3] != "without_debug_information") {
 		fmt.eprintln("kerneltool: module <name> with_checks|without_checks measure_run|usual_run with_debug_information|without_debug_information")

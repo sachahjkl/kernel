@@ -317,7 +317,7 @@ site_measure_record_read :: proc(path: string) -> (found: Site_Measure_Record, p
 }
 
 // site_measure_source_choose chooses where a fact of the page comes from.
-// A log of build/ that is newer than the measure record wins: a person who
+// A log of build/ that is newer than the measure record wins: a developer who
 // just ran the tests sees their numbers. Else the record, when it holds
 // the fact. A checkout writes the record at the time of the checkout, so
 // the logs of an older run lose.

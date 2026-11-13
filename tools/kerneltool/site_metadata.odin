@@ -33,7 +33,7 @@ SITE_SCRIPT_CLOSE :: "</script>"
 SITE_HEADLINE_LIMIT :: 110
 
 // site_page_address gives the absolute address of a page. An index page
-// is named by its folder, the form that a host serves and that a person
+// is named by its folder, the form that a host serves and that a reader
 // shares: "https://host/path/docs/guides/", not ".../docs/guides/index.html".
 site_page_address :: proc(address, path: string) -> string {
 	if path == SITE_PAGE {

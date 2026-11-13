@@ -46,7 +46,7 @@ cryptography_import_changes := [?][2]string {
 
 // One listed adjustment of a taken file: lines of the origin, and the lines
 // in their place. The lines of the origin must be in the origin exactly one
-// time: when the origin changes them, the check fails, and a person looks
+// time: when the origin changes them, the check fails, and a developer looks
 // at the adjustment again.
 Cryptography_Adjustment :: struct {
 	origin_path:  string,

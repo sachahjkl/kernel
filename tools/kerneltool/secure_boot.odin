@@ -34,7 +34,7 @@ SECURE_BOOT_VARIABLES :: BUILD_FOLDER + "/ovmf_vars_secure_boot.fd"
 // signature lists): a fixed identifier of this system, which the firmware
 // stores and does not check.
 SECURE_BOOT_OWNER :: "8a2f6c1e-5d3b-4e7a-9c0f-2b4d6e8a1c3f"
-// The subject of a new certificate. It names the role, not a person.
+// The subject of a new certificate. It names the role, not a human.
 FIRMWARE_CERTIFICATE_SUBJECT :: "/CN=firmware signing key of the system/"
 
 Firmware_Signing_Key :: struct {

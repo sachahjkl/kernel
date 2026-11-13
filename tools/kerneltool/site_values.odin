@@ -2,7 +2,7 @@
 // "The kinds of values"). The rule of the desktop holds on the site: a name
 // in the reading font, a value in the monospace font (docs/DESIGN.md, "Two
 // fonts"). Each value also has the accent and the icon of its kind, so that
-// a person tells a handle from a number at a glance. The writer of a table
+// a reader tells a handle from a number at a glance. The writer of a table
 // or of a symbol states the kind of each value that it writes; no text is
 // classified by its look, but a column of the kind Number or Date, whose
 // writer already stated what it holds.
