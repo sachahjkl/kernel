@@ -1,9 +1,10 @@
-// The scheduling strategies of the kernel, measured side by side
-// (docs/SCHEDULING.md).
+// The scheduling strategies of the kernel, checked side by side, and
+// measured in a measure run (docs/SCHEDULING.md).
 //
-// The program runs four cases under each strategy: two threads that wake
+// The program runs its cases under each strategy: two threads that wake
 // each other while spinners keep each processor busy; a thread that sleeps
-// 2 ms, many times, while 8 spinners run, with the delay of each wake;
+// 2 ms, many times, while 8 spinners run, with the delay of each wake (a
+// [measure run](term:measure-run) only: the delay is a measure);
 // 8 spinners of one weight, their shares and their work; 12 spinners with
 // the weights 1, 2 and 4, their shares; 12 spinners that start with the
 // full weight and get the weights 1, 2 and 4 while they run, their shares.
@@ -12,6 +13,14 @@
 // spinners. The window
 // shows the numbers and the strategy in use; the keys 1, 2 and 3, or a
 // click on a strategy, change it.
+//
+// A case of the check ends after a count, never after a time. The two
+// threads go on until the first one did its turns and, under EEVDF, the
+// kernel counted the turns that a wake ended. The spinners go on until the
+// thread report says that each one ran SHARE_TICKS_CHECKED ticks: the
+// shares are the work of each spinner in that interval. A measure run
+// gives each case a fixed time, and writes the wakes in one second, the
+// late wakes and the work in one second.
 //
 // The program checks what does not depend on the load of the host: no
 // spinner starved, a wake ended turns under EEVDF and none under round
@@ -75,11 +84,25 @@ STRATEGY_COUNT :: 3
 @(rodata)
 strategies := [STRATEGY_COUNT]op.Strategy{.Round_Robin, .Fair, .Eevdf}
 
+// The times of a measure run.
 PAIR_TIME :: 400 // Milliseconds: two threads wake each other.
 SLEEP_TIME :: 2 // Milliseconds: one sleep of the thread whose delay is measured.
 SLEEP_COUNT :: 60
 SHARE_TIME :: 500 // Milliseconds: the spinners share the processors.
 WARM_TIME :: 50 // Milliseconds before a measure: the spinners started.
+// The counts of the check.
+// The turns of the first of the two threads. Under round robin a turn can
+// wait for the end of the turn of a spinner, so the count is small.
+PAIR_ROUNDS_CHECKED :: 16
+// The turns that a wake must end under EEVDF before the case ends: the
+// check that EEVDF ends a turn by a wake is this count of the kernel.
+PAIR_PREEMPTIONS_CHECKED :: 8
+// The ticks of processor time that each spinner runs in a case of the
+// shares, by the thread report. The spinner with the least share has
+// several turns in it, so the order of the shares by weight is in the
+// counts and not in where a turn happened to end.
+SHARE_TICKS_CHECKED :: 30
+SHARE_POLL_TIME :: 2 // Milliseconds between two reads of the thread report: a poll period, not a wait.
 // A wait that ends at this deadline after its word changed lost its wake. A
 // wake that is only late on a loaded host comes long before it: the bound of
 // a hang.
@@ -100,15 +123,15 @@ Spinner :: struct #align (64) {
 
 // The results of one strategy.
 Result :: struct {
-	measured:    bool,
-	wakes:       u64, // In one second.
+	measured:    bool, // The cases ran under this strategy.
+	wakes:       u64, // In one second: a measure run only.
 	// During the case of the two threads: the turns that a wake ended on the
 	// processor of the waker and by an interrupt, and the moves.
 	pair_local, pair_interrupts, pair_moves: u64,
-	median:      u64, // Microseconds.
+	median:      u64, // Microseconds: a measure run only.
 	worst:       u64,
 	shares:      [EQUAL_COUNT]u64, // Tenths of a percent of the work of the spinners.
-	work:        u64, // Increments in one second, all the spinners.
+	work:        u64, // Increments in one second, all the spinners: a measure run only.
 	weighted:    [3]u64, // Tenths of a percent: the mean share of a spinner of each weight.
 	weighted_least: u64, // The least share of the 12, tenths of a percent.
 	// The same for 12 spinners that started with the full weight and got
@@ -328,17 +351,79 @@ spinner_machine_numbers :: proc "contextless" (first, count: int, numbers: ^[SPI
 	return true
 }
 
+// spinner_run_times reads the processor time of each of count spinners
+// from first, in ticks, from the thread report of this program. numbers
+// holds the machine number of each spinner. false: no report, or the
+// report does not name a spinner.
+spinner_run_times :: proc "contextless" (first, count: int, numbers: ^[SPINNER_LIMIT]u64, times: ^[SPINNER_LIMIT]u64) -> bool {
+	if self_slot == 0 || !threads_of(self_slot, self_serial) {
+		return false
+	}
+	for index in first ..< first + count {
+		found := false
+		for &item in thread_table.threads[:min(thread_table.count, op.THREAD_REPORT_CAPACITY)] {
+			if item.machine_number == numbers[index] {
+				times[index] = item.run_time
+				found = true
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// share_interval gives the count of the work of each of count spinners
+// from first at the start and at the end of one interval, and the
+// nanoseconds of the interval. In the check the interval ends when each
+// spinner ran SHARE_TICKS_CHECKED ticks, by the thread report; each_ran is
+// false when the hang bound ended it first: a spinner got no processor. A
+// measure run has an interval of SHARE_TIME.
+share_interval :: proc "contextless" (first, count: int) -> (before, after: [SPINNER_LIMIT]u64, elapsed: u64, each_ran: bool) {
+	if system.measure_run() {
+		before = spinner_counts(first, count)
+		start := system.nanoseconds()
+		system.sleep(system.time() + SHARE_TIME)
+		after = spinner_counts(first, count)
+		return before, after, max(system.nanoseconds() - start, 1), true
+	}
+	numbers, base, now: [SPINNER_LIMIT]u64
+	if !spinner_machine_numbers(first, count, &numbers) || !spinner_run_times(first, count, &numbers, &base) {
+		return before, after, 1, false
+	}
+	before = spinner_counts(first, count)
+	start := system.nanoseconds()
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
+		system.sleep(system.time() + SHARE_POLL_TIME)
+		if !spinner_run_times(first, count, &numbers, &now) {
+			break
+		}
+		each_ran = true
+		for index in first ..< first + count {
+			each_ran &&= now[index] - base[index] >= SHARE_TICKS_CHECKED
+		}
+		if each_ran {
+			break
+		}
+	}
+	after = spinner_counts(first, count)
+	return before, after, max(system.nanoseconds() - start, 1), each_ran
+}
+
 // weighted_shares measures the 12 spinners that run now, in three classes
 // (the spinner n is of the class n modulo 3): the mean share of a spinner
 // of each class and the least share of the 12, in tenths of a percent; if
 // the class of the heaviest weight did more work than the class of the
 // lightest; if a spinner starved (it has a sixteenth of its equal part or
-// less). The shares are a measure of this host.
+// less, or it did not run the ticks of the check). The shares are a
+// measure of this host.
 weighted_shares :: proc "contextless" () -> (shares: [3]u64, least: u64, heavier_got_more: bool, starved: bool) {
-	system.sleep(system.time() + WARM_TIME)
-	first := spinner_counts(0, WEIGHTED_COUNT)
-	system.sleep(system.time() + SHARE_TIME)
-	last := spinner_counts(0, WEIGHTED_COUNT)
+	if system.measure_run() {
+		system.sleep(system.time() + WARM_TIME)
+	}
+	first, last, _, each_ran := share_interval(0, WEIGHTED_COUNT)
+	starved = !each_ran
 	total: u64
 	for spinner in 0 ..< WEIGHTED_COUNT {
 		total += last[spinner] - first[spinner]
@@ -473,56 +558,88 @@ measure :: proc "contextless" (index: int, processors: u64) {
 		fail("a thread did not start")
 		return
 	}
-	system.sleep(system.time() + WARM_TIME)
-	start_rounds := intrinsics.atomic_load(&pair.rounds[0])
-	pair_before := counts(processors)
-	start := system.nanoseconds()
-	system.sleep(system.time() + PAIR_TIME)
-	rounds := intrinsics.atomic_load(&pair.rounds[0]) - start_rounds
-	elapsed := max(system.nanoseconds() - start, 1)
-	pair_after := counts(processors)
+	measured := system.measure_run()
+	pair_before, pair_after: Counts
+	start: u64
+	elapsed: u64 = 1
+	if measured {
+		system.sleep(system.time() + WARM_TIME)
+		start_rounds := intrinsics.atomic_load(&pair.rounds[0])
+		pair_before = counts(processors)
+		start = system.nanoseconds()
+		system.sleep(system.time() + PAIR_TIME)
+		rounds := intrinsics.atomic_load(&pair.rounds[0]) - start_rounds
+		elapsed = max(system.nanoseconds() - start, 1)
+		pair_after = counts(processors)
+		result.wakes = rounds * 1_000_000_000 / elapsed
+	} else {
+		// The start of the threads is not in the counts: each spinner runs,
+		// and each of the two threads did one turn. Then the case goes on
+		// until the first thread did its turns and, under EEVDF, the kernel
+		// counted the turns that a wake ended. The bound only ends a hang.
+		started_numbers: [SPINNER_LIMIT]u64
+		pair_deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+		spinners_run := spinner_machine_numbers(0, int(processors), &started_numbers)
+		for spinners_run && intrinsics.atomic_load(&pair.rounds[1]) == 0 && system.time() < pair_deadline {
+			system.sleep(system.time() + 1)
+		}
+		start_rounds := intrinsics.atomic_load(&pair.rounds[0])
+		pair_before = counts(processors)
+		wanted_preemptions: u64 = strategies[index] == .Eevdf ? PAIR_PREEMPTIONS_CHECKED : 0
+		turns_done := false
+		for spinners_run && !turns_done && system.time() < pair_deadline {
+			system.sleep(system.time() + 1)
+			pair_after = counts(processors)
+			turns_done = intrinsics.atomic_load(&pair.rounds[0]) - start_rounds >= PAIR_ROUNDS_CHECKED && pair_after.preemptions - pair_before.preemptions >= wanted_preemptions
+		}
+		if !turns_done {
+			fail("the two threads did not do the turns of the check, or EEVDF did not end the turns by a wake")
+		}
+	}
 	result.pair_interrupts = pair_after.interrupt_preemptions - pair_before.interrupt_preemptions
 	result.pair_local = pair_after.preemptions - pair_before.preemptions - result.pair_interrupts
 	result.pair_moves = pair_after.moves - pair_before.moves
-	result.wakes = rounds * 1_000_000_000 / elapsed
 	pair_stop()
 	spinners_stop(0, int(processors))
 
 	// 2. The delay of a thread that sleeps, while 8 spinners run. Its
-	// request is short: under EEVDF, its deadline comes early.
+	// request is short: under EEVDF, its deadline comes early. The delay
+	// is a measure and no check reads it: a measure run only.
 	if !spinners_start(0, EQUAL_COUNT, full_weight) {
 		spinners_stop(0, EQUAL_COUNT)
 		fail("a thread did not start")
 		return
 	}
-	system.sleep(system.time() + WARM_TIME)
-	sleeper = {}
-	sleeping, status := system.thread_start(sleep_run, nil, request = 500)
-	if status != .Ok {
-		spinners_stop(0, EQUAL_COUNT)
-		fail("a thread did not start")
-		return
-	}
-	for intrinsics.atomic_load(&sleeper.ended) == 0 {
-		system.word_wait(&sleeper.ended, 0, system.time() + 1000)
-	}
-	system.thread_wait(sleeping)
-	sorted := sleeper.delays
-	for at in 1 ..< len(sorted) {
-		for back := at; back > 0 && sorted[back - 1] > sorted[back]; back -= 1 {
-			sorted[back - 1], sorted[back] = sorted[back], sorted[back - 1]
+	if measured {
+		system.sleep(system.time() + WARM_TIME)
+		sleeper = {}
+		sleeping, status := system.thread_start(sleep_run, nil, request = 500)
+		if status != .Ok {
+			spinners_stop(0, EQUAL_COUNT)
+			fail("a thread did not start")
+			return
 		}
+		for intrinsics.atomic_load(&sleeper.ended) == 0 {
+			system.word_wait(&sleeper.ended, 0, system.time() + 1000)
+		}
+		system.thread_wait(sleeping)
+		sorted := sleeper.delays
+		for at in 1 ..< len(sorted) {
+			for back := at; back > 0 && sorted[back - 1] > sorted[back]; back -= 1 {
+				sorted[back - 1], sorted[back] = sorted[back], sorted[back - 1]
+			}
+		}
+		result.median = sorted[len(sorted) / 2]
+		result.worst = sorted[len(sorted) - 1]
 	}
-	result.median = sorted[len(sorted) / 2]
-	result.worst = sorted[len(sorted) - 1]
 
 	// 3. The same 8 spinners: their shares and their work.
-	first := spinner_counts(0, EQUAL_COUNT)
-	start = system.nanoseconds()
-	system.sleep(system.time() + SHARE_TIME)
-	last := spinner_counts(0, EQUAL_COUNT)
-	elapsed = max(system.nanoseconds() - start, 1)
+	first, last, share_elapsed, each_ran := share_interval(0, EQUAL_COUNT)
+	elapsed = share_elapsed
 	spinners_stop(0, EQUAL_COUNT)
+	if !each_ran {
+		fail("a spinner of one weight did not run the ticks of the check")
+	}
 	total: u64
 	for spinner in 0 ..< EQUAL_COUNT {
 		total += last[spinner] - first[spinner]
@@ -535,7 +652,9 @@ measure :: proc "contextless" (index: int, processors: u64) {
 			fail("a spinner of one weight starved")
 		}
 	}
-	result.work = total * 1_000_000_000 / elapsed
+	if measured {
+		result.work = total * 1_000_000_000 / elapsed
+	}
 
 	// 4. 12 spinners with the weights 1, 2 and 4.
 	if !spinners_start(0, WEIGHTED_COUNT, weight_of_class) {
@@ -614,25 +733,39 @@ log_result :: proc "contextless" (index: int) {
 	writer := system.Writer{buffer = buffer[:]}
 	system.write_part(&writer, "scheduler: ")
 	system.write_part(&writer, op.STRATEGY_NAMES[strategies[index]])
+	// The rates and the late wakes are in the line of a measure run only.
+	measured := system.measure_run()
 	system.write_part(&writer, ": two threads that wake each other, a spinner on each processor: ")
-	system.write_unsigned(&writer, result.wakes)
-	system.write_part(&writer, " wakes in one second (")
+	if measured {
+		system.write_unsigned(&writer, result.wakes)
+		system.write_part(&writer, " wakes in one second (")
+	} else {
+		system.write_unsigned(&writer, PAIR_ROUNDS_CHECKED)
+		system.write_part(&writer, " turns of the first thread and more (")
+	}
 	system.write_unsigned(&writer, result.pair_local)
 	system.write_part(&writer, " turns ended on the processor of the waker, ")
 	system.write_unsigned(&writer, result.pair_interrupts)
 	system.write_part(&writer, " by an interrupt, ")
 	system.write_unsigned(&writer, result.pair_moves)
-	system.write_part(&writer, " moves); a thread that sleeps 2 ms among 8 spinners: late by ")
-	system.write_unsigned(&writer, result.median)
-	system.write_part(&writer, " us in the middle, ")
-	system.write_unsigned(&writer, result.worst)
-	system.write_part(&writer, " us at worst; 8 spinners of one weight: shares ")
+	system.write_part(&writer, " moves); ")
+	if measured {
+		system.write_part(&writer, "a thread that sleeps 2 ms among 8 spinners: late by ")
+		system.write_unsigned(&writer, result.median)
+		system.write_part(&writer, " us in the middle, ")
+		system.write_unsigned(&writer, result.worst)
+		system.write_part(&writer, " us at worst; ")
+	}
+	system.write_part(&writer, "8 spinners of one weight: shares ")
 	tenths_part(&writer, least)
 	system.write_part(&writer, " to ")
 	tenths_part(&writer, most)
-	system.write_part(&writer, ", work ")
-	system.write_unsigned(&writer, result.work / 1_000_000)
-	system.write_part(&writer, " million in one second; 12 spinners, weights 1 2 4: a spinner of each weight ")
+	if measured {
+		system.write_part(&writer, ", work ")
+		system.write_unsigned(&writer, result.work / 1_000_000)
+		system.write_part(&writer, " million in one second")
+	}
+	system.write_part(&writer, "; 12 spinners, weights 1 2 4: a spinner of each weight ")
 	tenths_part(&writer, result.weighted[0])
 	system.write_part(&writer, ", ")
 	tenths_part(&writer, result.weighted[1])
@@ -1368,13 +1501,19 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 		most_work = max(most_work, result.work)
 	}
 	y := 24
-	number_row :: proc "contextless" (area: interface.Area, y: int, label: string, values: [STRATEGY_COUNT]u64, most: u64, unit: string) {
+	// A row of a rate or of a late wake has a number in a measure run
+	// only: else it says where the number comes from.
+	number_row :: proc "contextless" (area: interface.Area, y: int, label: string, values: [STRATEGY_COUNT]u64, most: u64, unit: string, measure_only := false) {
 		write(area, 0, y, label, graphics.COLOR_DIM)
 		line: [48]u8
 		for index in 0 ..< STRATEGY_COUNT {
 			x := LABEL_WIDTH + index * COLUMN_WIDTH
 			if !results[index].measured {
 				write(area, x, y, "not measured yet", graphics.COLOR_DIM)
+				continue
+			}
+			if measure_only && !system.measure_run() {
+				write(area, x, y, "kerneltool measure", graphics.COLOR_DIM)
 				continue
 			}
 			write(area, x, y, system.format(line[:], values[index], unit), graphics.COLOR_TEXT)
@@ -1389,11 +1528,11 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 		}
 		return out
 	}
-	number_row(inside, y, "wakes in one second", values(proc "contextless" (result: ^Result) -> u64 {return result.wakes}), most_wakes, "")
+	number_row(inside, y, "wakes in one second", values(proc "contextless" (result: ^Result) -> u64 {return result.wakes}), most_wakes, "", true)
 	y += ROW
-	number_row(inside, y, "late wake, middle", values(proc "contextless" (result: ^Result) -> u64 {return result.median}), most_worst, " us")
+	number_row(inside, y, "late wake, middle", values(proc "contextless" (result: ^Result) -> u64 {return result.median}), most_worst, " us", true)
 	y += ROW
-	number_row(inside, y, "late wake, worst", values(proc "contextless" (result: ^Result) -> u64 {return result.worst}), most_worst, " us")
+	number_row(inside, y, "late wake, worst", values(proc "contextless" (result: ^Result) -> u64 {return result.worst}), most_worst, " us", true)
 	y += ROW
 	// The shares of the 8 spinners: one column each, the height is the share; the line is the equal part.
 	write(inside, 0, y, "8 spinners, one weight", graphics.COLOR_DIM)
@@ -1432,7 +1571,7 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 		write(inside, x + 152, y + 4, "least", graphics.COLOR_DIM)
 	}
 	y += CHART
-	number_row(inside, y, "work, millions in 1 s", values(proc "contextless" (result: ^Result) -> u64 {return result.work / 1_000_000}), most_work / 1_000_000, "")
+	number_row(inside, y, "work, millions in 1 s", values(proc "contextless" (result: ^Result) -> u64 {return result.work / 1_000_000}), most_work / 1_000_000, "", true)
 	y += ROW
 	number_row(inside, y, "turns ended by a wake", values(proc "contextless" (result: ^Result) -> u64 {return result.preemptions}), 0, "")
 	y += ROW
@@ -1555,7 +1694,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	// Round robin has no wake preemption, and EEVDF has it: the counts of
 	// the kernel in the case of the two threads say it. The wakes in one
-	// second of each are a measure, printed and not checked.
+	// second of each are a measure, printed in a measure run and not
+	// checked.
 	round_robin_preemptions := results[0].pair_local + results[0].pair_interrupts
 	eevdf_preemptions := results[2].pair_local + results[2].pair_interrupts
 	if results[0].measured && results[2].measured && (round_robin_preemptions != 0 || eevdf_preemptions == 0) {
@@ -1564,8 +1704,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	stress()
 	system.strategy_set(machine, original)
 	done = true
+	if right && system.measure_run() {
+		system.log("scheduler: EEVDF woke ", results[2].wakes / max(results[0].wakes, 1), " times as often as round robin (a measure)")
+	}
 	if right {
-		system.log("scheduler: ok, no spinner starved under 3 strategies, EEVDF woke ", results[2].wakes / max(results[0].wakes, 1), " times as often as round robin (a measure), a wake ended ", eevdf_preemptions, " turns under EEVDF and 0 under round robin, the weights ordered the shares, each thread ran after ", stress_changes, " changes, 0 wakes lost, a change needs the right Schedule")
+		system.log("scheduler: ok, no spinner starved under 3 strategies, a wake ended ", eevdf_preemptions, " turns under EEVDF and 0 under round robin, the weights ordered the shares, each thread ran after ", stress_changes, " changes, 0 wakes lost, a change needs the right Schedule")
 	} else {
 		system.log("scheduler: wrong: ", problem)
 	}

@@ -139,7 +139,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	damage := interface.window_frame_end(&drawing, &frame, window)
 	samples_drawn += 1
 	damage_total += u64(damage)
-	if display.MEASURE_RUN && samples_drawn == 20 {
+	if system.measure_run() && samples_drawn == 20 {
 		system.log("inspect: the interface: ", u64(drawing.now.record_count), " records; 20 frames with ", damage_total, " damage rectangles in all; the last frame: build ", drawing.build_time / 1000, " us, difference ", drawing.difference_time / 1000, " us, draw ", drawing.draw_time / 1000, " us")
 	}
 }

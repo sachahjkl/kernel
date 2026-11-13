@@ -247,7 +247,7 @@ kerneltool run
 | Command | Action |
 |---|---|
 | `build` | Build the modules, the boot image and the boot program. One process for each module, as many at once as the processors; `build <processes>` sets the count |
-| `module` | `module <name> with_checks\|without_checks measure_run\|usual_run`: build one module of the table (the parallel build runs it) |
+| `module` | `module <name> with_checks\|without_checks with_debug_information\|without_debug_information`: build one module of the table (the parallel build runs it) |
 | `run` | Build, then start the machine under QEMU, with the log of the kernel on the terminal of the host |
 | `test` | Build, start the machine, act as the input (keys, pointer), check the log, save pictures |
 | `screenshots` | `test`, then copy the pictures to `docs/screenshots/`. The pictures are compressed PNG files; `screenshots compress` compresses, with no machine, each PNG file of `docs/screenshots/` and `resources/` that is not compressed yet |

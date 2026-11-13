@@ -357,14 +357,16 @@ Each number is a line that a program printed in the log of a machine test, quote
 
 The first paragraph of the page states the run of the measure record: its time, its commit and whether its tree had changes that were not committed, its release, its host and its count of checks that passed. When the release of the record is not the newest release of the changelog, a paragraph says that the numbers were measured before the release that the site shows. With no measure record, a paragraph says so.
 
+A rate over a duration comes from a measure run (`docs/TOOLS.md`, "A check by count, a measure by time"): the test checks by count and writes no rate. `kerneltool screenshots` runs these measure runs after the test, so their logs are in `build/` when it writes the measure record.
+
 | Number | Log in `build/` | Text of the line | Required |
 |---|---|---|---|
-| Kernel entries in one second, 1, 2 and 4 lockers | `test_output_measure.txt`, else `test_output.txt` | `locks: kernel entries in one second` | yes |
-| Reads of the time page in one second | `test_output.txt` | `clock: the time page:` | yes |
-| Wakes in one second under EEVDF | `test_output.txt` | `scheduler: EEVDF: two threads that wake each other` | yes |
+| Kernel entries in one second, 1, 2 and 4 lockers | `test_output_measure.txt` | `locks: kernel entries in one second` | yes |
+| Reads of the time page in one second | `test_output_measure_clock.txt` | `clock: the time page:` | yes |
+| Wakes in one second under EEVDF | `test_output_scheduler_1.txt` | `scheduler: EEVDF: two threads that wake each other` | yes |
 | One glyph of the vector font | `test_output.txt` | `vector_glyphs: one glyph from its outline` | yes |
 | A full frame of the compositor (the last line) | `test_output.txt` | `compositor: a full frame of` | no |
-| Blocks read in one second, 32 in flight | `test_output.txt` | `disk: read, 1 block in each request, 32 in flight` | yes |
+| Blocks read in one second, 32 in flight | `test_output_measure_disk.txt` | `disk: read, 1 block in each request, 32 in flight` | yes |
 | 1000 commits to a private store | `test_output_persist_1.txt` | `notes: count 1000, stopped` | yes |
 | The headers and the checksum of a UDP datagram | `test_output_network.txt` | `network: the headers and the checksum of a datagram` | yes |
 | The round trip of a UDP datagram | `test_output_network.txt` | `net: the round trip of one datagram` | yes |
