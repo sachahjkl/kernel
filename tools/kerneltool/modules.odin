@@ -444,6 +444,16 @@ module_compile :: proc(build: Module_Build) -> bool {
 		}
 	}
 	run(module_object_command(build)) or_return
+	{
+		// No unwind table in the object. No part of the system reads one:
+		// the converter leaves it out of the module, and a stack trace
+		// walks the frame pointers. With debug information llc writes an
+		// entry for more functions, so the table has another size, and
+		// the code and the data after it have other addresses: the module
+		// would not be the same bytes with and without debug information.
+		object := join(folder, "/objects/", build.name, ".o")
+		run({"llvm-objcopy", "--remove-section=.eh_frame", "--remove-section=.rela.eh_frame", object}) or_return
+	}
 	assembly := module_assembly_files(build) or_return
 	for source in assembly {
 		name := source[strings.last_index(source, "/") + 1:]
