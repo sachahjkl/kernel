@@ -9,8 +9,8 @@ import "core:thread"
 import "core:time"
 
 // The parallel build of the modules, and the pool of processes that it
-// shares with the boot volumes (boot_volumes.odin). Each module is built by its own
-// process of this tool (the command `module`), which runs one compiler.
+// shares with the boot volumes (boot_volumes.odin). Each step of a module runs in its own
+// process of this tool (the command `module`): the compile step runs one compiler.
 // The compiler uses its own threads too: its output does not depend on
 // their count (docs/REPRODUCIBLE_BUILD.md, section 7). The tool runs at
 // most `module_build_processes` processes at once, keeps the output of
@@ -18,7 +18,9 @@ import "core:time"
 // assembles the boot image in that order.
 //
 // A module whose inputs are the same as at its last build starts no
-// process: the tool keeps its outputs (incremental_build.odin).
+// process: the tool keeps its outputs (incremental_build.odin). A module
+// whose sources are the same and whose import changed starts its
+// conversion only.
 //
 // A module needs the files of its imports only at its conversion (their
 // hashes go into its import table). So the modules are built in levels: a
@@ -135,26 +137,80 @@ module_levels :: proc() -> (levels: []int, ok: bool) {
 	return levels, true
 }
 
-// The names of the built modules that the line of the kept modules prints.
+// The names of the modules with a step that the line of the kept modules
+// prints.
 BUILT_MODULE_NAMES_MOST :: 12
+
+// The last argument of the command `module`, for one step alone.
+MODULE_STEP_COMPILE :: "compile"
+MODULE_STEP_CONVERT :: "convert"
+
+// module_step_processes_run runs one step (MODULE_STEP_COMPILE or
+// MODULE_STEP_CONVERT) of each module of a list, each in its own process
+// of the tool, and prints the output of each process in the order of the
+// list. finished says, for each place of the list, that its process
+// ended with success.
+module_step_processes_run :: proc(tool_path: string, indexes: []int, step: string, processes: int) -> (finished: []bool, ok: bool) {
+	// Each setting of the build that this process holds goes to the
+	// module process as an argument: a setting that stays here gives a
+	// module of another build, with no error.
+	commands := make([][]string, len(indexes), context.temp_allocator)
+	for index, place in indexes {
+		command := make([]string, 6, context.temp_allocator)
+		command[0] = tool_path
+		command[1] = "module"
+		command[2] = module_builds[index].name
+		command[3] = test_build_checks ? "with_checks" : "without_checks"
+		command[4] = debug_information ? "with_debug_information" : "without_debug_information"
+		command[5] = step
+		commands[place] = command
+	}
+	outcomes := build_processes_run(commands, processes, context.temp_allocator)
+	finished = make([]bool, len(indexes), context.temp_allocator)
+	ok = true
+	for index, place in indexes {
+		outcome := outcomes[place]
+		if len(outcome.output) > 0 {
+			os.write(os.stdout, outcome.output)
+		}
+		delete(outcome.output)
+		finished[place] = outcome.started && outcome.success
+		if outcome.started && !outcome.success {
+			fmt.eprintfln("kerneltool: the %s step of %s failed", step, module_builds[index].name)
+			ok = false
+		}
+	}
+	return finished, ok
+}
 
 // build_modules_in_parallel builds every module of the table, level after
 // level. It prints the output of each process in the order of the table.
 // After a failure, no new process starts; the processes that run end, and
-// the tool names each module that failed or did not start.
+// the tool names each module that failed.
 //
-// A module whose build record has the build key of its inputs, and whose
-// outputs have their recorded hashes, is kept: it starts no process. The
-// tool decides for a level after the level before it ended, because the
-// file of an import is an input.
+// For each module the tool says what this build does (incremental_build.odin):
+// kept, no process starts; converted, the conversion runs alone, because
+// the file of an import changed and the linked file is the same; built,
+// the compile step runs, then the conversion.
+//
+// The tool decides for a level after the level before it ended, because
+// the file of an import is an input of the conversion. A module that is
+// converted has a new hash, as a module that is built: the level after it
+// then reads the new file, and converts each importer of it. So a change
+// goes up the levels as a chain of conversions.
+//
+// In a level, the compile steps run first, all at once, then the
+// conversions: each step has its own process and its own time in the
+// measure of the build.
 build_modules_in_parallel :: proc() -> bool {
 	levels := module_levels() or_return
 	modules_started := time.tick_now()
 	// Before the first compiler starts: the hash of each source.
 	build_inputs_prepare()
 	kept_count := 0
-	built_names := strings.builder_make(context.temp_allocator)
+	converted_count := 0
 	built_count := 0
+	step_names := strings.builder_make(context.temp_allocator)
 	processes := module_build_processes
 	if processes <= 0 {
 		processes = os.get_processor_core_count()
@@ -170,104 +226,90 @@ build_modules_in_parallel :: proc() -> bool {
 	// The folder that every module process writes under exists before the
 	// first process starts.
 	make_folder(module_build_folder) or_return
-	outcomes := make([]Build_Process_Outcome, len(module_builds))
-	defer {
-		for outcome in outcomes {
-			delete(outcome.output)
-		}
-		delete(outcomes)
-	}
+	// The modules whose steps of this build are done, kept ones too.
+	done_count := 0
 	highest := 0
 	for level in levels {
 		highest = max(highest, level)
 	}
 	for level_number in 0 ..= highest {
-		indexes := make([dynamic]int, context.temp_allocator)
-		for level, index in levels {
-			if level == level_number {
-				append(&indexes, index)
-			}
-		}
-		// The modules of the level that are built: the others are kept.
+		// What the build does with each module of the level.
 		checks_started := time.tick_now()
-		level_indexes := indexes[:]
-		indexes = make([dynamic]int, context.temp_allocator)
-		for index in level_indexes {
-			kept, reason := module_is_kept(module_builds[index])
-			if kept {
-				kept_count += 1
+		compile_indexes := make([dynamic]int, context.temp_allocator)
+		convert_indexes := make([dynamic]int, context.temp_allocator)
+		convert_steps := make([dynamic]Module_Step, context.temp_allocator)
+		for level, index in levels {
+			if level != level_number {
 				continue
 			}
-			append(&indexes, index)
-			built_count += 1
-			if built_count <= BUILT_MODULE_NAMES_MOST {
-				fmt.sbprintf(&built_names, "%s%s (%s)", built_count > 1 ? ", " : "", module_builds[index].name, reason)
+			step, reason := module_step_of_build(module_builds[index])
+			switch step {
+			case .Kept:
+				kept_count += 1
+				done_count += 1
+				continue
+			case .Converted:
+				converted_count += 1
+			case .Built:
+				built_count += 1
+				append(&compile_indexes, index)
+			}
+			append(&convert_indexes, index)
+			append(&convert_steps, step)
+			if built_count + converted_count <= BUILT_MODULE_NAMES_MOST {
+				fmt.sbprintf(&step_names, "%s%s (%s: %s)", built_count + converted_count > 1 ? ", " : "", module_builds[index].name, step == .Built ? "built" : "converted", reason)
 			}
 		}
 		build_measure.record_checks += time.tick_since(checks_started)
-		// Each setting of the build that this process holds goes to the
-		// module process as an argument: a setting that stays here gives a
-		// module of another build, with no error.
-		commands := make([][]string, len(indexes), context.temp_allocator)
-		for index, place in indexes {
-			command := make([]string, 5, context.temp_allocator)
-			command[0] = tool_path
-			command[1] = "module"
-			command[2] = module_builds[index].name
-			command[3] = test_build_checks ? "with_checks" : "without_checks"
-			command[4] = debug_information ? "with_debug_information" : "without_debug_information"
-			commands[place] = command
+		step_started := time.tick_now()
+		_, compiled := module_step_processes_run(tool_path, compile_indexes[:], MODULE_STEP_COMPILE, processes)
+		build_measure.module_compile_steps += time.tick_since(step_started)
+		finished: []bool
+		converted := false
+		if compiled {
+			step_started = time.tick_now()
+			finished, converted = module_step_processes_run(tool_path, convert_indexes[:], MODULE_STEP_CONVERT, processes)
+			build_measure.module_conversions += time.tick_since(step_started)
 		}
-		level_outcomes := build_processes_run(commands, processes, context.temp_allocator)
-		for index, place in indexes {
-			outcomes[index] = level_outcomes[place]
-		}
-		failed := false
-		for index in indexes {
-			outcome := outcomes[index]
-			if len(outcome.output) > 0 {
-				os.write(os.stdout, outcome.output)
-			}
-			if outcome.started && !outcome.success {
-				fmt.eprintfln("kerneltool: the build of %s failed", module_builds[index].name)
-				failed = true
-			}
-		}
-		if failed {
-			not_started := 0
-			for outcome in outcomes {
-				not_started += outcome.started ? 0 : 1
-			}
-			fmt.eprintfln("kerneltool: %d of %d modules did not start, because a module failed", not_started - kept_count, len(module_builds))
-			return false
-		}
-		// The build record of each module that was built: its key, and the
-		// hash of each output.
+		// The build record of each module whose conversion ended: the key
+		// of each step, and the hash of each output. After a failure too:
+		// the modules of the level that ended are not built again.
 		writes_started := time.tick_now()
-		for index in indexes {
-			if !module_record_write(module_builds[index]) && build_inputs.usable {
+		for index, place in convert_indexes {
+			if place >= len(finished) || !finished[place] {
+				continue
+			}
+			done_count += 1
+			if !module_records_write(module_builds[index], convert_steps[place]) && build_inputs.usable {
 				fmt.printfln("kerneltool: no build record for %s: the compiler gave no list of its files, or an input changed during the build; the next build builds it again", module_builds[index].name)
 			}
 		}
 		build_measure.record_writes += time.tick_since(writes_started)
+		if !compiled || !converted {
+			fmt.eprintfln("kerneltool: %d of %d modules are not built, because a step of a module failed", len(module_builds) - done_count, len(module_builds))
+			return false
+		}
 	}
 	build_measure.modules_built += built_count
+	build_measure.modules_converted += converted_count
 	build_measure.modules_kept += kept_count
 	build_measure.modules += time.tick_since(modules_started)
-	if built_count == 0 {
+	if built_count + converted_count == 0 {
 		fmt.printfln("kerneltool: %d of %d modules kept: the inputs of each one are the same, and its outputs have their recorded hashes", kept_count, len(module_builds))
-	} else if kept_count > 0 || !build_whole {
-		more := built_count > BUILT_MODULE_NAMES_MOST ? fmt.tprintf(", and %d more", built_count - BUILT_MODULE_NAMES_MOST) : ""
-		fmt.printfln("kerneltool: %d of %d modules kept, %d built: %s%s", kept_count, len(module_builds), built_count, strings.to_string(built_names), more)
+	} else if kept_count + converted_count > 0 || !build_whole {
+		more := built_count + converted_count > BUILT_MODULE_NAMES_MOST ? fmt.tprintf(", and %d more", built_count + converted_count - BUILT_MODULE_NAMES_MOST) : ""
+		fmt.printfln("kerneltool: %d of %d modules kept, %d converted, %d built: %s%s", kept_count, len(module_builds), converted_count, built_count, strings.to_string(step_names), more)
 	}
 	return true
 }
 
-// The command module: build one module of the table in this process. The
-// parallel build runs it; a developer can run it to build one module.
+// The command module: build one module of the table in this process, or
+// run one of its two steps. The parallel build runs each step in its own
+// process; a developer runs the command with no step to build one module.
 run_module :: proc(args: []string) -> int {
-	if len(args) != 3 || (args[1] != "with_checks" && args[1] != "without_checks") || (args[2] != "with_debug_information" && args[2] != "without_debug_information") {
-		fmt.eprintln("kerneltool: module <name> with_checks|without_checks with_debug_information|without_debug_information")
+	step_is_known := len(args) == 3 || (len(args) == 4 && (args[3] == MODULE_STEP_COMPILE || args[3] == MODULE_STEP_CONVERT))
+	if !step_is_known || (args[1] != "with_checks" && args[1] != "without_checks") || (args[2] != "with_debug_information" && args[2] != "without_debug_information") {
+		fmt.eprintln("kerneltool: module <name> with_checks|without_checks with_debug_information|without_debug_information [compile|convert]")
 		return EXIT_USAGE
 	}
 	test_build_checks = args[1] == "with_checks"
@@ -276,9 +318,19 @@ run_module :: proc(args: []string) -> int {
 	debug_information = args[2] == "with_debug_information"
 	module_build_folder = debug_information ? MODULE_BUILD_FOLDER : MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION
 	for build in module_builds {
-		if build.name == args[0] {
-			return build_module(build) ? 0 : EXIT_FAILURE
+		if build.name != args[0] {
+			continue
 		}
+		built: bool
+		switch {
+		case len(args) == 3:
+			built = build_module(build)
+		case args[3] == MODULE_STEP_COMPILE:
+			built = module_compile(build)
+		case:
+			built = module_convert(build)
+		}
+		return built ? 0 : EXIT_FAILURE
 	}
 	fmt.eprintfln("kerneltool: module: no module %s", args[0])
 	return EXIT_USAGE

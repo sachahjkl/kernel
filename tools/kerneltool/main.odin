@@ -167,10 +167,12 @@ COMMANDS :: [?]Command {
 	//   of the locks, the frames).
 	// - `with_debug_information` or `without_debug_information`: the debug
 	//   object beside the module.
+	// - `compile` or `convert`: one step alone. `compile` writes the linked
+	//   file; `convert` writes the module and its debug object from it.
 	//
-	// The parallel build of `build` runs this command once for each module.
+	// The parallel build of `build` runs this command once for each step of a module.
 	// Run it by hand to see the errors of one module alone.
-	{name = "module", about = "module <name> with_checks|without_checks with_debug_information|without_debug_information: build one module of the table, and its debug object with the debug information (the parallel build runs this command)", run = run_module},
+	{name = "module", about = "module <name> with_checks|without_checks with_debug_information|without_debug_information [compile|convert]: build one module of the table, and its debug object with the debug information, or run one of its two steps alone (the parallel build runs this command for each step)", run = run_module},
 	// Builds one boot volume in this process: its boot image with the system
 	// description, its boot program, and the volume file.
 	//
