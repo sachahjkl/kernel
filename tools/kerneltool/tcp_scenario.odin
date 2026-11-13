@@ -123,12 +123,14 @@ scenario_tcp := [?]Step {
 }
 
 scenario_tcp_real := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
 	// The server sends the field Date only when the date is known, and the
 	// program `date` knows it after it saw a second of the real-time clock
 	// begin: up to one second after its start. The fetch checks the field,
 	// so the date is known first.
+	// The date line and the line of the first window come in either order:
+	// the first one is looked for with no move of the place in the log.
 	{kind = .Wait, text = "date: ok, ", any_order = true},
+	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Launch, text = "server"},
 	{kind = .Wait, text = "server: listening on the TCP port 80"},
 	{kind = .Fetch, text = "/"},
