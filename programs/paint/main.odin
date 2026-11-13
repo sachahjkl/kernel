@@ -86,20 +86,20 @@ line :: proc "c" (from_x, from_y, to_x, to_y, color: i64, error: ^errors.Error_R
 // The text is drawn with the font of the system, from its top left corner. A text that passes the edge of the
 // paper is cut there.
 //
-// - **x**: 0 to 480, the left of the text.
-// - **y**: 0 to 320, the top of the text. The paper has 296 rows: a text below row 296 does not show.
+// - **x**: 0 to 479, the left of the text.
+// - **y**: 0 to 295, the top of the text: the paper has 296 rows.
 // - **text**: the bytes of the text.
 // - **color**: the number of a color of the palette, 0 to 5.
 //
 // The result is the count of bytes of the text. It fails with -1 and an error record: `Bad_Value` when x is not 0
-// to 480, when y is not 0 to 320, or when the color is not 0 to 5; the record names the argument.
+// to 479, when y is not 0 to 295, or when the color is not 0 to 5; the record names the argument.
 @(export, link_name = "write")
 write :: proc "c" (x, y: i64, text: ^string, color: i64, error: ^errors.Error_Record) -> i64 {
 	switch {
-	case x < 0 || x > WIDTH:
-		return errors.fail(error, -1, .Bad_Value, .None, 1, x, WIDTH)
-	case y < 0 || y > HEIGHT:
-		return errors.fail(error, -1, .Bad_Value, .None, 2, y, HEIGHT)
+	case x < 0 || x >= WIDTH:
+		return errors.fail(error, -1, .Bad_Value, .None, 1, x, WIDTH - 1)
+	case y < 0 || y >= PAPER_HEIGHT:
+		return errors.fail(error, -1, .Bad_Value, .None, 2, y, PAPER_HEIGHT - 1)
 	case color < 0 || color >= i64(len(colors)):
 		return errors.fail(error, -1, .Bad_Value, .None, 4, color, i64(len(colors) - 1))
 	}

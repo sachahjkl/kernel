@@ -7,7 +7,7 @@ import "core:testing"
 GOOD_NEWS_NAME :: "2026-11-11-a-thing.md"
 
 @(private = "file")
-GOOD_NEWS :: `title: A thing a person can see
+GOOD_NEWS :: `title: A thing a reader can see
 date: 2026-11-11
 release: 0.58.0
 picture: docs/screenshots/console.png
@@ -22,7 +22,7 @@ A line that continues it.
 news_of_a_good_entry :: proc(t: ^testing.T) {
 	entry, problems := news_parse(GOOD_NEWS_NAME, GOOD_NEWS)
 	testing.expectf(t, len(problems) == 0, "problems: %v", problems)
-	testing.expect_value(t, entry.title, "A thing a person can see")
+	testing.expect_value(t, entry.title, "A thing a reader can see")
 	testing.expect_value(t, entry.date, "2026-11-11")
 	testing.expect_value(t, entry.subject, "a-thing")
 	testing.expect_value(t, entry.release, "0.58.0")
@@ -46,11 +46,11 @@ news_of_a_damaged_entry :: proc(t: ^testing.T) {
 		before, after: string,
 	}
 	damages := []Damage {
-		{"title: A thing a person can see\n", ""},
-		{"title: A thing a person can see", "title:"},
-		{"title: A thing a person can see", "title: A `thing`"},
-		{"title: A thing a person can see", "title:  A thing"},
-		{"title: A thing a person can see", strings.concatenate({"title: ", strings.repeat("a", NEWS_TITLE_LIMIT + 1, context.temp_allocator)}, context.temp_allocator)},
+		{"title: A thing a reader can see\n", ""},
+		{"title: A thing a reader can see", "title:"},
+		{"title: A thing a reader can see", "title: A `thing`"},
+		{"title: A thing a reader can see", "title:  A thing"},
+		{"title: A thing a reader can see", strings.concatenate({"title: ", strings.repeat("a", NEWS_TITLE_LIMIT + 1, context.temp_allocator)}, context.temp_allocator)},
 		{"date: 2026-11-11", "date: 2026-11-12"},
 		{"date: 2026-11-11", "date: 2026-02-30"},
 		{"release: 0.58.0", "release: 0.58"},
@@ -138,7 +138,7 @@ news_feed_escapes_and_links :: proc(t: ^testing.T) {
 	site.news = []Site_News{{entry = entry, anchor = site_news_anchor(entry), body = "<p>x &amp; \"y\"</p>\n", picture = "pictures/console.png", picture_width = 1024, picture_height = 768, picture_alt = "A <b> & \"c\""}}
 	feed := site_news_feed(&site)
 	testing.expect(t, strings.has_prefix(feed, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">"))
-	testing.expect(t, strings.contains(feed, "<title>A thing a person can see</title>"))
+	testing.expect(t, strings.contains(feed, "<title>A thing a reader can see</title>"))
 	testing.expect(t, strings.contains(feed, "<updated>2026-11-11T00:00:00Z</updated>"))
 	testing.expect(t, strings.contains(feed, "<id>" + SITE_REPOSITORY_ADDRESS + "/blob/master/news/" + GOOD_NEWS_NAME + "</id>"))
 	// With no address: relative links and no link "self".

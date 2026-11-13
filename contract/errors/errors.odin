@@ -79,7 +79,7 @@ Kind :: enum i64 {
 	// The general kind for a number out of its range or with no meaning: a level of the log, a weight of a
 	// thread, a setting that names no value, a command of the terminal ring.
 	Bad_Flags         = 5, // value: the flags; limit: the flags that the call knows.
-	// The kernel gives it for `Memory_Create`, `Memory_Commit`, `Memory_Protect` and `Fault_Handler_Set` with a
+	// The kernel gives it for `Memory_Create`, `Memory_Map`, `Memory_Commit`, `Memory_Protect` and `Fault_Handler_Set` with a
 	// flag or a kind that it does not know, or with two flags that do not go together.
 	Bad_Byte          = 6, // value: the offset of the byte in the text; found: the byte.
 	// A name or a text holds a byte that the call refuses: the storage service for a byte 0 or `/` in a name, or a
