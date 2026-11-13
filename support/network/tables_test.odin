@@ -177,3 +177,41 @@ admitted_remote_amplification_limit :: proc(t: ^testing.T) {
 	testing.expect(t, admitted_add(&table, 0x0A000205, 1, 1000 + ADMITTED_IDLE + 1))
 	testing.expect(t, !admitted_received(&table, 0x0A000202, 40000, 1, 1000 + ADMITTED_IDLE + 1))
 }
+
+// A listen port has one holder. The table holds the ports of each endpoint
+// that exists, with or without a grant: the UDP listen port 4433 of an
+// endpoint whose grant was revoked is still taken, and it is free again
+// when the endpoint is removed.
+@(test)
+listen_port_has_one_holder :: proc(t: ^testing.T) {
+	CLIENT_FIRST :: 49152
+	TCP_CLIENT_FIRST :: 50176
+	held := [4]Local_Ports {
+		{tcp = false, first = CLIENT_FIRST, count = 1}, // A client grant of UDP.
+		{tcp = false, first = 4433, count = 1}, // A listen grant of UDP; the rule does not read its grant.
+		{tcp = true, first = 80, count = 1}, // A listen grant of TCP.
+		{tcp = true, first = TCP_CLIENT_FIRST + 3 * 64, count = 64}, // A client grant of TCP.
+	}
+	// UDP.
+	testing.expect(t, listen_port_taken(false, 4433, CLIENT_FIRST, 8, held[:]))
+	testing.expect(t, !listen_port_taken(false, 4434, CLIENT_FIRST, 8, held[:]))
+	testing.expect(t, !listen_port_taken(false, 80, CLIENT_FIRST, 8, held[:]), "a TCP port takes no UDP port")
+	testing.expect(t, listen_port_taken(false, CLIENT_FIRST, CLIENT_FIRST, 8, held[:]))
+	testing.expect(t, listen_port_taken(false, CLIENT_FIRST + 7, CLIENT_FIRST, 8, held[:]), "a port of the client range that no endpoint has yet")
+	testing.expect(t, !listen_port_taken(false, CLIENT_FIRST + 8, CLIENT_FIRST, 8, held[:]))
+	testing.expect(t, !listen_port_taken(false, CLIENT_FIRST - 1, CLIENT_FIRST, 8, held[:]))
+	// TCP.
+	testing.expect(t, listen_port_taken(true, 80, TCP_CLIENT_FIRST, 8 * 64, held[:]))
+	testing.expect(t, !listen_port_taken(true, 4433, TCP_CLIENT_FIRST, 8 * 64, held[:]), "a UDP port takes no TCP port")
+	testing.expect(t, listen_port_taken(true, TCP_CLIENT_FIRST, TCP_CLIENT_FIRST, 8 * 64, held[:]))
+	testing.expect(t, listen_port_taken(true, TCP_CLIENT_FIRST + 8 * 64 - 1, TCP_CLIENT_FIRST, 8 * 64, held[:]))
+	testing.expect(t, !listen_port_taken(true, TCP_CLIENT_FIRST + 8 * 64, TCP_CLIENT_FIRST, 8 * 64, held[:]))
+	// The largest port does not wrap.
+	testing.expect(t, !listen_port_taken(true, 65535, TCP_CLIENT_FIRST, 8 * 64, held[:]))
+	held[0] = {tcp = false, first = 65535, count = 1}
+	testing.expect(t, listen_port_taken(false, 65535, CLIENT_FIRST, 8, held[:]))
+	// The endpoint is removed: its place is free, and so is its port.
+	held[1] = {}
+	testing.expect(t, !listen_port_taken(false, 4433, CLIENT_FIRST, 8, held[:]))
+	testing.expect(t, !listen_port_taken(false, 0, CLIENT_FIRST, 8, held[:]), "a free place holds no port")
+}

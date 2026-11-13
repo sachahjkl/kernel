@@ -101,7 +101,7 @@ Three rules follow from the table.
 - **A wrong checksum harms its writer only.** A program that sends a wrong checksum loses its own datagram or segment: the remote drops it. A program that does not check the checksum of what it receives takes damaged bytes as data: the harm stays in that program. The TCP library always checks. A program with a datagram endpoint chooses the rule in its call of `network.udp_data_read`.
 - **The checksum comes after the choice of the endpoint.** The network service chooses the endpoint by a port that it did not check with the checksum. A frame whose port the wire damaged, and that the check of Ethernet let pass, can reach the endpoint of another port. The program of that endpoint then refuses it by its checksum, after it saw the bytes. The grant, not the checksum, is the guard against a hostile sender: a hostile sender writes a correct checksum.
 
-`net` shows the two sides in the machine test: the peer sends one datagram with a wrong UDP checksum to the port of `net` ("net: UDP from 10.0.2.2 port 7 with a wrong checksum: dropped by this program: 1 datagram; ..."), and `net` writes one datagram with another source port, which the network service refuses ("net: UDP from the source port 1234: refused: ...").
+`net` shows the two sides in the machine test: the peer sends one datagram with a wrong UDP checksum to the port of `net` ("net: UDP from 10.0.2.2 port 7 with a wrong checksum: dropped by this program: 1 datagram; ..."), and `net` writes one datagram with another source port, which the network service refuses ("net: UDP from the source port 1234: refused: ..."). `net` also writes a datagram whose length field says one byte more than its Send gives ("net: UDP with a wrong length field: refused: ...") and sends 7 bytes, fewer than a UDP header ("net: UDP of 7 bytes: refused: ..."): the network service refuses both. On receive, `network.udp_data_read` refuses a datagram under 8 bytes and a datagram whose length field is not its count, with each rule.
 
 ## The segment endpoint
 
@@ -125,6 +125,12 @@ The root service names the grant by the name of the program, as for UDP (`endpoi
 | UDP client grant | One UDP port that the network service gives (`Info`); the program writes it as the source port of each datagram | One remote address and one remote UDP port | A program that talks to one remote over datagrams |
 | UDP listen grant | One UDP port that the root service names | Each remote that sent a first datagram of 1200 bytes at least, and with a named address, that address only | A QUIC server: `quic_echo` on the port 4433, `remote` on the port 7100 (section "The listen grant of UDP") |
 
+The form and the local ports of an endpoint come from its creation, and stay until the endpoint is removed. A revocation sets the grant to none and keeps them:
+
+- A listen port has one holder. The port of an endpoint whose grant was revoked is still taken: no second endpoint gets it (`network.listen_port_taken`, one rule for UDP and TCP).
+- A new grant on an endpoint must have the form of its creation: the same protocol, listen or client, and for a listen grant the same port. An endpoint that was made for a listen port never gets a client grant, which would send from that port.
+- A Send that waits for a hardware address (the answer of ARP) was checked against the grant of its time. A change of the grant ends each such Send of the endpoint with the refusal `Not_Granted`: no frame leaves after a revocation.
+
 A client grant of TCP has 64 local ports, because a closed connection stays in TIME-WAIT (below) and one local port serves one connection at a time to one remote. The program chooses a port of its block for each connection.
 
 A listen grant is narrow in another way: the program answers, but it does not reach. The network service keeps one table of admitted remotes for each listen grant: an address and a TCP port that sent a SYN (no ACK, no RST) to the listen port, when a Receive of the endpoint waited for it, from an address that can answer (not 0, a broadcast or multicast address, or the local address). A segment of a remote that is not admitted does not reach the program. A segment to send goes out only to an admitted remote. So a program with a listen grant cannot open a connection to a machine that did not come to it, and cannot send a segment to it. The table has 64 places, each with the time of its last segment in or out. The program releases a remote (command `Release`) when its connection ended, after its last segment. When the table is full, the oldest place with no segment for more than 120 s serves again (twice the longest gap between two probes of a zero window in `support/tcp`, so that a live remote keeps its place); with none, a SYN from a new remote is dropped and counted in the problems of the endpoint (kind `Full`). A program that forgets a `Release` loses only places with no traffic.
@@ -146,6 +152,8 @@ This table is the one state of TCP in the network service: addresses and ports, 
 The work for a datagram is the same, with the UDP header in the place of the TCP header (section "The path of a datagram and of a segment").
 
 The library computes the TCP checksum of each segment that it sends, and checks the checksum of each segment that arrives, in `tcp.step`, before any other read of the segment. The checksum covers the pseudo-header: the remote address that the network service gives with the segment, and the local address of the table. A segment with a wrong checksum adds one to `Table.bad_checksums`; it changes no connection and gets no answer, because its ports and its sequence numbers are not to be trusted. A SYN with a wrong checksum takes a place of the admitted remotes until the program releases it: `server` releases the remote of each segment that has no connection.
+
+A program decides nothing from the bytes of a segment that the library dropped, with one exception that is safe for any bytes: the release of a remote that no connection has. `tcp.connection_of_segment` answers "does a connection have the remote of this segment" from the remote address and the two ports at their fixed place, bytes 0 to 3, and reads nothing else. `server` releases the remote of a segment only when the answer is no. So a segment from the remote of a live connection, damaged by the wire or with a malformed option, makes the network service forget nothing: the connection goes on. A release for a segment of no connection frees at most a place that a SYN took; it harms no connection, whatever the segment holds.
 
 ### Property 5 as it is built
 
@@ -226,9 +234,9 @@ TCP is tested at three levels: the library alone on the host, the system against
 
 ### The library on the host
 
-`odin test support/tcp` (in `kerneltool check`): two connection tables on one link that the test controls, with loss, reorder and duplicates; the sequence numbers at the wrap of 2^32; the round trip estimate and the timer of RFC 6298, with its doubling; a zero window that opens; a RST in the window and out of it; a SYN in a synchronized state. The checksum has its own cases: a segment with one changed bit, in its data or in its header, changes no field of the connection and adds one to the count; a segment whose checksum is right for another pair of addresses is dropped.
+`odin test support/tcp` (in `kerneltool check`): two connection tables on one link that the test controls, with loss, reorder and duplicates; the sequence numbers at the wrap of 2^32; the round trip estimate and the timer of RFC 6298, with its doubling; a zero window that opens; a RST in the window and out of it; a SYN in a synchronized state. The checksum has its own cases: a segment with one changed bit, in its data or in its header, changes no field of the connection and adds one to the count; a segment whose checksum is right for another pair of addresses is dropped; a segment from the remote of a live connection with a malformed option, with and without a right checksum, still names its connection for the program (`connection_of_segment`), and data on the connection is taken after it.
 
-`odin test support/network` checks the other half: `parse` gives a datagram or a segment with a wrong checksum to its port, and `udp_data_read` refuses the datagram with the rule `Verify` and takes it with the rule `Do_Not_Verify`.
+`odin test support/network` checks the other half: `parse` gives a datagram or a segment with a wrong checksum to its port, and `udp_data_read` refuses the datagram with the rule `Verify` and takes it with the rule `Do_Not_Verify`. A datagram with an odd count of bytes has its own case: the test sums the words by hand, and one changed bit of the last byte is refused. The rule of a taken listen port has its case too: the port of an endpoint with no grant stays taken until the endpoint is removed.
 
 ### Against an independent implementation
 
@@ -241,6 +249,8 @@ The peer uses `support/tcp` too: it tests the library against itself. So the tes
 ### With the controlled peer
 
 A third network machine (`scenario_tcp`) has the peer of the tool on `-netdev dgram`, as `scenario_network`. The tool tells the peer to run one case at a time. The peer is a TCP client of `server`, and it changes the frames between its library and the machine with a generator of numbers that the case seeds, so each run makes the same changes: 5 % loss, a reorder, duplicates, a zero window of its receive buffer.
+
+The case "damaged" sends two segments by hand on a live connection, after a first answer: an ACK with an option of length 0 and one bit of its checksum changed, then the same ACK with the checksum of its bytes. The library of `server` drops both; the log has "server: 1 segments dropped for a wrong checksum". The client then sends two more requests on the same connection, and the case passes when both are answered: "closed, the remote first: 3 requests". The second request is the one that shows the rule: the server can answer the first one before its network service acts on a release.
 
 ### What the tests found
 

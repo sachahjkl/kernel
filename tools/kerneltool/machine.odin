@@ -413,6 +413,10 @@ scenario_network := [?]Step {
 	// The program writes the UDP header: the network service checks the
 	// source port in its own copy of it.
 	{kind = .Wait, text = "net: UDP from the source port 1234: refused: the source port 1234 of the header is not the local port of this endpoint, 49152"},
+	// The network service refuses a datagram whose length field is not its
+	// count of bytes, and a datagram shorter than its header.
+	{kind = .Wait, text = "net: UDP with a wrong length field: refused: the length field of the header says 29 bytes, the Send has 28"},
+	{kind = .Wait, text = "net: UDP of 7 bytes: refused: the Send has 7 bytes, a datagram has 8 bytes at least, its header"},
 	// The network service computes no checksum of a datagram: the datagram
 	// of the peer with a wrong one reaches the endpoint of its port, and
 	// the program drops it.
@@ -424,7 +428,7 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "net: UDP from 10.0.2.2 port 9 to this endpoint: refused: from port 9; a row of this endpoint"},
 	{kind = .Wait, text = "net: malformed frames from the wire: 9 refused in 9 kinds, 9 of 9 expected; no fault"},
 	{kind = .Wait, text = "net: ICMP echo from 10.0.2.2 to this machine: the network service answered 1 request"},
-	{kind = .Wait, text = "net: ok, 12 cases"},
+	{kind = .Wait, text = "net: ok, 14 cases"},
 	{kind = .Wait, text = "net: the header and the checksum of a datagram of 1472 bytes: "},
 	{kind = .Wait, text = "net: the round trip of one datagram of 64 bytes: "},
 	{kind = .Wait, text = "net: a burst with 64 datagrams in flight: "},

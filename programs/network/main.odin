@@ -149,6 +149,7 @@ Endpoint :: struct {
 	region:          []u8,
 	grant:           datagram.Grant, // All zero: no grant (a revocation).
 	tcp:             bool, // A segment endpoint. It stays after a revocation.
+	listen:          bool, // Its local port is a listen port that its creation named. It stays after a revocation, as its port does.
 	local_port:      u16, // The first local port.
 	port_count:      u16, // 1, or datagram.PORT_BLOCK for a client grant of TCP.
 	admitted:        network.Admitted, // A listen grant: the remotes that sent a segment to its port.
@@ -715,12 +716,15 @@ udp_endpoint_of :: proc "contextless" (port: u16) -> ^Endpoint {
 	index := int(port) - PORT_FIRST
 	if index >= 0 && index < ENDPOINT_CAPACITY {
 		item := &endpoints[index]
-		if item.ring_memory != 0 && !item.tcp && !item.grant.listen {
+		if item.ring_memory != 0 && !item.tcp && !item.listen {
 			return item
 		}
 	}
+	// By the port that the creation of the endpoint named, not by its
+	// grant: an endpoint whose grant was revoked still owns its listen
+	// port, and the check of its grant then refuses the datagram.
 	for &item in endpoints {
-		if item.ring_memory != 0 && !item.tcp && item.grant.listen && item.local_port == port {
+		if item.ring_memory != 0 && !item.tcp && item.listen && item.local_port == port {
 			return &item
 		}
 	}
@@ -849,6 +853,24 @@ expire :: proc "contextless" (now: u64) -> (deadline: u64) {
 	return deadline
 }
 
+// sends_waiting_refuse ends each Send of an endpoint that waits for a
+// hardware address, when the grant of the endpoint changes. The grant that
+// was checked for such a Send is gone: without this, the frame would leave
+// after a revocation, when the answer of ARP comes. The place is free
+// again, and the program gets the refusal of a remote that the grant does
+// not name.
+sends_waiting_refuse :: proc "contextless" (endpoint: ^Endpoint, index: int) {
+	for &waiting in pending {
+		if waiting.kind != .Send || waiting.endpoint != index {
+			continue
+		}
+		port := network.read_16(place_bytes(waiting.place)[network.IPV4_DATA:], 2)
+		send_place_free(waiting.place)
+		complete_taken(endpoint, waiting.tag, .Not_Granted, not_granted(u32(datagram.Command.Send), 3, waiting.target, port, grant_remote(endpoint.grant)))
+		waiting = {}
+	}
+}
+
 // controlled does one command of the root service.
 controlled :: proc "contextless" (record: ring.Record) {
 	result := datagram.Status.Ok
@@ -866,26 +888,24 @@ controlled :: proc "contextless" (record: ring.Record) {
 				break
 			}
 		}
-		// A listen port is one port of one endpoint: a TCP port that no other
-		// segment endpoint has and not in a block of client ports; a UDP port
-		// that no other UDP listen grant has and not a port PORT_FIRST + n of
-		// a client grant.
+		// A listen port is one port of one endpoint: a port that no other
+		// endpoint of the same protocol has, and not in the range of the
+		// ports of client grants. The ports of an endpoint are the ones of
+		// its creation, whatever its grant is now: an endpoint whose grant
+		// was revoked keeps its port taken until it is removed.
 		asked := datagram.grant_unpack(record.values[2])
 		taken := false
-		if asked.tcp && asked.listen {
-			taken = asked.port >= TCP_PORT_FIRST && asked.port < TCP_PORT_FIRST + ENDPOINT_CAPACITY * datagram.PORT_BLOCK
-			for &item in endpoints {
-				if item.ring_memory != 0 && item.tcp && asked.port >= item.local_port && asked.port - item.local_port < item.port_count {
-					taken = true
+		if asked.listen {
+			held: [ENDPOINT_CAPACITY]network.Local_Ports
+			for &item, index in endpoints {
+				if item.ring_memory != 0 {
+					held[index] = {tcp = item.tcp, first = item.local_port, count = item.port_count}
 				}
 			}
-		}
-		if !asked.tcp && asked.listen {
-			taken = asked.port >= PORT_FIRST && asked.port < PORT_FIRST + ENDPOINT_CAPACITY
-			for &item in endpoints {
-				if item.ring_memory != 0 && !item.tcp && item.grant.listen && item.local_port == asked.port {
-					taken = true
-				}
+			if asked.tcp {
+				taken = network.listen_port_taken(true, asked.port, TCP_PORT_FIRST, ENDPOINT_CAPACITY * datagram.PORT_BLOCK, held[:])
+			} else {
+				taken = network.listen_port_taken(false, asked.port, PORT_FIRST, ENDPOINT_CAPACITY, held[:])
 			}
 		}
 		if taken {
@@ -930,7 +950,7 @@ controlled :: proc "contextless" (record: ring.Record) {
 			endpoint := &endpoints[free]
 			name := system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
 			grant := datagram.grant_unpack(record.values[2])
-			endpoint^ = {ring_memory = handle, datagram_ring = opened, region_memory = region_handle, region = ([^]u8)(region_address)[:datagram.REGION_PAGES * system.PAGE_SIZE], grant = grant, tcp = grant.tcp, local_port = u16(PORT_FIRST + free), port_count = 1, name = name}
+			endpoint^ = {ring_memory = handle, datagram_ring = opened, region_memory = region_handle, region = ([^]u8)(region_address)[:datagram.REGION_PAGES * system.PAGE_SIZE], grant = grant, tcp = grant.tcp, listen = grant.listen, local_port = u16(PORT_FIRST + free), port_count = 1, name = name}
 			text: [32]u8
 			writer := system.Writer{buffer = text[:]}
 			network.address_write(&writer, grant.address)
@@ -956,19 +976,24 @@ controlled :: proc "contextless" (record: ring.Record) {
 	case .Endpoint_Grant:
 		result = .Bad_Command
 		values = errors.ring_fail(record.kind, .Absent, .None, 1, i64(handle))
-		for &item in endpoints {
+		for &item, index in endpoints {
 			if item.ring_memory != 0 && item.ring_memory == handle {
 				// A grant changes to none (a revocation), or to a grant of the
 				// same form and the same local ports: the local ports and their
 				// check of overlap come from Endpoint_Add only.
+				// The form is the one of the creation of the endpoint, not the
+				// one of its grant now: after a revocation, a client grant on an
+				// endpoint that was made for a listen port would send from that
+				// port.
 				new_grant := datagram.grant_unpack(record.values[1])
-				same_form := new_grant.tcp == item.tcp && new_grant.listen == item.grant.listen && (!new_grant.listen || new_grant.port == item.local_port)
+				same_form := new_grant.tcp == item.tcp && new_grant.listen == item.listen && (!new_grant.listen || new_grant.port == item.local_port)
 				if datagram.granted(new_grant) && !same_form {
 					values = errors.ring_fail(record.kind, .Bad_Value, .None, 2, i64(record.values[1]))
 					break
 				}
 				item.grant = new_grant
 				item.admitted = {}
+				sends_waiting_refuse(&item, index)
 				system.log("network: the grant of the endpoint of ", system.name_of(item.name[:]), " changed: ", datagram.granted(item.grant) ? "a new remote" : "none")
 				result = .Ok
 				values = {}

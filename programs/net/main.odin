@@ -118,7 +118,7 @@ LINE :: 24
 LEFT :: 16
 ANSWER_X :: 376
 WIDTH :: 864
-CASE_CAPACITY :: 13 // The cases of cases_run, and one more after a key.
+CASE_CAPACITY :: 15 // The cases of cases_run, and one more after a key.
 HEIGHT :: 16 + 2 * LINE + CASE_CAPACITY * LINE + 4 * LINE + 16
 
 
@@ -345,6 +345,22 @@ cases_run :: proc "contextless" () {
 	refused, has_refused = call(.Send, {0 = (SEND_FIRST + 2) * PLACE_SIZE, 1 = u64(datagram_write(SEND_FIRST + 2, 20, ECHO_PORT, FORGED_SOURCE_PORT)), 2 = GATEWAY})
 	error = errors.completion_record(refused.values)
 	note("UDP from the source port 1234", has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(error.kind) == .No_Grant && error.found == FORGED_SOURCE_PORT && error.limit == errors.endpoint_pack(GATEWAY, ECHO_PORT), "refused: the source port ", u64(error.found), " of the header is not the local port of this endpoint, ", u64(local_port))
+
+	// A datagram whose length field is not its count of bytes: the field
+	// says one byte more than the Send gives. The network service reads the
+	// field in its own copy of the header, so each datagram that leaves has
+	// a length field that is its length.
+	copy(data_of(SEND_FIRST + 3), "a wrong length field")
+	whole_count := datagram_write(SEND_FIRST + 3, 20)
+	network.write_16(place_of(SEND_FIRST + 3), 4, u16(whole_count + 1))
+	refused, has_refused = call(.Send, {0 = (SEND_FIRST + 3) * PLACE_SIZE, 1 = u64(whole_count), 2 = GATEWAY})
+	error = errors.completion_record(refused.values)
+	note("UDP with a wrong length field", has_refused && datagram.Status(refused.kind) == .Bad_Command && errors.Kind(error.kind) == .Bad_Value && error.argument == 2 && error.value == i64(whole_count + 1) && error.limit == i64(whole_count) && whole_count == network.UDP_HEADER + 20, "refused: the length field of the header says ", u64(error.value), " bytes, the Send has ", u64(error.limit))
+
+	// A datagram shorter than the UDP header: it has no ports to check.
+	refused, has_refused = call(.Send, {0 = (SEND_FIRST + 3) * PLACE_SIZE, 1 = network.UDP_HEADER - 1, 2 = GATEWAY})
+	error = errors.completion_record(refused.values)
+	note("UDP of 7 bytes", has_refused && datagram.Status(refused.kind) == .Bad_Command && errors.Kind(error.kind) == .Too_Small && error.argument == 2 && error.value == network.UDP_HEADER - 1 && error.limit == datagram.DATAGRAM_LEAST, "refused: the Send has ", u64(error.value), " bytes, a datagram has ", u64(error.limit), " bytes at least, its header")
 
 	// 9. The datagram of the peer with a wrong checksum. The peer sent it
 	// before its first answer, so case 4 saw it first: the network service

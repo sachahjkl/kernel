@@ -46,6 +46,13 @@ scenario_tcp := [?]Step {
 	{kind = .Peer, text = "stray"},
 	{kind = .Peer, text = "challenge"},
 	{kind = .Wait, text = " 2 challenges"},
+	// On a live connection, a segment that the wire damaged (a wrong
+	// checksum, a malformed option), then the same segment with its checksum
+	// whole: the library of the server drops both, the server releases no
+	// remote for them, and the connection serves two more requests.
+	{kind = .Peer, text = "damaged"},
+	{kind = .Wait, text = "server: 1 segments dropped for a wrong checksum"},
+	{kind = .Wait, text = " closed, the remote first: 3 requests, "},
 	{kind = .Peer, text = "crowd"},
 	{kind = .Wait, text = "server: 16 connections open at once"},
 	// Three more rounds of 1 MiB each way: the spread of the measure.

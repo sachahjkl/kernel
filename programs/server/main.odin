@@ -403,15 +403,19 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 	free_count -= output.count
 	copy(free_places[:free_count], free_places[output.count:output.count + free_count])
 	// A segment whose connection has no record (a RST or an ACK of a
-	// connection that ended, a segment that the library refused): no event
-	// will release its remote, so it is released now.
+	// connection that ended, a SYN that the library refused or dropped): no
+	// event will release its remote, so it is released now.
+	//
+	// The only question is "does a connection have this remote", and the
+	// two ports at their fixed place answer it. The segment is not read
+	// further: the library dropped a segment with a wrong checksum or a
+	// malformed option, and such a segment must not make the network
+	// service forget the remote of a connection that lives. A remote that
+	// no connection has loses nothing by a release, whatever the segment.
 	for item in incoming {
-		header, read := tcp.header_read(item.segment)
-		if !read || tcp.find(&table, item.remote_address, header.destination_port, header.source_port) < 0 {
-			if len(item.segment) >= 4 {
-				released_strays += 1
-				release(item.remote_address, tcp.read_16(item.segment, 0))
-			}
+		if len(item.segment) >= 4 && tcp.connection_of_segment(&table, item) < 0 {
+			released_strays += 1
+			release(item.remote_address, tcp.read_16(item.segment, 0))
 		}
 	}
 	// The remotes of records in TIME-WAIT that a SYN took: no Closed event
