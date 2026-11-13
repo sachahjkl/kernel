@@ -27,11 +27,14 @@ SITE_MARK_BAR :: "mark_bar.png"
 SITE_MARK_BAR_LIGHT :: "mark_bar_light.png"
 SITE_MARK_CARD :: "mark_card.png"
 
-// The home head: cells of 8 for the heron (192 pixels), 6 for the name. The
-// bar: cells of 1 (24 pixels). The card for other sites: 1200 by 630.
+// The home head: the heron alone, cells of 8 (192 pixels). The bar: the
+// heron alone, cells of 1 (24 pixels). On a page the name is text in the
+// font of the name of the mark (site_mark_name.odin). The card for other
+// sites, 1200 by 630, holds the name: it is one picture that another site
+// shows with no page and no font of this site around it.
 site_mark_pictures := [?]Site_Mark_Picture {
-	{file_name = SITE_MARK_HOME, heron_cell = 8, name_cell = 6, gap = 16},
-	{file_name = SITE_MARK_HOME_LIGHT, heron_cell = 8, name_cell = 6, gap = 16, on_light = true},
+	{file_name = SITE_MARK_HOME, heron_cell = 8},
+	{file_name = SITE_MARK_HOME_LIGHT, heron_cell = 8, on_light = true},
 	{file_name = SITE_MARK_BAR, heron_cell = 1},
 	{file_name = SITE_MARK_BAR_LIGHT, heron_cell = 1, on_light = true},
 	{file_name = SITE_MARK_CARD, heron_cell = 16, name_cell = 12, gap = 32, opaque = true, width = 1200, height = 630},

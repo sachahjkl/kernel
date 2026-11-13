@@ -823,9 +823,10 @@ site_who_class :: proc(who: string) -> string {
 	return "accent-kernel"
 }
 
-// site_home_head writes the head of the home: the mark with the name, the
-// tagline (one line: the first sentence of the lead of README.md) and the
-// links to the sections. The rest of the lead is not in the head.
+// site_home_head writes the head of the home: the heron alone as a picture,
+// the name as the title, in the font of the name of the mark, the tagline
+// (one line: the first sentence of the lead of README.md) and the links to
+// the sections. The rest of the lead is not in the head.
 site_home_head :: proc(site: ^Site, b: ^strings.Builder) {
 	home_picture: Site_Mark_Picture
 	for picture in site_mark_pictures {
@@ -837,8 +838,8 @@ site_home_head :: proc(site: ^Site, b: ^strings.Builder) {
 	strings.write_string(b, "<header class=\"home-head\">\n<picture>")
 	fmt.sbprintf(b, "<source media=\"(prefers-color-scheme: light)\" srcset=\"%s/%s\">", SITE_PICTURE_FOLDER, SITE_MARK_HOME_LIGHT)
 	fmt.sbprintf(b, "<img class=\"mark\" src=\"%s/%s\" width=\"%d\" height=\"%d\" alt=\"", SITE_PICTURE_FOLDER, SITE_MARK_HOME, width, height)
-	site_plain(b, site.readme.mark_description)
-	strings.write_string(b, "\"></picture>\n<div>\n<h1>" + SITE_SYSTEM_NAME + "</h1>\n<p class=\"lead\">")
+	site_plain(b, site_heron_description(site.readme.mark_description))
+	strings.write_string(b, "\"></picture>\n<div>\n<h1>" + SITE_MARK_NAME_HTML + "</h1>\n<p class=\"lead\">")
 	site_inline(b, site.readme.tagline)
 	strings.write_string(b, "</p>\n<ul class=\"doors\">\n")
 	for section in Site_Section {

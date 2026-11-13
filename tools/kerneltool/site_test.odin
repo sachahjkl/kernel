@@ -256,6 +256,10 @@ site_tagline_of_the_home :: proc(t: ^testing.T) {
 	site_home_head(&site, &head)
 	head_html := strings.to_string(head)
 	testing.expect(t, strings.contains(head_html, "<p class=\"lead\">The lead.</p>"))
+	// The picture is the heron alone, and the title is the name as text in
+	// the font of the name of the mark.
+	testing.expect(t, strings.contains(head_html, "width=\"192\" height=\"192\" alt=\"The mark\">"))
+	testing.expect(t, strings.contains(head_html, "<h1><span class=\"mark-name\">" + SITE_SYSTEM_NAME + "</span></h1>"))
 	testing.expect(t, !strings.contains(head_html, "Its second line."))
 	page := strings.builder_make(context.temp_allocator)
 	site_home_head(&site, &page)

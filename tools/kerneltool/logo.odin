@@ -12,6 +12,10 @@ import "support:mark"
 //
 // The PNG writer is png_encode (picture_files.odin): it compresses the pixels,
 // and it writes an alpha channel for a transparent file.
+//
+// The name of the mark is also a font file, written beside the pictures
+// (mark_font.odin): a page that shows the heron alone writes the name as
+// text in that font.
 
 LOGO_FOLDER :: "resources/logo"
 PROJECT_IMAGE :: ".project/image.png"
@@ -170,6 +174,10 @@ run_logo :: proc(args: []string) -> int {
 		}
 		fmt.printfln("kerneltool: wrote %s (%d by %d pixels, %d bytes)", picture.path, picture.size, picture.size, len(file))
 	}
+	// The font of the name of the mark, from the same letters as the pictures.
+	if !mark_font_write() {
+		return EXIT_FAILURE
+	}
 	// Every frame of the animations, for a developer to look at; in the build
 	// folder, not in the repository (site_mark_animation.odin).
 	if !mark_animations_picture_write() {
@@ -181,7 +189,8 @@ run_logo :: proc(args: []string) -> int {
 // logo_check verifies that each file of the mark in the repository has the
 // size, the channels and the pixels that support/mark gives now. It compares
 // the pixels, not the bytes of the file: the bytes of the compressed stream
-// depend on the compressor of the Odin release, the pixels do not.
+// depend on the compressor of the Odin release, the pixels do not. The font
+// of the name is compared by its bytes: the tool writes each of them.
 logo_check :: proc() -> bool {
 	for picture in logo_pictures() {
 		data, read_error := os.read_entire_file(picture.path, context.temp_allocator)
@@ -211,5 +220,5 @@ logo_check :: proc() -> bool {
 		}
 		test_passed_print("%s is the picture of the data of support/mark", picture.path)
 	}
-	return true
+	return mark_font_check()
 }

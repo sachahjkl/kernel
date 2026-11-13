@@ -246,8 +246,9 @@ The mark is the picture that stands for the system: a heron in pixel cells, and 
 - The cell size: 1 to `CELL_SIZE_LIMIT` (65 536). Another cell size draws nothing and has a size of 0. A pixel outside the heron or the name is not covered.
 - The gradient: each part is filled with one linear gradient, from the top left corner of the box of the part (the color moved 30 % toward white) to its bottom right corner (the color moved 30 % toward black). A pixel takes the gradient at its centre. The eye is one flat color. The arithmetic is in integers, rounded to the nearest value, so that every machine gives the same pixels.
 - The two backgrounds: the background of the system `0x0B1018`, and the light background `0xF4F6F8` of a page of another program. On the light background the neck is darker (`0x9FB2C8`), and the name is in `0x0B1018` instead of the text color.
-- The name of the mark: "modus" in letters of 5 by 7 cells, 2 empty columns between two letters, one flat color.
-- The files: `kerneltool logo` writes them, and `kerneltool check` fails with "run kerneltool logo" when a file does not have the pixels of the data.
+- The name of the mark: "modus" in letters of 5 by 7 cells, 2 empty columns between two letters, one flat color. The same letters are a font file, for a page that writes the name as text: see "The font of the name".
+- A picture holds the name only where one file must carry the heron and the name. Elsewhere the picture is the heron alone, and the name is drawn or written beside it.
+- The files: `kerneltool logo` writes them, and `kerneltool check` fails with "run kerneltool logo" when a picture does not have the pixels of the data, or when the font does not have the bytes that the data gives.
 
 | File | Size | What it shows |
 |---|---|---|
@@ -258,6 +259,7 @@ The mark is the picture that stands for the system: a heron in pixel cells, and 
 | `resources/logo/heron_768.png` | 768 x 768 | The heron alone, cells of 32, on a transparent background |
 | `resources/logo/heron_24.png`, `heron_48.png`, `heron_96.png`, `heron_192.png` | 24 to 192 | The heron alone with cells of 1, 2, 4 and 8 pixels, on a transparent background |
 | `.project/image.png` | 512 x 512 | The heron alone, cells of 16, centred on the dark background |
+| `resources/logo/modus_mark.ttf` | A font file | The font of the name of the mark: the letters of the name as glyphs |
 
 - A transparent file keeps the colors of the dark background: its pale neck shows little on a white page. Use `modus_light.png` there.
 - The PNG writer of these files is the one of the Odin standard library: it compresses, and it writes an alpha channel. The writer of the pictures of the screen has neither.
@@ -269,6 +271,20 @@ The mark is the picture that stands for the system: a heron in pixel cells, and 
 | The head of the boot display | `support/bootscreen`: the boot program, the root service, the program `boot` | the heron, cells of 2 pixels (48 x 48) at (20, 12), and the name of the mark, cells of 3 pixels, at its right | at each draw of the display: one call for each of the 2 304 pixels of the box of the heron and the 2 079 pixels of the box of the name, a few integer divisions each |
 
 - No file of the mark is in the boot image: each place draws from the data.
+
+### The font of the name
+
+The font of the name of the mark (`GLOSSARY.md`) is the letters of `mark.name_letters` as a TrueType file. A page that writes "modus" in it shows the letters of the files of the mark, and the text stays text.
+
+- The file: `resources/logo/modus_mark.ttf`, written by `kerneltool logo` (`tools/kerneltool/mark_font.odin`). The tool writes each table itself: `OS/2`, `cmap`, `glyf`, `head`, `hhea`, `hmtx`, `loca`, `maxp`, `name` and `post`. The file holds no date: the same letters and the same license give the same bytes. `kerneltool check` compares the bytes of the file with the bytes that the data gives.
+- The glyphs, 7: the glyph of a character that the font does not have (no contour), the space, and `m`, `o`, `d`, `u`, `s`. The capitals `M`, `O`, `D`, `U`, `S` have the glyphs of the small letters: the name of the mark has small letters only, so a text "Modus" still shows the mark. No other character has a glyph: a browser takes it from the next font.
+- The outline of a glyph is the union of its cells: it goes around the whole letter, with a second contour for the hole of the `o` and of the `d`. It is not one square for each cell: two squares that share a side can show a thin line between them when a browser smooths the edges. Each point is a corner of a cell. An outer contour turns clockwise and a hole the other way. The font has no curve and no instruction.
+- The units: a cell is 128 units and the em is 1024 units, 8 cells. The 7 rows of the name are above the baseline (the ascent, 896 units) and one empty row is under it (the descent, 128 units): the letters stand on the baseline of a text beside them. The letters with no stem are 5 rows high (640 units).
+- The advance of each glyph is 896 units: the 5 columns of a letter and the gap of 2 columns. So "modus" in the font has the proportions of `name_draw`: 33 columns from the left of the `m` to the right of the `s`, and the gap after the `s` is empty.
+- The sizes: a font size of 8 pixels gives cells of one pixel. A font size that is a multiple of 8 pixels draws whole cells; another size blurs the squares. A text in this font starts on a whole pixel.
+- The names in the file: the family "modus mark", the style "Regular", the line of the copyright and the text of the license of the repository (`LICENSE`).
+- The test (`tools/kerneltool/mark_font_test.odin`): the reader of fonts of the system (`support/vector_font`), which did not write the file, opens it. For each letter, the outline sampled at the centre of each cell, with the rule of the winding that is not zero, is the cells of `mark.name_letters`, and the area of the outline is the area of those cells. The test also checks the checksum of each table and of the file, the glyph of each character, the advances, and that two builds give the same bytes.
+- Where it is used: the site (`SITE.md`, "The name of the mark"). The system draws the name from the cells with `name_draw`, with no font.
 
 ### The animations
 
@@ -287,10 +303,11 @@ The mark has idle animations. Several animations play in turn. They play only on
 | scratch | the knee in, the pose of the leg animation (200 ms, 6); three strokes on the ground: the foot forward on the row of the ground (220 or 200 ms, 8), pulled back one column with one cell of water lifted behind it (220 ms, 9); the knee in again (200 ms, 6) | 1680 ms | 1 |
 
 - The order of play, which repeats (about 80 seconds: 64.1 s still and 15.7 s of animations): 3 s blink, 4.8 s ripple, 2.2 s blink, 4 s look, 5.2 s blink, 3.4 s preen, 2.6 s ripple, 4.4 s blink, 5.5 s dip, 3 s look, 3.7 s blink, 5 s scratch, 2.4 s leg, 4.2 s blink, 3.3 s ripple, 2.8 s leg, 4.6 s look. Each time is the still time before the animation. No animation follows itself. No random number is used.
+- The rhythm of the site: the order of play above is the rhythm of the system, for a mark in a bar that a principal works under. On the home of the site the heron is what the page shows, so each still time there is 40 % of the still time of the table (`SITE_MARK_STILL_PERCENT`): 0.88 to 2.2 s, 25.6 s still and 15.7 s of animations in a turn of about 41 seconds. An animation starts each 2.4 s on average, in place of each 4.7 s; an animation other than the blink each 3.8 s, in place of each 7.3 s. The order, the animations and their frames are the same.
 - The preen and the scratch: in the preen the bird bends and scratches its body; in the scratch it scrapes the ground with its front foot. In the scratch the body does not dip: the body, the wing and the tail one row lower change 46 cells (counted on the table), five times the cells of a stroke of the leg, and the leg reads alone.
-- The bounds, which the host tests hold: each animation has its limit of changed cells in the data (`animation_change_limits`): a frame differs from the still heron and from the frame before it by at most 24 cells, or 48 for the preen, which moves the whole head onto the back; a frame lasts 150 to 1000 ms, so the picture changes at most about 6 times each second; an animation lasts at most 3 s; a still time is 2 to 6 s.
-- The sprite sheets of the site hold 22 sprites: the still heron and 21 distinct frames. A sheet of the home is 4356 x 250 pixels (198 for each sprite), in one row: under the 8192 pixels that a browser decodes. The sheet of the icon is 704 x 32.
-- Where it plays: the large heron of the head of the home of the site, and the icon of the tab of the home. Not the small mark of the bar of the site, and not the desktop of the system yet.
+- The bounds, which the host tests hold: each animation has its limit of changed cells in the data (`animation_change_limits`): a frame differs from the still heron and from the frame before it by at most 24 cells, or 48 for the preen, which moves the whole head onto the back; a frame lasts 150 to 1000 ms, so the picture changes at most about 6 times each second; an animation lasts at most 3 s; a still time is 2 to 6 s in the table, and 0.8 to 2.4 s on the site.
+- The sprite sheets of the site hold 22 sprites: the still heron and 21 distinct frames. A sheet of the home is 4224 x 192 pixels (the heron alone, 192 for each sprite), in one row: under the 8192 pixels that a browser decodes. The sheet of the icon is 704 x 32.
+- Where it plays: the large heron of the head of the home of the site, and the icon of the tab of the home. Not the small mark of the bar of the site: a page of the documentation is read, and a picture that moves each two seconds at the top of a text takes the eye from it. Not the desktop of the system yet.
 - Reduced motion: when the browser says that the visitor asks for reduced motion, nothing moves, and the still picture stays. A change of that choice while the page is open stops or starts the play.
 - A hidden tab: the play stops, no timer runs, and the icon is the still icon again.
 - `kerneltool logo` writes `build/mark_animations.png`: each animation as a row of its frames at cells of 8 pixels, with the durations and the order of play, for a reader to look at.

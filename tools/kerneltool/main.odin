@@ -286,8 +286,9 @@ COMMANDS :: [?]Command {
 	// reads the files of the repository (docs/FONTS.md).
 	{name = "vector_fonts", about = "subset the vector font candidates of " + VECTOR_FONT_SOURCES_VARIABLE + " to " + VECTOR_FONT_FOLDER + " and draw " + CANDIDATES_PICTURE, run = run_vector_fonts},
 	// Draws the files of the mark of the system from its geometry in
-	// `support/mark`: the icons in `resources/logo`, the picture of the
-	// project, and one picture of every frame of the animations of the mark.
+	// `support/mark`: the icons in `resources/logo`, the font of the name of
+	// the mark, the picture of the project, and one picture of every frame
+	// of the animations of the mark.
 	//
 	// - `check`: draws them again and compares them with the files of the
 	//   repository; `kerneltool check` runs it, so a mark that changed in

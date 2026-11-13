@@ -7,8 +7,8 @@
 // What the site gets:
 //   pictures/mark_animation_home.png and mark_animation_home_light.png: one
 //     sprite sheet for each color scheme. Each sprite is the whole picture of
-//     the head of the home (the heron and the name) for one distinct frame,
-//     side by side; the first sprite is the still heron, the same pixels as
+//     the head of the home (the heron alone) for one distinct frame, side by
+//     side; the first sprite is the still heron, the same pixels as
 //     mark_home.png.
 //   pictures/mark_animation_icon.png: the same sprites at the size of the
 //     icon of the tab (32 pixels, the drawing of the 32 of favicon.ico).
@@ -200,7 +200,10 @@ site_mark_animation_problems :: proc(files: map[string][]u8) -> []string {
 //   animations: for each animation its name and its frames, each frame
 //     [sprite, milliseconds];
 //   order: the order of play, each step [still milliseconds, animation];
-//   limits: the bounds of support/mark, which the self test checks.
+//     the still time is the one of the site (site_mark_name.odin): a part
+//     of the still time of support/mark;
+//   limits: the bounds of support/mark for a frame, and those of the site
+//     for a still time, which the self test checks.
 // The paths are relative to the folder of the script: the root of the site.
 site_mark_animation_table_json :: proc(sprites: ^Site_Mark_Sprites, home: Site_Mark_Picture) -> string {
 	// The braces are written as text, never through a format of fmt.
@@ -246,7 +249,7 @@ site_mark_animation_table_json :: proc(sprites: ^Site_Mark_Sprites, home: Site_M
 	write(&b, "],\"order\":[")
 	for step, index in mark.play_order {
 		write(&b, index > 0 ? ",[" : "[")
-		number(&b, int(step.still_milliseconds))
+		number(&b, site_mark_still_milliseconds(step))
 		write(&b, ",")
 		number(&b, int(step.animation))
 		write(&b, "]")
@@ -256,9 +259,9 @@ site_mark_animation_table_json :: proc(sprites: ^Site_Mark_Sprites, home: Site_M
 	write(&b, ",\"frameMost\":")
 	number(&b, mark.FRAME_DURATION_MOST)
 	write(&b, ",\"stillLeast\":")
-	number(&b, mark.STILL_DURATION_LEAST)
+	number(&b, SITE_MARK_STILL_DURATION_LEAST)
 	write(&b, ",\"stillMost\":")
-	number(&b, mark.STILL_DURATION_MOST)
+	number(&b, SITE_MARK_STILL_DURATION_MOST)
 	write(&b, "}}")
 	return strings.to_string(b)
 }
@@ -362,7 +365,8 @@ mark_animations_picture_write :: proc() -> bool {
 SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home, written by kerneltool site
 // (tools/kerneltool/site_mark_animation.odin) from support/mark/animation.odin.
 // The large heron of the head and the icon of the tab move a few cells from
-// time to time; between two animations the heron is still for seconds.
+// time to time; between two animations the heron is still for a second or
+// two.
 // Nothing moves when the person asks for reduced motion, and nothing runs
 // in a hidden tab. ?selftest=1 in the address checks the table.
 "use strict";
