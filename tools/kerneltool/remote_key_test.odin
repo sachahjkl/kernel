@@ -30,7 +30,7 @@ each_call_of_remote_has_the_key_of_its_start :: proc(t: ^testing.T) {
 		{kind = .Remote_Case, text = "two at once"},
 	}
 	testing.expect(t, remote_key_problem(started_again) != "", "a call after a start again with the key of the start before is refused")
-	for steps in ([][]Step{scenario[:], scenario_network[:], scenario_measure[:], scenario_shortage[:], scenario_film[:], scenario_tcp[:], scenario_tcp_real[:], scenario_quic[:], scenario_quic_real[:]}) {
+	for steps in ([][]Step{scenario[:], scenario_network[:], scenario_measure[:], scenario_shortage[:], scenario_film[:], scenario_palette_film[:], scenario_tcp[:], scenario_tcp_real[:], scenario_quic[:], scenario_quic_real[:]}) {
 		testing.expect_value(t, remote_key_problem(steps), "")
 	}
 }
