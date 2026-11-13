@@ -55,7 +55,8 @@ Measure :: struct {
 
 measures := [2]Measure{{name = "time page"}, {name = "kernel entry"}}
 went_back: u64 // The reads that gave a time before the time of the last read.
-apart: u64 // The most milliseconds between the two ways.
+outside: u64 // The kernel entries whose time was not between two reads of the page around them.
+apart_most: u64 // The most milliseconds between those two reads: a measure.
 // The milliseconds of the page against system.nanoseconds(), which reads
 // the cycle counter: the most that the page was behind, and ahead.
 behind, ahead, compared: u64
@@ -174,9 +175,9 @@ draw :: proc "contextless" (window: ^display.Window) {
 		sentence(&frame, interface.column_take(&column, LINE),
 			{"the time went back ", graphics.COLOR_DIM},
 			{interface.number_text(&numbers[0], went_back), went_back == 0 ? graphics.COLOR_TEXT : graphics.COLOR_FAILED},
-			{" times. the two ways are ", graphics.COLOR_DIM},
-			{interface.number_text(&numbers[1], apart), apart <= 1 ? graphics.COLOR_TEXT : graphics.COLOR_FAILED},
-			{" ms apart at most.", graphics.COLOR_DIM})
+			{" times. a kernel entry was outside two reads of the page ", graphics.COLOR_DIM},
+			{interface.number_text(&numbers[1], outside), outside == 0 ? graphics.COLOR_TEXT : graphics.COLOR_FAILED},
+			{" times.", graphics.COLOR_DIM})
 		sentence(&frame, interface.column_take(&column, LINE),
 			{"against the cycle counter, the page was ", graphics.COLOR_DIM},
 			{interface.number_text(&numbers[2], least), least <= LEAST_LIMIT ? graphics.COLOR_TEXT : graphics.COLOR_FAILED},
@@ -219,13 +220,29 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	run(&measures[1], true)
 	system.log("clock: a kernel entry: ", measures[1].rate, " reads in one second, ", measures[1].entries, " kernel entries for one million reads")
 
-	// The two ways give the same time. The kernel can count one
-	// millisecond between the two reads.
+	// The two ways give the same time: a kernel entry between two reads
+	// of the page gives a time that is not before the first read and not
+	// after the second one. The thread can leave its processor between
+	// the reads, for any time: the condition holds then too, so it checks
+	// the two ways and not the schedule. The kernel stores its own time
+	// just before it stores the page, on the first processor: an entry on
+	// another processor between the two stores is ahead of the page, so
+	// the second read is repeated until the page caught up. The bound of
+	// that wait is on the cycle counter, not on the page, and only ends a
+	// hang.
 	for _ in 0 ..< 1000 {
+		page_before := system.time()
 		entered := system.time_entered()
-		page := system.time()
-		apart = max(apart, max(entered, page) - min(entered, page))
+		page_after := system.time()
+		for give_up := system.nanoseconds() + system.TEST_HANG_BOUND_MILLISECONDS * 1_000_000; page_after < entered && system.nanoseconds() < give_up; {
+			page_after = system.time()
+		}
+		if entered < page_before || entered > page_after {
+			outside += 1
+		}
+		apart_most = max(apart_most, page_after - page_before)
 	}
+	system.log("clock: the time page and a kernel entry: in 1000 pairs of reads of the page with an entry between them, the entry was outside the two reads ", outside, " times; the two reads were at most ", apart_most, " ms apart (a measure)")
 	// The page follows the cycle counter: for half a second, each read of
 	// the page is compared with the time that the cycle counter gives now.
 	for begin := system.time(); system.time() < begin + DURATION / 2; {
@@ -239,10 +256,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("clock: the time page and the cycle counter: in ", compared, " reads the page was ", least, " to ", behind, " ms behind and at most ", ahead, " ms ahead")
 	refused = system.memory_unmap(rawptr(uintptr(op.TIME_ADDRESS))) != .Ok && system.time() != 0
 	checked = true
-	if slot != 0 && went_back == 0 && apart <= 1 && least <= LEAST_LIMIT && ahead <= AHEAD_LIMIT && refused && measures[0].entries == 0 {
+	if slot != 0 && went_back == 0 && outside == 0 && least <= LEAST_LIMIT && ahead <= AHEAD_LIMIT && refused && measures[0].entries == 0 {
 		system.log("clock: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page")
 	} else {
-		system.log("clock: wrong: the time went back ", went_back, " times, the two ways are ", apart, " ms apart, the page is at least ", least, " ms behind and ", ahead, " ms ahead of the cycle counter, the kernel ", refused ? "refuses" : "does not refuse", " to remove the time page")
+		system.log("clock: wrong: the time went back ", went_back, " times, a kernel entry was outside two reads of the page ", outside, " times, the page is at least ", least, " ms behind and ", ahead, " ms ahead of the cycle counter, the kernel ", refused ? "refuses" : "does not refuse", " to remove the time page")
 	}
 	deadline := system.time()
 	// The time of one picture: the mean of ten pictures after the checks

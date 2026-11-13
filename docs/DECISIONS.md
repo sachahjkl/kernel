@@ -21,7 +21,7 @@ This file is the record of the decisions of the project: who decided what, when,
 2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213, D-218, D-219, D-224, D-230
 3. [The kernel](#3-the-kernel): D-071 to D-083, D-220
 4. [Memory](#4-memory): D-084 to D-088
-5. [The scheduler](#5-the-scheduler): D-089 to D-091, D-226, D-227, D-228
+5. [The scheduler](#5-the-scheduler): D-089 to D-091, D-226, D-227, D-228, D-231
 6. [Storage](#6-storage): D-092 to D-095, D-221
 7. [The network and QUIC](#7-the-network-and-quic): D-096 to D-100
 8. [Cryptography and randomness](#8-cryptography-and-randomness): D-101 to D-105
@@ -832,8 +832,15 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-13. Decided by: the owner (to build it now, during the pause of D-224); the coordinator (the design).
 - Decision: two commands of `Thread_Control` read and write the weight and the request of a live thread, with no new kernel operation. A program writes them for its own threads; a holder of a thread handle with **Control** for that thread; the holder of the machine handle with **Schedule** for any thread. The weight stays at most the full weight. The placement of a thread on processors and a share for each budget are later layers.
 - Words: "ouais enfin ça reste à concevoir mais je pense que c'est relativement évident étant donné notre design actuel donc hésite pas à commencer à le faire pour pas laisser traîner"
-- State: in work.
+- State: done, in the form of D-231.
 - Where: `SCHEDULING.md`; `ARCHITECTURE.md`, "The control of a thread".
+
+### D-231 A program only lowers the weight and the request of its threads; the holder of Schedule raises them
+- 2026-11-13. Decided by: the coordinator, after five rounds of code and five independent reviews. The owner can reverse it.
+- Decision: four designs let a program write the weight and the request of a live thread in both directions while the strategy kept the history of the thread. Each review found a fault: a thread gained processor time by the moment of its writes, or an honest thread waited seconds. The cause was the same each time: the program chose the moment and the direction of a write. The rule built takes that choice away. A write by the program, or through a thread handle with Control, only lowers the weight and the request, and changes no field of the strategy. Only the machine handle with Schedule and Inspect raises them and sets the weight limit; a raised thread starts as a new thread, as after a change of strategy. A thread that never writes its schedule has the computation of before, but for a `Stop` of `Thread_Control`, which now keeps what a thread owes.
+- Words: none; the direction is D-227 ("la politique dehors le mécanisme dedans").
+- State: done. Not built: the placement of a thread on processors, a share for each budget.
+- Where: `SCHEDULING.md`, "The schedule of a live thread"; the reviews are not in the repository.
 
 ## 6. Storage
 

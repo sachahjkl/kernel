@@ -239,12 +239,13 @@ threads_report :: proc "contextless" (report: ^op.Thread_Table_Report, index: u3
 		return
 	}
 	report.program_serial = u64(programs[index].serial)
-	for &thread in threads[1:] {
+	for &thread, slot in threads[1:] {
 		state := intrinsics.atomic_load(&thread.state)
 		if state == .None || thread.program != index || report.count == op.THREAD_REPORT_CAPACITY {
 			continue
 		}
 		report.threads[report.count] = {
+			machine_number   = thread_machine_number(u32(slot + 1), thread.serial),
 			number           = thread.number,
 			state            = state,
 			processor        = intrinsics.atomic_load(&thread.processor),

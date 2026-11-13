@@ -218,6 +218,7 @@ Processor :: struct {
 	// caller can change between the two reads.
 	thread_write_refusal:       op.Thread_Write_Refusal,
 	thread_write_refused_value: u64,
+	thread_write_refused_limit: u64, // The most that the refused value can be. 0: the part has no range.
 	segments:      [7]u64,
 	task_state:    Task_State,
 }

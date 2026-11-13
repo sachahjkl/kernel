@@ -17,9 +17,10 @@ import "base:intrinsics"
 // expression of a small language: `name = expression`, or an expression
 // alone. A call is `name(argument, ...)`. Each argument is a number, a text
 // in quotes, a variable, or the result of another call. The console checks
-// the kind of each argument against the parameter before the call, and
-// prints the typed result after it. No program parses text: the text of the
-// line stops at the console.
+// the kind of each argument against the parameter before the call. A
+// command gives a result and never prints: the console draws the result of
+// the line by its kind. No program parses text: the text of the line stops
+// at the console.
 //
 // A command comes from one of three places:
 //
@@ -39,8 +40,10 @@ import "base:intrinsics"
 // `rows`.
 //
 // **The kinds of a value.** A result is an `Integer`, a `Text`, a `Record`,
-// a `Handle` or a `Table`. A command whose result is `None` prints its
-// answer as lines and gives nothing to the next call. A parameter of the
+// a `Handle`, a `Table` or `Bytes`. A command whose result is `None` does
+// something and gives nothing. A command that lists things gives a `Table`,
+// so `where`, `sort` and `columns` take it as they take the table of an
+// export: `where(grants("notes"), "state", "held")`. A parameter of the
 // kind `Value` takes any kind, and the command checks it.
 //
 // **Tables compose.** A `Table` is the records of one description, one
@@ -57,9 +60,11 @@ import "base:intrinsics"
 // then `sum_values(where(t, "sensor", 2))`. The console keeps 16 variables.
 // `variables()` lists them.
 //
-// **Errors.** A command that fails prints one line that starts with
-// `error: ` and gives no value: the rest of the line does not run. A wrong
-// argument is refused before the call, with the argument and the two kinds:
+// **Errors.** A command that fails gives no value, and the line has an
+// error: the rest of the line does not run. The console draws the error as
+// one line that starts with `error: `, then the values of its error record
+// when a call gave one. A wrong argument is refused before the call, with
+// the argument and the two kinds:
 // "error: sum_values: argument 1 is Table(Reading, Read), not
 // Table(Reading)".
 //
@@ -95,6 +100,7 @@ ERROR_DETAILS_CAPACITY :: 16
 Sandbox :: struct {
 	name:          string,
 	service:       bool, // A service that runs: the console does not start it and does not stop it.
+	quiet:         bool, // A service that the console connected to for itself, to read the log records of a line: its exports are no commands yet.
 	hash:          [32]u8, // A service: the hash of the file of the program.
 	// A call host: the files that it loads, in the boot image: the module,
 	// its imports, and the modules of the replacements. files_memory has the
@@ -114,7 +120,7 @@ Sandbox :: struct {
 	calls:         u32, // The tag of the last call.
 }
 
-SANDBOX_CAPACITY :: 8
+SANDBOX_CAPACITY :: 12
 FILE_CAPACITY :: system.MODULE_SPACE_CAPACITY + system.IMPORT_CAPACITY
 
 // A sandbox with no name is free.
@@ -132,7 +138,7 @@ sandbox_free :: proc "contextless" () -> (sandbox: ^Sandbox, number: int) {
 }
 image_memory: system.Handle
 
-COMMAND_CAPACITY :: 128
+COMMAND_CAPACITY :: 192
 LOADED_CAPACITY :: 8
 
 // A module that the console loaded.
@@ -173,7 +179,7 @@ requests_memory: system.Handle
 request_count: u32 // The tag of the last command to the root service.
 
 // The names of the commands of services: "program.export".
-names: [2048]u8
+names: [8192]u8
 names_count: int
 
 command :: proc "contextless" (name: string, parameters: []Kind, result: Kind, about: string, run: proc "contextless" (arguments: []Value) -> Value) {
@@ -199,80 +205,113 @@ commands_start :: proc "contextless" () {
 	space.next = op.MODULE_BASE
 
 	// The comment above each command is its documentation on the site: the
-	// help after the name is the one line that help() prints.
+	// help after the name is the text that help() gives in its row.
 
-	// Prints one line for each command that the console can call now: its
-	// signature, then its help.
+	// Gives one row for each command that the console can call now: its
+	// name, its signature, and its help.
 	//
-	// The list grows with each `load`, `isolate` and `connect`, and shrinks
-	// with each `unload`: it is the command table of this moment, not a
-	// fixed list. A parameter shows its name when the description of the
-	// export gives one, and `Value` when it takes any kind. The result
-	// follows `->`; a command with no `->` prints its answer and gives
-	// nothing.
+	// The table grows with each `load`, `isolate` and `connect`, and
+	// shrinks with each `unload`: it is the command table of this moment,
+	// not a fixed list. In a signature, a parameter shows its name when the
+	// description of the export gives one, and `Value` when it takes any
+	// kind; the result follows `->`, and a command with no `->` gives
+	// nothing. A help longer than its field ends with the cut mark:
+	// `describe(name)` gives it whole.
 	//
 	// ```
-	// > help()
-	// help()                                               list the commands
-	// repeat(Text, Integer) -> Text                        a text, several times
+	// > where(help(), "name", "repeat")
+	// name    signature                      about
+	// repeat  repeat(Text, Integer) -> Text  a text, several times
+	// 1 row of Command
 	// ```
-	command("help", {}, .None, "list the commands", help)
-	// Prints one line for each program that runs, from the kernel.
+	command("help", {}, .Table, "the commands, one row each", help)
+	// Gives the signature and the whole help of one command, as a `Text`.
 	//
-	// The columns: the slot of the program, its name, its state (created,
-	// ready, waiting, stopped), its threads, its mapped pages and the pages
-	// that have a page frame, its handles, its processor time in
-	// milliseconds, the pages of its budget, and its entries into the kernel.
-	// A program that holds more than its own module (a module loaded by
-	// name, or a module that a replacement put in place of another) has one
-	// more line for each module, with the start of its hash.
+	// - `name`: the name of a command, as `help()` gives it.
+	//
+	// Error: "no command has the name ...".
+	command("describe", {.Text}, .Text, "the signature and the help of one command", describe)
+	// Gives one row for each program that runs: the export `programs` of
+	// the service `monitor`, under a short name.
+	//
+	// The list of the programs is a fact of a service, not of the console:
+	// the command connects to `monitor` when the console has no connection
+	// to it yet, and calls `monitor.programs()`. The rows are those of that
+	// export: the slot, the name, the state, the pages, the handles, the
+	// threads, the processor time and the kernel entries of each program.
+	//
+	// ```
+	// > columns(where(programs(), "state", "waiting"), "slot name threads")
+	// ```
+	//
+	// Errors: those of `connect("monitor")` when the service does not run,
+	// and those of the export.
+	command("programs", {}, .Table, "the programs that run: monitor.programs()", programs_of_monitor)
+	// Gives one row for each module of each program that runs: the slot and
+	// the name of the program, the module, the module that it replaces, and
+	// the head of its hash.
+	//
+	// The rows are the module records of the kernel: what the loader of
+	// each program recorded. `replaces` is empty when the module is in no
+	// place but its own.
 	//
 	// It needs the grant **machine**: the console asks the kernel with
 	// `Inspect` on the machine handle. Without it: "error: the console has
 	// no grant to inspect the machine".
-	command("programs", {}, .None, "list the programs that run", list_programs)
-	// Prints the memory of the machine and the counters of the kernel.
+	command("program_modules", {}, .Table, "the modules of each program that runs", program_modules)
+	// Gives the memory of the machine and the counters of the kernel, as
+	// one `Record`.
 	//
-	// The lines: the memory and the free memory in MiB, the used pages, the
-	// pages that a budget paid for and that have no page frame yet, the
-	// pages of the budgets (and whether they hold every free page), the
-	// count of memory objects, of kernel entries, of interrupts and of
-	// processors, then for each kind of lock of the kernel the count of its
-	// waits and of its takes.
+	// The fields: the memory and the free memory in MiB, the used pages,
+	// the pages that a budget paid for and that have no page frame yet, the
+	// pages of the budgets, the free pages that no budget holds (0 when
+	// each page is free or paid), the count of memory objects, of kernel
+	// entries, of interrupts and of processors.
 	//
-	// It needs the grant **machine**, as `programs()`.
-	command("memory", {}, .None, "memory and kernel counters", show_memory)
-	// Prints the modules of the boot image: the name, the bytes and the
-	// first 12 bytes of the BLAKE3 hash of each one.
+	// It needs the grant **machine**, as `program_modules()`.
+	command("memory", {}, .Record, "memory and kernel counters", show_memory)
+	// Gives one row for each kind of lock of the kernel: its name, the
+	// count of its waits and the count of its takes.
+	//
+	// It needs the grant **machine**, as `memory()`.
+	command("locks", {}, .Table, "the waits and the takes of each kind of kernel lock", list_locks)
+	// Gives one row for each module of the boot image: its name, its bytes
+	// and the head of its BLAKE3 hash, the first 8 bytes.
 	//
 	// These are the names that `load`, `isolate`, `start` and `replace`
 	// take. The boot image is the one source of code of the console: it is
 	// what the root service granted, with the grant **image**.
-	command("modules", {}, .None, "list the modules of the boot image", list_modules)
+	command("modules", {}, .Table, "the modules of the boot image", list_modules)
 	// Loads a module of the boot image into the memory of the console, and
 	// makes each of its exports a command: a call is a direct call, with no
 	// other program.
 	//
 	// - `name`: the name of a module of the boot image, as `modules()`
-	//   prints it.
+	//   gives it.
 	//
 	// The loader checks the hash of the file against the boot image, loads
-	// its imports, and applies the replacement table of this time. It prints
-	// the count of commands, the start of the hash, and each import with the
-	// module that the loader gave in its place. The module runs with the
-	// memory and every handle of the console: load only a module that the
-	// console trusts, and `isolate` the others.
+	// its imports, and applies the replacement table of this time. The
+	// result is a `Record`: the module, the count of its commands, how a
+	// call runs (`direct`), and the head of its hash. `loaded()` then lists
+	// its imports, with the module that the loader gave in the place of
+	// each one. The module runs with the memory and every handle of the
+	// console: load only a module that the console trusts, and `isolate`
+	// the others.
 	//
 	// ```
 	// > load("sample")
-	// sample: 11 commands, hash <the first 8 bytes of its hash>...
+	// Loaded
+	//   module     sample
+	//   commands   11
+	//   call       direct
+	//   hash_head  <the first 8 bytes of its hash>
 	// ```
 	//
 	// Errors: no module has the name; the module is loaded already; it
 	// exports no command (`start` runs a program); no room for its commands
-	// (128 commands, 8 modules); the hash differs from the boot image; the
+	// (192 commands, 8 modules); the hash differs from the boot image; the
 	// loader refuses the file, with the stage and the reason.
-	command("load", {.Text}, .None, "load a module here: direct calls", load_module)
+	command("load", {.Text}, .Record, "load a module here: direct calls", load_module)
 	// Loads a module of the boot image into a new sandboxed program, a call
 	// host, and makes each of its exports a command: a call is an isolated
 	// call through a call ring.
@@ -282,20 +321,16 @@ commands_start :: proc "contextless" () {
 	// The call host receives its call ring, its call region, the log, and
 	// the files of the module and of its imports, read-only: no other
 	// handle. A fault of the module stops the call host, not the console:
-	// the console prints the stop report, with the instruction and the
-	// frames. Escape during a call stops the call host. The arguments and
-	// the results go through the call region, so a table result is limited
-	// by its size.
-	//
-	// ```
-	// > isolate("sample")
-	// sample: 11 commands in a sandboxed program, hash <the first 8 bytes of its hash>...
-	// ```
+	// the error of the line has the stop report, with the instruction and
+	// the frames. Escape during a call stops the call host. The arguments
+	// and the results go through the call region, so a table result is
+	// limited by its size. The result is the `Record` of `load`, with the
+	// call `isolated`.
 	//
 	// Errors: as `load`; also "no room for a sandboxed program" when 8
 	// sandboxes run, and "cannot start a sandboxed program" when the budget
 	// of the console cannot pay for it.
-	command("isolate", {.Text}, .None, "load a module in a sandboxed program", isolate_module)
+	command("isolate", {.Text}, .Record, "load a module in a sandboxed program", isolate_module)
 	// Removes a module that `load` or `isolate` added: its commands leave
 	// the command table.
 	//
@@ -304,134 +339,151 @@ commands_start :: proc "contextless" () {
 	// After `isolate`, the call host stops: the console closes its handles,
 	// and the kernel stops a program that no handle names. After `load`, the
 	// module leaves the memory of the console, unless another loaded module
-	// imports it: one copy serves both, and the console says that it stays.
+	// imports it: one copy serves both. The result is a `Record`: the
+	// module, the count of the commands removed, and what became of its
+	// memory.
 	//
 	// ```
 	// > unload("sample")
-	// sample: 11 commands removed, the module left the memory of the console
+	// Unloaded
+	//   module    sample
+	//   commands  11
+	//   memory    left the console
 	// ```
 	//
 	// Error: "load and isolate added no module with the name ...".
-	command("unload", {.Text}, .None, "remove a module that load or isolate added", unload_module)
+	command("unload", {.Text}, .Record, "remove a module that load or isolate added", unload_module)
+	// Gives one row for each module and each service whose exports are
+	// commands of the console, and one row for each import of such a
+	// module.
+	//
+	// The fields: the module; how a call runs (`direct`, `isolated`,
+	// `service`); for an import, the module that imports it and, when the
+	// loader gave another module in its place, the module that the import
+	// names; the head of its hash.
+	//
+	// ```
+	// > where(loaded(), "in_place_of", "calendar")
+	// ```
+	command("loaded", {}, .Table, "the modules and the services whose exports are commands", list_loaded)
 	// Asks the root service for a connection to a service that runs, and
 	// makes each export of the service a command named `service.export`.
 	//
-	// - `name`: the name of the service, as `programs()` prints it.
+	// - `name`: the name of the service, as `programs()` gives it.
 	//
 	// The root service decides: it refuses a service that the console may
 	// not call, with its reason. It gives a call ring, a call region and the
 	// hash of the file of the program; the console reads the descriptions of
 	// the exports from that file in the boot image. A call then runs in the
 	// service, with the rights of the service, and the service checks its
-	// caller. When the service stops, the console ends the connection.
+	// caller. When the service stops, the console ends the connection. The
+	// result is the `Record` of `load`, with the call `service`; a service
+	// that is connected already gives it again.
 	//
 	// ```
 	// > connect("settings")
-	// settings: 3 commands of a service that runs, hash <the first 8 bytes of its hash>...
+	// Loaded
+	//   module     settings
+	//   commands   3
+	//   call       service
+	//   hash_head  <the first 8 bytes of its hash>
 	// ```
 	//
-	// Errors: the console has the commands of the service already; the root
-	// service refused, with its sentence; the service exports no command;
-	// no room for its commands.
-	command("connect", {.Text}, .None, "call the exports of a service that runs", connect_service)
+	// Errors: the root service refused, with its error record; the service
+	// exports no command; no room for its commands.
+	command("connect", {.Text}, .Record, "call the exports of a service that runs", connect_service)
 	// Asks the root service to start a program from a module of the boot
-	// image.
+	// image. It gives nothing.
 	//
 	// - `name`: the name of the module, which becomes the name of the
 	//   program.
 	//
 	// The root service gives the program the grants of its name, and only
-	// those (the reference page of the grants lists them). It prints nothing
-	// when the program starts; `programs()` then shows it.
+	// those (the reference page of the grants lists them). `programs()`
+	// then has its row.
 	//
-	// Errors: the sentence of the root service when it refuses (no module
-	// has the name, the program runs already, no slot is free), and "the
-	// root service did not answer" after 3 seconds.
+	// Errors: the error record of the root service when it refuses (no
+	// module has the name, the program runs already, no slot is free), and
+	// "the root service did not answer" after 3 seconds.
 	command("start", {.Text}, .None, "start a program, by module name", start_program)
-	// Asks the root service to stop a program that runs.
+	// Asks the root service to stop a program that runs. It gives nothing.
 	//
-	// - `name`: the name of the program, as `programs()` prints it.
+	// - `name`: the name of the program, as `programs()` gives it.
 	//
 	// `stop("console")` stops this console: it saves its line history
 	// first, because the save after the line never comes.
 	//
-	// Errors: the sentence of the root service when it refuses, and "the
-	// root service did not answer".
+	// Errors: the error record of the root service when it refuses, and
+	// "the root service did not answer".
 	command("stop", {.Text}, .None, "stop a program, by name", stop_program)
-	// Prints the grants that a program has from the root service, the grants
-	// that it lost, and the principal that it runs for.
+	// Gives one row for each grant that a program has or lost, of the
+	// grants that the root service records and can revoke.
 	//
 	// - `name`: the name of a program that runs.
 	//
-	// The grants are those that the root service records and can revoke:
-	// log, machine, image, log_records, store, network, acts_for_principal,
-	// history.
+	// The fields: the program; the grant (log, machine, image, log_records,
+	// store, network, acts_for_principal, history); its state, `held` or
+	// `lost`; the number and the name of the principal that the program
+	// runs for.
 	//
 	// ```
 	// > grants("notes")
-	// notes has: log, store
-	// notes runs for principal 0 "machine"
+	// program  grant  state  principal  principal_name
+	// notes    log    held           0  machine
+	// notes    store  held           0  machine
+	// 2 rows of Grant
 	// ```
 	//
-	// Error: the sentence of the root service when no program has the name.
-	command("grants", {.Text}, .None, "what a program has from the root service", grants)
-	// Asks the root service to end one grant of a program that runs.
+	// Error: the error record of the root service when no program has the
+	// name.
+	command("grants", {.Text}, .Table, "what a program has from the root service", grants)
+	// Asks the root service to end one grant of a program that runs, and
+	// gives the count of the holdings that ended.
 	//
 	// - `name`: the name of the program.
-	// - `grant`: the name of the grant, as `grants()` prints it.
+	// - `grant`: the name of the grant, as `grants()` gives it.
 	//
 	// The root service closes each handle that came from the grant and
-	// records the loss: `grants()` then lists it after "lost:". The program
-	// continues, and an operation on a closed handle fails with an error
-	// record that says "was revoked". It prints the count of holdings ended.
-	//
-	// ```
-	// > revoke("monitor", "machine")
-	// monitor lost the grant machine, holdings ended: 1
-	// ```
+	// records the loss: `grants()` then gives it with the state `lost`. The
+	// program continues, and an operation on a closed handle fails with an
+	// error record that says "was revoked".
 	//
 	// Errors: "no grant has the name ...", with the list of the names; the
-	// sentence of the root service when it refuses.
-	command("revoke", {.Text, .Text}, .None, "end a grant of a program that runs", revoke)
+	// error record of the root service when it refuses.
+	command("revoke", {.Text, .Text}, .Integer, "end a grant of a program that runs", revoke)
 	// Asks the root service to create a named principal: a principal whose
-	// session opens with a passphrase.
+	// session opens with a passphrase. It gives nothing.
 	//
 	// - `name`: the name of the principal.
 	//
 	// The passphrase is never a text of the console, because the console
-	// keeps each line in its history: the window of unlock asks for it.
-	// `principals()` then lists the principal.
-	//
-	// ```
-	// > principal_create("alice")
-	// the principal alice is created in the window of unlock: type its passphrase there
-	// ```
+	// keeps each line in its history: the window of unlock opens and asks
+	// for it. `principals()` then has the row of the principal.
 	command("principal_create", {.Text}, .None, "create a named principal: its passphrase is typed in the window of unlock", principal_create)
 	// Asks the root service to lock the session of the named principal that
-	// is unlocked: each program of the session stops.
-	//
-	// ```
-	// > lock()
-	// locked: 1 programs of the session stopped
-	// ```
+	// is unlocked, and gives the count of the programs of the session that
+	// stopped.
 	//
 	// The window of unlock then asks for the passphrase again.
-	command("lock", {}, .None, "end the session of the named principal: its programs stop", lock_session)
-	// Prints one line for each principal of the machine: its number, its
-	// name, its state, the start of its public key, and for principal 0
-	// whether the system was measured.
+	command("lock", {}, .Integer, "end the session of the named principal: its programs stop", lock_session)
+	// Gives one row for each principal of the machine: its number, its
+	// name, its state, the head of its public key, and for principal 0 the
+	// head of the measure of the system.
 	//
-	// Principal 0 is the machine: it has no unlock. The states: absent, the
-	// machine, locked, unlocked (its session runs), and created in the
-	// window of unlock.
+	// Principal 0 is the machine: it has no unlock, and its state is
+	// `machine`. The other states: `locked`, `unlocked` (its session runs),
+	// and `creating` (created in the window of unlock). An empty measure:
+	// the system was not measured.
 	//
 	// ```
 	// > principals()
-	// principal 0 "machine": the machine, no unlock, the system not measured
+	// number  name     state    public_key_head  measure_head
+	//      0  machine  machine
+	// 1 row of Principal
 	// ```
-	command("principals", {}, .None, "list the principals of the machine", list_principals)
+	command("principals", {}, .Table, "the principals of the machine", list_principals)
 	// Asks the root service to give one module where a module imports
-	// another, in each load that follows.
+	// another, in each load that follows. It gives nothing.
 	//
 	// - `name`: the module that an import names.
 	// - `by`: the module to give in its place; the text `""` removes the
@@ -439,21 +491,16 @@ commands_start :: proc "contextless" () {
 	//
 	// The replacement table belongs to the machine: the root service writes
 	// it, and each loader reads it at each load. A program that runs keeps
-	// the modules that it loaded. `replacements()` lists the table.
-	//
-	// ```
-	// > replace("calendar", "calendar_fixed")
-	// calendar_fixed replaces calendar in the loads that follow
-	// ```
+	// the modules that it loaded. `replacements()` gives the table.
 	//
 	// Errors: no module has the name; the console has no grant to change
 	// the table; a chain of replacements is refused; the table is full; a
 	// module does not replace itself.
 	command("replace", {.Text, .Text}, .None, "give the second module where a module imports the first", replace)
-	// Prints the replacement table of the machine: one line for each module
-	// that a load replaces, and the module that it gets in its place, or
-	// "no replacement".
-	command("replacements", {}, .None, "list the replacement table of the machine", list_replacements)
+	// Gives the replacement table of the machine: one row for each module
+	// that a load replaces, with the module that it gets in its place and
+	// the heads of the two hashes. No replacement: no row.
+	command("replacements", {}, .Table, "the replacement table of the machine", list_replacements)
 	// Gives the milliseconds since the machine started, as an `Integer`.
 	command("time", {}, .Integer, "milliseconds since boot", time)
 	// Gives the BLAKE3 hash of the bytes of a text, as 64 hexadecimal
@@ -478,9 +525,9 @@ commands_start :: proc "contextless" () {
 	// Makes a new memory object of a count of pages, paid by the budget of
 	// the console, and gives its handle.
 	//
-	// The console holds the handle until `release`. The console prints a
+	// The console holds the handle until `release`. The console draws a
 	// handle with its kind and its rights: "Handle 65541: Memory (Give,
-	// Read, Write)". `byte` reads it.
+	// Read, Write)". `byte` and `bytes` read it.
 	//
 	// Error: "the budget of the console cannot pay for N pages".
 	command("buffer", {.Integer}, .Handle, "a new memory object, in pages", buffer_create)
@@ -491,108 +538,149 @@ commands_start :: proc "contextless" () {
 	// handle names no memory object, or the object has no byte at that
 	// place.
 	command("byte", {.Handle, .Integer}, .Integer, "one byte of a memory object", buffer_byte)
+	// Gives a count of bytes of a memory object, from a first byte, as
+	// `Bytes`: the console maps the object for the time of the command and
+	// copies them.
+	//
+	// - `memory`: a handle of a memory object.
+	// - `first`: the place of the first byte, from 0.
+	// - `count`: the count of bytes, at most 4096.
+	//
+	// The console draws `Bytes` as rows of 16 bytes in hexadecimal, with
+	// the place of each row and the characters; it draws the first 256
+	// bytes and says how many it does not show.
+	//
+	// Errors: the handle names no memory object; the object does not have
+	// these bytes; the count is not 0 to 4096.
+	command("bytes", {.Handle, .Integer, .Integer}, .Bytes, "bytes of a memory object", buffer_bytes)
 	// Closes a memory object that `buffer` made: the console gives its
 	// handle back, and the kernel frees the pages when no handle names the
-	// object.
+	// object. It gives nothing.
 	//
 	// Error: "release closes a memory object that buffer made", for each
 	// other handle.
 	command("release", {.Handle}, .None, "close a handle", release)
-	// Prints each variable with its kind and its value: `t: Reading = ...`.
+	// Gives one row for each variable: its name, its type and its value as
+	// a text.
 	//
 	// A line `name = expression` makes or changes a variable. The console
-	// keeps 16 variables; a table keeps at most 32 KiB of rows.
-	command("variables", {}, .None, "list the variables", list_variables)
+	// keeps 16 variables; a table keeps at most 32 KiB of rows. The value
+	// of a table is the count of its rows; the value of a record is its
+	// fields in one line.
+	command("variables", {}, .Table, "the variables", list_variables)
 	// Clears the text of the terminal: the edit line becomes the first row
-	// of the view. The line history stays.
+	// of the view. The line history stays. It gives nothing.
 	command("clear", {}, .None, "clear the console", clear)
 	// Stops the machine: the console saves its line history, then asks the
-	// kernel to stop the machine.
+	// kernel to stop the machine. It gives nothing.
 	//
 	// It needs the grant **machine**. Without it: "error: the console has
 	// no grant to stop the machine".
 	command("shutdown", {}, .None, "stop the machine", shutdown)
-	// Forgets the line history: in the memory of the console, and its
-	// object with each of its versions in its store. The line
-	// `history_clear()` goes too.
+	// Forgets the line history, in the memory of the console and in its
+	// store, and gives the count of the lines that it forgot.
 	//
-	// ```
-	// > history_clear()
-	// the line history is cleared: <the count of lines> lines, and its store
-	// ```
+	// Its object leaves the store with each of its versions. The line
+	// `history_clear()` goes too.
 	//
 	// If the store refuses the removal, the history is still cleared in
 	// memory, and the error gives the reason of the store. The design of the
 	// history: (docs/CONSOLE.md, "6. The line history across a stop").
-	command("history_clear", {}, .None, "forget the line history, in memory and in its store", history_clear)
+	command("history_clear", {}, .Integer, "forget the line history, in memory and in its store", history_clear)
 	// Measures the work of one key with the completion list open, for the
-	// query `mcnt`, and writes two lines on the log.
+	// query `mcnt`, and gives the measure as two rows.
 	//
 	// It times four parts: the collect of the names, their rank, the text
 	// of the rows, and the colors of the code. Each number is the least of
-	// 20 batches of 10 keys, in microseconds. The first line is for the
-	// names of this console; the second for the worst case, 512 names of
-	// 128 bytes. It runs in the second thread, so the list on the screen
-	// stays. The bounds that it measures: (docs/CONSOLE.md, "4. The bounds, and the cost of one key").
-	command("measure_completion", {}, .None, "measure one key of the completion list", measure_completion)
+	// 20 batches of 10 keys, in nanoseconds. The first row is for the names
+	// of this console; the second for the worst case, 512 names of 128
+	// bytes. It also writes each row as a line of the log, in microseconds.
+	// It runs in the second thread, so the list on the screen stays. The
+	// bounds that it measures: (docs/CONSOLE.md, "4. The bounds, and the cost of one key").
+	command("measure_completion", {}, .Table, "measure one key of the completion list", measure_completion)
 	tables_start()
 }
 
 help :: proc "contextless" (arguments: []Value) -> Value {
+	columns := [3]Column{text_column("name", 48), text_column("signature", 104), text_column("about", 104)}
+	table, made := made_table("Command", columns[:])
+	if !made {
+		return fail("help: the line has no room for the description")
+	}
 	for &item in commands[:command_count] {
-		buffer: [160]u8
+		row := made_row(&table)
+		buffer: [240]u8
 		writer := system.Writer {
 			buffer = buffer[:],
 		}
-		system.write_part(&writer, item.name)
-		system.write_part(&writer, "(")
-		for kind, index in item.parameters[:item.parameter_count] {
-			system.write_part(&writer, index > 0 ? ", " : "")
-			if item.parameter_names[index] != "" {
-				system.write_part(&writer, item.parameter_names[index])
-				system.write_part(&writer, ": ")
-			}
-			if kind == .None {
-				system.write_part(&writer, "Value") // Any kind: the command checks it.
-			}
-			system.write_parameter_type(&writer, item.file, module.Type(kind), item.function.parameter_details[index], item.function.parameter_directions[index])
-		}
-		system.write_part(&writer, ")")
-		if item.result != .None {
-			system.write_part(&writer, " -> ")
-			system.write_type(&writer, item.file, module.Type(item.result), item.function.result_detail)
-		}
-		system.write_part(&writer, " ")
-		for writer.count < 53 {
-			system.write_part(&writer, " ")
-		}
-		print(system.written(&writer), item.about, "\n")
+		_, _ = signature_write(&writer, &item, -1, true)
+		made_text(&table, row, 0, item.name)
+		made_text(&table, row, 1, system.written(&writer))
+		made_text(&table, row, 2, item.about)
 	}
-	return {}
+	return made_value(&table, "help")
 }
 
-// padded gives text in a field of width characters.
-padded :: proc "contextless" (text: string, width: int) -> string {
-	start := scratch_count
-	scratch_text(text)
-	for scratch_count - start < width {
-		scratch_text(" ")
+// describe gives the signature and the whole help of one command. When two
+// commands have the name, it is the one that a call runs: the last one.
+describe :: proc "contextless" (arguments: []Value) -> Value {
+	found: ^Command
+	for &item in commands[:command_count] {
+		if item.name == arguments[0].text {
+			found = &item
+		}
 	}
-	return string(scratch[start:scratch_count])
+	if found == nil {
+		return fail("no command has the name ", arguments[0].text, "; help() gives the commands")
+	}
+	writer := system.Writer {
+		buffer = scratch[scratch_count:],
+	}
+	_, _ = signature_write(&writer, found, -1, true)
+	system.write_part(&writer, "\n")
+	system.write_part(&writer, found.about)
+	described := system.written(&writer)
+	scratch_count += len(described)
+	return {kind = .Text, text = described}
 }
 
-number :: proc "contextless" (value: u64, width: int) -> string {
-	buffer: [20]u8
-	return padded(system.format(buffer[:], value), width)
+// command_of_service gives the command of an export of a service that the
+// console is connected to, or nil.
+command_of_service :: proc "contextless" (service: string, export: string) -> ^Command {
+	for &item in commands[:command_count] {
+		if item.sandbox == 0 || item.record != 0 || len(item.name) != len(service) + 1 + len(export) {
+			continue
+		}
+		sandbox := &sandboxes[item.sandbox - 1]
+		if sandbox.service && sandbox.name == service && item.name[:len(service)] == service && item.name[len(service) + 1:] == export {
+			return &item
+		}
+	}
+	return nil
 }
 
-@(rodata)
-state_names := [op.Program_State]string {
-	.None    = "",
-	.Created = "created",
-	.Ready   = "ready",
-	.Waiting = "waiting",
-	.Stopped = "stopped",
+// bound_call calls an export of a service under a short name of the
+// console: the fact is a fact of the service, and the console calls its
+// export as it calls any export. It connects to the service first when the
+// console has no connection to it.
+bound_call :: proc "contextless" (service: string, export: string, arguments: []Value) -> Value {
+	found := command_of_service(service, export)
+	if found == nil {
+		connect_arguments := [1]Value{{kind = .Text, text = service}}
+		connect_service(connect_arguments[:])
+		if failed {
+			return {}
+		}
+		found = command_of_service(service, export)
+	}
+	if found == nil {
+		return fail("the service ", service, " has no export ", export, " that the console can call")
+	}
+	return call_isolated(found, arguments)
+}
+
+programs_of_monitor :: proc "contextless" (arguments: []Value) -> Value {
+	return bound_call("monitor", "programs", arguments)
 }
 
 system_report :: proc "contextless" () -> (report: op.System_Report, ok: bool) {
@@ -603,75 +691,43 @@ system_report :: proc "contextless" () -> (report: op.System_Report, ok: bool) {
 	return report, status == .Ok
 }
 
-list_programs :: proc "contextless" (arguments: []Value) -> Value {
+module_report: op.Module_Report
+
+// program_modules gives the identity of each program: each module that a
+// loader put in it, and the module that it replaces (the module records of
+// the kernel).
+program_modules :: proc "contextless" (arguments: []Value) -> Value {
 	report, ok := system_report()
 	if !ok {
 		return {}
 	}
-	print("slot name        state    threads pages present handles  cpu ms  budget  entries\n")
+	columns := [5]Column{integer_column("slot"), text_column("program", 32), text_column("module", 32), text_column("replaces", 32), text_column("hash_head", 16)}
+	table, made := made_table("Program_Module", columns[:])
+	if !made {
+		return fail("program_modules: the line has no room for the description")
+	}
 	for slot in 1 ..< report.program_slots {
 		program: op.Program_Report
 		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(&program)), size_of(program))
 		if program.state == .None {
 			continue
 		}
-		print(number(slot, 5), padded(system.name_of(program.name[:]), 12), padded(state_names[program.state], 9))
-		print(number(program.thread_count, 8), number(program.mapped_pages, 6), number(program.present_pages, 8), number(program.handle_count, 8), number(program.run_time, 8), number(program.budget.pages, 8), "  ", number(program.entries, 0), "\n")
-		modules_print(slot)
-	}
-	return {}
-}
-
-// modules_print shows the identity of a program that has more than its
-// module: each module that a loader put in it, and the replacements that
-// the loader applied (the module records of the kernel).
-modules_print :: proc "contextless" (slot: u64) {
-	report := &module_report
-	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Modules), slot, u64(uintptr(report)), size_of(report^))
-	replaced := false
-	for item in report.modules[:report.count] {
-		replaced ||= item.replaces != {}
-	}
-	if report.count < 2 && !replaced {
-		return
-	}
-	for item, index in report.modules[:report.count] {
-		print(index == 0 ? "      modules " : "              ", module_text(item.hash))
-		if item.replaces != {} {
-			print(" in place of ", module_text(item.replaces))
+		modules := &module_report
+		modules^ = {}
+		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Modules), slot, u64(uintptr(modules)), size_of(modules^))
+		for item in modules.modules[:min(int(modules.count), len(modules.modules))] {
+			row := made_row(&table)
+			head: [16]u8
+			made_integer(&table, row, 0, i64(slot))
+			made_text(&table, row, 1, system.name_of(program.name[:]))
+			made_text(&table, row, 2, module_name_of(item.hash))
+			if item.replaces != {} {
+				made_text(&table, row, 3, module_name_of(item.replaces))
+			}
+			made_text(&table, row, 4, hash_head_text(&head, item.hash))
 		}
-		print("\n")
 	}
-}
-
-module_report: op.Module_Report
-
-// module_text gives the name of a module in the boot image, and the start of its hash.
-module_text :: proc "contextless" (value: [32]u8) -> string {
-	hash := value
-	start := scratch_count
-	if entry := system.image_entry_of(image, hash); entry != nil {
-		scratch_text(system.name_of(entry.name[:]), " ")
-	}
-	hex_text(hash[:8]) // It writes in the scratch memory, after the name.
-	scratch_text("...")
-	return string(scratch[start:scratch_count])
-}
-
-// imports_print shows the imports of a module that load put in the
-// console: the module that each import names, and the module that the
-// loader gave in its place.
-imports_print :: proc "contextless" (place: int) {
-	item := &space.modules[place]
-	for number in 0 ..< int(item.import_count) {
-		record, _ := module.record(item.file, .Imports, u32(number + 1), module.Import)
-		used := &space.modules[item.import_places[number]]
-		print("  imports ", module_text(record.hash))
-		if used.hash != record.hash {
-			print(": the loader gave ", module_text(used.hash), " in its place")
-		}
-		print("\n")
-	}
+	return made_value(&table, "program_modules")
 }
 
 show_memory :: proc "contextless" (arguments: []Value) -> Value {
@@ -679,26 +735,60 @@ show_memory :: proc "contextless" (arguments: []Value) -> Value {
 	if !ok {
 		return {}
 	}
-	print("memory          ", report.page_count * system.PAGE_SIZE >> 20, " MiB\n")
-	print("free            ", report.free_pages * system.PAGE_SIZE >> 20, " MiB\n")
-	print("used            ", report.page_count - report.free_pages, " pages\n")
-	print("reserved        ", report.reserved_pages, " pages paid, with no page frame yet\n")
-	// Each page is free or paid: the budgets and the reserved pages hold all
-	// the free pages.
-	if report.budget_pages + report.reserved_pages == report.free_pages {
-		print("budgets         ", report.budget_pages, " pages: all the free pages\n")
-	} else {
-		print("budgets         ", report.budget_pages, " pages, but ", report.free_pages - report.reserved_pages, " free pages are not reserved\n")
+	columns := [10]Column {
+		integer_column("memory_mebibytes"),
+		integer_column("free_mebibytes"),
+		integer_column("used_pages"),
+		integer_column("reserved_pages"),
+		integer_column("budget_pages"),
+		// Each page is free or paid: the budgets and the reserved pages
+		// hold all the free pages, and this count is 0.
+		integer_column("free_pages_no_budget_holds"),
+		integer_column("memory_objects"),
+		integer_column("kernel_entries"),
+		integer_column("interrupts"),
+		integer_column("processors"),
 	}
-	print("memory objects  ", report.region_count, "\n")
-	print("kernel entries  ", report.entries, "\n")
-	print("interrupts      ", report.interrupts, "\n")
-	print("processors      ", report.processors, "\n")
+	table, made := made_table("Memory", columns[:])
+	if !made {
+		return fail("memory: the line has no room for the description")
+	}
+	values := [10]i64 {
+		i64(report.page_count * system.PAGE_SIZE >> 20),
+		i64(report.free_pages * system.PAGE_SIZE >> 20),
+		i64(report.page_count - report.free_pages),
+		i64(report.reserved_pages),
+		i64(report.budget_pages),
+		i64(report.free_pages) - i64(report.reserved_pages) - i64(report.budget_pages),
+		i64(report.region_count),
+		i64(report.entries),
+		i64(report.interrupts),
+		i64(report.processors),
+	}
+	row := made_row(&table)
+	for value, index in values {
+		made_integer(&table, row, index, value)
+	}
+	return made_record(&table, "memory")
+}
+
+list_locks :: proc "contextless" (arguments: []Value) -> Value {
+	report, ok := system_report()
+	if !ok {
+		return {}
+	}
+	columns := [3]Column{text_column("lock", 16), integer_column("waits"), integer_column("takes")}
+	table, made := made_table("Lock", columns[:])
+	if !made {
+		return fail("locks: the line has no room for the description")
+	}
 	for kind in op.Lock_Kind {
-		count := report.locks[kind]
-		print("lock ", padded(op.LOCK_KIND_NAMES[kind], 11), count.waits, " waits of ", count.takes, "\n")
+		row := made_row(&table)
+		made_text(&table, row, 0, op.LOCK_KIND_NAMES[kind])
+		made_integer(&table, row, 1, i64(report.locks[kind].waits))
+		made_integer(&table, row, 2, i64(report.locks[kind].takes))
 	}
-	return {}
+	return made_value(&table, "locks")
 }
 
 hex_text :: proc "contextless" (bytes: []u8) -> string {
@@ -710,12 +800,93 @@ hex_text :: proc "contextless" (bytes: []u8) -> string {
 	return string(scratch[start:scratch_count])
 }
 
-list_modules :: proc "contextless" (arguments: []Value) -> Value {
-	print("name        bytes    hash (BLAKE3)\n")
-	for &entry in system.image_entries(image) {
-		print(padded(system.name_of(entry.name[:]), 12), number(entry.size, 9), hex_text(entry.hash[:12]), "...\n")
+// module_text gives the name of a module in the boot image, and the start
+// of its hash, for a sentence.
+module_text :: proc "contextless" (value: [32]u8) -> string {
+	hash := value
+	start := scratch_count
+	if entry := system.image_entry_of(image, hash); entry != nil {
+		scratch_text(system.name_of(entry.name[:]), " ")
 	}
-	return {}
+	hex_text(hash[:8]) // It writes in the scratch memory, after the name.
+	scratch_text("...")
+	return string(scratch[start:scratch_count])
+}
+
+list_modules :: proc "contextless" (arguments: []Value) -> Value {
+	columns := [3]Column{text_column("name", 32), integer_column("bytes"), text_column("hash_head", 16)}
+	table, made := made_table("Module", columns[:])
+	if !made {
+		return fail("modules: the line has no room for the description")
+	}
+	for &entry in system.image_entries(image) {
+		row := made_row(&table)
+		head: [16]u8
+		made_text(&table, row, 0, system.name_of(entry.name[:]))
+		made_integer(&table, row, 1, i64(entry.size))
+		made_text(&table, row, 2, hash_head_text(&head, entry.hash))
+	}
+	return made_value(&table, "modules")
+}
+
+// loaded_record gives the result of load, isolate and connect: the module,
+// the count of its commands, how a call runs, and the head of its hash.
+loaded_record :: proc "contextless" (name: string, callable: int, how: string, hash: [32]u8) -> Value {
+	columns := [4]Column{text_column("module", 32), integer_column("commands"), text_column("call", 8), text_column("hash_head", 16)}
+	table, made := made_table("Loaded", columns[:])
+	if !made {
+		return fail(name, ": the line has no room for the description of its result")
+	}
+	row := made_row(&table)
+	head: [16]u8
+	made_text(&table, row, 0, name)
+	made_integer(&table, row, 1, i64(callable))
+	made_text(&table, row, 2, how)
+	made_text(&table, row, 3, hash_head_text(&head, hash))
+	return made_record(&table, name)
+}
+
+// list_loaded gives the modules and the services whose exports are
+// commands, and the imports of the modules: the module that each import
+// names, and the module that the loader gave in its place.
+list_loaded :: proc "contextless" (arguments: []Value) -> Value {
+	columns := [5]Column{text_column("module", 32), text_column("call", 8), text_column("imported_by", 32), text_column("in_place_of", 32), text_column("hash_head", 16)}
+	table, made := made_table("Loaded_Module", columns[:])
+	if !made {
+		return fail("loaded: the line has no room for the description")
+	}
+	loaded_row :: proc "contextless" (table: ^Made_Table, name: string, how: string, imported_by: string, in_place_of: string, hash: [32]u8) {
+		row := made_row(table)
+		head: [16]u8
+		made_text(table, row, 0, name)
+		made_text(table, row, 1, how)
+		made_text(table, row, 2, imported_by)
+		made_text(table, row, 3, in_place_of)
+		made_text(table, row, 4, hash_head_text(&head, hash))
+	}
+	for &item in loaded[:loaded_count] {
+		if item.sandbox != 0 {
+			loaded_row(&table, item.name, "isolated", "", "", item.hash)
+			sandbox := &sandboxes[item.sandbox - 1]
+			for file in sandbox.files[1:max(sandbox.file_count, 1)] {
+				loaded_row(&table, system.name_of(file.name[:]), "isolated", item.name, "", file.hash)
+			}
+			continue
+		}
+		loaded_row(&table, item.name, "direct", "", "", item.hash)
+		placed := &space.modules[item.place]
+		for number in 0 ..< int(placed.import_count) {
+			record, _ := module.record(placed.file, .Imports, u32(number + 1), module.Import)
+			used := &space.modules[placed.import_places[number]]
+			loaded_row(&table, module_name_of(used.hash), "direct", item.name, used.hash != record.hash ? module_name_of(record.hash) : "", used.hash)
+		}
+	}
+	for &sandbox in sandboxes {
+		if sandbox.service && !sandbox.quiet {
+			loaded_row(&table, sandbox.name, "service", "", "", sandbox.hash)
+		}
+	}
+	return made_value(&table, "loaded")
 }
 
 // load_module loads a module in the console: a call of its exports is a
@@ -788,16 +959,7 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 		loaded[loaded_count] = {hash = entry.hash, name = system.name_of(entry.name[:]), file = file, place = place, sandbox = number}
 		loaded_count += 1
 		commands_add(file, "", number, base)
-		print(name, ": ", i64(callable), isolate ? " commands in a sandboxed program, hash " : " commands, hash ", hex_text(entry.hash[:8]), "...\n")
-		if place >= 0 {
-			imports_print(place)
-		} else {
-			sandbox := &sandboxes[number - 1]
-			for item in sandbox.files[1:sandbox.file_count] {
-				print("  with ", system.name_of(item.name[:]), " ", hex_text(item.hash[:8]), "...\n")
-			}
-		}
-		return {}
+		return loaded_record(system.name_of(entry.name[:]), callable, isolate ? "isolated" : "direct", entry.hash)
 	}
 	return fail("no module has the name ", name)
 }
@@ -823,6 +985,7 @@ unload_module :: proc "contextless" (arguments: []Value) -> Value {
 		}
 		removed += command_count - kept
 		command_count = kept
+		memory := "left the console"
 		if item.sandbox != 0 {
 			sandbox := &sandboxes[item.sandbox - 1]
 			sandbox_end(sandbox)
@@ -832,23 +995,29 @@ unload_module :: proc "contextless" (arguments: []Value) -> Value {
 			system.close(sandbox.region_memory)
 			system.close(sandbox.files_memory)
 			sandbox^ = {}
-			print(item.name, ": ", i64(removed), " commands removed, its sandboxed program stops\n")
+			memory = "its sandboxed program stopped"
 		} else {
 			// A module that another module imports stays: one copy for all.
 			// An import that no other module uses leaves with the module.
 			if !system.module_space_release(&space, item.place, &load_error) {
-				print(item.name, ": ", i64(removed), " commands removed\n")
 				return fail_load("cannot remove ", item.name)
 			}
 			if space.modules[item.place].users != 0 {
-				print(item.name, ": ", i64(removed), " commands removed, the module stays: a module of the console imports it\n")
-			} else {
-				print(item.name, ": ", i64(removed), " commands removed, the module left the memory of the console\n")
+				memory = "stays: another module imports it"
 			}
 		}
+		columns := [3]Column{text_column("module", 32), integer_column("commands"), text_column("memory", 40)}
+		table, made := made_table("Unloaded", columns[:])
+		row := made_row(&table)
+		made_text(&table, row, 0, item.name)
+		made_integer(&table, row, 1, i64(removed))
+		made_text(&table, row, 2, memory)
 		loaded[index] = loaded[loaded_count - 1]
 		loaded_count -= 1
-		return {}
+		if !made {
+			return fail(name, ": the line has no room for the description of its result")
+		}
+		return made_record(&table, "unload")
 	}
 	return fail("load and isolate added no module with the name ", name)
 }
@@ -942,27 +1111,44 @@ commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, ba
 // program by its hash: the console reads the descriptions there.
 connect_service :: proc "contextless" (arguments: []Value) -> Value {
 	name := arguments[0].text
-	for &sandbox in sandboxes {
-		if sandbox.service && sandbox.name == name {
-			return fail("the console has the commands of the service ", name)
+	line_records_try_again()
+	sandbox: ^Sandbox
+	number := 0
+	for &item, index in sandboxes {
+		if !item.service || item.name != name {
+			continue
+		}
+		// The commands of the service exist already: the answer is the
+		// record of the connection, again.
+		if !item.quiet {
+			if entry := system.image_entry_of(image, item.hash); entry != nil {
+				return loaded_record(item.name, callable_count(image[entry.offset:][:entry.size]), "service", item.hash)
+			}
+			return fail("the boot image has no file with the hash of the program ", name)
+		}
+		// The console connected for itself: the commands come now.
+		sandbox, number = &item, index + 1
+	}
+	fresh := sandbox == nil
+	if fresh {
+		sandbox, number = sandbox_free()
+		if sandbox == nil {
+			return fail("no room for the service ", name)
+		}
+		sandbox^ = {
+			name    = name,
+			service = true,
 		}
 	}
-	sandbox, number := sandbox_free()
-	if sandbox == nil {
-		return fail("no room for the service ", name)
-	}
-	sandbox^ = {
-		name    = name,
-		service = true,
-	}
-	refused: ring.Record
-	if status := service_connect(sandbox, &refused); status != .Ok {
-		sandbox^ = {}
-		if refused.kind == 0 {
-			return fail("cannot connect to ", name, ": ", status == .Bad_State ? "the root service did not answer" : "the call ring or the call region does not map")
+	if fresh || sandbox.program == 0 {
+		refused: ring.Record
+		if status := service_connect(sandbox, &refused); status != .Ok {
+			sandbox^ = {}
+			if refused.kind == 0 {
+				return fail("cannot connect to ", name, ": ", status == .Bad_State ? "the root service did not answer" : "the call ring or the call region does not map")
+			}
+			return fail_root(scratch_text("cannot connect to ", name, ": "), refused)
 		}
-		text: [240]u8
-		return fail("cannot connect to ", name, ": ", root_refusal_text(text[:], refused))
 	}
 	for &entry in system.image_entries(image) {
 		if entry.hash != sandbox.hash || entry.offset > u64(len(image)) || entry.size > u64(len(image)) - entry.offset {
@@ -979,9 +1165,9 @@ connect_service :: proc "contextless" (arguments: []Value) -> Value {
 			return fail("the service ", name, callable == 0 ? " exports no command" : ": no room for its commands")
 		}
 		sandbox.name = system.name_of(entry.name[:]) // The text of the line does not stay.
+		sandbox.quiet = false
 		commands_add(file, sandbox.name, number, 0)
-		print(sandbox.name, ": ", i64(callable), " commands of a service that runs, hash ", hex_text(entry.hash[:8]), "...\n")
-		return {}
+		return loaded_record(sandbox.name, callable, "service", entry.hash)
 	}
 	service_disconnect(sandbox)
 	sandbox^ = {}
@@ -1137,6 +1323,9 @@ record_build :: proc "contextless" (item: ^Command, arguments: []Value) -> Value
 // a Handle is the handle. The module is in this program: it has each handle
 // of the console, and the rights of a description limit nothing here.
 call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value {
+	// The module runs in this program: its log records are records of the
+	// console.
+	line_records_call_begins("console")
 	integers: [system.CALL_INTEGERS]u64
 	// A Table or Bytes parameter: the address of a table place over the
 	// memory of the value. A Change table changes it in place: a variable
@@ -1203,9 +1392,9 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 	system.export_call(item.address, &integers, &floats, &results)
 	if item.function.error_record != 0 && i64(results[0]) < 0 {
 		error.operation = i64(item.export)
-		failure := export_failure(item, &error, i64(results[0]))
-		error_details_print(item, details[:], details_place.count)
-		return failure
+		result := export_failure(item, &error, i64(results[0]))
+		failure_details_set(details[:], details_place.count)
+		return result
 	}
 	#partial switch item.result {
 	case .Integer:
@@ -1376,8 +1565,9 @@ load_error: module.Load_Error
 load_detail_records: [ERROR_DETAILS_CAPACITY]module.Load_Error
 load_details: system.Table_To_Append(module.Load_Error)
 
-// fail_load writes a load error: the first line says what failed, and the
-// lines of the record follow. Each line starts with "error". When the load
+// fail_load makes the line fail with a load error: the sentence says what
+// failed, and the lines of the record follow it in the error of the line.
+// Each line is drawn after "error: ". When the load
 // gave more than one error detail, the lines of each one follow, after its
 // number: the record is the first detail.
 fail_load :: proc "contextless" (what: string, name: string) -> Value {
@@ -1397,7 +1587,7 @@ fail_load :: proc "contextless" (what: string, name: string) -> Value {
 			for end < len(text) && text[end] != '\n' {
 				end += 1
 			}
-			print("error: ", text[:end], "\n")
+			fail_note(text[:end])
 			text = text[min(end + 1, len(text)):]
 		}
 	}
@@ -1411,14 +1601,14 @@ fail_load :: proc "contextless" (what: string, name: string) -> Value {
 		writer := system.Writer{buffer = buffer[:]}
 		system.error_details_rest_text(&writer, shown, load_details.count)
 		if rest := system.written(&writer); rest != "" {
-			print("error: ", rest, "\n")
+			fail_note(rest)
 		}
 	}
 	load_details.count = 0
 	return result
 }
 
-// fault_print writes where a program stopped on a fault: the module that
+// fault_print adds to the error of the line where a program stopped on a fault: the module that
 // ran, as the loader of the program recorded it, and the module that it
 // replaced. With the debug image, the instruction and each frame have the
 // name of their procedure and their source line.
@@ -1431,12 +1621,12 @@ fault_print :: proc "contextless" (report: ^op.Stop_Report) {
 			named = system.place_write(&writer, system.debug_object_of(&debug_names, report.module.hash), report.instruction - report.module.base, system.name_of(entry.name[:]), false)
 		}
 		if named {
-			print("error: the instruction is at ", system.written(&writer), "\n")
+			fail_note("the instruction is at ", system.written(&writer))
 		} else {
-			print("error: the instruction is at offset ", system.Hex(report.instruction - report.module.base), " of ", module_text(report.module.hash), "\n")
+			fail_note("the instruction is at offset ", system.Hex(report.instruction - report.module.base), " of ", module_text(report.module.hash))
 		}
 		if report.module.replaces != {} {
-			print("error: ", module_text(report.module.hash), " runs in place of ", module_text(report.module.replaces), "\n")
+			fail_note(module_text(report.module.hash), " runs in place of ", module_text(report.module.replaces))
 		}
 	}
 	// The stack trace: the instruction, then the return address of each call.
@@ -1444,7 +1634,7 @@ fault_print :: proc "contextless" (report: ^op.Stop_Report) {
 		buffer: [256]u8
 		writer := system.Writer{buffer = buffer[:]}
 		system.frame_text(&writer, image, &debug_names, &frame, number)
-		print("error: frame ", u64(number), ": ", system.written(&writer), number == 0 ? ", the instruction" : "", "\n")
+		fail_note("frame ", u64(number), ": ", system.written(&writer), number == 0 ? ", the instruction" : "")
 	}
 }
 
@@ -1459,9 +1649,11 @@ sandbox_end :: proc "contextless" (sandbox: ^Sandbox) {
 	sandbox.program = 0
 }
 
-// export_failure prints the sentence of the error record of an export that
-// failed, after "error: ". The names come from the description.
+// export_failure makes the line fail with the error record of an export
+// that failed: the sentence of the record, and the record itself with the
+// names of the export and of its parameters, from the description.
 export_failure :: proc "contextless" (item: ^Command, error: ^errors.Error_Record, answer: i64) -> Value {
+	already := failed
 	argument := ""
 	if error.argument >= 1 && error.argument <= i64(item.parameter_count) {
 		argument = item.parameter_names[error.argument - 1]
@@ -1469,36 +1661,11 @@ export_failure :: proc "contextless" (item: ^Command, error: ^errors.Error_Recor
 	buffer: [240]u8
 	writer := system.Writer{buffer = buffer[:]}
 	system.error_text(&writer, error, item.name, argument)
-	return fail(system.written(&writer), " (", answer, ")")
-}
-
-// error_details_print prints the error details of an export that failed,
-// one line each, after the line of its error record. count is the count of
-// the full answer; details holds the places of the table of the console.
-// The error record is the first detail: with one detail, the line of the
-// record says all of it.
-error_details_print :: proc "contextless" (item: ^Command, details: []errors.Error_Record, count: u64) {
-	if count < 2 {
-		return
+	result := fail(system.written(&writer), " (", answer, ")")
+	if !already {
+		failure_record_set(error^, item.name, item.parameter_names[:item.parameter_count])
 	}
-	shown := min(u64(len(details)), count)
-	for &detail, index in details[:shown] {
-		argument := ""
-		if detail.argument >= 1 && detail.argument <= i64(item.parameter_count) {
-			argument = item.parameter_names[detail.argument - 1]
-		}
-		buffer: [240]u8
-		writer := system.Writer{buffer = buffer[:]}
-		system.error_detail_number_text(&writer, u64(index + 1), count)
-		system.error_text(&writer, &detail, item.name, argument)
-		print("error: ", system.written(&writer), "\n")
-	}
-	if count > shown {
-		buffer: [128]u8
-		writer := system.Writer{buffer = buffer[:]}
-		system.error_details_rest_text(&writer, shown, count)
-		print("error: ", system.written(&writer), "\n")
-	}
+	return result
 }
 
 // stop_reason gives the text of the code of a stopped program: each fault
@@ -1560,6 +1727,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 		}
 		return fail(sandbox.service ? "no service runs with the name " : "cannot start a sandboxed program for ", sandbox.name)
 	}
+	line_records_call_begins(sandbox.name)
 	encoded: [ARGUMENT_CAPACITY]isolated.Argument
 	for argument, index in arguments {
 		encoded[index] = {integer = u64(argument.integer), text = transmute([]u8)argument.text, record = argument.record}
@@ -1606,7 +1774,15 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 		sandbox_end(sandbox)
 		return fail("the call ring of ", sandbox.name, " is full: the console ", sandbox.service ? "closed the connection" : "stopped the program")
 	}
+	// The log records that the program writes show under the line while
+	// the call runs: the console reads them at this interval, never before
+	// the first look at the answer.
+	records_due := system.time() + STATUS_INTERVAL
 	for {
+		if system.time() >= records_due {
+			line_records_show_during(item.sandbox)
+			records_due = system.time() + STATUS_INTERVAL
+		}
 		// The stop of the call host is an event.
 		wait := system.wait_begin()
 		// The other side writes this queue: read a bounded number of records,
@@ -1629,15 +1805,15 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 				// section 8, "The table of error details").
 				if error_place.count != 0 && i64(completion.values[0]) < 0 {
 					error := (^errors.Error_Record)(raw_data(sandbox.region[error_place.start:]))^
-					failure := export_failure(item, &error, i64(completion.values[0]))
+					result := export_failure(item, &error, i64(completion.values[0]))
 					if item.details_parameter != 0 {
 						if problem, _ := isolated.error_details_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset); problem != .None {
-							print("error: the program ", sandbox.name, " gave a wrong count for the table of error details: the details are missing\n")
+							fail_note("the program ", sandbox.name, " gave a wrong count for the table of error details: the details are missing")
 						} else {
-							error_details_print(item, details[:], encoded[item.details_parameter - 1].table.count)
+							failure_details_set(details[:], encoded[item.details_parameter - 1].table.count)
 						}
 					}
-					return failure
+					return result
 				}
 				// The rows of a Change table come back into the memory of the value.
 				if problem, parameter := isolated.tables_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset); problem != .None {
@@ -1712,7 +1888,9 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 		}
 		system.wait_records(&wait, &sandbox.ring.completions)
 		system.wait_word(&wait, &work.cancel, 0)
-		system.wait_end(&wait)
+		// The time only wakes the thread to read the log records again:
+		// a call has no time limit.
+		system.wait_end(&wait, records_due)
 	}
 }
 
@@ -1747,52 +1925,53 @@ request_record :: proc "contextless" (kind: system.Root_Command, name: string, v
 	}
 }
 
-// request asks the root service to start or to stop a program.
+// request asks the root service to start or to stop a program. It gives
+// nothing: a refusal is the error of the line, with the error record of the
+// root service.
 request :: proc "contextless" (kind: system.Root_Command, name: string) -> Value {
 	completion, answered := request_record(kind, name)
 	if !answered {
-		return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
+		return fail_no_answer()
 	}
 	if system.Status(completion.kind) != .Ok {
-		text: [240]u8
-		return fail(root_refusal_text(text[:], completion))
+		return fail_root("", completion)
 	}
 	return {}
 }
 
-// grants shows what a program has from the root service, of the grants
-// that the root service can revoke.
+// grants gives what a program has from the root service, of the grants
+// that the root service can revoke: one row for each grant that it holds,
+// then one for each grant that it lost.
 grants :: proc "contextless" (arguments: []Value) -> Value {
 	name := arguments[0].text
 	completion, answered := request_record(.Grants, name)
 	if !answered {
-		return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
+		return fail_no_answer()
 	}
 	if system.Status(completion.kind) != .Ok {
-		text: [240]u8
-		return fail(root_refusal_text(text[:], completion))
+		return fail_root("", completion)
 	}
-	for set, pass in ([2]system.Root_Grants{transmute(system.Root_Grants)completion.values[0], transmute(system.Root_Grants)completion.values[1]}) {
-		if pass == 1 && set == {} {
-			break
-		}
-		print(name, pass == 0 ? " has:" : " lost:")
-		if set == {} {
-			print(" no grant")
-		}
-		first := true
-		for grant in system.Root_Grant {
-			if grant in set {
-				print(first ? " " : ", ", system.root_grant_names[grant])
-				first = false
-			}
-		}
-		print("\n")
+	columns := [5]Column{text_column("program", 32), text_column("grant", 24), text_column("state", 8), integer_column("principal"), text_column("principal_name", 32)}
+	table, made := made_table("Grant", columns[:])
+	if !made {
+		return fail("grants: the line has no room for the description")
 	}
 	// Who the grants are for: the principal of the session of the program.
 	principal_name := system.name_unpack({completion.values[3], completion.values[4], completion.values[5], completion.values[6]})
-	print(name, " runs for principal ", completion.values[2], " \"", system.name_of(principal_name[:]), "\"\n")
-	return {}
+	for set, pass in ([2]system.Root_Grants{transmute(system.Root_Grants)completion.values[0], transmute(system.Root_Grants)completion.values[1]}) {
+		for grant in system.Root_Grant {
+			if grant not_in set {
+				continue
+			}
+			row := made_row(&table)
+			made_text(&table, row, 0, name)
+			made_text(&table, row, 1, system.root_grant_names[grant])
+			made_text(&table, row, 2, pass == 0 ? "held" : "lost")
+			made_integer(&table, row, 3, i64(completion.values[2]))
+			made_text(&table, row, 4, system.name_of(principal_name[:]))
+		}
+	}
+	return made_value(&table, "grants")
 }
 
 // principal_create asks the root service for a new named principal. The
@@ -1801,37 +1980,34 @@ grants :: proc "contextless" (arguments: []Value) -> Value {
 principal_create :: proc "contextless" (arguments: []Value) -> Value {
 	completion, answered := request_record(.Principal_Create, arguments[0].text)
 	if !answered {
-		return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
+		return fail_no_answer()
 	}
 	if system.Status(completion.kind) != .Ok {
-		text: [240]u8
-		return fail(root_refusal_text(text[:], completion))
+		return fail_root("", completion)
 	}
-	print("the principal ", arguments[0].text, " is created in the window of unlock: type its passphrase there\n")
 	return {}
 }
 
-// lock_session ends the session of the named principal that is unlocked.
+// lock_session ends the session of the named principal that is unlocked,
+// and gives the count of its programs that stopped.
 lock_session :: proc "contextless" (arguments: []Value) -> Value {
 	completion, answered := request_record(.Principal_Lock, "")
 	if !answered {
-		return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
+		return fail_no_answer()
 	}
 	if system.Status(completion.kind) != .Ok {
-		text: [240]u8
-		return fail(root_refusal_text(text[:], completion))
+		return fail_root("", completion)
 	}
-	print("locked: ", completion.values[0], " programs of the session stopped\n")
-	return {}
+	return {kind = .Integer, integer = i64(completion.values[0])}
 }
 
 @(rodata)
 principal_state_names := [system.Principal_State]string {
 	.Absent   = "absent",
-	.Machine  = "the machine, no unlock",
+	.Machine  = "machine",
 	.Locked   = "locked",
-	.Unlocked = "unlocked: its session runs",
-	.Creating = "created in the window of unlock",
+	.Unlocked = "unlocked",
+	.Creating = "creating",
 }
 
 // first_bytes_hexadecimal writes 8 bytes, in their order in memory, as 16
@@ -1847,35 +2023,42 @@ first_bytes_hexadecimal :: proc "contextless" (value: u64) -> (digits: [16]u8) {
 	return
 }
 
-// list_principals gives one line for each principal of the root service.
+// list_principals gives one row for each principal of the root service.
 list_principals :: proc "contextless" (arguments: []Value) -> Value {
+	columns := [5]Column{integer_column("number"), text_column("name", 32), text_column("state", 12), text_column("public_key_head", 16), text_column("measure_head", 16)}
+	table, made := made_table("Principal", columns[:])
+	if !made {
+		return fail("principals: the line has no room for the description")
+	}
 	for number in u64(0) ..< 2 {
 		completion, answered := request_record(.Principals, "", number)
 		if !answered {
-			return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
+			return fail_no_answer()
 		}
 		if system.Status(completion.kind) != .Ok {
 			continue // No record with this number.
 		}
 		state := completion.values[0] <= u64(max(system.Principal_State)) ? system.Principal_State(completion.values[0]) : .Absent
 		principal_name := system.name_unpack({completion.values[1], completion.values[2], completion.values[3], completion.values[4]})
-		print("principal ", number, " \"", system.name_of(principal_name[:]), "\": ", principal_state_names[state])
-		key_digits := first_bytes_hexadecimal(completion.values[5])
-		measure_digits := first_bytes_hexadecimal(completion.values[6])
+		row := made_row(&table)
+		made_integer(&table, row, 0, i64(number))
+		made_text(&table, row, 1, system.name_of(principal_name[:]))
+		made_text(&table, row, 2, principal_state_names[state])
 		if completion.values[5] != 0 {
-			print(", public key ", string(key_digits[:]), "...")
+			key_digits := first_bytes_hexadecimal(completion.values[5])
+			made_text(&table, row, 3, string(key_digits[:]))
 		}
+		// The measure of the system belongs to the machine: principal 0.
 		if number == 0 && completion.values[6] != 0 {
-			print(", the system measured: PCR 11 ", string(measure_digits[:]), "...")
-		} else if number == 0 {
-			print(", the system not measured")
+			measure_digits := first_bytes_hexadecimal(completion.values[6])
+			made_text(&table, row, 4, string(measure_digits[:]))
 		}
-		print("\n")
 	}
-	return {}
+	return made_value(&table, "principals")
 }
 
-// revoke asks the root service to end one grant of a program that runs.
+// revoke asks the root service to end one grant of a program that runs,
+// and gives the count of the holdings that ended.
 revoke :: proc "contextless" (arguments: []Value) -> Value {
 	name := arguments[0].text
 	for grant in system.Root_Grant {
@@ -1884,14 +2067,12 @@ revoke :: proc "contextless" (arguments: []Value) -> Value {
 		}
 		completion, answered := request_record(.Revoke, name, u64(grant))
 		if !answered {
-			return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
+			return fail_no_answer()
 		}
 		if system.Status(completion.kind) == .Ok {
-			print(name, " lost the grant ", arguments[1].text, ", holdings ended: ", completion.values[0], "\n")
-			return {}
+			return {kind = .Integer, integer = i64(completion.values[0])}
 		}
-		text: [240]u8
-		return fail(root_refusal_text(text[:], completion))
+		return fail_root("", completion)
 	}
 	return fail("no grant has the name ", arguments[1].text, ": the grants are log, machine, image, log_records, store, network, acts_for_principal, history")
 }
@@ -1913,15 +2094,10 @@ replace :: proc "contextless" (arguments: []Value) -> Value {
 	}
 	completion, answered := request_record(.Replace, name, value)
 	if !answered {
-		return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
+		return fail_no_answer()
 	}
 	#partial switch system.Status(completion.kind) {
 	case .Ok:
-		if by == "" {
-			print(name, ": no replacement for the loads that follow\n")
-		} else {
-			print(by, " replaces ", name, " in the loads that follow\n")
-		}
 		return {}
 	case .No_Right:
 		return fail("the console has no grant to change the replacement table")
@@ -1935,22 +2111,31 @@ replace :: proc "contextless" (arguments: []Value) -> Value {
 	return fail(by == "" ? "no replacement of the module " : "no module has the name ", name)
 }
 
-// list_replacements shows the replacement table of the machine.
+// list_replacements gives the replacement table of the machine.
 list_replacements :: proc "contextless" (arguments: []Value) -> Value {
 	if replacement_table == nil {
 		return fail("the console has no grant to read the replacement table")
 	}
-	records := system.replacements_read(replacement_table, &replacement_records)
-	if len(records) == 0 {
-		print("no replacement\n")
+	columns := [4]Column{text_column("module", 32), text_column("by", 32), text_column("module_hash_head", 16), text_column("by_hash_head", 16)}
+	table, made := made_table("Replacement", columns[:])
+	if !made {
+		return fail("replacements: the line has no room for the description")
 	}
-	for item in records {
-		print(module_text(item.from), ": replaced by ", module_text(item.to), "\n")
+	for item in system.replacements_read(replacement_table, &replacement_records) {
+		row := made_row(&table)
+		from_head, to_head: [16]u8
+		made_text(&table, row, 0, module_name_of(item.from))
+		made_text(&table, row, 1, module_name_of(item.to))
+		made_text(&table, row, 2, hash_head_text(&from_head, item.from))
+		made_text(&table, row, 3, hash_head_text(&to_head, item.to))
 	}
-	return {}
+	return made_value(&table, "replacements")
 }
 
 start_program :: proc "contextless" (arguments: []Value) -> Value {
+	// The log service can be the program that starts: the console tries
+	// its connection again.
+	line_records_try_again()
 	return request(.Start, arguments[0].text)
 }
 
@@ -2018,6 +2203,38 @@ buffer_byte :: proc "contextless" (arguments: []Value) -> Value {
 	return {kind = .Integer, integer = i64(([^]u8)(address)[arguments[1].integer])}
 }
 
+BYTES_MOST :: 4096 // The most bytes that one call of bytes copies.
+
+// buffer_bytes copies bytes of a memory object into the memory of the
+// line: the console maps the object for the time of the command. The value
+// keeps the place of its first byte, for the view.
+buffer_bytes :: proc "contextless" (arguments: []Value) -> Value {
+	memory := system.Handle(arguments[0].integer)
+	first, count := arguments[1].integer, arguments[2].integer
+	kind, _, _ := system.handle_state(memory)
+	if kind != .Memory {
+		return fail("bytes: the handle names no memory object")
+	}
+	if count < 0 || count > BYTES_MOST {
+		return fail("bytes: the count is ", count, "; it is 0 to ", i64(BYTES_MOST))
+	}
+	size := system.memory_size(memory) * system.PAGE_SIZE
+	if first < 0 || u64(first) > size || u64(count) > size - u64(first) {
+		return fail("bytes: the memory object has ", size, " bytes; it does not have ", count, " bytes from the byte ", first)
+	}
+	copied := table_bytes(int(count))
+	if copied == nil && count > 0 {
+		return fail("bytes: the line has no room for ", count, " bytes")
+	}
+	address, status := system.memory_map(memory, {})
+	if status != .Ok {
+		return fail("the console cannot map the memory object")
+	}
+	defer system.memory_unmap(address)
+	copy(copied, ([^]u8)(address)[first:][:count])
+	return {kind = .Bytes, integer = first, record = copied}
+}
+
 release :: proc "contextless" (arguments: []Value) -> Value {
 	if kind, _, _ := system.handle_state(system.Handle(arguments[0].integer)); kind != .Memory {
 		return fail("release closes a memory object that buffer made")
@@ -2026,20 +2243,49 @@ release :: proc "contextless" (arguments: []Value) -> Value {
 	return {}
 }
 
+// list_variables gives one row for each variable: its name, its type, and
+// its value as a text.
 list_variables :: proc "contextless" (arguments: []Value) -> Value {
+	columns := [3]Column{text_column("name", VARIABLE_NAME_SIZE), text_column("type", 64), text_column("value", 128)}
+	table, made := made_table("Variable", columns[:])
+	if !made {
+		return fail("variables: the line has no room for the description")
+	}
 	for &variable in variables {
 		if variable.name_count == 0 {
 			continue
 		}
-		print(string(variable.name[:variable.name_count]), ": ", type_text(variable.value.file, variable.value.kind, variable.value.detail), " = ")
-		if variable.value.kind == .Text {
-			print("\"", variable.value.text, "\"\n")
-		} else {
-			print_value(variable.value)
-			print("\n")
+		value := variable.value
+		row := made_row(&table)
+		type_buffer: [64]u8
+		type_writer := system.Writer {
+			buffer = type_buffer[:],
 		}
+		system.write_type(&type_writer, value.file, module.Type(value.kind), value.detail)
+		value_buffer: [128]u8
+		value_writer := system.Writer {
+			buffer = value_buffer[:],
+		}
+		#partial switch value.kind {
+		case .Integer:
+			system.write_part(&value_writer, value.integer)
+		case .Handle:
+			system.write_part(&value_writer, u64(value.integer))
+		case .Text:
+			system.write_part(&value_writer, value.text)
+		case .Record:
+			record_fields_text(&value_writer, value)
+		case .Table:
+			if rows, ok := table_of(value); ok {
+				system.write_part(&value_writer, i64(rows.rows))
+				system.write_part(&value_writer, rows.rows == 1 ? " row" : " rows")
+			}
+		}
+		made_text(&table, row, 0, string(variable.name[:variable.name_count]))
+		made_text(&table, row, 1, system.written(&type_writer))
+		made_text(&table, row, 2, system.written(&value_writer))
 	}
-	return {}
+	return made_value(&table, "variables")
 }
 
 clear :: proc "contextless" (arguments: []Value) -> Value {

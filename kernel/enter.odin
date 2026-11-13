@@ -291,7 +291,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if to.state != .Created {
 			return .Bad_State
 		}
-		if _, status := thread_create(slot.object, to.budget, v[1], v[2], v[3]); status != .Ok {
+		// The first thread of the program gets the weight limit of the
+		// thread that starts it: a program does not leave its limit by a
+		// program that it starts.
+		if _, status := thread_create(slot.object, to.budget, v[1], v[2], v[3], weight_limit = intrinsics.atomic_load(&threads[index].weight_limit)); status != .Ok {
 			return status
 		}
 		to.state = .Ready
@@ -303,11 +306,16 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		budget := handle_find(program, v[0], .Budget, {.Spend}) or_return
 		// A weight above the full weight would raise the share: a program
-		// would take processor time that its budget does not give.
-		if v[4] > op.WEIGHT_FULL || v[5] > op.REQUEST_LIMIT {
+		// would take processor time that its budget does not give. A weight
+		// above the weight limit of the calling thread would undo a limit
+		// that the holder of the machine set: the new thread gets that
+		// limit. A write of the limit at the same time comes before this
+		// read or after it: the creation is then before the write or after.
+		weight_limit := intrinsics.atomic_load(&threads[index].weight_limit)
+		if !op.thread_schedule_accepted(v[4], v[5]) || v[4] > u64(weight_limit) {
 			return .Bad_Operation
 		}
-		created := thread_create(program_index, budget.object, v[1], v[2], v[3], v[4], v[5]) or_return
+		created := thread_create(program_index, budget.object, v[1], v[2], v[3], v[4], v[5], weight_limit) or_return
 		handle := handle_insert(program, {kind = .Thread, rights = RIGHTS_THREAD, object = created})
 		if handle == 0 {
 			thread_stop(created)

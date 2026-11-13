@@ -172,15 +172,19 @@ Right :: enum u32 {
 	// while it is held (Thread_Control): full control of the code that its program runs.
 	Write   = 2,
 	Execute = 3, // Memory: map it with Execute.
-	Control = 4, // Program: map memory in it, give handles to it, start it, stop it. Thread: end it, make it the fault handler.
-	// Machine: read the reports. Thread: hold it and release it, and read its registers and its extended state
-	// (Thread_Control): what a sampling profiler needs, and no write.
+	// Program: map memory in it, give handles to it, start it, stop it. Thread: end it, make it the fault handler,
+	// write its weight and its request (Thread_Control).
+	Control = 4,
+	// Machine: read the reports. Thread: hold it and release it, and read its registers, its extended state and its
+	// schedule (Thread_Control): what a sampling profiler needs, and no write.
 	Inspect = 5,
 	Devices = 6, // Machine: create device handles.
 	Stop    = 7, // Machine: stop the machine.
 	Spend   = 8, // Budget: create objects with it, and take a part of it for a new budget.
 	Physical = 9, // Machine: read the physical address of a memory object (Memory_Physical).
-	Schedule = 10, // Machine: change the scheduling strategy of the machine (Strategy_Set).
+	// Machine: change the scheduling strategy of the machine (Strategy_Set), and the weight, the request and the
+	// weight limit of any thread (Thread_Control).
+	Schedule = 10,
 	// Budget: pay pages of a memory object that this budget already pays for (Memory_Commit), and nothing else: no
 	// object, thread, program or budget is created with it. The narrow form of Spend, to give to another program.
 	Commit = 11,
@@ -591,8 +595,10 @@ Operation :: enum u32 {
 	// - `entry`: the address of the first instruction, below `USER_END`.
 	// - `stack`: the top of the stack, from 8 to `USER_END`.
 	// - `parameter`: any value.
-	// - `weight`: from 1 to `WEIGHT_FULL`; 0 is `WEIGHT_FULL`. The share of the thread under the strategies
-	//   that use weights. A weight can only be lower than the weight of a thread created with 0.
+	// - `weight`: from 1 to the weight limit of the calling thread, which is `WEIGHT_FULL` unless the holder
+	//   of the machine lowered it (`Thread_Schedule`); 0 is that limit. The share of the thread under the
+	//   strategies that use weights. A weight can only be lower than the weight of a thread created with 0.
+	//   The new thread gets the weight limit of the calling thread.
 	// - `request`: microseconds, from 1 to `REQUEST_LIMIT`; 0 is `REQUEST_DEFAULT`. The delay that the
 	//   thread asks for under EEVDF ([weights and requests](docs/SCHEDULING.md#weights-and-requests-a-field-at-thread-creation)).
 	//
@@ -601,7 +607,8 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Spend**.
-	// - `Bad_Operation`: `weight` is above `WEIGHT_FULL`, or `request` above `REQUEST_LIMIT`.
+	// - `Bad_Operation`: `weight` is above the weight limit of the calling thread, or `request` above
+	//   `REQUEST_LIMIT`.
 	// - `Bad_Address`: `entry` or `stack` is out of its range.
 	// - `Bad_State`: the program stops.
 	// - `No_Slot`: the thread table of the kernel is full, the program has `THREAD_CAPACITY` threads, or
@@ -1003,18 +1010,25 @@ Operation :: enum u32 {
 	// them ([the control of a thread](docs/ARCHITECTURE.md#the-control-of-a-thread)). `Stop` and `Resume`
 	// change the stop count of the thread: it runs only while the count is 0. The registers and the
 	// extended state are read and written only while the thread is held: its stop count is above 0, or it
-	// waits for an answer of the fault ring.
+	// waits for an answer of the fault ring. It also reads and writes the schedule of a thread: its weight
+	// and its request (`Thread_Schedule`), also while the thread runs
+	// ([the schedule of a live thread](docs/SCHEDULING.md#the-schedule-of-a-live-thread)).
 	//
 	// **Arguments**
 	//
-	// - `thread`: a thread handle with **Inspect** for each command, and **Write** too for a write
-	//   (`thread_control_rights`); or 0, and then `number` names a live thread of this program
-	//   (`Thread_Record.number`, `Fault_Record.thread`). A thread of another program needs a handle.
-	// - `number`: the number of the thread when `thread` is 0.
+	// - `thread`: a thread handle with the rights of the command (`thread_control_rights`): **Inspect**,
+	//   and **Write** too for a write of the registers or of the extended state; **Control** for
+	//   `Write_Schedule`. Or 0, and then `number` names a live thread of this program
+	//   (`Thread_Record.number`, `Fault_Record.thread`). Or, for `Read_Schedule` and `Write_Schedule`
+	//   only, the machine handle with **Schedule** and **Inspect**
+	//   (`thread_control_machine_rights`), and then `number` names any thread of the machine. A
+	//   thread of another program needs a handle.
+	// - `number`: the number of the thread when `thread` is 0; the machine number of the thread
+	//   (`Thread_Report.machine_number`) when `thread` is the machine handle.
 	// - `command`: a `Thread_Control_Command`.
 	// - `address`, `size`: the memory of the command that reads or writes: `size` is at least the size of
-	//   a `Thread_Registers`, or of the extended state area (`Thread_State`), and the program can read it,
-	//   or write it for a read of the thread.
+	//   a `Thread_Registers`, of the extended state area (`Thread_State`) or of a `Thread_Schedule`, and
+	//   the program can read it, or write it for a read of the thread.
 	//
 	// **Results**: what the command gives: the stop count, or the bytes written and the components.
 	//
@@ -1022,10 +1036,16 @@ Operation :: enum u32 {
 	//
 	// - `Bad_Operation`: `command` is `None` or a command that the kernel does not know; a write of values
 	//   that a thread of a program cannot hold changes nothing (`thread_registers_refusal`,
-	//   `extended_state_refusal`).
-	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with the rights of the command.
-	// - `Bad_State`: no live thread of this program has `number`; the thread or its program ended; a read or
-	//   a write of a thread that is not held, or of the calling thread; a `Stop` above
+	//   `extended_state_refusal`); a `Write_Schedule` through 0 or a thread handle with a weight above
+	//   the weight of the thread or a request above its request; a `Write_Schedule` with a weight above
+	//   `WEIGHT_FULL`, a request above `REQUEST_LIMIT`, or a weight limit above `WEIGHT_FULL`,
+	//   changes nothing.
+	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with the rights of the command, and not
+	//   the machine handle with the rights of a command of the schedule. The machine handle with
+	//   another command gives `Bad_Handle`.
+	// - `Bad_State`: no live thread of this program has `number`; no live thread of the machine has the
+	//   machine number `number`; the thread or its program ended; a read or
+	//   a write of the registers of a thread that is not held, or of the calling thread; a `Stop` above
 	//   `THREAD_STOP_COUNT_LIMIT` or of a thread that ends; a `Resume` at the count 0.
 	// - `Bad_Address`: `size` is too small, or the program cannot read or write the memory.
 }
@@ -1070,6 +1090,54 @@ REQUEST_DEFAULT :: 3000 // Microseconds: the request of a thread created with th
 // EEVDF (two requests) inside the overflow argument of the scheduler
 // (docs/SCHEDULING.md, "Integer arithmetic and the overflow argument").
 REQUEST_LIMIT :: 100_000
+
+// The schedule of a thread: the two values that a program sets for the
+// scheduling strategies. `Thread_Control` reads it (`Read_Schedule`) and
+// writes it (`Write_Schedule`) while the thread lives, also while it runs;
+// `Thread_Create` takes the same two values. See
+// [thread schedule](term:thread-schedule) and (docs/SCHEDULING.md, "The
+// schedule of a live thread").
+//
+// A read gives the values in use, never 0.
+//
+// Who writes decides what a write can do:
+//
+// - A write through 0 (a thread of the calling program) or through a thread
+//   handle only **lowers**: a weight above the weight that the thread has
+//   now, or a request above its request, gives `Bad_Operation`, and nothing
+//   changes. 0 keeps the value that the thread has. `weight_limit` is not
+//   read.
+// - A write through the machine handle with **Schedule** and **Inspect**
+//   gives the three values, and it alone raises a weight or a request. 0 is
+//   the default of each: `WEIGHT_FULL` for the limit, the limit for the
+//   weight, `REQUEST_DEFAULT` for the request. A weight above the new limit
+//   becomes the limit. A thread whose weight was raised starts again as a
+//   new thread for its scheduling strategy: what it owed and what it was
+//   owed are gone.
+//
+// The weight limit is the most that the weight of the thread can be. A new
+// thread gets the limit of the thread that creates it. So a weight that
+// the holder of **Schedule** lowered stays lowered.
+//
+// Example: `{weight = 256, request = 500}` gives the thread a quarter of the
+// share of a thread of the full weight, and asks for turns of 500
+// microseconds under EEVDF.
+Thread_Schedule :: struct {
+	weight:       u32, // From 1 to the weight limit of the thread. The share of the thread under the strategies that use weights. 0 in a write: the weight that the thread has, or the limit in a write through the machine handle.
+	request:      u32, // Microseconds, from 1 to `REQUEST_LIMIT`. The delay that the thread asks for under EEVDF. 0 in a write: the request that the thread has, or `REQUEST_DEFAULT` in a write through the machine handle.
+	weight_limit: u32, // From 1 to `WEIGHT_FULL`; 0 in a write is `WEIGHT_FULL`. Read from a write through the machine handle only.
+}
+#assert(size_of(Thread_Schedule) == 12)
+
+// thread_schedule_accepted says if a weight and a request are values that a
+// thread can have: `Thread_Create` and `Write_Schedule` refuse the others
+// with `Bad_Operation`. 0 is accepted for each: the default. A weight above
+// the full weight would raise the share of a thread above the share of a
+// thread that asked for nothing. The kernel also refuses a weight above the
+// weight limit of the thread, which this check does not know.
+thread_schedule_accepted :: proc "contextless" (weight, request: u64) -> bool {
+	return weight <= WEIGHT_FULL && request <= REQUEST_LIMIT
+}
 
 // A module record: one module that a loader put in a program (Program_Module).
 // The identity of a program that runs is the list of its module records: the
@@ -1400,10 +1468,12 @@ Fault_Answer_Kind :: enum u64 {
 
 // What Thread_Control does. The results are in the completion record.
 //
-// Each command needs **Inspect** on the thread handle, and a write needs
-// **Write** too (`thread_control_rights`). A read or a write of the
+// Each command of the registers and of the stop count needs **Inspect** on
+// the thread handle, and a write of the registers needs **Write** too
+// (`thread_control_rights`). A read or a write of the
 // registers needs the thread held: its stop count above 0 and its processor
-// left (`Bad_State` before). See [thread control](term:thread-control) and
+// left (`Bad_State` before). The two commands of the schedule need no hold.
+// See [thread control](term:thread-control) and
 // (docs/ARCHITECTURE.md, "The control of a thread").
 Thread_Control_Command :: enum u64 {
 	None                 = 0, // Refused.
@@ -1440,20 +1510,59 @@ Thread_Control_Command :: enum u64 {
 	// with it. Bad_Operation for an area that the processor would refuse
 	// (extended_state_refusal): nothing changes.
 	Write_Extended_State = 6,
+	// Writes the Thread_Schedule of the thread at the address (size: at
+	// least its size) -> the bytes written. The values are the ones in use:
+	// never 0. The thread is not held. A thread handle needs Inspect; the
+	// machine handle with Schedule and Inspect names any thread by its
+	// machine number.
+	Read_Schedule        = 7,
+	// Reads a Thread_Schedule at the address: the thread has this weight and
+	// this request from now on, also while it runs. Through 0 or a thread
+	// handle (with Control) the write only lowers: Bad_Operation for a
+	// weight above the weight of the thread or a request above its request,
+	// and nothing changes; 0 keeps a value. The machine handle with Schedule
+	// and Inspect names any thread by its machine number; its write gives
+	// the three values, raises too, and sets the weight limit: a weight
+	// above the new limit becomes the limit. A raised weight starts the
+	// thread again as a new thread for its strategy.
+	Write_Schedule       = 8,
 }
 
 // thread_control_rights gives the rights that a thread handle needs for a
-// command of Thread_Control: Inspect for each command, and Write too for a
-// write. A write lets its holder choose the code that the program of the
+// command of Thread_Control: Inspect for a hold and for each read, and Write
+// too for a write of the registers. A write of the registers lets its
+// holder choose the code that the program of the
 // thread runs, so it has its own right; a hold and a read do not, so a
 // profiler gets them with no write. A writer also reads the frame before it
-// writes it. Control, the right to end a thread, gives none of them.
+// writes it. Control, the right to end a thread, gives none of them. It
+// gives the write of the schedule, which only lowers: a holder that can end
+// a thread can also give it a smaller share, which is less.
 thread_control_rights :: proc "contextless" (command: Thread_Control_Command) -> Rights {
 	#partial switch command {
 	case .Write_Registers, .Write_Extended_State:
 		return {.Inspect, .Write}
+	case .Write_Schedule:
+		return {.Control}
 	}
 	return {.Inspect}
+}
+
+// thread_control_machine_rights says if a command of Thread_Control also
+// takes the machine handle, with a machine number in place of a thread
+// handle, and gives the rights that the machine handle then needs. The two
+// commands of the schedule only, each with Schedule and Inspect. A read by
+// machine number is a report of the machine, and each report needs
+// Inspect: it gives values of any thread, and says which machine numbers
+// name a thread. A write through the machine handle gives the three values
+// of the record, also the weight limit: its holder reads the schedule
+// first to keep what it does not change, and it gets the machine numbers
+// from a report. So Schedule with no Inspect names no thread.
+thread_control_machine_rights :: proc "contextless" (command: Thread_Control_Command) -> (rights: Rights, taken: bool) {
+	#partial switch command {
+	case .Read_Schedule, .Write_Schedule:
+		return {.Schedule, .Inspect}, true
+	}
+	return {}, false
 }
 
 // The highest stop count of a thread: `Thread_Control` `Stop` gives
@@ -1510,8 +1619,8 @@ THREAD_FLAGS_REQUIRED :: u64(0x202)
 // virtual-8086, the virtual interrupt flags, the reserved bits.
 THREAD_FLAGS_ALLOWED :: u64(0x0025_0FD7)
 
-// Which part of a Thread_Registers or of an extended state area a write
-// refused.
+// Which part of a Thread_Registers, of an extended state area or of a
+// Thread_Schedule a write refused.
 //
 // `Thread_Control` gives `Bad_Operation` for a refused write, and the error
 // record names the refusal and the value. Nothing of the thread changes.
@@ -1525,6 +1634,9 @@ Thread_Write_Refusal :: enum u64 {
 	Mxcsr               = 6, // A bit that the processor does not take (its MXCSR mask).
 	Header_Components   = 7, // XSTATE_BV names a component that the kernel does not save.
 	Header_Reserved     = 8, // A byte of the header after XSTATE_BV is not 0.
+	Weight              = 9, // The weight of a Thread_Schedule is above WEIGHT_FULL, or, in a write that only lowers, above the weight that the thread has: the error record gives the most that applied.
+	Request             = 10, // The request of a Thread_Schedule is above REQUEST_LIMIT, or, in a write that only lowers, above the request that the thread has: the error record gives the most that applied.
+	Weight_Limit        = 11, // The weight limit of a Thread_Schedule, in a write through the machine handle, is above WEIGHT_FULL.
 }
 
 // thread_registers_refusal says what a write of the registers of a thread
@@ -2027,6 +2139,9 @@ Program_Mapping_Report :: struct {
 // fields of the scheduler with no lock: each field is whole, two fields can
 // come from two instants.
 Thread_Report :: struct {
+	// The machine number of the thread: the name of this thread among all the threads of the machine. A new
+	// thread never has the machine number of a thread that ended. `Thread_Control` takes it with the machine handle.
+	machine_number:   u64,
 	number:           u32, // The thread area of the thread in the program.
 	state:            Program_State, // Ready or Waiting (Stopped: it ended).
 	processor:        u32, // 1 + the processor that runs it now. 0: none.
@@ -2041,7 +2156,7 @@ Thread_Report :: struct {
 	run_time:         u64, // Milliseconds of processor time: the ticks in which it ran.
 	deadline:         u64, // The end of its wait, in milliseconds since the start. WAIT_FOREVER: none.
 }
-#assert(size_of(Thread_Report) == 72)
+#assert(size_of(Thread_Report) == 80)
 
 THREAD_REPORT_CAPACITY :: 32 // The thread areas of one program: `THREAD_CAPACITY`.
 

@@ -51,13 +51,20 @@ measure_line_write :: proc "contextless" () {
 }
 
 measure_completion :: proc "contextless" (arguments: []Value) -> Value {
+	columns := [6]Column{text_column("names_of", 32), integer_column("names"), integer_column("collect_nanoseconds"), integer_column("rank_nanoseconds"), integer_column("rows_nanoseconds"), integer_column("colors_nanoseconds")}
+	table, made := made_table("Completion_Measure", columns[:])
+	if !made {
+		return fail("measure_completion: the line has no room for the description")
+	}
 	measure_line_write()
 	least, name_count := completion_measure(collect_console_names)
-	completion_measure_print("the names of this console", least, name_count)
+	completion_measure_log("the names of this console", least, name_count)
+	completion_measure_row(&table, "the names of this console", least, name_count)
 	worst_names_write()
 	least, name_count = completion_measure(collect_worst_names)
-	completion_measure_print("512 names of 128 bytes", least, name_count)
-	return {}
+	completion_measure_log("512 names of 128 bytes", least, name_count)
+	completion_measure_row(&table, "512 names of 128 bytes", least, name_count)
+	return made_value(&table, "measure_completion")
 }
 
 // collect_console_names fills the table as a key at the start of a name
@@ -148,8 +155,20 @@ colors_write :: proc "contextless" (kept: int) {
 	}
 }
 
-// completion_measure_print writes one line of the measure, in microseconds
-// with one decimal.
-completion_measure_print :: proc "contextless" (what: string, least: Key_Time, name_count: int) {
-	print("console: one key with the completion list: the collect ", least.collect / 1000, ".", least.collect / 100 % 10, " us, the rank ", least.rank / 1000, ".", least.rank / 100 % 10, " us, the rows ", least.rows / 1000, ".", least.rows / 100 % 10, " us, the colors ", least.colors / 1000, ".", least.colors / 100 % 10, " us, over ", u64(name_count), " names (", what, ", the least of ", u64(COMPLETION_MEASURE_BATCHES), " batches of ", u64(COMPLETION_MEASURE_KEYS), ")\n")
+// completion_measure_log writes one line of the measure on the log, in
+// microseconds with one decimal: the machine tests read the measure there.
+completion_measure_log :: proc "contextless" (what: string, least: Key_Time, name_count: int) {
+	system.log("console: one key with the completion list: the collect ", least.collect / 1000, ".", least.collect / 100 % 10, " us, the rank ", least.rank / 1000, ".", least.rank / 100 % 10, " us, the rows ", least.rows / 1000, ".", least.rows / 100 % 10, " us, the colors ", least.colors / 1000, ".", least.colors / 100 % 10, " us, over ", u64(name_count), " names (", what, ", the least of ", u64(COMPLETION_MEASURE_BATCHES), " batches of ", u64(COMPLETION_MEASURE_KEYS), ")")
+}
+
+// completion_measure_row adds the measure as one row of the result, in
+// nanoseconds.
+completion_measure_row :: proc "contextless" (table: ^Made_Table, what: string, least: Key_Time, name_count: int) {
+	row := made_row(table)
+	made_text(table, row, 0, what)
+	made_integer(table, row, 1, i64(name_count))
+	made_integer(table, row, 2, i64(least.collect))
+	made_integer(table, row, 3, i64(least.rank))
+	made_integer(table, row, 4, i64(least.rows))
+	made_integer(table, row, 5, i64(least.colors))
 }

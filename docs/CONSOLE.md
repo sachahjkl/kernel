@@ -1,6 +1,6 @@
 # The line of the console
 
-This guide describes the line that is typed at the console: the language that the line is written in, the keys that edit it, the completion list that opens while it is typed, the line history that survives a stop, and the colors of its code.
+This guide describes the line that is typed at the console: the language that the line is written in, the result that a line gives and how the console draws it, the log records that show under a line while it runs, the keys that edit the line, the completion list that opens while it is typed, the line history that survives a stop, and the colors of its code.
 
 ## About this guide
 
@@ -8,13 +8,16 @@ This guide describes the line that is typed at the console: the language that th
 
 **For whom.** A reader who uses the console, and a reader who changes `programs/console`, `support/line_editor` or `support/terminal`.
 
-**Read before.** `PROPERTIES.md`, "19. A command is a function: no text between programs". The terms edit line, line editor, hint line, free row, completion list, chosen row, fuzzy match, line history, history search and terminal are in `GLOSSARY.md`, group Communication.
+**Read before.** `PROPERTIES.md`, "19. A command is a function: no text between programs". The terms edit line, line editor, hint line, free row, completion list, chosen row, fuzzy match, line history, history search, terminal, result drawer and short name of an export are in `GLOSSARY.md`, group Communication; log record and value run are in the group Running code.
 
 **The map of this guide.**
 
 | Section | What it says |
 |---|---|
 | "The language of the console" | What a line can say: values and their kinds, calls, variables, records, tables as values, how a line composes, and its errors |
+| "Results and their drawers" | The one result of a line, the drawer of each kind of result, and the result of each built-in command |
+| "The log records of a line" | Which log records show under a line while it runs, and how the console reads them |
+| "The built-in commands and the services" | Which built-in commands are exports of a service, and which stay in the console |
 | "1. The keys" | What each key does, with the list closed, the completion list open, or the history search open |
 | "2. What the console completes" | Which names come where the caret is, and from which table |
 | "3. The fuzzy match" | How a query matches a name, and the score that orders the list |
@@ -35,9 +38,9 @@ The console owns the line that the input edits: its bytes, the caret, the line h
 
 ## The language of the console
 
-A line of the console is one expression of a small language, or a variable that takes the value of one. The console reads the line, calls the functions that it names with typed values, and prints the value that comes back. No program receives the text of the line: the text stops at the console, and only typed values go to the functions (`PROPERTIES.md`, "19. A command is a function: no text between programs").
+A line of the console is one expression of a small language, or a variable that takes the value of one. The console reads the line, calls the functions that it names with typed values, and draws the one result that comes back: a value, or an error. No program receives the text of the line: the text stops at the console, and only typed values go to the functions (`PROPERTIES.md`, "19. A command is a function: no text between programs").
 
-The code is `programs/console/language.odin` (the parser and the values), `programs/console/commands.odin` (the commands and the calls) and `programs/console/tables.odin` (the commands of tables).
+The code is `programs/console/language.odin` (the parser and the values), `programs/console/commands.odin` (the commands and the calls), `programs/console/tables.odin` (the commands of tables), `programs/console/results.odin` (the result of a line and its drawing), `programs/console/line_records.odin` (the log records of a line) and `support/console_results` (the drawers).
 
 ### The form of a line
 
@@ -49,9 +52,9 @@ factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "("
 ```
 
 - **A name** starts with a letter or `_`, and goes on with letters, digits, `_` and `.`: `monitor.count` and `r.value` are one name each.
-- **An integer** is decimal digits. It has 64 bits with a sign; the console does not check an overflow of a number or of an operation.
+- **An integer** is decimal digits. It has 64 bits with a sign. A number that is larger than 9223372036854775807 is an error of the line. A result of `+`, `-`, `*` or `/` that does not fit is an error of the line too: no result wraps. The checks are `number_value`, `integer_add`, `integer_subtract`, `integer_multiply`, `integer_negate` and `integer_divide` of `support/console_language`. The least integer has no literal: write `-9223372036854775807 - 1`.
 - **A text** is the bytes between two quotes. A text has no escape, so it cannot hold a quote.
-- **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them. A division by zero is an error.
+- **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them. A division by zero is an error. So is the one division whose result does not fit: the least integer by `-1`.
 
 Examples:
 
@@ -68,17 +71,18 @@ abcdef
 
 Each value has one kind. The kinds are those of the module contract (`MODULE_CONTRACT.md`), so an export of a module takes and gives the same values as a command of the console.
 
-| Kind | What it holds | How the console prints it |
+| Kind | What it holds | How the console draws it |
 |---|---|---|
 | `Integer` | A whole number of 64 bits | `42` |
-| `Text` | Bytes | The bytes |
-| `Record` | The bytes of one record, with the description of its record in a module | `Rectangle{x = 1, y = 2}` |
+| `Text` | Bytes | The bytes, one line for each line of the text |
+| `Record` | The bytes of one record, with the description of its record in a module | The name of the record, then one line for each field: its name and its value |
 | `Handle` | A handle that the console holds | `Handle 65541: Memory (Give, Read, Write)`: the kind of the object and the rights, which the console asks of the kernel |
 | `Table` | Records of one description, one after the other | A line of the names of the fields, a line for each row, then the count: `2 rows of Import` |
+| `Bytes` | Bytes with no description | Rows of 16 bytes: the place of the row, the bytes in hexadecimal, their characters; then the count |
 
-A parameter has one more kind, `Bytes`: a `Text` value is its argument. A built-in command can have a parameter of the kind `Value`, which takes a value of any kind; the command checks it itself (the third parameter of `where`).
+A parameter of the kind `Bytes` takes a `Text` value as its argument. A built-in command can have a parameter of the kind `Value`, which takes a value of any kind; the command checks it itself (the third parameter of `where`).
 
-A command with no result prints its answer as lines and gives no value. `help()` shows this in each signature: a command with `->` gives a value of that kind, and a command with no `->` gives nothing.
+A command gives a result and never prints. A command that does something and has nothing to give has no result: `start`, `stop`, `clear`. `help()` shows this in each signature: a command with `->` gives a value of that kind, and a command with no `->` gives nothing. The section "Results and their drawers" has the result of each built-in command.
 
 ### Calls
 
@@ -120,9 +124,10 @@ The bounds:
 - 16 variables. A new name takes a free slot; a name that exists takes its new value.
 - A name of 16 bytes at most, and a text value of 96 bytes at most.
 - A table of 32 KiB of rows at most (`TABLE_KEPT`).
+- No `Bytes` value: "error: a variable keeps no Bytes value".
 - An expression with no value (a call of a command with no result) cannot be kept: "error: the expression has no value".
 
-`variables()` lists them. A variable lives in the memory of the console: it does not survive a stop of the console.
+`variables()` gives them as a table: the name, the type and the value as a text. A variable lives in the memory of the console: it does not survive a stop of the console.
 
 ### Records
 
@@ -130,7 +135,7 @@ A record is a group of named fields, as a module describes it. The command with 
 
 ### Tables as values
 
-A table is the records of one description, one after the other. An export with a `Table` result gives one, and the console holds it as one value: it passes the table to the next call with no parsing. Seven built-in commands work on a table of any record, because each one reads only the description of the records:
+A table is the records of one description, one after the other. An export with a `Table` result gives one, and the console holds it as one value: it passes the table to the next call with no parsing. Eight built-in commands work on a table of any record, because each one reads only the description of the records. A table that a built-in command gives (`grants`, `modules`, `help`) is such a table: the console writes the description of its record in the format of the module contract.
 
 | Command | Gives |
 |---|---|
@@ -139,12 +144,13 @@ A table is the records of one description, one after the other. An export with a
 | `join(left, right, field)` | One row for each pair of rows with one value of the field. The new record has the fields of the left record, then the fields of the right one that the left one does not have, at most 40; its name is `<left>_<right>` |
 | `columns(table, "a b c")` | The rows with only the fields that the text names, in its order. The record keeps its name |
 | `first(table, count)` | The first rows, at most the count |
+| `skip(table, count)` | The rows after the first rows |
 | `rows(table)` | The count of rows, as an `Integer` |
 | `row(table, number)` | One row as a `Record`, from 1 |
 
 `join` and `columns` make a new record description. The console writes it in the format of the module contract, so the next command reads it as it reads the description of a module. A command that gives a table gives a new table; the table of its argument does not change.
 
-The tables of one line share 256 KiB (`TABLE_ARENA`). When the console prints a table, a text field longer than 24 characters ends with `..`: that is a cut of the column on the screen, not of the value.
+The tables of one line share 256 KiB (`TABLE_ARENA`). The console draws a table with no cut inside a value ("Results and their drawers").
 
 ![Tables as parameters: one description, three ways to call](screenshots/tables.png)
 
@@ -161,13 +167,20 @@ A line composes by calls in calls. The console evaluates each argument before it
 
 The first line lists the programs that run a module, keeps the rows of one module, and shows four of their fields. The second joins two tables of the service `manual` on the hash of a module. The third subtracts two counts.
 
-**What does not compose today.** A line can filter and combine only values. Of the 37 built-in commands, 23 print text and give no result: `help`, `programs`, `memory`, `modules`, `load`, `isolate`, `unload`, `connect`, `start`, `stop`, `grants`, `revoke`, `principal_create`, `lock`, `principals`, `replace`, `replacements`, `release`, `variables`, `clear`, `shutdown`, `history_clear` and `measure_completion`. So a line cannot filter, sort or count what they show: `rows(programs())` is refused, because `programs()` gives no value. An export of a module or of a service gives a table, and much of the same information comes from there as a table: `manual.running()` gives the modules of each program that runs, as rows of `Running`, which `where`, `sort` and `rows` take. The 14 other built-in commands give a value: the 7 commands of tables, and `time`, `hash`, `length`, `text`, `repeat`, `buffer` and `byte`.
+**The built-in commands compose too.** A built-in command that lists things gives a table, so a line filters, sorts and counts it as it does the table of an export:
+
+```
+> where(grants("notes"), "state", "held")
+> sort(where(programs(), "state", "waiting"), "name")
+> rows(where(help(), "name", "repeat"))
+> columns(where(loaded(), "call", "direct"), "module imported_by in_place_of")
+```
 
 ### Errors
 
-A line that fails prints one line that starts with `error: `, and gives no value. The first error ends the line: the rest of the line does not run, and the console prints no second error.
+A line that fails has one result: its error. The first error ends the line: the rest of the line does not run. A command never prints its error: it makes the line fail, and the console draws the error after the line ("Results and their drawers", "The drawer of an error"). The first line of a drawn error starts with `error: ` and holds one sentence.
 
-| When | The line |
+| When | The sentence |
 |---|---|
 | No command has the name | `error: no command has the name x; try help()` |
 | A command named with no parentheses | `error: help is a command: write help(...)` |
@@ -177,13 +190,157 @@ A line that fails prints one line that starts with `error: `, and gives no value
 | An argument has the wrong kind | `error: sum_values: argument 1 is Table(Reading, Read), not Table(Reading)` |
 | An operator on the wrong kinds | `error: "-" does not take Text and Text` |
 | A division by zero | `error: division by zero` |
+| A result that does not fit in an integer | `error: "+" of 9223372036854775807 and 1 does not fit in an Integer: an Integer has 64 bits with a sign` |
+| A number that does not fit in an integer | `error: the number 9223372036854775808 does not fit in an Integer: the largest is 9223372036854775807` |
 | A text with no end quote | `error: the text has no end quote` |
 | A field that the records do not have | `error: where: the records ... have no field x; their fields are ...` |
 | A value of the wrong kind for a field | `error: where: the field code is Integer, the value is Text` |
-| An export that fails | `error: manual.exports: the argument name names none of the modules (-1)`: the sentence of its error record (`MODULE_CONTRACT.md`, section 8) |
-| A call in an isolated program that faults | `error: the program agenda stopped: invalid instruction`, then the instruction and the frames of its stop report |
+| An export that fails | `error: manual.exports: the argument name names none of the modules (-1)`: the sentence of its error record (`MODULE_CONTRACT.md`, section 8), then the values of the record |
+| The root service refuses | `error: root.Stop: the argument name names a program of the system: ...`: the sentence of the error record of the root ring, then its values |
+| A call in an isolated program that faults | `error: the program agenda stopped: invalid instruction`, then the instruction and the frames of its stop report, each after `error: ` |
 
-A call that runs before the error keeps its effect: in `length(programs())`, `programs()` runs and prints its lines, then `length` refuses its argument.
+An overflow has an error record of the kind `Over_Limit`: `value` is the left value, `found` the right value, and `limit` the largest integer.
+
+A call that runs before the error keeps its effect: in `length(start("life"))`, `start` runs, then `length` refuses its argument. The line draws only its error.
+
+## Results and their drawers
+
+A line has one result, and the console draws it by its kind. No command writes to the terminal: a command gives a value, or makes the line fail. So each fact that a command gives is a value that the next call can take, and the look of a result is decided in one place.
+
+### The drawers
+
+One drawer exists for each kind of result. A drawer knows no command: it reads the value, and for a record or a table the description of its record. The drawers are in `support/console_results`: they have no state, call no allocator and make no kernel call, and host tests draw each kind into a text (`support/console_results/console_results_test.odin`). A drawer writes parts of a line to the console with what each part is; the console chooses the color.
+
+| Kind | What the drawer writes |
+|---|---|
+| Integer | The decimal text |
+| Text | The bytes, one line for each line of the text. An empty text is one empty line |
+| Record | The name of the record, then one line for each field: two spaces, the name of the field, and its value. The values start at one column |
+| Table | A line with the names of the fields, a line for each row, a line with the count of rows and the name of the record. Each column has the least width that holds its head and its values, with two spaces between two columns. A number is at the right of its column, a text at the left |
+| Handle | `Handle`, its number, the kind of its object, and its rights in parentheses. A handle that names no object: `Handle 7: no object` |
+| Bytes | Rows of 16 bytes: the place of the first byte of the row in 8 hexadecimal digits, the bytes in hexadecimal, their characters (a byte that is no character is `.`). The last line is the count of bytes |
+| An error | "The drawer of an error", below |
+
+```
+> where(grants("notes"), "state", "held")
+program  grant  state  principal  principal_name
+notes    log    held           0  machine
+notes    store  held           0  machine
+2 rows of Grant
+> memory()
+Memory
+  memory_mebibytes            256
+  free_mebibytes              201
+  ...
+```
+
+**The colors.** A value has the color of its value kind, from the one table that the window of the log and the site read (`support/graphics/value_colors.odin`; `docs/DESIGN.md`, "The colors of values"): an Integer is a number, a handle a handle, the name of a record and the kind of an object a type, an error kind a status, the operation of an error an operation. The name of a field, the head of a column and a line about the result (the count of rows) are dim. A text value is plain: the drawer has only the type of a field, and no text is classified by its look.
+
+**No value is cut.** The terminal draws no byte past its last column. The console starts a new row when a line reaches the last column of its window (`WINDOW_COLUMNS`, 96), so a long value goes on in the next row, under the start of its column when that column starts in the left half of the window. The log has the line whole. A text that a command writes in a field of a fixed size, and that is longer than the field, ends with the cut mark and the count of the missing bytes (`GLOSSARY.md`, "Cut mark"): the help of a command in `help()`; `describe(name)` gives it whole.
+
+**The bounds.** The console draws the first 20 rows of a table (`RESULT_ROW_LIMIT`), then one line that says how many rows it does not show, then the count of all the rows. The widths of the columns are those of the rows that it draws. `first(table, count)` and `skip(table, count)` choose other rows, and `where` chooses by a value. The console draws the first 256 bytes of a `Bytes` value (`RESULT_BYTE_LIMIT`), then how many it does not show. A cut is always between two rows, never inside a value.
+
+### The drawer of an error
+
+The first line is `error: ` and the sentence. When a call gave an error record (`MODULE_CONTRACT.md`, section 8), the lines after it give the record as values, so a reader sees what the sentence was made from:
+
+```
+> add(1, "a note of forty bytes, four more than 36")
+error: add: the argument note has 40 bytes; it can have at most 36 bytes (-1)
+  kind       Too_Long
+  operation  add
+  argument   2 note
+  values     value 40, limit 36, found 0, unit bytes
+```
+
+- `kind`: the error kind, by its name in `contract/errors`. A kind that the contract does not have, from another program: "an unknown kind" and its number.
+- `operation`: the export, or `root.` and the command of the root ring.
+- `argument`: the number of the argument that is wrong, from 1, and its name. The line is absent when the record names no argument.
+- `values`: `value`, `limit` and `found` of the record, and its unit when it has one.
+
+When the export has a table of error details and wrote more than one detail, one line for each detail follows, each after `error: `, then the count of the details that the table of the console did not hold (16 places). An error of the console itself (a wrong kind of argument, an unknown name) has no record: its sentence is all of it. A load that fails, and a program that stops on a fault, add their lines after the sentence, each after `error: `.
+
+### The result of each built-in command
+
+| Command | Result | What it gives |
+|---|---|---|
+| `help()` | Table of `Command` | One row for each command: `name`, `signature`, `about` |
+| `describe(name)` | Text | The signature and the whole help of one command |
+| `programs()` | Table of `Program` | The export `monitor.programs()` ("The built-in commands and the services") |
+| `program_modules()` | Table of `Program_Module` | One row for each module of each program: `slot`, `program`, `module`, `replaces`, `hash_head` |
+| `memory()` | Record `Memory` | The memory of the machine and the counters of the kernel. `free_pages_no_budget_holds` is 0 when each page is free or paid |
+| `locks()` | Table of `Lock` | One row for each kind of kernel lock: `lock`, `waits`, `takes` |
+| `modules()` | Table of `Module` | One row for each module of the boot image: `name`, `bytes`, `hash_head` |
+| `load(name)`, `isolate(name)`, `connect(name)` | Record `Loaded` | `module`, `commands`, `call` (`direct`, `isolated` or `service`), `hash_head` |
+| `unload(name)` | Record `Unloaded` | `module`, `commands`, `memory`: what became of the memory of the module |
+| `loaded()` | Table of `Loaded_Module` | The modules and the services whose exports are commands, and the imports of the modules: `module`, `call`, `imported_by`, `in_place_of`, `hash_head` |
+| `start(name)`, `stop(name)` | none | |
+| `grants(name)` | Table of `Grant` | One row for each grant that the program has or lost: `program`, `grant`, `state` (`held` or `lost`), `principal`, `principal_name` |
+| `revoke(name, grant)` | Integer | The holdings that ended |
+| `principal_create(name)` | none | The window of unlock opens |
+| `lock()` | Integer | The programs of the session that stopped |
+| `principals()` | Table of `Principal` | `number`, `name`, `state` (`machine`, `locked`, `unlocked`, `creating`), `public_key_head`, `measure_head` |
+| `replace(name, by)` | none | |
+| `replacements()` | Table of `Replacement` | `module`, `by`, `module_hash_head`, `by_hash_head` |
+| `time()` | Integer | Milliseconds since the machine started |
+| `hash(text)` | Text | 64 hexadecimal digits |
+| `length(text)` | Integer | |
+| `text(integer)` | Text | |
+| `repeat(text, count)` | Text | |
+| `buffer(pages)` | Handle | A new memory object |
+| `byte(memory, place)` | Integer | |
+| `bytes(memory, first, count)` | Bytes | At most 4096 bytes of a memory object |
+| `release(memory)` | none | |
+| `variables()` | Table of `Variable` | `name`, `type`, `value` |
+| `clear()`, `shutdown()` | none | |
+| `history_clear()` | Integer | The lines that the history forgot |
+| `measure_completion()` | Table of `Completion_Measure` | Two rows, in nanoseconds; the same measure goes to the log in microseconds |
+| `where`, `sort`, `join`, `columns`, `first`, `skip` | Table | "Tables as values" |
+| `rows(table)` | Integer | |
+| `row(table, number)` | Record | |
+
+A `hash_head` is the head of a BLAKE3 hash: its first 8 bytes, as 16 hexadecimal digits. `manual.modules()` gives the whole hash of a module.
+
+**How a built-in command makes a table.** It gives the name of its record and its columns (`made_table` in `programs/console/results.odin`), then adds rows. The console writes the description of the record in the format of the module contract (`console_results.description_write`), in the memory of the tables of the line: a table of a command and a table of an export are one kind of value.
+
+## The log records of a line
+
+While a line calls an export, the console shows under the line the log records that the called program writes, so the effect of a call is visible where the call was typed.
+
+```
+> server.put("hello.txt", "kept in the store of server")
+  server
+    server: the page /hello.txt is in the store: 27 bytes
+27
+```
+
+- **Which records.** The records that a program called by the line wrote, from the first call of the line on: a service, a sandboxed program of `isolate`, and the console itself for a module that `load` put in it. A line follows 4 programs at most. A program that `start` starts is not followed: the line ends before the program writes.
+- **By channel.** The records of one program and one channel follow one head line: the name of the program, in the color of a module, and the channel. A record of another channel starts a new group.
+- **The value runs.** Each value run of a record is in the color of its value kind, as in the window of the log (`docs/TOOLS.md`, "The log"). A record of the level error is in the color of a failure.
+- **While the line runs.** During an isolated call or a call of a service, the console reads the new records each 100 ms (`STATUS_INTERVAL`), and once more when the line ends, before it draws the result. During a direct call the console waits in the module: the records show when the call returns.
+- **To the terminal only.** These lines do not go to the log: the records are in the log already.
+
+**How the console reads the records.** The console has no grant to read the memory of the log (the grant `log_records`), and gets none. It reads the records as any caller that acts for the principal: it calls the exports `records(after)` and `value_runs(after)` of the service `log`, through a connection that the root service gives. The console asks for that connection itself, at the first line that calls a program; the connection adds no command, until `connect("log")` asks for the commands. The console reads the rows with the description of their record, by the names of the fields, and trusts no count of the service.
+
+**When there is no record.** With no service `log`, or when the root service refuses the connection, a line shows no record; the console asks again after a line with `start` or `connect`. A service that does not answer in one second (`LINE_RECORD_ANSWER_LIMIT`) is not asked again in that line. A line that calls the service `log` itself shows no record: the console does not use a connection while a call runs on it.
+
+**The bounds.** One read draws at most 32 records, and reads at most 8 answers: a program that writes faster keeps its records in the log, where `log.records(after)` gives them.
+
+## The built-in commands and the services
+
+A fact that a service holds is an export of that service, and the console calls it as any export. A built-in name can stay as a short name of such an export: the command connects to the service when the console has no connection to it yet, then calls the export through the connection (`bound_call` in `programs/console/commands.odin`).
+
+| Built-in command | Where the fact comes from |
+|---|---|
+| `programs()` | The export `monitor.programs()`. With no service `monitor`, or when `monitor` lost its grant, the line fails with the error of the connection or of the export |
+| `start`, `stop`, `grants`, `revoke`, `principal_create`, `lock`, `principals`, `replace`, `connect` | A command of the root ring, with typed values and an error record. The root service serves no exports: it has a ring of its own commands, and these built-in commands are its callers |
+| `modules()` | The boot image that the root service granted to the console. `manual.modules()` gives the same modules with more fields, when the program `manual` runs |
+| `replacements()` | The replacement table that the root service granted to the console, read-only. `manual.replacements()` gives it too, when `manual` runs |
+| `program_modules()`, `memory()`, `locks()` | The reports of the kernel, with the grant of the console to inspect the machine. `manual.running()` gives the modules of the programs, and `monitor.counts()` the counts, when those programs run |
+| `load`, `isolate`, `unload`, `loaded`, `buffer`, `byte`, `bytes`, `release` | The console itself: its command table, its modules, its handles |
+| `help`, `describe`, `variables`, `where`, `sort`, `join`, `columns`, `first`, `skip`, `rows`, `row`, `time`, `hash`, `length`, `text`, `repeat`, `clear`, `history_clear`, `measure_completion`, `shutdown` | The language and the console itself |
+
+`modules`, `replacements`, `program_modules`, `memory` and `locks` stay in the console because the programs that serve the same facts (`manual`, `monitor`) do not run at each boot, and these commands must work with no other program. The stores are a fact of the storage service: the console has no built-in command for them, and calls `storage.stores()` and `storage.usage()`.
 
 ## 1. The keys
 
@@ -216,7 +373,7 @@ The console completes the name at the caret from what it knows at that moment: i
 | A name with no dot | Each command (with its full name: `monitor.count`), each connected service, each variable | The command table: the commands of the console, and the exports of the modules and services, from their descriptions |
 | After the name of a service and a dot (`storage.`) | The exports of that service | The commands whose name starts with that name and a dot. If none does, the whole name is matched against all the names |
 | Inside the quotes of the first argument of `load`, `isolate`, `start`, `replace` | The modules of the boot image | The image that the root service granted |
-| Inside the quotes of `connect`, `stop`, `grants`, `revoke` | The programs that run | `Inspect` on the machine, with the grant that the console holds. The root service has no command that lists its services: the console asks for none, and gets no new grant. With no grant to inspect, the list names the services that the console is connected to |
+| Inside the quotes of `connect`, `stop`, `grants`, `revoke` | The programs that run | `Inspect` on the machine, with the grant that the console holds. The root service has no command that lists its services: the console asks for none, and gets no new grant. With no grant to inspect, the list names the services whose exports are commands of the console |
 | Inside the quotes of `unload` | The modules that `load` and `isolate` added | The table of the console |
 
 Not completed: the second argument of a call (the grant names of `revoke`), the fields of a record variable (`r.x`), the common start of several names (the list replaces it).
@@ -277,7 +434,7 @@ The main machine and `kerneltool measure` (the machine with only the desktop and
 
 The console knows the names; the terminal owns the cells and the keys. The console sends the rows to show (`terminal.List_Row`: the name, what it is, the places that matched) and then the list (`terminal.List`: the count of rows, the chosen row, the place of the first row in all the names and their count, and the byte of the edit line where the name starts). The terminal lays it out: under the edit line and its hint line when the rows below hold it, above the edit line if not, at the column of the start of the name, as wide as the longest row and cut to the terminal. It has at most 8 rows, and a scroll mark at the right when there are more names.
 
-So no record has a place on the screen, and the terminal stays a program with no knowledge of the language of the console. The rows go through the text region of the console and its terminal: no third program reads it, and the terminal already shows each name that `help()` prints.
+So no record has a place on the screen, and the terminal stays a program with no knowledge of the language of the console. The rows go through the text region of the console and its terminal: no third program reads it, and the terminal already shows each name that `help()` gives.
 
 The look follows `docs/DESIGN.md`: the cells of the list have the card color, the chosen row the chosen blue `COLOR_CHOSEN` with its text in white, the matched characters the accent (on the chosen row: the chosen blue on a white cell), what a name is at the right of its row, in the colors of its code (section 7); a border of one pixel in the color of the kernel, as the menus of the bar; no shadow, no round corner. A cell of the text grid has a fill color for this (`interface.Text_Grid_Cell.filled` and `background`, draw record version 5): a cell is 12 bytes in place of 8, and the damage by difference redraws only the rows of the list that change. The border is four records after all the others, so the records before keep their places when the list opens or closes.
 
@@ -357,4 +514,4 @@ A part with no class has the color of the text around it: the tone of the line, 
 
 **The bound, and a hostile list.** A row has at most 64 runs: a line with more parts keeps its first 64 runs, and the text after them is whole, in the plain color. The text is never cut by the runs: only the color stops. The terminal checks the runs against the row that takes them: each run inside the row, after the run before it, with at least one byte and a kind that exists. One run that fails, or bytes that are not a whole count of runs, or a target that takes no runs: the row is plain, its text whole, and the terminal counts it and writes once on the log "terminal: console sent runs of code that do not fit their row: the row is drawn plain, its text whole".
 
-**The cost.** The runs of the edit line are made only when its text or its caret changes, on at most 202 bytes, with one look in the tables of names (128 commands, 16 variables, 8 services, the loaded modules) for each name. `measure_completion()` gives the time of the runs of one key in its fourth part (section 4). When Tab opens the list, the log line says the count of the runs of the first row ("...; its first row has 13 runs of code"), so that a test checks the colors with no pixel.
+**The cost.** The runs of the edit line are made only when its text or its caret changes, on at most 202 bytes, with one look in the tables of names (192 commands, 16 variables, 12 services, the loaded modules) for each name. `measure_completion()` gives the time of the runs of one key in its fourth part (section 4). When Tab opens the list, the log line says the count of the runs of the first row ("...; its first row has 13 runs of code"), so that a test checks the colors with no pixel.
