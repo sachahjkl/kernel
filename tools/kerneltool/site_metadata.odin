@@ -446,7 +446,7 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 		main_entity = system_id
 	case is_guide:
 		main_entity = strings.concatenate({page_address, "#article"}, context.temp_allocator)
-	case page.path == site_page_file(SITE_GLOSSARY_FOLDER):
+	case page.path == site_page_file(SITE_GLOSSARY_FOLDER) || site_glossary_group_of_page(site.glossary, page.path) >= 0:
 		main_entity = strings.concatenate({page_address, "#terms"}, context.temp_allocator)
 	case page.path == site_page_file(SITE_MODULES_FOLDER):
 		main_entity = strings.concatenate({page_address, "#modules"}, context.temp_allocator)
@@ -524,21 +524,31 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 		site_json_optional_reference(&node, "author", author_id)
 		site_json_reference(&node, "image", card_id)
 		site_json_close(&node)
-	case page.path == site_page_file(SITE_GLOSSARY_FOLDER):
+	case main_entity != "" && (page.path == site_page_file(SITE_GLOSSARY_FOLDER) || site_glossary_group_of_page(site.glossary, page.path) >= 0):
+		// The index holds the set of every term; the page of a group, the
+		// set of its terms. A term is named by its entry on the page of its
+		// group, on both: one id for one term.
+		is_index := page.path == site_page_file(SITE_GLOSSARY_FOLDER)
 		strings.write_byte(&b, ',')
 		node := site_json_open(&b, "DefinedTermSet", main_entity)
 		site_json_text(&node, "name", page.title)
 		site_json_text(&node, "url", page_address)
 		site_json_key(&node, "hasDefinedTerm")
 		strings.write_byte(&b, '[')
-		for term, index in site.terms {
-			if index > 0 {
+		written_terms := 0
+		for term in site.terms {
+			if !is_index && term.page != page.path {
+				continue
+			}
+			if written_terms > 0 {
 				strings.write_byte(&b, ',')
 			}
-			term_node := site_json_open(&b, "DefinedTerm", strings.concatenate({page_address, "#", term.id}, context.temp_allocator))
+			written_terms += 1
+			term_address := strings.concatenate({site_page_address(address, term.page), "#", term.id}, context.temp_allocator)
+			term_node := site_json_open(&b, "DefinedTerm", term_address)
 			site_json_text(&term_node, "name", term.name)
 			site_json_text(&term_node, "description", site_plain_text(term.definition))
-			site_json_text(&term_node, "url", strings.concatenate({page_address, "#", term.id}, context.temp_allocator))
+			site_json_text(&term_node, "url", term_address)
 			site_json_reference(&term_node, "inDefinedTermSet", main_entity)
 			site_json_close(&term_node)
 		}

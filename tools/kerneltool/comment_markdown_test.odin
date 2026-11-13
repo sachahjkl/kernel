@@ -132,7 +132,7 @@ comment_markdown_link_targets :: proc(t: ^testing.T) {
 	address, address_problem := site_comment_link_target(&site, "https://example.org/x")
 	testing.expect(t, address_problem == "" && address.kind == .Address, address_problem)
 	term, term_problem := site_comment_link_target(&site, "term:module")
-	testing.expect(t, term_problem == "" && term.kind == .Term && term.address == "docs/reference/glossary/index.html#term-module", term_problem)
+	testing.expect(t, term_problem == "" && term.kind == .Term && term.address == "docs/reference/glossary/code/index.html#term-module", term_problem)
 	expect_page(t, &site, "docs/ARCHITECTURE.md", "docs/guides/ARCHITECTURE/index.html")
 	expect_page(t, &site, "docs/ARCHITECTURE.md#kernel-systems", "docs/guides/ARCHITECTURE/index.html#kernel-systems")
 	expect_page(t, &site, "Memory_Map", "docs/reference/operations/index.html#operation-memory-map")
@@ -147,7 +147,7 @@ comment_markdown_link_targets :: proc(t: ^testing.T) {
 	}
 	// The markup: a link with its own text; a declaration has its card.
 	html := render_comment(&site, "See [the ring](docs/ARCHITECTURE.md#kernel-systems), [a **wait**](system.word_wait), [a module](term:module) and [the site](https://example.org).")
-	testing.expect(t, strings.contains(html, "<a class=\"term\" href=\"../../../docs/reference/glossary/index.html#term-module\">a module</a>"), html)
+	testing.expect(t, strings.contains(html, "<a class=\"term\" href=\"../../../docs/reference/glossary/code/index.html#term-module\">a module</a>"), html)
 	testing.expect(t, strings.contains(html, "<a href=\"../../../docs/guides/ARCHITECTURE/index.html#kernel-systems\">the ring</a>"), html)
 	testing.expect(t, strings.contains(html, "data-declaration-card=\"declaration-") && strings.contains(html, "<strong>wait</strong></a>"), html)
 	testing.expect(t, strings.contains(html, "<a href=\"https://example.org\">the site</a>"), html)

@@ -52,7 +52,7 @@ site_comment_link_target :: proc(site: ^Site, target: string) -> (link: Site_Com
 		name := target[len(SITE_TERM_TARGET_PREFIX):]
 		for term in site.terms {
 			if site_slug(term.name) == site_slug(name) {
-				return {kind = .Term, address = strings.concatenate({site_page_file(SITE_GLOSSARY_FOLDER), "#", term.id}, context.temp_allocator), definition = term.definition}, ""
+				return {kind = .Term, address = strings.concatenate({term.page, "#", term.id}, context.temp_allocator), definition = term.definition}, ""
 			}
 		}
 		return {}, fmt.tprintf("no term of the glossary is \"%s\"", name)
@@ -74,6 +74,10 @@ site_comment_link_target :: proc(site: ^Site, target: string) -> (link: Site_Com
 		}
 		if !site_document_has_id(site, path, anchor) {
 			return {}, fmt.tprintf("%s has no heading with the id \"%s\"", path, anchor)
+		}
+		if path == SITE_GLOSSARY_FILE {
+			// A term and a group are on the page of their group.
+			page = site_glossary_anchor_page(site, anchor)
 		}
 		return {kind = .Page, address = strings.concatenate({page, "#", anchor}, context.temp_allocator)}, ""
 	}

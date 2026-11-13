@@ -19,7 +19,7 @@ SITE_OUTLINE_LIST_OPEN :: "<nav class=\"outline-list\" aria-label=\"On this page
 // The files of the site whose bytes change between builds. A proxy keeps a
 // file for hours, so each link to one of them carries a version of its
 // bytes: the same bytes give the same address, new bytes a new address.
-SITE_VERSIONED_FILES :: [?]string{SITE_STYLE_SHEET, SITE_SEARCH_SCRIPT, SITE_MARK_ANIMATION_SCRIPT, SITE_MODULE_GRAPH_SCRIPT, SITE_SEARCH_INDEX}
+SITE_VERSIONED_FILES :: [?]string{SITE_STYLE_SHEET, SITE_SEARCH_SCRIPT, SITE_MARK_ANIMATION_SCRIPT, SITE_MODULE_GRAPH_SCRIPT, SITE_GLOSSARY_SCRIPT, SITE_SEARCH_INDEX}
 // The bytes of the hash in a version: 8 bytes, 16 hexadecimal digits.
 SITE_VERSION_BYTES :: 8
 
@@ -152,6 +152,25 @@ site_tree_html :: proc(site: ^Site, page: Site_Page) -> string {
 			}
 			strings.write_string(&b, "<li>")
 			site_tree_link(site, &b, page.path, entry.path, entry.title, false)
+			// The glossary is one page for each group: the groups are
+			// under it, each with the count of its terms.
+			if entry.path == site_page_file(SITE_GLOSSARY_FOLDER) && len(site.glossary.groups) > 0 {
+				strings.write_string(&b, "\n<ul class=\"tree-glossary\">\n")
+				for group in site.glossary.groups {
+					group_page := site_glossary_group_page(group.id)
+					if !site_page_exists(site, group_page) {
+						continue
+					}
+					fmt.sbprintf(&b, "<li><a href=\"%s\"", site_page_link(site, page.path, group_page))
+					if page.path == group_page {
+						strings.write_string(&b, " aria-current=\"page\"")
+					}
+					strings.write_byte(&b, '>')
+					site_escape(&b, group.name)
+					fmt.sbprintf(&b, " <span class=\"tree-count\">%d</span></a></li>\n", len(group.terms))
+				}
+				strings.write_string(&b, "</ul>\n")
+			}
 			strings.write_string(&b, "</li>\n")
 		}
 		strings.write_string(&b, "</ul>\n</li>\n")

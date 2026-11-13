@@ -24,7 +24,7 @@ No page holds a text that a person must remember to update: each page is generat
   - no page names a document of the repository as bare text (see "The count and the check").
 - Then the command checks what other programs read (see "What other sites read"); a failure stops it in the same way.
 - After the checks of the pages, the command makes the index of the search and checks it against the pages (see "The search"); a failure stops it in the same way.
-- At its end the command prints: the pages and their bytes, the count of the redirect pages and the count of each generation of old addresses, the other files, the bytes of the style sheet and the count of the icons inside it, the entries and the bytes of the index of the search and the bytes of the script, the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, the count of the document references and the first three whose labels found no heading (see "The references to documents"), the count of the declarations of the sources and of the files that the parser refused, and the count of the code spans that link to a declaration, that are ambiguous and that name no declaration, with the first five of the last two (see "The declarations of the sources"), the counts of the module graph and its modules with no entry that no module imports (see "The module graph"), each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the count of the pictures of the repository that it compressed, with their bytes before and after.
+- At its end the command prints: the pages and their bytes, the count of the redirect pages and the count of each generation of old addresses, the other files, the bytes of the style sheet and the count of the icons inside it, the entries and the bytes of the index of the search and the bytes of the script, the bytes of each page of the glossary with its bound (see "The glossary"), the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, the count of the document references and the first three whose labels found no heading (see "The references to documents"), the count of the declarations of the sources and of the files that the parser refused, and the count of the code spans that link to a declaration, that are ambiguous and that name no declaration, with the first five of the last two (see "The declarations of the sources"), the counts of the module graph and its modules with no entry that no module imports (see "The module graph"), each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the count of the pictures of the repository that it compressed, with their bytes before and after.
 - `kerneltool check` runs the host tests of the site (`tools/kerneltool/site_test.odin`, `site_render_test.odin`) and checks that each picture that `README.md` names is a file of the repository. It does not write the site.
 
 ## The pages
@@ -38,7 +38,8 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `docs/guides/` | The table "Documents" of `README.md`, then the other documents of `docs/` by name |
 | `docs/guides/<name>/` | Each document of `docs/` but the working records `HANDOFF.md`, `REVIEWS.md`, `SITE.md` and `FIRST_MILESTONE.md` (`SITE_WORKING_RECORDS`), which stay out of the site: only the guides that explain the system are published. A link of a page to a working record names the file in the repository. The glossary is a page of the reference |
 | `docs/reference/` | The list of the reference tables below |
-| `docs/reference/glossary/` | `docs/GLOSSARY.md`: each term is an entry with the anchor `term-<name>` (see "The glossary") |
+| `docs/reference/glossary/` | The index of `docs/GLOSSARY.md`: every term from A to Z, each row with the anchor `term-<name>` (see "The glossary") |
+| `docs/reference/glossary/<group>/` | One group of `docs/GLOSSARY.md`, by the slug of its heading: each term of the group is an entry with the anchor `term-<name>` |
 | `docs/reference/commands/` | `COMMANDS` in `tools/kerneltool/main.odin`: the comment above `COMMANDS ::` (what the tool is and how to run a command) at the top; for each command its name, the comment lines just above its entry as its documentation (the first sentence is the cell "What it does"), and its help, the line that `kerneltool help` prints |
 | `docs/reference/numbers/` | The list `site_measures`, the measure record `docs/measures/measures.txt` and the logs of `build/` that are newer than it |
 | `docs/reference/licenses/` | See "The licenses" |
@@ -94,7 +95,7 @@ The old addresses were public. Two generations of them exist, and each old addre
 - With a site address it also names the new address as its canonical address. With none it has no canonical address, as no page has one.
 - It is not a page of the site: it is not in the sitemap, the index of the search, `llms.txt` or the feeds, and the checks of the pages, of the page graph and of the search do not apply to it.
 - The check (`site_check_redirects`): its path is not the path of a page or of a file of the site, and its refresh and its link name a page that the command writes, never another redirect page.
-- The command prints the count of the redirect pages, and the count of each generation. With the pages of today (17 guides, 12 reference pages that are not index pages, 81 module pages, the three index pages of the guides, the reference and the modules, and the status, the news and the releases), it expects 113 of each: 226 redirect pages. The page of the module graph has the redirect pages of the rule, though its old addresses were never public: the rule has no exception.
+- The command prints the count of the redirect pages, and the count of each generation. With the pages of today (17 guides, 12 reference pages that are not index pages, 81 module pages, the three index pages of the guides, the reference and the modules, and the status, the news and the releases), it expects 113 of each: 226 redirect pages, and two more for the page of each group of the glossary (14 groups: 254). The page of the module graph and the pages of the groups of the glossary have the redirect pages of the rule, though their old addresses were never public: the rule has no exception. The index of the glossary is not an index page in this sense: it keeps its old path `reference/glossary.html`. A redirect page has no script, so it does not keep the anchor of an old address: `reference/glossary.html#term-<name>` opens the index at its top.
 - The host test `site_addresses_of_every_page` checks, with a site address and with none: every old path of both generations has its redirect page, which names its page; no old path is a page; a redirect to a page that is not written, to another redirect, or at the path of a file or a page fails the check; two pages with one old path fail; and the sitemap, the index of the search, `llms.txt` and the two feeds name no old address.
 
 ## The Markdown that the site renders
@@ -118,7 +119,7 @@ Links:
 - A link to an address of another host stays a link.
 - A code span that names a row of a reference table becomes a link to the row. The rule: the whole text of the span, with its case, is the name of one kernel operation (`Memory_Map`), one error kind (`No_Grant`) or one module (`math`); or the span is a call of a built-in command of the console (`load("math")`, `help()`). A name that two tables have links nowhere: `Bad_Address` is a status and an error kind. A status, a unit and a grant are not linked: their names (`Pages`, `Store`, `Person`) are also common words of the code. A document of `docs/` comes first, then a row, then a file of the repository.
 - A code span that names a declaration of the sources (`blend_coverage_row_in_order`, `graphics.mix`, `layout_place()`) is a link to it, with a declaration card; a code span that is a fragment of Odin (`square_root[(d * d) >> 12]`) is colored as a block of code. A document, a row and a file come first. See "The declarations of the sources".
-- The first use of each term of the glossary on a page links to the term, with its short definition as the tooltip of the link. The rule: the letters of the term with no regard to case, a whole word, or the word with an `s`; outside code, links and headings; the longest terms first; once for each term on a page. On the page of the glossary the rule holds inside each entry, and an entry never links its own term.
+- The first use of each term of the glossary on a page links to the term, with its short definition as the tooltip of the link. The rule: the letters of the term with no regard to case, a whole word, or the word with an `s`; outside code, links and headings; the longest terms first; once for each term on a page. The link names the entry on the page of the group of the term, never the index of the glossary. On the page of a group the rule holds inside each entry, and an entry never links its own term. The index of the glossary links no term in its text: each row is the link to its term.
 
 What it does not render, shown as text and listed by the command: a mermaid diagram (shown as its code), a line of HTML, a table with no line of dashes, a fence with no end, a link to a file that is not in the repository. A `_` is text.
 
@@ -128,7 +129,7 @@ Each guide has the documentation layout (see "The two layouts"): its headings of
 
 ## The glossary
 
-The glossary (`docs/GLOSSARY.md`) is one source, read by one reader: `glossary_read` (`tools/kerneltool/glossary.odin`). The page of the glossary, the links to a term on the other pages, the entries of the search, the page graph, the references to a term and the check of the tool all take the terms that it gives.
+The glossary (`docs/GLOSSARY.md`) is one source, read by one reader: `glossary_read` (`tools/kerneltool/glossary.odin`). The pages of the glossary, the links to a term on the other pages, the entries of the search, the page graph, the references to a term and the check of the tool all take the terms that it gives.
 
 ### The form of an entry
 
@@ -138,20 +139,43 @@ The glossary (`docs/GLOSSARY.md`) is one source, read by one reader: `glossary_r
 - The paragraphs after it are the explanation, in the Markdown of the guides: what the term is for, how a program gets and uses it, its neighbours, what it is not, an example from the system, and a document reference to its full design.
 - The last paragraph starts with "Do not use: " and lists the words that the term replaces. It is optional.
 
-`glossary_read` refuses a table of terms (the form before this one), a term before the first group, a term with no short definition or whose first paragraph is a list, a table, a quote or a fence, a heading of level 4 or more inside an entry, and a line "Do not use" that is not the last paragraph of its entry. `kerneltool check` and `kerneltool site` stop on each of them, with the line.
+`glossary_read` refuses a table of terms (the form before this one), two groups whose headings have one slug (each group is a page, named by its slug), a term before the first group, a term with no short definition or whose first paragraph is a list, a table, a quote or a fence, a heading of level 4 or more inside an entry, and a line "Do not use" that is not the last paragraph of its entry. `kerneltool check` and `kerneltool site` stop on each of them, with the line.
 
 ### The terms with no explanation
 
 `kerneltool check` prints the count of the terms that have a short definition and no explanation, and their names by group, as a warning: a short definition alone is the summary that a reader of another system cannot use. The warning becomes a failure when every group has its explanations.
 
-### The page
+### The pages
 
-- Each group is a `<section class="glossary-group">` with its heading `<h2>`.
-- Each term is a `<div class="term-entry">`: its heading `<h3 id="term-<name>">`, its short definition in `<p class="term-definition">` (a rule at its left, in bold), its explanation, then `<p class="term-avoided">` with the label "Do not use" and the words, dim. A word in code marks stays code; no word links.
-- Inside an entry, the first use of each other term links to its entry on the same page (`#term-<name>`): a reader who opens one entry finds its neighbours there. The short definition links too. The words to avoid never link.
-- The list "On this page" holds each group and each term: it is the index of the terms, at the right of the text from 1100 pixels, above it under that width.
+The glossary is one page for each group and an index. A single page of every entry passed 1 MB before compression: a browser lays out the whole page before it shows the entry of a link. No page of the glossary passes 1 MB (`SITE_GLOSSARY_PAGE_BYTE_LIMIT`), and the command prints the bytes of each one with that bound.
 
-The page stays one page, at its address of before: each anchor `term-<name>` stays where the links of the other pages and of other sites point. The command prints the bytes of each page. If the glossary page passes 1 MB, the page splits into one page for each group, and the page of today keeps its address with a script that sends each old anchor to the page of its group.
+The page of a group, `docs/reference/glossary/<group>/` (the slug of the heading of the group):
+
+- Its `h1` is the name of the group, with the slug as its id. A line under it names the glossary and the count of the terms of the group. The text under the heading of the group in the file follows.
+- Each term is a `<div class="term-entry">`: its heading `<h2 id="term-<name>">`, its short definition in `<p class="term-definition">` (a rule at its left, in bold), its explanation, then `<p class="term-avoided">` with the label "Do not use" and the words, dim. A word in code marks stays code; no word links.
+- Inside an entry, the first use of each other term links to its entry: `#term-<name>` for a term of the same group, the page of its group for another. The short definition links too. The words to avoid never link.
+- The list "On this page" holds each term of the group.
+- At its end, the links to the groups before and after it, in the order of the file.
+- Its title is "Glossary: <group>". Its breadcrumbs pass through the index of the glossary.
+
+The index, `docs/reference/glossary/`, keeps the address of the single page of before:
+
+- The title and the introduction of the file, then a paragraph that says how to find a term: its word in the list from A to Z, or the search.
+- "The groups": each group as a link to its page, with the count of its terms.
+- "The terms from A to Z": a line of the letters, then a heading `h3` for each letter (`letter-<letter>`; `letter-signs` for a name that does not start with a letter) and a `<dl class="glossary-index">`. A reader looks for a word, so the order is the order of the words, with no regard to case; two terms of one name keep the order of the file.
+- Each term is one row: `<div id="term-<name>" data-group-page="<the page of its group>">`, then the name as a link to its entry, its group as a dim label, and its short definition. Every term of the file has its row, a name of two letters too, which no other page links.
+
+The anchors of the old addresses: a link `…/glossary/#term-<name>`, from another site, a page in a cache or a search engine, named the single page. The site has no rules of a server, so the index keeps each anchor:
+
+- With no script, the address shows the row of the term, at the same anchor, with its definition and the link to its entry.
+- The script of the index (`glossary.js`, a file of the site: no script is in a page) reads the anchor `#term-<name>` of the address, at the load and at each change of the anchor. It finds the row of that id and goes to the page that its attribute `data-group-page` names, with the same anchor. It replaces the address in the history, so "back" does not come again to the index. The table of the term to its page is the rows of the page itself: the script needs no second file.
+- The entry on the page of the group has the same id as the row of the index: one fragment works on both pages. Two terms of one name in two groups keep their two anchors (`term-frame`, `term-frame-2`), each on the page of its group and both at the index.
+
+Every link to a term goes straight to the page of its group, never through the index: the term links of the pages, the links `term:` of the comments, the references to a term of the glossary, the results of the search and the ids of the page graph. A link `docs/GLOSSARY.md#<id>` of a comment names the page of the group that holds the id.
+
+The check of the command (`site_glossary_problems`), on the pages that it writes: each page of the glossary is written and has at most 1 MB; the index has each id of a term once, in a row that names the page of the group of the term; the page of each group has the entry of each of its terms once. The host tests `site_glossary_pages_split_by_group` and `site_glossary_pages_of_the_repository` run the check on a small glossary, on damaged pages and on the glossary of the repository.
+
+The documentation tree lists the groups under the glossary, each with the count of its terms.
 
 ## The news
 
@@ -193,7 +217,7 @@ The owner asked for it on 2026-11-12: "une doc riche et auto générée, avec re
 
 - An entry has a title (what the match reads), its page (an index of `pages`), an anchor (an id of the page, or empty for the page itself), a kind (an index of `kinds`) and a text (the line under the list for the chosen row).
 - A kind is its name and the name of its value kind (see "The kinds of values"), whose icon and color the list shows. One table, `site_search_kinds`, gives each kind its name, its value kind and the folder of the one page that lists every entry of the kind (none for the pages and the exports).
-- The kinds, in their tie order: page, module, program, export, operation, error kind, console command, term, guide section, property, news entry, release, gap, license row, type. Each page of the site is an entry. The others come from the same data as their page: the modules and their exports (`module.export`, with the signature as the console prints it), the kernel operations, the error kinds, the commands of the console, the terms of the glossary with their short definition, the headings of levels 2 and 3 of each guide with their first paragraph, the properties with their status, the news entries, the releases with their date and their first change, the gaps, and the rows of the two tables of licenses (each row has the id `license-<what it is>`).
+- The kinds, in their tie order: page, module, program, export, operation, error kind, console command, term, guide section, property, news entry, release, gap, license row, type. Each page of the site is an entry. The others come from the same data as their page: the modules and their exports (`module.export`, with the signature as the console prints it), the kernel operations, the error kinds, the commands of the console, the terms of the glossary with their short definition (at the entry on the page of the group), the headings of levels 2 and 3 of each guide with their first paragraph, the properties with their status, the news entries, the releases with their date and their first change, the gaps, and the rows of the two tables of licenses (each row has the id `license-<what it is>`).
 - The bounds: a title has at most 128 bytes (`NAME_SCAN_LIMIT` of the match: it reads no more); a text has at most 120 bytes, cut at the start of a character; the index has at most 4096 entries (`CANDIDATE_SCAN_LIMIT`: one ranking of the console reads no more names, and the script reads them all only under that count) and at most 1 MiB. The command prints the count of entries and of bytes, and stops over a bound.
 - The checks: each page of the site has at least one entry, and each entry names a page that the command writes and an id of that page.
 - The JSON escapes each character that can end a string or a line of a script: the quote, the backslash, the control characters, `<`, `>`, `&` (so no `</script>`), U+2028 and U+2029. A byte that is not UTF-8 becomes U+FFFD.
@@ -292,7 +316,7 @@ One `@graph` for each page, built from the data that the page shows; no value is
 | `WebPage`, or `CollectionPage` for an index | `<canonical address>#page` | Each page | `url`, `name`, `description`, `inLanguage`, `isPartOf` the site, `primaryImageOfPage` the card, `breadcrumb`, `mainEntity`, `image` the pictures that it shows |
 | `BreadcrumbList` | `#breadcrumb` | Each page below the home | A `ListItem` for each crumb of the line above the content, then the page |
 | `TechArticle` | `#article` | A guide | `headline` (at most 110 bytes), `description`, `inLanguage`, `url`, `mainEntityOfPage`, `isPartOf`, `about`, `image`. No `dateModified` and no `datePublished`: the tool does not read the history of a document, and a false date is worse than none |
-| `DefinedTermSet`, `DefinedTerm` | `#terms`; a term by its anchor `#term-<name>` | The glossary | Each term with its `name`, its short definition as `description`, its `url` and `inDefinedTermSet` |
+| `DefinedTermSet`, `DefinedTerm` | `#terms`; a term by the address of its entry, `<page of its group>#term-<name>` | The index of the glossary (every term) and the page of each group (its terms) | Each term with its `name`, its short definition as `description`, its `url` (its entry) and `inDefinedTermSet`. A term has one id on both pages |
 | `ItemList` | `#modules` | The index of the modules | `numberOfItems`, a `ListItem` for each module page with its `position`, `name` and `url` |
 | `Blog`, `BlogPosting` | `#blog`; an entry by its anchor `#news-<file>` | The news | A `BlogPosting` for each entry: `headline`, `description` (its first sentence), `url`, `inLanguage`, `datePublished` and `dateModified` (the date of its head: an entry is never updated), `articleSection` (its kind), `isPartOf`, `mainEntityOfPage`, `about`, `image` (its picture, else the card) |
 
@@ -499,9 +523,9 @@ The writer of each page states its layout (`Site_Page.layout`); the tool does no
 | Layout | Pages | Form |
 |---|---|---|
 | Presentation | The home, the docs home, the news, the releases | One centred column of at most 1152 pixels |
-| Documentation (`GLOSSARY.md`) | Each guide, each reference page, the glossary, each module page, the status, and the index pages of the guides, the reference and the modules | The documentation tree, the text, "On this page", over the whole width of the window |
+| Documentation (`GLOSSARY.md`) | Each guide, each reference page, the index and the page of each group of the glossary, each module page, the status, and the index pages of the guides, the reference and the modules | The documentation tree, the text, "On this page", over the whole width of the window |
 
-The documentation tree (`GLOSSARY.md`) is one `<nav class="tree" aria-label="Documentation">`. Its first link is the docs home, "Docs", the way back to the door of the docs. Then, on a guide: "Guides" with each guide in the reading order of the page of the guides, "Reference" with each reference page in the order of its index, "Modules" with a `details` for each group (Kernel, Programs, Modules), open when it holds the current page, and "Status". The current page has `aria-current="page"`. It is written once in each page, inside the site menu, after the search: under 720 pixels it is under the sections in the open menu, which scrolls on its own; from 720 pixels the style sheet fixes it at the left of the window (`position: fixed`, its own `overflow-y`), so a long tree never moves the page. With no script, a browser with no `::details-content` shows the tree when the button of the menu opens it, as the sections.
+The documentation tree (`GLOSSARY.md`) is one `<nav class="tree" aria-label="Documentation">`. Its first link is the docs home, "Docs", the way back to the door of the docs. Then, on a guide: "Guides" with each guide in the reading order of the page of the guides, "Reference" with each reference page in the order of its index (under the glossary, each of its groups with the count of its terms), "Modules" with a `details` for each group (Kernel, Programs, Modules), open when it holds the current page, and "Status". The current page has `aria-current="page"`. It is written once in each page, inside the site menu, after the search: under 720 pixels it is under the sections in the open menu, which scrolls on its own; from 720 pixels the style sheet fixes it at the left of the window (`position: fixed`, its own `overflow-y`), so a long tree never moves the page. With no script, a browser with no `::details-content` shows the tree when the button of the menu opens it, as the sections.
 
 "On this page" (`GLOSSARY.md`) is one `<details class="outline">` at the start of `main`: the title of the page (a link to `#content`), then each heading h2 and h3 with an id, then each element that states a symbol with `data-outline`, in the order of the page. From 1100 pixels it is a column at the right of the text, sticky, with its own scroll, and open (`::details-content`, or `search.js`); under 1100 pixels it is closed above the text, and its summary "On this page" opens it. The script marks the link of the part in view with `aria-current="location"`: an `IntersectionObserver` reports each heading and symbol that enters or leaves the top 40 % of the window; nothing runs each frame. With no script it is a correct list of links.
 
@@ -576,7 +600,7 @@ The legend: the reference index ends with the section "The kinds of values", a t
 
 ### The versions of the files
 
-The site is behind a proxy that keeps a file for hours. Each link to a file whose bytes change between builds carries its file version (`GLOSSARY.md`): `style.css?v=<16 hexadecimal digits>`, the first 8 bytes of the BLAKE3 hash of its bytes (`contract/blake3`). The files: `style.css`, `search.js`, `mark_animation.js`, `module_graph.js` and `search.json` (`SITE_VERSIONED_FILES`). The same bytes give the same address. The index of the search is written before the pages, so that each page names its version: `search.js` reads it from the attribute `data-index` of its own `script` element, relative to its folder, with no inline script. The check of the links ignores the query. The icons and the pictures carry no version: their bytes come from the mark and the repository and change rarely.
+The site is behind a proxy that keeps a file for hours. Each link to a file whose bytes change between builds carries its file version (`GLOSSARY.md`): `style.css?v=<16 hexadecimal digits>`, the first 8 bytes of the BLAKE3 hash of its bytes (`contract/blake3`). The files: `style.css`, `search.js`, `mark_animation.js`, `module_graph.js`, `glossary.js` and `search.json` (`SITE_VERSIONED_FILES`). The same bytes give the same address. The index of the search is written before the pages, so that each page names its version: `search.js` reads it from the attribute `data-index` of its own `script` element, relative to its folder, with no inline script. The check of the links ignores the query. The icons and the pictures carry no version: their bytes come from the mark and the repository and change rarely.
 
 ### A page of an older build
 
@@ -776,7 +800,7 @@ A comment of the source names a document for a person who reads the code: a docu
 - `choice <n>`, `decision <n>`, `item <n>`: the one top-level item of an ordered list with that number, inside the part of the heading "Choices ..." or "Decisions ..." when the document has one. The reference shows its words in bold, else its first sentence.
 - A quoted label that no heading has, as the last label: the words in bold at the start of a line (`- **The frame caches** ...`) of the part. The reference shows them and links to the heading above them.
 - `sections 4 and 5`: two references.
-- The glossary: a quoted label is first a term, whose entry has the anchor `term-<name>`; else the heading of a group.
+- The glossary: a quoted label is first a term: its entry, at the anchor `term-<name>` on the page of its group; else the heading of a group: the page of the group.
 
 A pointer whose labels do not all find their place names the document alone: the reference shows the title, never the label, and the command counts the pointer as not resolved. A path that names no document of `docs/` is not a pointer: its text stays.
 
@@ -828,7 +852,7 @@ A code span that names a thing links to it by itself: it stays the usual form of
 | Target | Example | What it names |
 |---|---|---|
 | An address of another host | `https://www.rfc-editor.org/rfc/rfc8439` | That address |
-| `term:` and a term | `term:handle` | The entry of the term in the glossary, by its name with no regard to case, from the terms that the reader of the glossary gives: a link of the class `term`, with its short definition as its `title`, as a term that a guide links |
+| `term:` and a term | `term:handle` | The entry of the term on the page of its group of the glossary, by its name with no regard to case, from the terms that the reader of the glossary gives: a link of the class `term`, with its short definition as its `title`, as a term that a guide links |
 | A guide, or its heading by the id of the heading | `docs/ARCHITECTURE.md#the-fault-ring` | The page of the guide, at that heading. A working record is not a page: it is refused |
 | A name of a row | `Memory_Map`, `No_Grant`, `math`, `load()` | The row, by the rule of the code spans |
 | A module and its export | `manual.edges` | The export on the page of its module |

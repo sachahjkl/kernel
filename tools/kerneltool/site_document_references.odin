@@ -43,6 +43,7 @@ Site_Document_Heading :: struct {
 	level: int,
 	text:  string, // As the document writes it, with its label: "K1. Handle table".
 	id:    string, // Its id on the page of the document; "" for a file that is not a page.
+	page:  string, // The page that holds it when it is not the page of the document (a group or a term of the glossary), else "".
 	line:  int, // Its line in the file; 0 when the site knows the page only.
 }
 
@@ -519,12 +520,19 @@ site_document_file_outline :: proc(site: ^Site, path: string) -> Site_Document_O
 	return read
 }
 
+// site_document_heading_link gives the link to a heading of a document on
+// the site: its id on the page that holds it.
+site_document_heading_link :: proc(outline: Site_Document_Outline, heading: Site_Document_Heading) -> string {
+	page := heading.page != "" ? heading.page : outline.page
+	return strings.concatenate({page, "#", heading.id}, context.temp_allocator)
+}
+
 // site_document_outline gives the title, the headings and the items of a
 // document. A guide has the ids of its rendered page; a heading of a guide
 // that is not rendered yet has no id, and a label of it does not resolve.
-// The glossary is rendered after the guides: the id of a heading of a group
-// is its slug, when no other group has that slug, and the id of a term is
-// its anchor. A working record is a file of the repository: its places are
+// The glossary is rendered after the guides: a heading of a group is the
+// title of the page of its group, with its slug as its id, and a term is
+// its entry on that page, with its anchor as its id. A working record is a file of the repository: its places are
 // lines.
 site_document_outline :: proc(site: ^Site, path: string) -> Site_Document_Outline {
 	if site == nil {
@@ -550,12 +558,20 @@ site_document_outline :: proc(site: ^Site, path: string) -> Site_Document_Outlin
 		}
 		term_ids := make(map[string]int, context.temp_allocator)
 		headings := make([]Site_Document_Heading, len(file.headings), context.temp_allocator)
+		group_page := ""
 		for heading, index in file.headings {
 			headings[index] = heading
+			if heading.level == 2 {
+				group_page = site_glossary_group_page(site_slug(heading.text))
+			}
 			if heading.level == 3 {
 				headings[index].id = glossary_term_id(site_term_name(heading.text), &term_ids)
+				headings[index].page = group_page
 			} else if slugs[site_slug(heading.text)] == 1 {
 				headings[index].id = site_slug(heading.text)
+				if heading.level == 2 {
+					headings[index].page = group_page
+				}
 			}
 		}
 		outline.headings = headings
@@ -722,7 +738,7 @@ site_document_targets :: proc(site: ^Site, path: string, labels: []string) -> []
 			if quoted && site_slug(term.name) == site_slug(key) {
 				term_target := whole
 				term_target.heading = term.name
-				term_target.link = strings.concatenate({outline.page, "#", term.id}, context.temp_allocator)
+				term_target.link = strings.concatenate({term.page, "#", term.id}, context.temp_allocator)
 				append(&targets, term_target)
 				return targets[:]
 			}
@@ -770,7 +786,7 @@ site_document_targets :: proc(site: ^Site, path: string, labels: []string) -> []
 					if whole.outside {
 						bold_target.link = site_line_address(site, path, bold.line)
 					} else if bold.heading >= 0 && outline.headings[bold.heading].id != "" {
-						bold_target.link = strings.concatenate({outline.page, "#", outline.headings[bold.heading].id}, context.temp_allocator)
+						bold_target.link = site_document_heading_link(outline, outline.headings[bold.heading])
 					}
 					append(&chosen, bold_target)
 					continue
@@ -794,7 +810,7 @@ site_document_targets :: proc(site: ^Site, path: string, labels: []string) -> []
 			if whole.outside {
 				target.link = site_line_address(site, path, heading.line)
 			} else {
-				target.link = strings.concatenate({outline.page, "#", heading.id}, context.temp_allocator)
+				target.link = site_document_heading_link(outline, heading)
 			}
 			append(&chosen, target)
 		}

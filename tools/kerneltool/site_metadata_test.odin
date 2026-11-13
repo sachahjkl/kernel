@@ -15,9 +15,10 @@ TEST_GUIDE_A :: SITE_GUIDE_FOLDER + "/A/" + SITE_PAGE
 TEST_GUIDE_B :: SITE_GUIDE_FOLDER + "/B/" + SITE_PAGE
 
 // A small site: a home with a picture, the index of the guides, two
-// guides, the glossary, the news, the index of the reference, the releases,
+// guides, the index of the glossary and the page of one group, the news, the index of the reference, the releases,
 // the licenses and the home of the docs, with or without an address. Guide
-// A uses a term of the glossary, so it links to an anchor of the glossary.
+// A uses a term of the glossary, so it links to an anchor of the page of
+// its group.
 @(private = "file")
 metadata_test_site :: proc(address: string) -> Site {
 	site := test_site()
@@ -51,7 +52,9 @@ metadata_test_site :: proc(address: string) -> Site {
 	site_page_add(&site, Site_Page{path = site_section_page(.Guides), is_index = true, title = "Guides", description = "The guides.", section = .Guides, crumbs = site_crumbs(.Docs), body = "<h1>Guides</h1>"})
 	site_page_add(&site, Site_Page{path = TEST_GUIDE_A, title = "Guide A", description = "The guide A.", section = .Guides, crumbs = site_crumbs(.Guides), body = guide_body})
 	site_page_add(&site, Site_Page{path = TEST_GUIDE_B, title = "Guide B", description = "The guide B.", section = .Guides, crumbs = site_crumbs(.Guides), body = "<h1>Guide B</h1>"})
-	site_page_add(&site, Site_Page{path = site_page_file(SITE_GLOSSARY_FOLDER), title = "Glossary", description = "The terms.", section = .Reference, crumbs = site_crumbs(.Reference), body = "<h1>Glossary</h1><table><tr id=\"term-module\"><td>Module</td></tr><tr id=\"term-module-metadata\"><td>Module metadata</td></tr></table>"})
+	site_page_add(&site, Site_Page{path = site_page_file(SITE_GLOSSARY_FOLDER), title = "Glossary", description = "The terms.", section = .Reference, crumbs = site_crumbs(.Reference), body = "<h1>Glossary</h1><dl><div id=\"term-module\"><dt>Module</dt></div><div id=\"term-module-metadata\"><dt>Module metadata</dt></div></dl>"})
+	// The page of the group of the two terms: a link to a term names it.
+	site_page_add(&site, Site_Page{path = site_glossary_group_page("code"), title = "Glossary: Code", description = "The terms of the group Code.", section = .Reference, crumbs = site_crumbs(.Reference), body = "<h1 id=\"code\">Code</h1><div class=\"term-entry\"><h2 id=\"term-module\">Module</h2></div><div class=\"term-entry\"><h2 id=\"term-module-metadata\">Module metadata</h2></div>"})
 	site_page_add(&site, Site_Page{path = site_section_page(.News), title = "News", description = "The news.", section = .News, crumbs = site_crumbs(.Home), body = "<h1>News</h1><article id=\"news-2026-11-12-a\"></article>"})
 	site_page_add(&site, Site_Page{path = site_section_page(.Reference), is_index = true, title = "Reference", description = "The reference.", section = .Reference, crumbs = site_crumbs(.Docs), body = "<h1>Reference</h1>"})
 	site_page_add(&site, Site_Page{path = site_section_page(.Releases), title = "Releases", description = "The releases.", section = .Releases, crumbs = site_crumbs(.Home), body = strings.concatenate({"<h1>Releases</h1><h2 id=\"", site_release_id(site.release), "\">0.1.0</h2>"}, context.temp_allocator)})
@@ -159,7 +162,9 @@ site_metadata_with_an_address :: proc(t: ^testing.T) {
 	testing.expect(t, !strings.contains(written[TEST_GUIDE_A], "dateModified"))
 	glossary_page := site_page_file(SITE_GLOSSARY_FOLDER)
 	testing.expect(t, strings.contains(written[glossary_page], "\"@type\":\"DefinedTerm\""))
-	testing.expect(t, strings.contains(written[glossary_page], "\"@id\":\"" + TEST_ADDRESS + "/docs/reference/glossary/#term-module\""))
+	// The index names each term by its entry on the page of its group.
+	testing.expect(t, strings.contains(written[glossary_page], "\"@id\":\"" + TEST_ADDRESS + "/docs/reference/glossary/code/#term-module\""))
+	testing.expect(t, !strings.contains(written[glossary_page], "\"@id\":\"" + TEST_ADDRESS + "/docs/reference/glossary/#term-module\""))
 	testing.expect(t, strings.contains(written["news/index.html"], "\"@type\":\"BlogPosting\""))
 	testing.expect(t, strings.contains(written["news/index.html"], "\"datePublished\":\"2026-11-12\""))
 	testing.expect(t, strings.contains(written[site_section_page(.Guides)], "\"@type\":\"CollectionPage\""))
@@ -689,7 +694,7 @@ site_addresses_of_every_page :: proc(t: ^testing.T) {
 		guide := written[TEST_GUIDE_A]
 		if has_address {
 			testing.expect(t, strings.contains(guide, "<link rel=\"next\" href=\"../../../docs/guides/B/\">"))
-			testing.expect(t, strings.contains(guide, "<a class=\"term\" href=\"../../../docs/reference/glossary/#term-module\">module</a>"))
+			testing.expect(t, strings.contains(guide, "<a class=\"term\" href=\"../../../docs/reference/glossary/code/#term-module\">module</a>"))
 			testing.expect(t, strings.contains(guide, "<a class=\"bar-home\" href=\"../../../\">"))
 			testing.expect(t, strings.contains(guide, "href=\"../../../docs/reference/licenses/\">Licenses</a>"))
 			testing.expect(t, strings.contains(written[TEST_GUIDE_B], "<link rel=\"prev\" href=\"../../../docs/guides/A/\">"))
@@ -697,7 +702,7 @@ site_addresses_of_every_page :: proc(t: ^testing.T) {
 			testing.expect(t, !strings.contains(guide, "index.html\""))
 		} else {
 			testing.expect(t, strings.contains(guide, "<link rel=\"next\" href=\"../../../docs/guides/B/index.html\">"))
-			testing.expect(t, strings.contains(guide, "<a class=\"term\" href=\"../../../docs/reference/glossary/index.html#term-module\">module</a>"))
+			testing.expect(t, strings.contains(guide, "<a class=\"term\" href=\"../../../docs/reference/glossary/code/index.html#term-module\">module</a>"))
 			testing.expect(t, strings.contains(guide, "<a class=\"bar-home\" href=\"../../../index.html\">"))
 		}
 		// The style sheet, the script and the icons from a page three folders deep.
@@ -725,16 +730,18 @@ site_addresses_of_every_page :: proc(t: ^testing.T) {
 
 		// The redirect pages: one at each old path of each page, which names
 		// the page itself. The generation of the .html files: the guides A
-		// and B, the glossary, the news, the releases and the licenses. The
-		// generation of the folders before the docs: the index of the
-		// guides, the guides A and B, the glossary, the index of the
-		// reference and the licenses. The home and the home of the docs
-		// have none.
+		// and B, the glossary, the page of its group, the news, the releases
+		// and the licenses. The generation of the folders before the docs:
+		// the index of the guides, the guides A and B, the glossary, the
+		// page of its group, the index of the reference and the licenses.
+		// The home and the home of the docs have none.
 		table_problems := site_redirects_make(&site)
 		testing.expect_value(t, len(table_problems), 0)
-		testing.expect_value(t, site.redirect_counts[.Html_Files], 6)
-		testing.expect_value(t, site.redirect_counts[.Folders_Before_Docs], 6)
-		testing.expect_value(t, len(site.redirects), 12)
+		testing.expect_value(t, site.redirect_counts[.Html_Files], 7)
+		testing.expect_value(t, site.redirect_counts[.Folders_Before_Docs], 7)
+		testing.expect_value(t, len(site.redirects), 14)
+		testing.expect(t, "reference/glossary.html" in site.redirects)
+		testing.expect(t, "reference/glossary/code.html" in site.redirects)
 		testing.expect(t, "guides/index.html" in site.redirects)
 		testing.expect(t, "reference/index.html" in site.redirects)
 		testing.expect(t, "docs.html" not_in site.redirects)

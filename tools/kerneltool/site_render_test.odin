@@ -14,8 +14,9 @@ test_site :: proc() -> Site {
 	site.documents["docs/NETWORK.md"] = "docs/guides/NETWORK/index.html"
 	site.documents["NETWORK.md"] = "docs/guides/NETWORK/index.html"
 	terms := make([]Site_Term, 2, context.temp_allocator)
-	terms[0] = {name = "Module metadata", id = "term-module-metadata"}
-	terms[1] = {name = "Module", id = "term-module"}
+	// The terms of the group Code of the glossary: a link names its page.
+	terms[0] = {name = "Module metadata", id = "term-module-metadata", page = site_glossary_group_page("code")}
+	terms[1] = {name = "Module", id = "term-module", page = site_glossary_group_page("code")}
 	site.terms = terms
 	return site
 }
@@ -62,8 +63,8 @@ site_render_each_construct :: proc(t: ^testing.T) {
 site_render_links_the_first_use_of_a_term :: proc(t: ^testing.T) {
 	site := test_site()
 	html, _ := render(&site, "The module metadata of a module. Modules, and `Module` in code.\n")
-	testing.expect(t, strings.contains(html, "<a class=\"term\" href=\"../../../docs/reference/glossary/index.html#term-module-metadata\">module metadata</a>"))
-	testing.expect(t, strings.contains(html, "of a <a class=\"term\" href=\"../../../docs/reference/glossary/index.html#term-module\">module</a>."))
+	testing.expect(t, strings.contains(html, "<a class=\"term\" href=\"../../../docs/reference/glossary/code/index.html#term-module-metadata\">module metadata</a>"))
+	testing.expect(t, strings.contains(html, "of a <a class=\"term\" href=\"../../../docs/reference/glossary/code/index.html#term-module\">module</a>."))
 	testing.expect_value(t, strings.count(html, "#term-module\""), 1)
 }
 

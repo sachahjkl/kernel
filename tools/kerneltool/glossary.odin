@@ -1,5 +1,5 @@
 // The glossary of the project (docs/SITE.md, "The glossary"): the one reader
-// of docs/GLOSSARY.md. The page of the site, the links to a term, the search,
+// of docs/GLOSSARY.md. The pages of the site, the links to a term, the search,
 // the page graph, the references to a term and the check of the tool all
 // read the terms that glossary_read gives.
 package kerneltool
@@ -18,6 +18,7 @@ Glossary_Term :: struct {
 	name:             string, // The text of its heading, with no code marks.
 	id:               string, // Its anchor on the page: "term-" and the slug of the name, "-2" for a second term of that slug.
 	group:            string, // The name of its group.
+	group_id:         string, // The id of its group: the folder of the page of the group on the site.
 	line:             int, // The line of its heading in the file, from 1.
 	definition:       string, // The first paragraph under the heading, as one line of Markdown: the text of a tooltip, a search result and the page graph.
 	explanation:      string, // The Markdown between the short definition and the words to avoid, or "".
@@ -115,6 +116,13 @@ glossary_read :: proc(content: string) -> (glossary: Glossary, problems: []strin
 				group_terms = make([dynamic]Glossary_Term, context.temp_allocator)
 			}
 			group := Glossary_Group{name = text, id = site_slug(text)}
+			// Each group is a page of the site, in a folder named by the
+			// slug of its heading: two groups of one slug would be one page.
+			for other in groups {
+				if other.id == group.id {
+					append(&found, fmt.tprintf("line %d: the group %q has the slug %q of the group %q: each group is a page, named by its slug", index + 1, text, group.id, other.name))
+				}
+			}
 			group.introduction, group.introduction_line = glossary_markdown(body, index + 2)
 			append(&groups, group)
 		case 3:
@@ -124,6 +132,7 @@ glossary_read :: proc(content: string) -> (glossary: Glossary, problems: []strin
 			}
 			term := glossary_term_read(text, index + 1, body, &seen_ids, &found)
 			term.group = groups[len(groups) - 1].name
+			term.group_id = groups[len(groups) - 1].id
 			append(&group_terms, term)
 		case:
 			append(&found, fmt.tprintf("line %d: a heading of level %d: an entry has no heading inside it", index + 1, level))

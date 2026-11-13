@@ -373,7 +373,9 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 		site_search_add(&entries, command.name, site_page_file(SITE_CONSOLE_FOLDER), strings.concatenate({"command-", site_slug(command.name)}, context.temp_allocator), .Console_Command, strings.concatenate({site_console_signature(command), ": ", site_source_comment_plain(site, command.about)}, context.temp_allocator))
 	}
 	for term in site.terms {
-		site_search_add(&entries, term.name, site_page_file(SITE_GLOSSARY_FOLDER), term.id, .Term, term.definition)
+		// The entry of the term, on the page of its group: a result never
+		// passes through the index of the glossary.
+		site_search_add(&entries, term.name, term.page, term.id, .Term, term.definition)
 	}
 	for guide in site.guides {
 		for heading in guide.headings {
