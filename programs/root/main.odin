@@ -413,7 +413,7 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "errors":
 		return {pages = 2048, programs = 3, threads = 4} // It starts fault and its child, and 3 threads under contention.
 	case "server":
-		return {pages = 4096, programs = 1, threads = 1} // A table of 32 connections with their buffers, and a large window.
+		return {pages = 4096, programs = 1, threads = 1} // Its table of connections with their buffers (CAPACITY in programs/server), and a large window.
 	case "quic_echo":
 		// 16 QUIC connections of about 85 KiB each, 4 streams of about
 		// 130 KiB for each, and an echo buffer of 16 KiB for each stream:

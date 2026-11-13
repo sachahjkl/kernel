@@ -324,7 +324,7 @@ COMMANDS :: [?]Command {
 	//   and no text: the check fails until they are written.
 	// - `check`: checks the head, the date, the picture, the release, the
 	//   guide and the length of each entry. `kerneltool check` runs it.
-	{name = "news", about = "new <subject> | check: the news entries of " + NEWS_FOLDER + ", dated reports in prose of what a person can now see or use, for the page of the news of the site", run = run_news},
+	{name = "news", about = "new <subject> | check: the news entries of " + NEWS_FOLDER + ", dated reports in prose of what a reader can now see or use, for the page of the news of the site", run = run_news},
 	// Writes the site in `build/site/`: the home, the guides, the reference
 	// tables read from the code, the status, the news, the releases, the
 	// index of the search and its script.
@@ -532,8 +532,38 @@ run_machine :: proc(args: []string) -> int {
 	return 0
 }
 
+// The parts of the machine test that `test <part>` runs alone.
+test_parts := [?]string{"main", "network", "power", "hierarchy", "ranges", "tcp", "quic", "quic-real", "crypto", "random", "shortage", "extended_state", "return_fault", "fault_ring", "kernel_events", "principals", "trusted_boot"}
+
+// test_arguments_problem gives the refusal of the arguments of `test`, or
+// "" when they name the whole test, one part, or `trusted_boot tpm`. A word
+// that is not a part is refused: the whole test in its place takes minutes
+// and passes, and the reader believes that the part passed.
+test_arguments_problem :: proc(args: []string) -> string {
+	if len(args) == 0 {
+		return ""
+	}
+	if len(args) == 2 && args[0] == "trusted_boot" && args[1] == "tpm" {
+		return ""
+	}
+	if len(args) == 1 {
+		for part in test_parts {
+			if args[0] == part {
+				return ""
+			}
+		}
+	}
+	given := strings.join(args, " ", context.temp_allocator)
+	known := strings.join(test_parts[:], ", ", context.temp_allocator)
+	return fmt.tprintf("test does not know the part `%s`; the parts: %s, and `trusted_boot tpm`; with no argument, the whole test", given, known)
+}
+
 // run_test runs the machine test (machine.odin), then the host load test.
 run_test :: proc(args: []string) -> int {
+	if problem := test_arguments_problem(args); problem != "" {
+		fmt.eprintfln("kerneltool: %s", problem)
+		return EXIT_USAGE
+	}
 	if code := run_build(nil); code != 0 {
 		return code
 	}
@@ -551,9 +581,6 @@ run_test :: proc(args: []string) -> int {
 	// `test trusted_boot tpm`: with the two machines of the measure.
 	if len(args) == 2 && args[0] == "trusted_boot" && args[1] == "tpm" {
 		return trusted_boot_tests_run(with_tpm = true) ? 0 : EXIT_FAILURE
-	}
-	if len(args) == 1 && args[0] == "tcp" {
-		return tcp_tests_run() ? 0 : EXIT_FAILURE
 	}
 	if len(args) == 1 && args[0] == "hierarchy" {
 		return hierarchy_tests_run() ? 0 : EXIT_FAILURE
@@ -793,7 +820,7 @@ run_check :: proc(args: []string) -> int {
 	// compiler assembles runtime/memory_for_host_tests.asm itself and links
 	// its object by its path (a library found through `-L/` is refused by
 	// the linker of the Nix sandbox).
-	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/sentence", "support/cryptography/vectors", "modules/cryptography", "support/quic", "contract/date", "support/storage_mount", "support/storage_object", "support/storage_tree", "support/storage_retention", "support/principals", "support/calendar", "support/line_editor", "support/console_language", "support/console_results", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/bootscreen/image_card", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool", "contract/fixed_addresses", "contract/settings", "modules/text_shaping", "support/text_shaping", "support/mark", "support/terminal", "contract/cut_mark", "runtime/without_vector_registers", "support/instruction_sets", "contract/system_description", "contract/operation", "contract/debug_object", "contract/value_kinds"}) {
+	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/sentence", "support/cryptography/vectors", "modules/cryptography", "support/quic", "contract/date", "support/storage_mount", "support/storage_object", "support/storage_tree", "support/storage_retention", "support/principals", "support/calendar", "support/line_editor", "support/console_language", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/bootscreen/image_card", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/virtio", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool", "contract/fixed_addresses", "contract/settings", "modules/text_shaping", "support/text_shaping", "support/mark", "support/terminal", "contract/cut_mark", "runtime/without_vector_registers", "support/instruction_sets", "contract/system_description", "contract/operation", "contract/debug_object", "contract/value_kinds", "support/source_comment_markdown", "support/console_results"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE
@@ -1024,7 +1051,7 @@ network_device_problem :: proc(device: string) -> string {
 			return fmt.tprintf("the network device has a UDP forward that the tool cannot read: %s", part)
 		}
 		if rule[colon + 1:] == fmt.tprintf("%d", remote.LISTEN_PORT) {
-			return fmt.tprintf("the network device forwards a UDP port of the host to the port %d of remote: each sender would call as the person (%s)", remote.LISTEN_PORT, part)
+			return fmt.tprintf("the network device forwards a UDP port of the host to the port %d of remote: each sender would call as the principal of the session of remote (%s)", remote.LISTEN_PORT, part)
 		}
 	}
 	return ""

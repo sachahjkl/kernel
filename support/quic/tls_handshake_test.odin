@@ -528,6 +528,118 @@ bytes_after_a_change_of_keys :: proc(t: ^testing.T) {
 			testing.expect(t, !tls_receive(&pair.client, .Initial, with_rest, &error))
 		}
 		testing.expect_value(t, pair.client.state, Tls_State.Failed)
-		testing.expect(t, pair.client.bytes_after_key_change)
+		testing.expect(t, pair.client.protocol_violation)
 	}
+}
+
+// After the secrets of a handshake are erased, tls_packet_keys gives no
+// keys: it fails with State, and the record of the keys is zero. The same
+// after a failure of the handshake, which erases them too. Before the
+// correction, both calls gave keys made from a secret of zeros, with no
+// error.
+@(test)
+no_packet_keys_after_the_secrets_are_erased :: proc(t: ^testing.T) {
+	pair := new(Test_Pair)
+	defer free(pair)
+	pair_make(pair)
+	handshake_run(pair)
+	testing.expect_value(t, pair.client.state, Tls_State.Connected)
+	error: errors.Error_Record
+	keys: Packet_Keys
+	testing.expect(t, tls_packet_keys(&pair.client, .Application, true, &keys, &error))
+	tls_handshake_erase_secrets(&pair.client)
+	for level in ([]Encryption_Level{.Handshake, .Application}) {
+		for sending in ([]bool{true, false}) {
+			error = {}
+			testing.expectf(t, !tls_packet_keys(&pair.client, level, sending, &keys, &error), "keys of the level %v came after the erase", level)
+			testing.expect_value(t, error.kind, i64(errors.Kind.State))
+			testing.expect_value(t, error.argument, 2)
+			testing.expect(t, keys == Packet_Keys{}, "a failed call left keys")
+		}
+	}
+	testing.expect(t, !pair.client.handshake_keys_ready && !pair.client.application_keys_ready)
+	// A handshake that fails after its handshake secrets were made: a
+	// client that refuses the key of the server.
+	pair_make(pair, pinned_key_change = 0x01)
+	handshake_run(pair)
+	testing.expect_value(t, pair.client.state, Tls_State.Failed)
+	error = {}
+	testing.expect(t, !tls_packet_keys(&pair.client, .Handshake, true, &keys, &error))
+	testing.expect_value(t, error.kind, i64(errors.Kind.State))
+	testing.expect(t, keys == Packet_Keys{})
+}
+
+// with_extension gives a copy of a message whose body is one extension
+// block (EncryptedExtensions), with one more extension at the end of the
+// block, and the two lengths set.
+with_extension :: proc(message: []u8, extension: []u8) -> []u8 {
+	larger := make([]u8, len(message) + len(extension), context.temp_allocator)
+	copy(larger, message)
+	copy(larger[len(message):], extension)
+	body := len(larger) - MESSAGE_HEADER_SIZE
+	larger[1], larger[2], larger[3] = u8(body >> 16), u8(body >> 8), u8(body)
+	block := body - 2
+	larger[MESSAGE_HEADER_SIZE], larger[MESSAGE_HEADER_SIZE + 1] = u8(block >> 8), u8(block)
+	return larger
+}
+
+// A server may name the groups that it prefers in EncryptedExtensions, to a
+// client that offered supported_groups (RFC 8446, sections 4.2 and 4.2.7):
+// the client takes the extension and goes on. Before the correction it
+// failed with unsupported_extension. An extension that the client did not
+// offer is still refused there: server_name, and one that is not known.
+@(test)
+supported_groups_in_encrypted_extensions_is_taken :: proc(t: ^testing.T) {
+	messages := messages_of_a_good_handshake()
+	pair := new(Test_Pair, context.temp_allocator)
+	// The message 2 is EncryptedExtensions.
+	testing.expect_value(t, messages[2].bytes[0], u8(Handshake_Message.Encrypted_Extensions))
+	// supported_groups: a list of 4 bytes, X25519 and secp256r1.
+	groups := with_extension(messages[2].bytes, []u8{0x00, 0x0a, 0x00, 0x06, 0x00, 0x04, 0x00, 0x1d, 0x00, 0x17})
+	client := receiver_after(pair, messages[:], 2, groups)
+	testing.expectf(t, client.state == .Client_Waits_For_Certificate, "the client is in the state %v with the alert %v", client.state, client.alert)
+	// server_name with no data: the client did not offer it.
+	name := with_extension(messages[2].bytes, []u8{0x00, 0x00, 0x00, 0x00})
+	client = receiver_after(pair, messages[:], 2, name)
+	testing.expect_value(t, client.state, Tls_State.Failed)
+	testing.expect_value(t, client.alert, Alert.Unsupported_Extension)
+	// An extension that this side does not know.
+	unknown := with_extension(messages[2].bytes, []u8{0xfa, 0xfa, 0x00, 0x00})
+	client = receiver_after(pair, messages[:], 2, unknown)
+	testing.expect_value(t, client.state, Tls_State.Failed)
+	testing.expect_value(t, client.alert, Alert.Unsupported_Extension)
+}
+
+// A ClientHello with a session identifier asks for the compatibility mode
+// of TLS, which QUIC does not have: the server fails, and the transport
+// closes with PROTOCOL_VIOLATION (RFC 9001, section 8.4), not with the code
+// of an alert. Before the correction the close had the code of
+// illegal_parameter.
+@(test)
+a_client_hello_with_a_session_identifier_is_a_protocol_violation :: proc(t: ^testing.T) {
+	messages := messages_of_a_good_handshake()
+	hello := messages[0].bytes
+	// The session identifier is after the header, the legacy version and
+	// the Random: one byte of length, 0 in a ClientHello of this library.
+	place := MESSAGE_HEADER_SIZE + 2 + 32
+	testing.expect_value(t, hello[place], 0)
+	with_session := make([]u8, len(hello) + 4, context.temp_allocator)
+	copy(with_session, hello[:place])
+	with_session[place] = 4
+	copy(with_session[place + 5:], hello[place + 1:])
+	body := len(with_session) - MESSAGE_HEADER_SIZE
+	with_session[1], with_session[2], with_session[3] = u8(body >> 16), u8(body >> 8), u8(body)
+	pair := new(Test_Pair, context.temp_allocator)
+	server := receiver_after(pair, messages[:], 0, with_session)
+	testing.expect_value(t, server.state, Tls_State.Failed)
+	testing.expect(t, server.protocol_violation, "the failure is not marked as a PROTOCOL_VIOLATION")
+	connection := new(Connection)
+	defer free(connection)
+	connection.tls.protocol_violation = server.protocol_violation
+	connection.tls.alert = server.alert
+	testing.expect_value(t, tls_failure_code(connection), u64(Transport_Error.Protocol_Violation))
+	// The same ClientHello with no session identifier is taken.
+	server = receiver_after(pair, messages[:], 0, hello)
+	testing.expect_value(t, server.state, Tls_State.Server_Waits_For_Finished)
+	testing.expect(t, !server.protocol_violation)
 }

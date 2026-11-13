@@ -1273,6 +1273,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "address_space: sparse table: 1024 pages committed of 262144, 1024 with a frame; decommit: 1024 pages back in the budget at once"},
 	{kind = .Wait, text = "address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls"},
 	{kind = .Wait, text = "address_space: guard page: the child stopped with vector 14 at "},
+	{kind = .Wait, text = "address_space: edge case: a map with a flag that the kernel does not know is refused: right", any_order = true},
 	{kind = .Wait, text = "address_space: large pages: one random read over 64 MiB: "},
 	// Each page table that a mapping made returns to the budget with its
 	// unmap, at three levels, for a reservation, for a large page, and
@@ -1443,6 +1444,9 @@ scenario := [?]Step {
 	// their exports, and one reverse question.
 	{kind = .Wait, text = "manual: information: ", any_order = true},
 	{kind = .Wait, text = "manual: ok, "},
+	// The manual reads the Markdown of the documentation: it checks its own
+	// page, whose comments have each mark.
+	{kind = .Wait, text = "manual: the Markdown of its page: bold, italics, code, list items and links that open a page; no mark is left and no row passes the window: as it must", fails_on = "manual: the Markdown of its page: FAILED"},
 	{kind = .Move, text = "manual", to_x = 208, to_y = 744},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"manual\")"},
@@ -1677,6 +1681,12 @@ scenario := [?]Step {
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "paint.line(0, 0, 10, 10, 9)"},
 	{kind = .Wait, text = "error: paint.line: the argument color has the value 9, which the call refuses; it takes at most 5"},
+	// A text below the last row of the paper, and a glider at a negative
+	// column: each is refused with its record, and draws nothing.
+	{kind = .Type, text = "paint.write(0, 296, \"below the paper\", 0)"},
+	{kind = .Wait, text = "error: paint.write: the argument y has the value 296, which the call refuses; it takes at most 295"},
+	{kind = .Type, text = "life.glider(-1, 10)"},
+	{kind = .Wait, text = "error: life.glider: the argument column has -1; it must have at least 0"},
 	{kind = .Type, text = "stop(\"paint\")"},
 	{kind = .Wait, text = "root: paint stopped"},
 	// (After the check of the log: these lines do not push the boot
@@ -1909,9 +1919,13 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: surface errors", any_order = true},
 	{kind = .Trace, text = "errors: stack of fault: ", names = "fault::three fault::two fault::one entry"},
 	// The program errors names each frame from the debug image: the
-	// instruction of the write at its line, and the call of two.
-	{kind = .Wait, text = " in fault (programs/fault/main.odin:15), fault::two + 0x"},
-	{kind = .Wait, text = " in fault (programs/fault/main.odin:20), fault::one + 0x"},
+	// procedure, the module and the source file. No step names a line
+	// number: a line added to the source of fault moves it. The tool checks
+	// the lines of fault::three against the source (trace.odin).
+	{kind = .Wait, text = " in fault (programs/fault/main.odin:"},
+	{kind = .Wait, text = "), fault::two + 0x"},
+	{kind = .Wait, text = " in fault (programs/fault/main.odin:"},
+	{kind = .Wait, text = "), fault::one + 0x"},
 	{kind = .Wait, text = "errors: t the pages of another program (Inspect, Pages): Inspect: the argument index has the value 1, which the call refuses"},
 	{kind = .Wait, text = "errors: u the pages past the end of the user half: Inspect: the argument address has the value 140737488351232, which the call refuses; it takes at most 140737488093184"},
 	{kind = .Wait, text = "errors: v a wrapper: display.open of 0 by 100 pixels: display.open: the argument width has the value 0, which the call refuses; it takes at most 2048"},
@@ -1976,7 +1990,8 @@ scenario := [?]Step {
 	{kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"},
 	{kind = .Type, text = "fault"},
 	{kind = .Wait, text = "inspect: fault stopped: page fault at 0x0; stack: fault::three + 0x"},
-	{kind = .Wait, text = " in fault (programs/fault/main.odin:15), fault::two + 0x"},
+	{kind = .Wait, text = " in fault (programs/fault/main.odin:"},
+	{kind = .Wait, text = "), fault::two + 0x"},
 	{kind = .Shot, text = "inspect_stopped"},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "inspect: the bytes of the memory of inspect"},
@@ -2277,6 +2292,7 @@ scenario_measure_address_space := [?]Step {
 	{kind = .Wait, text = "address_space: sparse table: 1024 pages committed of 262144, 1024 with a frame; decommit: 1024 pages back in the budget at once"},
 	{kind = .Wait, text = "address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls"},
 	{kind = .Wait, text = "address_space: guard page: the child stopped with vector 14 at "},
+	{kind = .Wait, text = "address_space: edge case: a map with a flag that the kernel does not know is refused: right", any_order = true},
 	{kind = .Wait, text = "address_space: large pages: one random read over 64 MiB: "},
 	// Each page table that a mapping made returns to the budget with its
 	// unmap, at three levels, for a reservation, for a large page, and

@@ -294,13 +294,17 @@ Field :: struct {
 // The documentation of the module, for a reader. Record 1 of the
 // documentation table is the documentation of the module. No loader reads it.
 //
-// A documentation text is UTF-8 bytes. A line feed ends a line. A line is a
-// paragraph: the reader breaks it at the width that it has. A line that
-// starts with a space is not a paragraph: the reader keeps it as it is.
-// An empty line separates two paragraphs. The build writes it from the
-// Markdown of the comments of the source, with the marks removed: a list
-// item is a line that starts with "- " or its number, and a code span keeps
-// its backticks (docs/TOOLS.md, "The form of a documented comment").
+// The line that says what the module is, and the line of help of an
+// export, are plain text: the first sentence of the comment, with no mark.
+//
+// A documentation text is UTF-8 bytes: the comment of the source, as its
+// author wrote it, in a small part of Markdown (docs/TOOLS.md, "The form of
+// a documented comment"). Lines that follow each other are one paragraph:
+// the reader breaks it at the width that it has. An empty line separates
+// two blocks. A line that starts with "- " or with a number and a period is
+// a list item. A line that starts with a space, outside a list, and a line
+// between two fences of three backticks, are kept as they are. A reader in
+// the system reads it with `support/source_comment_markdown`.
 Documentation :: struct {
 	about_offset: u32, // One line, in the string table: what the module is.
 	about_count:  u32, // The bytes of the line.

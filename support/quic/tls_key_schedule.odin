@@ -74,14 +74,27 @@ hkdf_label_with_context_write :: proc "contextless" (buffer: ^[HKDF_LABEL_WITH_C
 //
 // **Result**: true when `output` is whole. False:
 //
-// - `Bad_Value` (argument 3): the label or the context is over its limit, or the output has no
-//   byte or more than 65535 bytes;
+// - `Too_Long` (argument 3): the label is over `LABEL_LIMIT`. The record holds the length of the
+//   label as its value and the limit;
+// - `Too_Long` (argument 4): the context is over `CONTEXT_LIMIT`, with its length and the limit;
+// - `Empty` (argument 5): the output has no byte;
+// - `Too_Long` (argument 5): the output has more than 65535 bytes, with its length and 65535;
 // - an error of HKDF-Expand of the module, with its own record.
 hkdf_expand_label_with_context :: proc "contextless" (cryptography: ^Cryptography, secret: []u8, label: string, context_bytes: []u8, output: []u8, error: ^errors.Error_Record) -> bool {
 	buffer: [HKDF_LABEL_WITH_CONTEXT_LIMIT]u8
 	hkdf_label := hkdf_label_with_context_write(&buffer, label, context_bytes, len(output))
 	if hkdf_label == nil {
-		return fail_at(error, .Bad_Value, 3, len(output), 0xFFFF, len(label))
+		// The label writer gives no reason: the record names the argument
+		// that broke its rule, with the size that it had.
+		switch {
+		case len(label) > LABEL_LIMIT:
+			return fail_at(error, .Too_Long, 3, len(label), LABEL_LIMIT)
+		case len(context_bytes) > CONTEXT_LIMIT:
+			return fail_at(error, .Too_Long, 4, len(context_bytes), CONTEXT_LIMIT)
+		case len(output) == 0:
+			return fail_at(error, .Empty, 5, 0, 0xFFFF)
+		}
+		return fail_at(error, .Too_Long, 5, len(output), 0xFFFF)
 	}
 	key := string(secret)
 	info := string(hkdf_label)

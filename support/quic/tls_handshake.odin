@@ -87,7 +87,7 @@ CERTIFICATE_TYPE_RAW_PUBLIC_KEY :: 2
 // ClientHello (missing_extension).
 Extension :: enum u16 {
 	Server_Name             = 0, // `server_name` (RFC 6066). A server takes it in a ClientHello and does not read it: a key is pinned, not a name. A client does not send it.
-	Supported_Groups        = 10, // `supported_groups` (RFC 8446, section 4.2.7): the groups of the key exchange. ClientHello only; the list must hold `TLS_GROUP_X25519`.
+	Supported_Groups        = 10, // `supported_groups` (RFC 8446, section 4.2.7): the groups of the key exchange. The list of a ClientHello must hold `TLS_GROUP_X25519`. A client takes it in EncryptedExtensions, where a server names the groups that it prefers, and does not read it.
 	Signature_Algorithms    = 13, // `signature_algorithms` (RFC 8446, section 4.2.3): the signature schemes that the client verifies. ClientHello only; the list must hold `TLS_SIGNATURE_ED25519`.
 	Application_Protocol    = 16, // `application_layer_protocol_negotiation`, ALPN (RFC 7301): the protocol names of the client in a ClientHello, the one chosen name in EncryptedExtensions. QUIC requires it (RFC 9001, section 8.1).
 	Client_Certificate_Type = 19, // `client_certificate_type` (RFC 7250). A server takes it in a ClientHello and does not read it: this handshake asks no certificate of a client.
@@ -131,7 +131,7 @@ Alert :: enum u8 {
 	Handshake_Failure        = 40, // handshake_failure: the two sides share no parameters. A ClientHello with neither cipher suite, without X25519, without ed25519 or without an X25519 key share; at a client, a HelloRetryRequest.
 	Bad_Certificate          = 42, // bad_certificate: the key of the server is not the pinned key. `Tls_Handshake.refused_server_public_key` holds the key that came.
 	Unsupported_Certificate  = 43, // unsupported_certificate: the client did not offer the raw public key type, the server did not answer with it, or the entry of the Certificate is not an Ed25519 SubjectPublicKeyInfo of 44 bytes.
-	Illegal_Parameter        = 47, // illegal_parameter: a field that is well formed and has a wrong value: an extension that comes two times, a session identifier that is not empty, a compression method, a key share of another size or of small order, a ServerHello that selects what was not offered, transport parameters over `TRANSPORT_PARAMETERS_LIMIT`.
+	Illegal_Parameter        = 47, // illegal_parameter: a field that is well formed and has a wrong value: an extension that comes two times, a session identifier that is not empty (in a ClientHello the transport closes with PROTOCOL_VIOLATION instead), a compression method, a key share of another size or of small order, a ServerHello that selects what was not offered, transport parameters over `TRANSPORT_PARAMETERS_LIMIT`.
 	Decode_Error             = 50, // decode_error: a message that is malformed: a length that passes its bytes, bytes left after the last field, a list of a wrong size, a message over 4096 bytes, more than `EXTENSION_TYPES_LIMIT` extensions.
 	Decrypt_Error            = 51, // decrypt_error: the signature of CertificateVerify or the verify_data of a Finished does not verify.
 	Protocol_Version         = 70, // protocol_version: a ClientHello whose `legacy_version` is not 0x0303, or whose `supported_versions` does not hold TLS 1.3.
@@ -331,7 +331,8 @@ Level_Bytes :: struct {
 // 2. `tls_receive`: for the bytes of each CRYPTO frame of the peer, in order, with their level.
 // 3. `tls_bytes_to_send` and `tls_bytes_sent`: after each of the two calls above, for each level.
 //    The transport puts the bytes in CRYPTO frames.
-// 4. `tls_packet_keys`: when `handshake_keys_ready`, then `application_keys_ready`, becomes true.
+// 4. `tls_packet_keys`: when `handshake_keys_ready`, then `application_keys_ready`, becomes true,
+//    and before the secrets are erased.
 // 5. `tls_handshake_erase_secrets`: when the transport took the application keys.
 //
 // ```odin
@@ -364,7 +365,8 @@ Level_Bytes :: struct {
 // - **A certificate of the client**: a server sends no CertificateRequest, and a client that
 //   receives one fails (unexpected_message).
 // - **KeyUpdate**, which QUIC forbids, and the compatibility mode of TLS 1.3 for middleboxes: a
-//   ClientHello or a ServerHello with a session identifier fails (illegal_parameter).
+//   ServerHello with a session identifier fails (illegal_parameter), and a ClientHello with one
+//   fails as a PROTOCOL_VIOLATION of QUIC (`protocol_violation`).
 // - **The other groups, signatures and suites**: no P-256, no RSA, no ECDSA, no
 //   TLS_AES_256_GCM_SHA384, no AES-128-CCM.
 //
@@ -423,16 +425,17 @@ Tls_Handshake :: struct {
 	// stale pin at once. All zeros when no key was refused.
 	refused_server_public_key:     [ED25519_KEY_SIZE]u8,
 	// The two handshake traffic secrets exist: `tls_packet_keys` gives the keys of the Handshake level.
-	// It stays true after the secrets are erased.
+	// It is false again once the secrets are erased.
 	handshake_keys_ready:          bool,
 	// The two application traffic secrets exist: `tls_packet_keys` gives the 1-RTT keys. A server has
-	// them after it wrote its Finished, a client after it wrote its own. It stays true after the
+	// them after it wrote its Finished, a client after it wrote its own. It is false again once the
 	// secrets are erased.
 	application_keys_ready:        bool,
-	// Bytes of the peer came at a level after the keys of the next level were in use. It is a
-	// PROTOCOL_VIOLATION of QUIC (RFC 9001, section 4.1.3), not an alert of TLS: the transport reads
-	// this field after a failure, and closes with that code.
-	bytes_after_key_change:        bool,
+	// The failure is a PROTOCOL_VIOLATION of QUIC, not an alert of TLS: the transport reads this field
+	// after a failure, and closes with that code. Two faults set it: bytes of the peer at a level
+	// after the keys of the next level were in use (RFC 9001, section 4.1.3), and a ClientHello with
+	// a session identifier, which asks for the compatibility mode of TLS (RFC 9001, section 8.4).
+	protocol_violation:            bool,
 }
 
 // tls_receive_level gives the encryption level at which the peer sends its next message in a state.
@@ -467,16 +470,20 @@ tls_receive_level :: proc "contextless" (state: Tls_State) -> Encryption_Level {
 // - `alert`: the alert of TLS.
 // - `kind`: the error kind of the record, for example `Bad_Value` or `Not_Authentic`.
 // - `value`: where the fault is: an offset in the message, a size, or the wrong value.
+// - `argument`: the number of the argument at fault, as the caller of `tls_start` or of
+//   `tls_receive` sees it. 3, the bytes of `tls_receive`, when it is not given: most failures are
+//   a message of the peer. 2 for the configuration of `tls_start` and for the level of
+//   `tls_receive`. 0 for a failure that no argument caused: a refusal of the module, a buffer of
+//   the handshake with no room, a handshake that failed before.
 //
-// **The record**: the unit `Bytes`, argument 3 (the bytes of `tls_receive`), `value`, and the alert
-// in `found`.
+// **The record**: the unit `Bytes`, `argument`, `value`, and the alert in `found`.
 //
 // **Result**: always false.
 @(private)
-tls_fail :: proc "contextless" (handshake: ^Tls_Handshake, error: ^errors.Error_Record, alert: Alert, kind: errors.Kind, value: int = 0) -> bool {
+tls_fail :: proc "contextless" (handshake: ^Tls_Handshake, error: ^errors.Error_Record, alert: Alert, kind: errors.Kind, value: int = 0, argument: i64 = 3) -> bool {
 	handshake.state = .Failed
 	handshake.alert = alert
-	errors.fail(error, -1, kind, .Bytes, 3, i64(value), 0, i64(alert))
+	errors.fail(error, -1, kind, .Bytes, argument, i64(value), 0, i64(alert))
 	tls_handshake_erase_secrets(handshake)
 	return false
 }
@@ -489,11 +496,13 @@ tls_fail :: proc "contextless" (handshake: ^Tls_Handshake, error: ^errors.Error_
 // of TLS is in the record, only public values.
 //
 // **Call it only after the last `tls_packet_keys`.** The two flags that say that the keys are
-// ready stay true, so a later call of `tls_packet_keys` gives keys of a secret of zeros, with no
-// error.
+// ready become false, because the secrets no longer exist: a later call of `tls_packet_keys` fails
+// with `State`, and never gives keys of a secret of zeros.
 //
 // It is safe to call it two times, and on a handshake that never started.
 tls_handshake_erase_secrets :: proc "contextless" (handshake: ^Tls_Handshake) {
+	handshake.handshake_keys_ready = false
+	handshake.application_keys_ready = false
 	secret_erase(&handshake.x25519_private_key, size_of(handshake.x25519_private_key))
 	secret_erase(&handshake.schedule, size_of(handshake.schedule))
 	secret_erase(&handshake.configuration.server_private_key, size_of(handshake.configuration.server_private_key))
@@ -750,7 +759,7 @@ message_send :: proc "contextless" (handshake: ^Tls_Handshake, level: Encryption
 	}
 	output := &handshake.to_send[level]
 	if len(message) > LEVEL_BUFFER_SIZE - output.length {
-		return tls_fail(handshake, error, .Internal_Error, .Full, len(message))
+		return tls_fail(handshake, error, .Internal_Error, .Full, len(message), 0)
 	}
 	copy(output.bytes[output.length:], message)
 	output.length += len(message)
@@ -764,7 +773,7 @@ message_send :: proc "contextless" (handshake: ^Tls_Handshake, level: Encryption
 @(private)
 transcript_add :: proc "contextless" (handshake: ^Tls_Handshake, message: []u8, error: ^errors.Error_Record) -> bool {
 	if len(message) > TRANSCRIPT_LIMIT - handshake.transcript_length {
-		return tls_fail(handshake, error, .Internal_Error, .Full, len(message))
+		return tls_fail(handshake, error, .Internal_Error, .Full, len(message), 0)
 	}
 	copy(handshake.transcript[handshake.transcript_length:], message)
 	handshake.transcript_length += len(message)
@@ -779,7 +788,7 @@ transcript_add :: proc "contextless" (handshake: ^Tls_Handshake, message: []u8, 
 @(private)
 transcript_hash :: proc "contextless" (handshake: ^Tls_Handshake, output: ^[HASH_SIZE]u8, error: ^errors.Error_Record) -> bool {
 	if !hash_of(handshake.cryptography, handshake.transcript[:handshake.transcript_length], output) {
-		return tls_fail(handshake, error, .Internal_Error, .Refused)
+		return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
 	}
 	return true
 }
@@ -808,7 +817,7 @@ key_share_make :: proc "contextless" (handshake: ^Tls_Handshake, error: ^errors.
 	scalar, point := string(handshake.x25519_private_key[:]), string(base_point[:])
 	result := handshake.x25519_public_key[:]
 	if handshake.cryptography.x25519(&scalar, &point, &result, error) != 32 {
-		return tls_fail(handshake, error, .Internal_Error, .Refused)
+		return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
 	}
 	return true
 }
@@ -843,7 +852,7 @@ shared_secret_and_handshake_keys :: proc "contextless" (handshake: ^Tls_Handshak
 	secret_erase(&handshake.x25519_private_key, size_of(handshake.x25519_private_key))
 	hash: [HASH_SIZE]u8
 	if !transcript_hash(handshake, &hash, error) || !key_schedule_handshake(handshake.cryptography, &handshake.schedule, shared[:], hash[:], error) {
-		return tls_fail(handshake, error, .Internal_Error, .Refused)
+		return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
 	}
 	handshake.handshake_keys_ready = true
 	return true
@@ -877,13 +886,16 @@ shared_secret_and_handshake_keys :: proc "contextless" (handshake: ^Tls_Handshak
 // **Result**: true when the handshake started. False, with the state `Failed` and the alert
 // internal_error (nothing is sent to a peer):
 //
-// - `Bad_Value`: the least seed strength of the configuration is under `Processor`. A field left
-//   at its zero value would accept a weak seed for the keys;
-// - `Empty`: a client whose pinned key is 32 zero bytes. No key was pinned, and such a client
-//   could never verify a server;
-// - `Bad_Value`: the protocol name does not have 1 to `APPLICATION_PROTOCOL_LIMIT` bytes, or the
-//   transport parameters have more than `TRANSPORT_PARAMETERS_LIMIT`;
-// - `Refused`: the module did not give the public key of the server, or the key share;
+// - `Bad_Value`, argument 2: the least seed strength of the configuration is under `Processor`.
+//   A field left at its zero value would accept a weak seed for the keys. The record holds the
+//   strength as its value;
+// - `Empty`, argument 2: a client whose pinned key is 32 zero bytes. No key was pinned, and such
+//   a client could never verify a server;
+// - `Bad_Value`, argument 2: the protocol name does not have 1 to `APPLICATION_PROTOCOL_LIMIT`
+//   bytes, or the transport parameters have more than `TRANSPORT_PARAMETERS_LIMIT`. The record
+//   holds the count of bytes at fault as its value;
+// - `Refused`, argument 0: the module did not give the public key of the server, or the key
+//   share;
 // - `Seed_Too_Weak`, the record of the generator: the seed of the program is weaker than the
 //   configuration asks. A server meets this later, when it reads the ClientHello.
 tls_start :: proc "contextless" (handshake: ^Tls_Handshake, configuration: ^Tls_Configuration, cryptography: ^Cryptography, generator: ^random.Generator, error: ^errors.Error_Record) -> bool {
@@ -892,22 +904,25 @@ tls_start :: proc "contextless" (handshake: ^Tls_Handshake, configuration: ^Tls_
 	// leaves the field at its zero value would accept a weak seed for its
 	// keys.
 	if configuration.least_seed_strength < .Processor {
-		return tls_fail(handshake, error, .Internal_Error, .Bad_Value, int(configuration.least_seed_strength))
+		return tls_fail(handshake, error, .Internal_Error, .Bad_Value, int(configuration.least_seed_strength), 2)
 	}
 	// A client with no pinned key (32 zeros, a point of small order) could
 	// never verify a server: it is refused here, with its own reason.
 	if configuration.role == .Client && configuration.server_public_key == ([ED25519_KEY_SIZE]u8{}) {
-		return tls_fail(handshake, error, .Internal_Error, .Empty)
+		return tls_fail(handshake, error, .Internal_Error, .Empty, 0, 2)
 	}
-	if configuration.application_protocol_length < 1 || configuration.application_protocol_length > APPLICATION_PROTOCOL_LIMIT || configuration.transport_parameters_length < 0 || configuration.transport_parameters_length > TRANSPORT_PARAMETERS_LIMIT {
-		return tls_fail(handshake, error, .Internal_Error, .Bad_Value)
+	if configuration.application_protocol_length < 1 || configuration.application_protocol_length > APPLICATION_PROTOCOL_LIMIT {
+		return tls_fail(handshake, error, .Internal_Error, .Bad_Value, configuration.application_protocol_length, 2)
+	}
+	if configuration.transport_parameters_length < 0 || configuration.transport_parameters_length > TRANSPORT_PARAMETERS_LIMIT {
+		return tls_fail(handshake, error, .Internal_Error, .Bad_Value, configuration.transport_parameters_length, 2)
 	}
 	if configuration.role == .Server {
 		// The public key that the Certificate carries, from the private key.
 		secret := string(handshake.configuration.server_private_key[:])
 		result := handshake.server_public_key[:]
 		if cryptography.ed25519_public_key(&secret, &result, error) != ED25519_KEY_SIZE {
-			return tls_fail(handshake, error, .Internal_Error, .Refused)
+			return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
 		}
 		handshake.state = .Server_Waits_For_Client_Hello
 		return true
@@ -959,7 +974,7 @@ tls_start :: proc "contextless" (handshake: ^Tls_Handshake, configuration: ^Tls_
 	vector_end(&writer, extensions, 2)
 	vector_end(&writer, body, 3)
 	if writer.failed {
-		return tls_fail(handshake, error, .Internal_Error, .Too_Long)
+		return tls_fail(handshake, error, .Internal_Error, .Too_Long, argument = 0)
 	}
 	if !message_send(handshake, .Initial, message[:writer.position], error) {
 		return false
@@ -1101,13 +1116,17 @@ transport_parameters_take :: proc "contextless" (handshake: ^Tls_Handshake, data
 // False: the handshake failed. `handshake.alert` is the alert for the CONNECTION_CLOSE, the record
 // holds it in `found`, and the secrets are erased. The failures of this procedure itself:
 //
-// - unexpected_message (`State`): bytes came at a level below the level of the state, or bytes of
-//   a level are left after the message that moved the handshake to the next level. Both set
-//   `bytes_after_key_change`: the transport closes with PROTOCOL_VIOLATION;
+// - unexpected_message (`State`): bytes came at a level below the level of the state (argument 2,
+//   with the level as the value), or bytes of a level are left after the message that moved the
+//   handshake to the next level (argument 3, with their count). Both set `protocol_violation`:
+//   the transport closes with PROTOCOL_VIOLATION;
 // - unexpected_message (`Too_Long`): more than `LEVEL_BUFFER_SIZE` bytes wait at the level;
 // - decode_error (`Too_Long`): a message says that its body has more than 4092 bytes;
-// - internal_error: `level` is not a member of `Encryption_Level`;
-// - the alert of the first failure, again, when the handshake failed before.
+// - internal_error (argument 2): `level` is not a member of `Encryption_Level`;
+// - the alert of the first failure, again (`State`, argument 0), when the handshake failed before.
+//
+// The record names argument 3, the bytes, for each fault of a message of the peer, and argument 0
+// for a failure of this side that no argument caused (`tls_fail`).
 //
 // Each other failure is the failure of the reader of one message: see `Alert` for the alerts and
 // when each one comes.
@@ -1117,14 +1136,14 @@ transport_parameters_take :: proc "contextless" (handshake: ^Tls_Handshake, data
 // must not treat a peer as known before that state.
 tls_receive :: proc "contextless" (handshake: ^Tls_Handshake, level: Encryption_Level, bytes: []u8, error: ^errors.Error_Record) -> bool {
 	if handshake.state == .Failed {
-		return tls_fail(handshake, error, handshake.alert == .None ? Alert.Internal_Error : handshake.alert, .State)
+		return tls_fail(handshake, error, handshake.alert == .None ? Alert.Internal_Error : handshake.alert, .State, 0, 0)
 	}
 	if level > .Application {
-		return tls_fail(handshake, error, .Internal_Error, .Bad_Value, int(level))
+		return tls_fail(handshake, error, .Internal_Error, .Bad_Value, int(level), 2)
 	}
 	if level < tls_receive_level(handshake.state) && len(bytes) > 0 {
-		handshake.bytes_after_key_change = true
-		return tls_fail(handshake, error, .Unexpected_Message, .State, int(level))
+		handshake.protocol_violation = true
+		return tls_fail(handshake, error, .Unexpected_Message, .State, int(level), 2)
 	}
 	input := &handshake.received[level]
 	if len(bytes) > LEVEL_BUFFER_SIZE - input.length {
@@ -1150,7 +1169,7 @@ tls_receive :: proc "contextless" (handshake: ^Tls_Handshake, level: Encryption_
 		if rest > 0 && tls_receive_level(handshake.state) > level {
 			// The message moved the handshake to the keys of the next
 			// level, and bytes of this level are left.
-			handshake.bytes_after_key_change = true
+			handshake.protocol_violation = true
 			return tls_fail(handshake, error, .Unexpected_Message, .State, rest)
 		}
 	}
@@ -1226,8 +1245,9 @@ message_read :: proc "contextless" (handshake: ^Tls_Handshake, level: Encryption
 // 1. the form of the message, and a list of cipher suites that is not empty and has an even
 //    length: decode_error;
 // 2. the legacy version 0x0303: protocol_version;
-// 3. an empty session identifier, because QUIC has no compatibility mode (RFC 9001, section 8.4):
-//    illegal_parameter;
+// 3. an empty session identifier, because QUIC has no compatibility mode (RFC 9001, section 8.4).
+//    A session identifier sets `protocol_violation`: the transport closes with
+//    PROTOCOL_VIOLATION, not with the alert (illegal_parameter, which the record still holds);
 // 4. the null compression alone: illegal_parameter;
 // 5. a cipher suite of this library: handshake_failure. ChaCha20-Poly1305 wins when the client
 //    offers it, in any place of its list; else AES-128-GCM;
@@ -1269,7 +1289,9 @@ client_hello_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u
 	}
 	if len(session) != 0 {
 		// RFC 9001, section 8.4: a QUIC client does not ask for the
-		// compatibility mode of TLS.
+		// compatibility mode of TLS, and a server treats the request as a
+		// PROTOCOL_VIOLATION of QUIC. The alert stays for the record only.
+		handshake.protocol_violation = true
 		return tls_fail(handshake, error, .Illegal_Parameter, .Bad_Value, 34)
 	}
 	if len(compressions) != 1 || compressions[0] != 0 {
@@ -1375,7 +1397,7 @@ client_hello_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u
 	vector_end(&writer, server_extensions, 2)
 	vector_end(&writer, body_place, 3)
 	if writer.failed || !message_send(handshake, .Initial, hello[:writer.position], error) {
-		return writer.failed ? tls_fail(handshake, error, .Internal_Error, .Too_Long) : false
+		return writer.failed ? tls_fail(handshake, error, .Internal_Error, .Too_Long, argument = 0) : false
 	}
 	if !shared_secret_and_handshake_keys(handshake, peer_key_share, error) {
 		return false
@@ -1419,7 +1441,7 @@ server_flight_send :: proc "contextless" (handshake: ^Tls_Handshake, error: ^err
 	vector_end(&writer, block, 2)
 	vector_end(&writer, body, 3)
 	if writer.failed || !message_send(handshake, .Handshake, buffer[:writer.position], error) {
-		return writer.failed ? tls_fail(handshake, error, .Internal_Error, .Too_Long) : false
+		return writer.failed ? tls_fail(handshake, error, .Internal_Error, .Too_Long, argument = 0) : false
 	}
 	// Certificate: an empty request context, one entry with the raw public
 	// key and no extension.
@@ -1435,7 +1457,7 @@ server_flight_send :: proc "contextless" (handshake: ^Tls_Handshake, error: ^err
 	vector_end(&writer, list, 3)
 	vector_end(&writer, body, 3)
 	if writer.failed || !message_send(handshake, .Handshake, buffer[:writer.position], error) {
-		return writer.failed ? tls_fail(handshake, error, .Internal_Error, .Too_Long) : false
+		return writer.failed ? tls_fail(handshake, error, .Internal_Error, .Too_Long, argument = 0) : false
 	}
 	// CertificateVerify: the signature of the transcript to the Certificate.
 	content: [SIGNATURE_CONTENT_SIZE]u8
@@ -1446,7 +1468,7 @@ server_flight_send :: proc "contextless" (handshake: ^Tls_Handshake, error: ^err
 	secret, signed := string(handshake.configuration.server_private_key[:]), string(content[:])
 	result := signature[:]
 	if handshake.cryptography.ed25519_sign(&secret, &signed, &result, error) != ED25519_SIGNATURE_SIZE {
-		return tls_fail(handshake, error, .Internal_Error, .Refused)
+		return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
 	}
 	writer = Writer{bytes = buffer[:]}
 	write_integer(&writer, int(Handshake_Message.Certificate_Verify), 1)
@@ -1456,7 +1478,7 @@ server_flight_send :: proc "contextless" (handshake: ^Tls_Handshake, error: ^err
 	write_bytes(&writer, signature[:])
 	vector_end(&writer, body, 3)
 	if writer.failed || !message_send(handshake, .Handshake, buffer[:writer.position], error) {
-		return writer.failed ? tls_fail(handshake, error, .Internal_Error, .Too_Long) : false
+		return writer.failed ? tls_fail(handshake, error, .Internal_Error, .Too_Long, argument = 0) : false
 	}
 	// Finished of the server, then the application secrets.
 	if !finished_send(handshake, handshake.schedule.server_handshake_traffic[:], error) {
@@ -1464,7 +1486,7 @@ server_flight_send :: proc "contextless" (handshake: ^Tls_Handshake, error: ^err
 	}
 	hash: [HASH_SIZE]u8
 	if !transcript_hash(handshake, &hash, error) || !key_schedule_application(handshake.cryptography, &handshake.schedule, hash[:], error) {
-		return tls_fail(handshake, error, .Internal_Error, .Refused)
+		return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
 	}
 	handshake.application_keys_ready = true
 	handshake.state = .Server_Waits_For_Finished
@@ -1512,7 +1534,7 @@ signature_content :: proc "contextless" (handshake: ^Tls_Handshake, content: ^[S
 finished_send :: proc "contextless" (handshake: ^Tls_Handshake, traffic_secret: []u8, error: ^errors.Error_Record) -> bool {
 	hash, verify_data: [HASH_SIZE]u8
 	if !transcript_hash(handshake, &hash, error) || !finished_verify_data(handshake.cryptography, traffic_secret, hash[:], &verify_data, error) {
-		return tls_fail(handshake, error, .Internal_Error, .Refused)
+		return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
 	}
 	message: [MESSAGE_HEADER_SIZE + HASH_SIZE]u8
 	message[0] = u8(Handshake_Message.Finished)
@@ -1548,7 +1570,7 @@ finished_check :: proc "contextless" (handshake: ^Tls_Handshake, body: []u8, tra
 	}
 	hash, expected: [HASH_SIZE]u8
 	if !transcript_hash(handshake, &hash, error) || !finished_verify_data(handshake.cryptography, traffic_secret, hash[:], &expected, error) {
-		return tls_fail(handshake, error, .Internal_Error, .Refused)
+		return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
 	}
 	difference: u8
 	for index in 0 ..< HASH_SIZE {
@@ -1633,9 +1655,13 @@ server_hello_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u
 // **What it checks**, with the alert of each refusal:
 //
 // - the form of the message: decode_error;
-// - only ALPN, `server_certificate_type` and `quic_transport_parameters`: each other extension
-//   fails with unsupported_extension. That includes `supported_groups` and `server_name`, which
-//   RFC 8446 lets a server send there;
+// - only the extensions that the client offered and that RFC 8446, section 4.2, lets a server
+//   answer there: ALPN, `server_certificate_type`, `quic_transport_parameters` and
+//   `supported_groups`. Each other extension fails with unsupported_extension. That includes
+//   `server_name`, `client_certificate_type` and `early_data`: the RFC lets a server send them
+//   there only as an answer, and this client offers none of them;
+// - `supported_groups` is taken and not read: it names the groups that the server prefers for a
+//   later connection (RFC 8446, section 4.2.7), and this client has one group;
 // - ALPN is there: no_application_protocol (RFC 9001, section 8.1); it holds one name, the name of
 //   the client: illegal_parameter;
 // - `server_certificate_type` is there and is the raw public key: unsupported_certificate. No
@@ -1652,7 +1678,9 @@ encrypted_extensions_read :: proc "contextless" (handshake: ^Tls_Handshake, mess
 		return tls_fail(handshake, error, .Decode_Error, .Bad_Value)
 	}
 	extensions: Extensions
-	if !extensions_read(handshake, block, {.Application_Protocol, .Server_Certificate_Type, .Quic_Transport_Parameters}, false, &extensions, error) {
+	// supported_groups is taken and not read: a server may name there the
+	// groups that it prefers, to a client that offered the extension.
+	if !extensions_read(handshake, block, {.Application_Protocol, .Server_Certificate_Type, .Quic_Transport_Parameters, .Supported_Groups}, false, &extensions, error) {
 		return false
 	}
 	if .Application_Protocol not_in extensions.present {
@@ -1791,7 +1819,7 @@ server_finished_read :: proc "contextless" (handshake: ^Tls_Handshake, message: 
 	}
 	hash: [HASH_SIZE]u8
 	if !transcript_hash(handshake, &hash, error) || !key_schedule_application(handshake.cryptography, &handshake.schedule, hash[:], error) {
-		return tls_fail(handshake, error, .Internal_Error, .Refused)
+		return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
 	}
 	if !finished_send(handshake, handshake.schedule.client_handshake_traffic[:], error) {
 		return false
@@ -1863,8 +1891,8 @@ tls_bytes_sent :: proc "contextless" (handshake: ^Tls_Handshake, level: Encrypti
 //
 // **Result**: true when the keys are whole. False:
 //
-// - `State` (argument 2): the secrets of the level do not exist yet (`handshake_keys_ready`,
-//   `application_keys_ready`);
+// - `State` (argument 2): the secrets of the level do not exist (`handshake_keys_ready`,
+//   `application_keys_ready`): the handshake did not make them yet, or they were erased;
 // - `Bad_Value` (argument 2): the level is `Initial`. The Initial keys come from a connection
 //   identifier, not from TLS (`initial_keys`);
 // - an error of the derivation.
@@ -1872,7 +1900,8 @@ tls_bytes_sent :: proc "contextless" (handshake: ^Tls_Handshake, level: Encrypti
 // A failure here does not fail the handshake: the state and the alert stay as they are.
 //
 // **Take the keys before the secrets are erased**: after `tls_handshake_erase_secrets`, or after a
-// failure of the handshake, the flags stay true and the keys would come from a secret of zeros.
+// failure of the handshake, the secrets are zeros, the flags are false, and the call fails with
+// `State`.
 tls_packet_keys :: proc "contextless" (handshake: ^Tls_Handshake, level: Encryption_Level, sending: bool, keys: ^Packet_Keys, error: ^errors.Error_Record) -> bool {
 	keys^ = {}
 	client_side := (handshake.configuration.role == .Client) == sending

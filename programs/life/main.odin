@@ -31,6 +31,7 @@
 // the left edge.
 package life
 
+import "contract:errors"
 import "support:display"
 import "support:graphics"
 import "support:interface"
@@ -90,17 +91,27 @@ empty :: proc "c" () {
 //
 // **Parameters**: `column` and `row`, the top left corner of the 3 by 3
 // box of the glider, from 0. A value past the board wraps: `column` modulo
-// 96, `row` modulo 64. A negative value does not wrap to the other edge in
-// the same way: it is read as a large unsigned number first.
+// 96, `row` modulo 64.
 //
-// It adds cells and removes none. It has no error.
+// It adds cells and removes none. The result is 1. It fails with -1 and an
+// error record: `Too_Small` when `column` or `row` is negative; the record
+// names the argument, and no cell changes.
 @(export, link_name = "glider")
-glider :: proc "c" (column, row: i64) {
+glider :: proc "c" (column, row: i64, error: ^errors.Error_Record) -> i64 {
+	switch {
+	case column < 0:
+		return errors.fail(error, -1, .Too_Small, .None, 1, column, 0)
+	case row < 0:
+		return errors.fail(error, -1, .Too_Small, .None, 2, row, 0)
+	}
+	// The modulo comes before the sum: a sum of the largest integer and an
+	// offset of the shape would be negative.
 	shape := [5][2]i64{{1, 0}, {2, 1}, {0, 2}, {1, 2}, {2, 2}}
 	for cell in shape {
-		cells[shown][u64(row + cell[1]) % ROWS][u64(column + cell[0]) % COLUMNS] = 1
+		cells[shown][(row % ROWS + cell[1]) % ROWS][(column % COLUMNS + cell[0]) % COLUMNS] = 1
 	}
 	board_generation += 1
+	return 1
 }
 
 // The window is built with the interface package (docs/INTERFACE.md): the

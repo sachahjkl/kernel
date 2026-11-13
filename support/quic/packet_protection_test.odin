@@ -579,6 +579,7 @@ authentic_packets_with_reserved_bits :: proc(t: ^testing.T) {
 		opened: Opened_Packet
 		testing.expect(t, !packet_open(&cryptography, &client, buffer[:end], &header, 0, &opened, &error))
 		testing.expect_value(t, error.kind, i64(errors.Kind.Bad_Value))
+		testing.expect(t, opened.authentic_with_reserved_bits, "the open does not say that the packet is authentic")
 	}
 	// A short header: the reserved bits are 0x18.
 	for reserved in ([]u8{0x08, 0x10}) {
@@ -592,7 +593,60 @@ authentic_packets_with_reserved_bits :: proc(t: ^testing.T) {
 		opened: Opened_Packet
 		testing.expect(t, !packet_open(&cryptography, &short, buffer[:end], &header, 0, &opened, &error))
 		testing.expect_value(t, error.kind, i64(errors.Kind.Bad_Value))
+		testing.expect(t, opened.authentic_with_reserved_bits, "the open does not say that the packet is authentic")
 	}
+}
+
+// short_packet_without_header_protection gives a private copy of the short
+// header packet of RFC 9001, appendix A.5, with its header read and its
+// header protection removed: the state before `packet_payload_open`.
+short_packet_without_header_protection :: proc(module: ^Cryptography, packet_keys: ^Packet_Keys, memory: []u8, read_header: ^Packet_Header, removed: ^Unprotected_Header) -> []u8 {
+	problem: errors.Error_Record
+	datagram, _ := datagram_take(bytes_of(SHORT_PACKET), memory, &problem)
+	header_read(datagram, 0, 0, read_header, &problem)
+	header_protection_remove(module, packet_keys, datagram, read_header, SHORT_PACKET_NUMBER - 1, removed, &problem)
+	return datagram
+}
+
+// Bad_Value alone does not say that a packet is authentic: an open that
+// fails with Bad_Value before any tag is checked (offsets that do not fit the
+// datagram, keys with no suite) leaves `authentic_with_reserved_bits` false,
+// and so does a packet that is not authentic, with its reserved bits set or
+// not. Only that field lets a caller close a connection for reserved bits.
+// Before the correction the caller told the cases apart by the kind
+// Bad_Value, which the first two failures give too.
+@(test)
+only_an_authentic_packet_is_marked_for_its_reserved_bits :: proc(t: ^testing.T) {
+	cryptography := module_cryptography()
+	error: errors.Error_Record
+	keys, other, none: Packet_Keys
+	packet_keys_from_secret(&cryptography, .ChaCha20_Poly1305_Sha256, bytes_of(SHORT_SECRET), &keys, &error)
+	packet_keys_from_secret(&cryptography, .ChaCha20_Poly1305_Sha256, bytes_of(CLIENT_INITIAL_SECRET), &other, &error)
+	private_memory: [DATAGRAM_LIMIT]u8
+	header: Packet_Header
+	unprotected: Unprotected_Header
+	opened: Opened_Packet
+	// Offsets that do not fit: Bad_Value before the open.
+	datagram := short_packet_without_header_protection(&cryptography, &keys, private_memory[:], &header, &unprotected)
+	unprotected.payload_offset = header.end + 1
+	opened.authentic_with_reserved_bits = true
+	testing.expect(t, !packet_payload_open(&cryptography, &keys, datagram, &header, &unprotected, &opened, &error))
+	testing.expect_value(t, error.kind, i64(errors.Kind.Bad_Value))
+	testing.expect(t, !opened.authentic_with_reserved_bits, "a failure before the open marked the packet as authentic")
+	// Keys with no suite: Bad_Value before the open.
+	datagram = short_packet_without_header_protection(&cryptography, &keys, private_memory[:], &header, &unprotected)
+	opened.authentic_with_reserved_bits = true
+	testing.expect(t, !packet_payload_open(&cryptography, &none, datagram, &header, &unprotected, &opened, &error))
+	testing.expect_value(t, error.kind, i64(errors.Kind.Bad_Value))
+	testing.expect(t, !opened.authentic_with_reserved_bits, "a failure before the open marked the packet as authentic")
+	// A packet that is not authentic, with reserved bits set in the header
+	// that the removal gave.
+	datagram = short_packet_without_header_protection(&cryptography, &keys, private_memory[:], &header, &unprotected)
+	unprotected.first_byte |= 0x18
+	opened.authentic_with_reserved_bits = true
+	testing.expect(t, !packet_payload_open(&cryptography, &other, datagram, &header, &unprotected, &opened, &error))
+	testing.expect_value(t, error.kind, i64(errors.Kind.Not_Authentic))
+	testing.expect(t, !opened.authentic_with_reserved_bits, "a packet that is not authentic was marked as authentic")
 }
 
 // The seal writes the packet number itself, and refuses a long header whose

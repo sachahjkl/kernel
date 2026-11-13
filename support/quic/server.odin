@@ -282,7 +282,7 @@ Server :: struct {
 //   configuration is 0. A record of a server always has a bound: with no idle
 //   timeout on either side, a client that vanishes while the server has a packet
 //   in flight would keep its record for ever.
-// - `Bad_Value`, argument 1: the least seed strength of the configuration is
+// - `Bad_Value`, argument 5: the least seed strength of the configuration is
 //   under `.Processor`.
 // - The error of `random.fill_for_a_key`: the seed of the generator is weaker
 //   than the least seed strength, so the server makes no key.
@@ -310,7 +310,7 @@ server_init :: proc "contextless" (server: ^Server, connections: []Connection, r
 	}
 	server.streams = streams
 	server.streams_per_connection = len(streams) / len(connections)
-	if !connection_seed_strength_check(configuration, error) {
+	if !connection_seed_strength_check(configuration, 5, error) {
 		return false
 	}
 	server.connections = connections
@@ -876,9 +876,11 @@ server_time_passes :: proc "contextless" (server: ^Server, now: u64) {
 // server_sweep frees each record whose connection ended, and writes its remote
 // in `released` when no other record has it: the caller releases them.
 //
-// - `released`: where the remotes go. Give it one place for each record: a
-//   remote with no place left is not written, and the caller then never releases
-//   it.
+// - `released`: where the remotes go. Give it one place for each record, so
+//   that one call frees each record that ended. A record whose remote has no
+//   place left is not freed in this call: it stays in use, and the next call
+//   frees it and gives its remote. No remote is lost. With no place at all, a
+//   record whose remote must be released is never freed.
 //
 // **Result**: the count of remotes written.
 //
@@ -892,11 +894,17 @@ server_sweep :: proc "contextless" (server: ^Server, released: []Remote) -> int 
 			continue
 		}
 		record.in_use = false
-		server.counters.ended += 1
-		if !server_remote_has_record(server, record.remote) && count < len(released) {
+		if !server_remote_has_record(server, record.remote) {
+			if count >= len(released) {
+				// The caller must release this remote, and has no place to
+				// learn it now: the record waits for the next call.
+				record.in_use = true
+				continue
+			}
 			released[count] = record.remote
 			count += 1
 		}
+		server.counters.ended += 1
 	}
 	return count
 }

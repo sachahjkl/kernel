@@ -27,7 +27,7 @@ PARAMETER_INITIAL_MAX_STREAMS_UNIDIRECTIONAL :: 0x09 // `initial_max_streams_uni
 PARAMETER_ACK_DELAY_EXPONENT :: 0x0a // `ack_delay_exponent`: the power of 2 that scales the ACK Delay field of the sender; 3 when absent, `ACK_DELAY_EXPONENT_LARGEST` at most.
 PARAMETER_MAX_ACK_DELAY :: 0x0b // `max_ack_delay`: the longest time, in milliseconds, for which the sender holds back an acknowledgment; 25 when absent, under `MAX_ACK_DELAY_LIMIT`.
 PARAMETER_DISABLE_ACTIVE_MIGRATION :: 0x0c // `disable_active_migration`: a parameter with no value; the sender takes no packet of this connection from another address.
-PARAMETER_PREFERRED_ADDRESS :: 0x0d // `preferred_address`: another address of a server, from a server only. This library does not read its value: it does not migrate.
+PARAMETER_PREFERRED_ADDRESS :: 0x0d // `preferred_address`: another address of a server, from a server only. This library checks its form and keeps nothing of it: it does not migrate.
 PARAMETER_ACTIVE_CONNECTION_ID_LIMIT :: 0x0e // `active_connection_id_limit`: the count of connection identifiers of the peer that the sender stores; 2 at least, 2 when absent.
 PARAMETER_INITIAL_SOURCE_CONNECTION_ID :: 0x0f // `initial_source_connection_id`: the Source Connection ID of the first Initial packet of the sender. Each side must send it.
 PARAMETER_RETRY_SOURCE_CONNECTION_ID :: 0x10 // `retry_source_connection_id`: the Source Connection ID of the Retry packet of the server. A server sends it after a Retry, and only then.
@@ -50,6 +50,20 @@ ACK_DELAY_EXPONENT_LARGEST :: 20
 // A valid value is under this limit (RFC 9000, section 18.2). `transport_parameters_read` gives
 // `Transport_Parameter_Error` for this value and for each larger one.
 MAX_ACK_DELAY_LIMIT :: 1 << 14
+
+// The offset, in the value of the transport parameter `preferred_address`, of the byte that holds the length of its connection identifier: 24.
+//
+// Before it come an IPv4 address (4 bytes) and its port (2), then an IPv6 address (16 bytes) and
+// its port (2) (RFC 9000, section 18.2).
+PREFERRED_ADDRESS_IDENTIFIER_LENGTH_OFFSET :: 4 + 2 + 16 + 2
+
+// The bytes of the value of the transport parameter `preferred_address` without its connection identifier: 41.
+//
+// The two addresses with their ports, the byte of the length of the identifier, and the stateless
+// reset token of 16 bytes after the identifier. A value has these bytes and the 1 to
+// `CONNECTION_ID_LIMIT` bytes of its identifier: `transport_parameters_read` gives
+// `Transport_Parameter_Error` for each other size.
+PREFERRED_ADDRESS_FIXED_SIZE :: PREFERRED_ADDRESS_IDENTIFIER_LENGTH_OFFSET + 1 + STATELESS_RESET_TOKEN_SIZE
 
 // The transport parameters of one side of a connection, as values.
 //
@@ -195,8 +209,15 @@ transport_parameters_write :: proc "contextless" (parameters: ^Transport_Paramet
 //   `stateless_reset_token`, `preferred_address` or `retry_source_connection_id`;
 // - a connection identifier has more than `CONNECTION_ID_LIMIT` bytes;
 // - `stateless_reset_token` does not have 16 bytes, or `disable_active_migration` has a value;
+// - `preferred_address` does not have its form: an IPv4 address and port (6 bytes), an IPv6 address
+//   and port (18 bytes), the length of a connection identifier (1 byte), that identifier, and a
+//   stateless reset token (16 bytes), with nothing after;
+// - the connection identifier of `preferred_address` has no byte or more than
+//   `CONNECTION_ID_LIMIT`, or the server that sends `preferred_address` chose an empty
+//   `initial_source_connection_id` (RFC 9000, section 18.2);
 // - an integer parameter is not one variable-length integer that fills its value;
-// - `max_udp_payload_size` is under 1200, a count of streams is over `STREAMS_LIMIT`,
+// - `max_udp_payload_size` is under 1200 (RFC 9000 gives it no largest value: a value over the
+//   65527 bytes that UDP carries is taken as it is, and this side sends 1200 bytes at most), a count of streams is over `STREAMS_LIMIT`,
 //   `ack_delay_exponent` is over 20, `max_ack_delay` is 2^14 or more, or
 //   `active_connection_id_limit` is under 2;
 // - `initial_source_connection_id` is absent, or a server did not send
@@ -205,8 +226,9 @@ transport_parameters_write :: proc "contextless" (parameters: ^Transport_Paramet
 // After an error, `parameters` holds a part of the values: the caller must not use it.
 //
 // **What it skips**: a parameter with an identifier over 0x10, which this library does not know (RFC
-// 9000, section 7.4.2). Such a parameter can come two times. The value of `preferred_address` is
-// not read, and the token of `stateless_reset_token` is not kept.
+// 9000, section 7.4.2). Such a parameter can come two times. The addresses of `preferred_address`
+// are not kept: only its form is checked, because this library does not migrate. The token of
+// `stateless_reset_token` is not kept.
 //
 // **What it does not check**: that the identifiers are those that the packets carried, and that
 // `retry_source_connection_id` is there after a Retry and only then. The transport does both with
@@ -214,6 +236,7 @@ transport_parameters_write :: proc "contextless" (parameters: ^Transport_Paramet
 transport_parameters_read :: proc "contextless" (bytes: []u8, sender: Tls_Role, parameters: ^Transport_Parameters) -> Transport_Error {
 	parameters^ = transport_parameters_default()
 	seen: bit_set[0 ..= PARAMETER_RETRY_SOURCE_CONNECTION_ID]
+	has_preferred_address := false
 	position := 0
 	for position < len(bytes) {
 		identifier, identifier_size, identifier_ok := variable_length_integer_read(bytes, position)
@@ -274,8 +297,18 @@ transport_parameters_read :: proc "contextless" (bytes: []u8, sender: Tls_Role, 
 			}
 			parameters.disable_active_migration = true
 		case PARAMETER_PREFERRED_ADDRESS:
-		// Not used: this library does not migrate. Its form is the
-		// server's concern.
+			// Not used: this library does not migrate. Only its form is
+			// checked: the two addresses with their ports, a connection
+			// identifier with its length, and a stateless reset token. The
+			// identifier is never empty (RFC 9000, section 18.2).
+			if len(value) < PREFERRED_ADDRESS_FIXED_SIZE {
+				return .Transport_Parameter_Error
+			}
+			identifier_length := int(value[PREFERRED_ADDRESS_IDENTIFIER_LENGTH_OFFSET])
+			if identifier_length == 0 || identifier_length > CONNECTION_ID_LIMIT || len(value) != PREFERRED_ADDRESS_FIXED_SIZE + identifier_length {
+				return .Transport_Parameter_Error
+			}
+			has_preferred_address = true
 		case:
 			// An integer: a variable-length integer that fills the value.
 			number, size, ok := variable_length_integer_read(value, 0)
@@ -328,6 +361,11 @@ transport_parameters_read :: proc "contextless" (bytes: []u8, sender: Tls_Role, 
 	// Each side gives the identifier of its first packet; a server gives the
 	// identifier that the client chose (RFC 9000, section 7.3).
 	if !parameters.has_initial_source_connection_id || (sender == .Server && !parameters.has_original_destination_connection_id) {
+		return .Transport_Parameter_Error
+	}
+	// A server that chose an empty connection identifier gives no preferred
+	// address (RFC 9000, section 18.2): a client could not name it there.
+	if has_preferred_address && parameters.initial_source_connection_id_length == 0 {
 		return .Transport_Parameter_Error
 	}
 	return .No_Error

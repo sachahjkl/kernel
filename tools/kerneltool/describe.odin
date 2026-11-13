@@ -75,7 +75,7 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 		append(&files, file)
 		if markdown := markdown_of(file.docs); description.markdown == "" {
 			description.markdown = markdown
-			description.text = documentation_text_of_markdown(markdown)
+			description.text = markdown
 		}
 	}
 	for file in files {
@@ -90,7 +90,7 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 			}
 		}
 	}
-	description.about = about_of(description.text, "")
+	description.about = about_of(documentation_text_of_markdown(description.text), "")
 	if description.about == "" {
 		fmt.eprintfln("kerneltool: describe %s: no file has a comment before `package`: this comment is the documentation of the module", folder)
 		return {}, false
@@ -554,8 +554,8 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 			// does when the loader starts it. With no comment its text is empty.
 			entry_description := Export_Description{name = name, file = path, line = declaration.pos.line}
 			entry_description.markdown = markdown_of(declaration.docs)
-			entry_description.text = documentation_text_of_markdown(entry_description.markdown)
-			entry_description.about = about_of(entry_description.text, name)
+			entry_description.text = entry_description.markdown
+			entry_description.about = about_of(documentation_text_of_markdown(entry_description.markdown), name)
 			append(list, entry_description)
 			continue
 		}
@@ -702,8 +702,8 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 			return describe_fail(path, declaration, "%s: a call lends at most %d handles; this export takes %d", name, module.HANDLE_CAPACITY, handles)
 		}
 		description.markdown = markdown_of(declaration.docs)
-		description.text = documentation_text_of_markdown(description.markdown)
-		description.about = about_of(description.text, name)
+		description.text = description.markdown
+		description.about = about_of(documentation_text_of_markdown(description.markdown), name)
 		if description.about == "" {
 			return describe_fail(path, declaration, "%s has no comment: the first sentence of the comment is the help of the export", name)
 		}
@@ -732,10 +732,11 @@ markdown_of :: proc(docs: ^ast.Comment_Group) -> string {
 }
 
 // text_of gives the documentation text of a comment that a module carries
-// (module.Documentation says the form): its Markdown with the marks
-// removed (documentation_text_of_markdown).
+// (module.Documentation says the form): its Markdown, as its author wrote
+// it. The line of help is its first sentence with the marks removed
+// (about_of, documentation_text_of_markdown).
 text_of :: proc(docs: ^ast.Comment_Group) -> string {
-	return documentation_text_of_markdown(markdown_of(docs))
+	return markdown_of(docs)
 }
 
 // about_of gives the first sentence of a documentation text, without the

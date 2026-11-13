@@ -11,9 +11,11 @@ import "core:strings"
 // The debug object of each module (docs/MODULE_CONTRACT.md, "Debug
 // information"). The tool reads the linked ELF file of the module: the
 // procedure table comes from its symbol table, the line table from the line
-// program of DWARF that the compiler wrote with -debug. The tool writes the
-// tables of contract:debug_object, which a program reads with no parser of
-// DWARF. The DWARF stays in the linked file, for a debugger of the host.
+// program of DWARF that the compiler wrote with -debug, the types and the
+// variables from the entries of .debug_info (debug_information.odin). The
+// tool writes the tables of contract:debug_object, which a program reads
+// with no parser of DWARF. The DWARF stays in the linked file, for a
+// debugger of the host.
 
 // The debug image: the debug object of each module of the build, in the
 // form of a boot image. The tool puts it on each boot volume, beside the
@@ -77,6 +79,8 @@ debug_object_from_elf :: proc(elf: []u8, module_hash: [32]u8) -> (object: []u8, 
 	}
 	procedures := elf_function_symbols(elf, sections, code_start, code_end)
 	line_rows: []Debug_Row
+	host_paths: map[string]string
+	information: Debug_Information
 	if line_program, has_lines := elf_section_named(elf, header, sections, ".debug_line"); has_lines {
 		line_strings, _ := elf_section_named(elf, header, sections, ".debug_line_str")
 		debug_strings, _ := elf_section_named(elf, header, sections, ".debug_str")
@@ -90,17 +94,67 @@ debug_object_from_elf :: proc(elf: []u8, module_hash: [32]u8) -> (object: []u8, 
 		if error != "" {
 			return nil, error
 		}
-		line_rows, error = dwarf_line_rows(line_program, line_strings, debug_strings, compilation_directories, code_start, code_end)
+		line_rows, host_paths, error = dwarf_line_rows(line_program, line_strings, debug_strings, compilation_directories, code_start, code_end)
 		if error != "" {
 			return nil, error
 		}
+		if len(units) > 0 {
+			locations, _ := elf_section_named(elf, header, sections, ".debug_loc")
+			ranges, _ := elf_section_named(elf, header, sections, ".debug_ranges")
+			information, error = debug_information_from_dwarf(units, abbreviations, debug_strings, locations, ranges, sections)
+			if error != "" {
+				return nil, error
+			}
+		}
 	}
-	return debug_object_encode(procedures, line_rows, code_end, module_hash)
+	file_hashes: map[string][32]u8
+	file_hashes, error = debug_source_file_hashes(line_rows, host_paths)
+	if error != "" {
+		return nil, error
+	}
+	return debug_object_encode(procedures, line_rows, code_end, module_hash, file_hashes, information)
+}
+
+// debug_source_file_hashes gives the BLAKE3 hash of the content of each
+// source file of the rows, by its path in the debug object. The tool reads
+// the file where the compiler read it. A file that the tool cannot read
+// is an error: a debug object with no hash for a file lets a reader show
+// lines of another version of the source.
+debug_source_file_hashes :: proc(line_rows: []Debug_Row, host_paths: map[string]string) -> (hashes: map[string][32]u8, error: string) {
+	hashes = make(map[string][32]u8, context.temp_allocator)
+	for row in line_rows {
+		if row.path == "" || row.path in hashes {
+			continue
+		}
+		host_path, known := host_paths[row.path]
+		if !known {
+			return nil, fmt.tprintf("the source file %s has no path on the build host", row.path)
+		}
+		content, read_error := os.read_entire_file(host_path, context.temp_allocator)
+		if read_error != nil {
+			return nil, fmt.tprintf("cannot read the source file %s to hash it: %v", host_path, read_error)
+		}
+		hashes[row.path] = blake3.hash(content)
+	}
+	return hashes, ""
+}
+
+// debug_host_path gives the path of a source file on the build host, from
+// its directory and its name in a line program: where the tool reads the
+// file to hash it. It never reaches the debug object.
+debug_host_path :: proc(directory, name: string) -> string {
+	if !strings.has_prefix(name, "/") && directory != "" {
+		return join(directory, "/", name)
+	}
+	return name
 }
 
 // debug_object_encode writes the tables: one string for each name and each
-// path, the files in the order of their first row.
-debug_object_encode :: proc(procedures: []Debug_Procedure, line_rows: []Debug_Row, code_end: u64, module_hash: [32]u8) -> (object: []u8, error: string) {
+// path, the files in the order of their first row, each with the hash of
+// its content from `file_hashes` (no entry: no hash), then the types, the
+// globals and the variables of `information`, each table in a fixed order
+// (debug_tables_encode).
+debug_object_encode :: proc(procedures: []Debug_Procedure, line_rows: []Debug_Row, code_end: u64, module_hash: [32]u8, file_hashes: map[string][32]u8, information: Debug_Information) -> (object: []u8, error: string) {
 	context.allocator = context.temp_allocator
 	string_bytes := make([dynamic]u8)
 	string_add :: proc(pool: ^[dynamic]u8, value: string) -> (offset: u32) {
@@ -127,7 +181,7 @@ debug_object_encode :: proc(procedures: []Debug_Procedure, line_rows: []Debug_Ro
 			if !known {
 				number = u32(len(file_table))
 				file_numbers[row.path] = number
-				append(&file_table, debug_object.File{path_offset = string_add(&string_bytes, row.path), path_count = u32(len(row.path))})
+				append(&file_table, debug_object.File{path_offset = string_add(&string_bytes, row.path), path_count = u32(len(row.path)), content_hash = file_hashes[row.path]})
 			}
 			file = number
 		}
@@ -148,13 +202,309 @@ debug_object_encode :: proc(procedures: []Debug_Procedure, line_rows: []Debug_Ro
 		procedures  = procedure_table[:],
 		files       = file_table[:],
 		lines       = line_table[:],
-		strings     = string_bytes[:],
 	}
+	error = debug_tables_encode(&parts, &string_bytes, information)
+	if error != "" {
+		return nil, error
+	}
+	parts.strings = string_bytes[:]
 	object = make([]u8, debug_object.encoded_size(parts))
 	if !debug_object.encode(parts, object) {
-		return nil, fmt.tprintf("%d procedures, %d files, %d rows and %d bytes of names: a table is over its capacity", len(procedure_table), len(file_table), len(line_table), len(string_bytes))
+		return nil, fmt.tprintf("%d procedures, %d files, %d rows, %d types, %d fields, %d globals, %d variables, %d ranges of variables and %d bytes of names: a table is over its capacity", len(procedure_table), len(file_table), len(line_table), len(parts.types), len(parts.fields), len(parts.globals), len(parts.variables), len(parts.ranges), len(string_bytes))
 	}
 	return object, ""
+}
+
+// The names of the types, the globals and the variables: each one is in
+// the strings once.
+Debug_Names :: struct {
+	bytes: ^[dynamic]u8,
+	known: map[string]u32,
+}
+
+debug_name_add :: proc(pool: ^Debug_Names, value: string) -> u32 {
+	if value == "" {
+		return 0
+	}
+	if known_offset, known := pool.known[value]; known {
+		return known_offset
+	}
+	offset := u32(len(pool.bytes))
+	append(pool.bytes, ..transmute([]u8)value)
+	pool.known[value] = offset
+	return offset
+}
+
+// debug_tables_encode writes the type table, the field table, the
+// enumeration value table, the global table, the variable table and the
+// variable range table of `information` into the parts, and their names
+// into the strings.
+//
+// Each table has a fixed order, so that two builds of one source give the
+// same bytes whatever the order of the entries of DWARF: the types by
+// their content (debug_types_in_fixed_order); the globals by their
+// address, then their name; the variables by their procedure, then their
+// name (debug_variables_encode). Two records with the same content are
+// one record. A name is in the strings once.
+debug_tables_encode :: proc(parts: ^debug_object.Encode_Parts, string_bytes: ^[dynamic]u8, information: Debug_Information) -> (error: string) {
+	context.allocator = context.temp_allocator
+	names := Debug_Names{bytes = string_bytes, known = make(map[string]u32)}
+	// The ranges that the tables keep: a type that only a dropped range
+	// uses is not written.
+	kept := debug_variable_ranges_in_procedures(information.variables, parts.procedures)
+	types, index_of, order_error := debug_types_in_fixed_order(information.types, information.globals, kept)
+	if order_error != "" {
+		return order_error
+	}
+	type_table := make([dynamic]debug_object.Type)
+	field_table := make([dynamic]debug_object.Field)
+	value_table := make([dynamic]debug_object.Enumeration_Value)
+	append(&type_table, debug_object.Type{})
+	for type in types[1:] {
+		if type.size > u64(max(u32)) || type.count > u64(max(u32)) {
+			return fmt.tprintf("the type %s of %d bytes and %d elements does not fit the type table", type.name, type.size, type.count)
+		}
+		record := debug_object.Type {
+			name_offset = debug_name_add(&names, type.name),
+			name_count  = u32(len(type.name)),
+			size        = u32(type.size),
+			kind        = type.kind,
+			element     = u32(type.element),
+			count       = u32(type.count),
+		}
+		#partial switch type.kind {
+		case .Record, .Union, .Slice, .String:
+			record.first = u32(len(field_table))
+			record.count = u32(len(type.fields))
+			for field in type.fields {
+				if field.offset > u64(max(u32)) {
+					return fmt.tprintf("the field %s of the type %s, at %d bytes, does not fit the field table", field.name, type.name, field.offset)
+				}
+				append(&field_table, debug_object.Field{name_offset = debug_name_add(&names, field.name), name_count = u32(len(field.name)), offset = u32(field.offset), type = u32(field.type), bit_shift = field.bit_shift, bit_size = field.bit_size})
+			}
+		case .Enumeration:
+			record.first = u32(len(value_table))
+			record.count = u32(len(type.values))
+			for named in type.values {
+				append(&value_table, debug_object.Enumeration_Value{name_offset = debug_name_add(&names, named.name), name_count = u32(len(named.name)), value_low = u32(named.value & 0xFFFF_FFFF), value_high = u32(named.value >> 32)})
+			}
+		}
+		append(&type_table, record)
+	}
+	// The globals: by their address, then their name.
+	globals := make([]Debug_Global, len(information.globals))
+	copy(globals, information.globals)
+	for &global in globals {
+		global.type = index_of[global.type]
+	}
+	slice.sort_by(globals, proc(a, b: Debug_Global) -> bool {
+		if a.address != b.address {
+			return a.address < b.address
+		}
+		if a.name != b.name {
+			return a.name < b.name
+		}
+		return a.type < b.type
+	})
+	global_table := make([dynamic]debug_object.Global)
+	for global, index in globals {
+		if index > 0 && globals[index - 1] == global {
+			continue
+		}
+		if global.address > u64(max(u32)) || global.name == "" {
+			return fmt.tprintf("the global %s at %x does not fit the global table", global.name, global.address)
+		}
+		append(&global_table, debug_object.Global{address = u32(global.address), type = u32(global.type), name_offset = debug_name_add(&names, global.name), name_count = u32(len(global.name))})
+	}
+	error = debug_variables_encode(parts, &names, kept, index_of)
+	if error != "" {
+		return error
+	}
+	parts.types = type_table[:]
+	parts.fields = field_table[:]
+	parts.values = value_table[:]
+	parts.globals = global_table[:]
+	return ""
+}
+
+// debug_variable_ranges_in_procedures gives the ranges of variables that
+// the tables keep, each with its procedure of the procedure table.
+//
+// - A range is given to the procedure that holds its start, and is cut at
+//   the end of that procedure. A range in no procedure (code that the link
+//   dropped) and a range with no byte are not kept.
+// - A range that is not readable of a variable of a procedure that the
+//   compiler put inside another one is not kept. Such variables are most
+//   of the variables of a module, at each place where the compiler put a
+//   small procedure of a library, and most of them are readable nowhere:
+//   a debugger shows such a variable where it has a value.
+debug_variable_ranges_in_procedures :: proc(variables: []Debug_Variable, procedures: []debug_object.Procedure) -> []Debug_Variable {
+	kept := make([dynamic]Debug_Variable, context.temp_allocator)
+	for variable in variables {
+		if variable.end <= variable.start || variable.name == "" || (variable.inlined && variable.location == .Not_Readable) {
+			continue
+		}
+		// The last procedure that starts at or before the range.
+		low, high := 0, len(procedures)
+		for low < high {
+			middle := low + (high - low) / 2
+			if u64(procedures[middle].start) <= variable.start {
+				low = middle + 1
+			} else {
+				high = middle
+			}
+		}
+		if low == 0 {
+			continue
+		}
+		procedure_end := u64(procedures[low - 1].start) + u64(procedures[low - 1].size)
+		if variable.start >= procedure_end {
+			continue
+		}
+		item := variable
+		item.procedure = u32(low - 1)
+		item.end = min(variable.end, procedure_end)
+		append(&kept, item)
+	}
+	return kept[:]
+}
+
+// debug_variables_encode writes the variable table and the variable range
+// table from the kept ranges. `index_of` gives the type of the type table
+// for each type of the source.
+//
+// - One variable is one procedure, one name, one role and one type: the
+//   ranges of two variables of the source that agree on the four are the
+//   ranges of one record.
+// - Two ranges of a variable with the same variable location that touch
+//   or overlap are one range. A gap between them keeps them apart.
+// - The ranges that are not readable of a variable become one range, from
+//   the first of their starts to the last of their ends: where the
+//   variable is visible. It is not written when one readable range covers
+//   it. So a variable that is readable nowhere is one record of a range.
+// - A range longer than a record holds is several records in a row.
+// - The variables are in the order of their procedure, their name, their
+//   role, then their type; the ranges of a variable in the order of their
+//   start. Neither order depends on the order of the source.
+debug_variables_encode :: proc(parts: ^debug_object.Encode_Parts, names: ^Debug_Names, kept: []Debug_Variable, index_of: []int) -> (error: string) {
+	context.allocator = context.temp_allocator
+	ordered := make([]Debug_Variable, len(kept))
+	copy(ordered, kept)
+	for &item in ordered {
+		item.type = index_of[item.type]
+		// A field that its kind of location does not use is zero.
+		if item.location == .Not_Readable {
+			item.register = 0
+		}
+		if item.location == .Not_Readable || item.location == .Register {
+			item.offset = 0
+		}
+	}
+	// The ranges of one variable in a row; in it, the ranges that are not
+	// readable first, then the ranges of one location in a row, by their start.
+	slice.sort_by(ordered, proc(a, b: Debug_Variable) -> bool {
+		if a.procedure != b.procedure {
+			return a.procedure < b.procedure
+		}
+		if a.name != b.name {
+			return a.name < b.name
+		}
+		if a.role != b.role {
+			return u8(a.role) < u8(b.role)
+		}
+		if a.type != b.type {
+			return a.type < b.type
+		}
+		if a.location != b.location {
+			return u8(a.location) < u8(b.location)
+		}
+		if a.register != b.register {
+			return a.register < b.register
+		}
+		if a.offset != b.offset {
+			return a.offset < b.offset
+		}
+		if a.start != b.start {
+			return a.start < b.start
+		}
+		return a.end < b.end
+	})
+	variable_table := make([dynamic]debug_object.Variable)
+	range_table := make([dynamic]debug_object.Variable_Range)
+	merged := make([dynamic]Debug_Variable)
+	at := 0
+	for at < len(ordered) {
+		first := ordered[at]
+		group_end := at
+		for group_end < len(ordered) && ordered[group_end].procedure == first.procedure && ordered[group_end].name == first.name && ordered[group_end].role == first.role && ordered[group_end].type == first.type {
+			group_end += 1
+		}
+		clear(&merged)
+		visible_start, visible_end := max(u64), u64(0)
+		for item in ordered[at:group_end] {
+			if item.location == .Not_Readable {
+				visible_start = min(visible_start, item.start)
+				visible_end = max(visible_end, item.end)
+				continue
+			}
+			if len(merged) > 0 {
+				last := &merged[len(merged) - 1]
+				if last.location == item.location && last.register == item.register && last.offset == item.offset && item.start <= last.end {
+					last.end = max(last.end, item.end)
+					continue
+				}
+			}
+			append(&merged, item)
+		}
+		if visible_end > visible_start {
+			covered := false
+			for item in merged {
+				if item.start <= visible_start && item.end >= visible_end {
+					covered = true
+				}
+			}
+			if !covered {
+				visible := first
+				visible.location = .Not_Readable
+				visible.register = 0
+				visible.offset = 0
+				visible.start = visible_start
+				visible.end = visible_end
+				append(&merged, visible)
+			}
+		}
+		slice.sort_by(merged[:], proc(a, b: Debug_Variable) -> bool {
+			if a.start != b.start {
+				return a.start < b.start
+			}
+			if a.end != b.end {
+				return a.end < b.end
+			}
+			if a.location != b.location {
+				return u8(a.location) < u8(b.location)
+			}
+			if a.register != b.register {
+				return a.register < b.register
+			}
+			return a.offset < b.offset
+		})
+		if len(first.name) > int(max(u16)) {
+			return fmt.tprintf("the name of the variable %s does not fit the variable table", first.name)
+		}
+		append(&variable_table, debug_object.Variable{name_offset = debug_name_add(names, first.name), name_count = u16(len(first.name)), role = first.role, type = u32(first.type), first_range = u32(len(range_table))})
+		for item in merged {
+			start := item.start
+			for start < item.end {
+				size := min(item.end - start, u64(debug_object.VARIABLE_RANGE_SIZE_LIMIT))
+				append(&range_table, debug_object.Variable_Range{start = u32(start), offset = item.offset, size = u16(size), location = item.location, register = u8(item.register)})
+				start += size
+			}
+		}
+		at = group_end
+	}
+	parts.variables = variable_table[:]
+	parts.ranges = range_table[:]
+	return ""
 }
 
 elf_sections :: proc(elf: []u8) -> (header: Elf_Header, sections: []Elf_Section_Header, ok: bool) {
@@ -638,8 +988,11 @@ dwarf_compilation_directories :: proc(units, abbreviations, debug_strings, line_
 // section 6.2 of DWARF 5) and gives its rows inside the code, sorted by
 // their address. A sequence whose start is outside the code is a function
 // that the link dropped (--gc-sections): its rows go.
-dwarf_line_rows :: proc(section, line_strings, debug_strings: []u8, compilation_directories: map[u64]string, code_start, code_end: u64) -> (line_rows: []Debug_Row, error: string) {
+dwarf_line_rows :: proc(section, line_strings, debug_strings: []u8, compilation_directories: map[u64]string, code_start, code_end: u64) -> (line_rows: []Debug_Row, host_paths: map[string]string, error: string) {
 	root, _ := os.get_working_directory(context.temp_allocator)
+	// Where each file of the rows is on the build host, by its path in
+	// the debug object: the tool hashes the content of each one.
+	host_paths = make(map[string]string, context.temp_allocator)
 	all := make([dynamic]Debug_Row, context.temp_allocator)
 	sequence := make([dynamic]Debug_Row, context.temp_allocator)
 	reader := Dwarf_Reader{bytes = section}
@@ -654,14 +1007,14 @@ dwarf_line_rows :: proc(section, line_strings, debug_strings: []u8, compilation_
 			unit_length = dwarf_unsigned(&reader, 8)
 		}
 		if unit_length > u64(len(section) - reader.at) {
-			return nil, "a unit of the line program is longer than its section"
+			return nil, nil, "a unit of the line program is longer than its section"
 		}
 		unit_end := reader.at + int(unit_length)
 		unit := Dwarf_Reader{bytes = section[:unit_end], at = reader.at}
 		reader.at = unit_end
 		version := dwarf_unsigned(&unit, 2)
 		if version < 2 || version > 5 {
-			return nil, fmt.tprintf("a line program has the version %d of DWARF; the tool reads 2 to 5", version)
+			return nil, nil, fmt.tprintf("a line program has the version %d of DWARF; the tool reads 2 to 5", version)
 		}
 		address_size := 8
 		if version >= 5 {
@@ -670,7 +1023,7 @@ dwarf_line_rows :: proc(section, line_strings, debug_strings: []u8, compilation_
 		}
 		header_length := dwarf_unsigned(&unit, offset_size)
 		if header_length > u64(unit_end - unit.at) {
-			return nil, "the header of a line program is longer than its unit"
+			return nil, nil, "the header of a line program is longer than its unit"
 		}
 		program_start := unit.at + int(header_length)
 		minimum_instruction_length := dwarf_unsigned(&unit, 1)
@@ -682,7 +1035,7 @@ dwarf_line_rows :: proc(section, line_strings, debug_strings: []u8, compilation_
 		line_range := dwarf_unsigned(&unit, 1)
 		opcode_base := dwarf_unsigned(&unit, 1)
 		if line_range == 0 || opcode_base == 0 {
-			return nil, "a line program has a line range or an opcode base of 0"
+			return nil, nil, "a line program has a line range or an opcode base of 0"
 		}
 		standard_lengths := dwarf_bytes(&unit, int(opcode_base) - 1)
 		directories := make([dynamic]string, context.temp_allocator)
@@ -707,7 +1060,10 @@ dwarf_line_rows :: proc(section, line_strings, debug_strings: []u8, compilation_
 				directory := dwarf_leb128(&unit, false)
 				dwarf_leb128(&unit, false) // The time of its last change.
 				dwarf_leb128(&unit, false) // Its size.
-				append(&files, debug_path(directory < u64(len(directories)) ? directories[directory] : "", name, root))
+				directory_of_file := directory < u64(len(directories)) ? directories[directory] : ""
+				recorded := debug_path(directory_of_file, name, root)
+				host_paths[recorded] = debug_host_path(directory_of_file, name)
+				append(&files, recorded)
 			}
 		} else {
 			for list in 0 ..< 2 {
@@ -720,7 +1076,7 @@ dwarf_line_rows :: proc(section, line_strings, debug_strings: []u8, compilation_
 				}
 				count := dwarf_leb128(&unit, false)
 				if count > u64(unit_end) {
-					return nil, "a line program names more entries than its bytes hold"
+					return nil, nil, "a line program names more entries than its bytes hold"
 				}
 				for _ in 0 ..< count {
 					name: string
@@ -728,7 +1084,7 @@ dwarf_line_rows :: proc(section, line_strings, debug_strings: []u8, compilation_
 					for format in formats {
 						form_text, number, form_error := dwarf_form(&unit, format[1], offset_size, line_strings, debug_strings)
 						if form_error != "" {
-							return nil, form_error
+							return nil, nil, form_error
 						}
 						switch format[0] {
 						case DW_LNCT_PATH:
@@ -742,13 +1098,16 @@ dwarf_line_rows :: proc(section, line_strings, debug_strings: []u8, compilation_
 						// a relative directory is under it.
 						append(&directories, len(directories) == 0 ? directory_join(name, compilation_directory) : directory_join(name, directories[0]))
 					} else {
-						append(&files, debug_path(directory < u64(len(directories)) ? directories[directory] : "", name, root))
+						directory_of_file := directory < u64(len(directories)) ? directories[directory] : ""
+						recorded := debug_path(directory_of_file, name, root)
+						host_paths[recorded] = debug_host_path(directory_of_file, name)
+						append(&files, recorded)
 					}
 				}
 			}
 		}
 		if unit.failed {
-			return nil, "the header of a line program is cut"
+			return nil, nil, "the header of a line program is cut"
 		}
 		// The state machine of the line program.
 		unit.at = program_start
@@ -767,7 +1126,7 @@ dwarf_line_rows :: proc(section, line_strings, debug_strings: []u8, compilation_
 			case opcode == 0:
 				length := dwarf_leb128(&unit, false)
 				if length == 0 || length > u64(unit_end - unit.at) {
-					return nil, "an extended operation of a line program is longer than its unit"
+					return nil, nil, "an extended operation of a line program is longer than its unit"
 				}
 				next := unit.at + int(length)
 				switch dwarf_unsigned(&unit, 1) {
@@ -809,11 +1168,11 @@ dwarf_line_rows :: proc(section, line_strings, debug_strings: []u8, compilation_
 			}
 		}
 		if unit.failed {
-			return nil, "a line program is cut"
+			return nil, nil, "a line program is cut"
 		}
 	}
 	if reader.failed {
-		return nil, "the line section is cut"
+		return nil, nil, "the line section is cut"
 	}
 	// By address; at one address, the end of a sequence first, then the
 	// rows in their order: the last row at an address describes it, and a
@@ -839,7 +1198,7 @@ dwarf_line_rows :: proc(section, line_strings, debug_strings: []u8, compilation_
 		}
 		append(&kept, row)
 	}
-	return kept[:], ""
+	return kept[:], host_paths, ""
 }
 
 // dwarf_row_emit adds one row to a sequence: the path of its file, or no
@@ -878,7 +1237,7 @@ text_until_zero :: proc(bytes: []u8, offset: u64) -> string {
 // module. It prints its size: the boot program reads it at each start.
 debug_image_write :: proc() -> bool {
 	files := make([dynamic]Image_File, context.temp_allocator)
-	procedures, rows := 0, 0
+	procedures, rows, types, globals, variables, ranges := 0, 0, 0, 0, 0, 0
 	for build in module_builds {
 		object := read_file(debug_object_path(build.name)) or_return
 		parts, fault := debug_object.tables(object)
@@ -888,6 +1247,10 @@ debug_image_write :: proc() -> bool {
 		}
 		procedures += len(parts.procedures)
 		rows += len(parts.lines)
+		types += len(parts.types) - min(1, len(parts.types))
+		globals += len(parts.globals)
+		variables += len(parts.variables)
+		ranges += len(parts.ranges)
 		append(&files, Image_File{name = build.name, file = object})
 	}
 	image := boot_image_encode(files[:], len(files))
@@ -895,6 +1258,6 @@ debug_image_write :: proc() -> bool {
 		fmt.eprintfln("kerneltool: cannot write %s: %v", DEBUG_IMAGE, err)
 		return false
 	}
-	fmt.printfln("kerneltool: the debug image has %d debug objects, %d procedures and %d rows of lines: %d bytes", len(files), procedures, rows, len(image))
+	fmt.printfln("kerneltool: the debug image has %d debug objects, %d procedures, %d rows of lines, %d types, %d global variables and %d variables in %d ranges: %d bytes", len(files), procedures, rows, types, globals, variables, ranges, len(image))
 	return true
 }
