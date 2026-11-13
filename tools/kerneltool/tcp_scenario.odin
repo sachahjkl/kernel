@@ -103,6 +103,11 @@ scenario_tcp := [?]Step {
 	{kind = .Close, text = "server"},
 	{kind = .Wait, text = "root: server stopped with code 0"},
 	{kind = .Wait, text = "network: the endpoint of server ended: "},
+	// The passes of the network service over the bytes of the segments of
+	// `server`: a measure, then the structural count: one copy each way, and
+	// no checksum (the TCP library of `server` checks and writes it).
+	{kind = .Wait, text = "network: a measure: the endpoint of server, TCP: the passes of this service over the data for each payload byte: "},
+	{kind = .Wait, text = "network: the endpoint of server, TCP: this service read each payload byte one time on receive and one time on send, for the copy, and computed no checksum of it: as it must"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = "free_pages_no_budget_holds  0"},

@@ -8,7 +8,7 @@ The first layer of the network is the base: the frame service, the network servi
 
 **Read before.** `PROPERTIES.md`, "5. Kernel off the data path" and "20. No ambient access: the other holes to close" (line 3). `ARCHITECTURE.md`, "U7. Network steering service". After this guide, `QUIC.md`.
 
-**The map of this guide.** "The principles" and "The parts" give the model and the programs. "The segment endpoint" is the grant of TCP and its checks. "The TCP library" is the protocol in the program. "The tests" and "The HTTP server" show it at work. "The listen grant of UDP" and "QUIC: what it reuses, and what it needs" lead to `QUIC.md`.
+**The map of this guide.** "The principles" and "The parts" give the model and the programs. "The path of a datagram and of a segment" says which program touches the bytes, hop by hop, and who checks what. "The segment endpoint" is the grant of TCP and its checks. "The TCP library" is the protocol in the program. "The tests" and "The HTTP server" show it at work. "The listen grant of UDP" and "QUIC: what it reuses, and what it needs" lead to `QUIC.md`.
 
 ![TCP in the program: server serves one table of connections from one thread, while the peer of the test drops, reorders and repeats frames](screenshots/server.png)
 
@@ -17,7 +17,7 @@ The first layer of the network is the base: the frame service, the network servi
 The kernel carries no network data and holds no network protocol. A program that talks over the network runs the protocol itself, as a library, and one service of user space only checks each datagram or segment against the grant of the program. Three rules follow:
 
 - The network stack is a library in the program that uses the network (property 5). A fault in TCP or QUIC harms only the program that runs it.
-- The network service is on the data path for UDP and TCP: it reads each frame, because the device of the first machine has one pair of queues. TCP and QUIC stay libraries in the program (section "The note of property 5").
+- The network service is on the control path of each datagram and each segment: it reads the headers and checks them against the grant. It is on the data path for one copy in each direction, and for nothing else: it computes no checksum of the bytes and writes no header of UDP or TCP. The reason is the device of the first machine, which has one pair of queues (section "The path of a datagram and of a segment").
 - The network has UDP, TCP and QUIC, and a server as a scenario: `server` speaks HTTP over TCP, and `quic_echo` and `remote` speak QUIC over UDP.
 
 ## The parts
@@ -27,7 +27,8 @@ Each part of the network is a program or a library of user space. The table name
 | Part | Where | What it does |
 |---|---|---|
 | TCP library | `support/tcp` | The state machine, the windows, the timers, the reassembly, the congestion control. Pure code over memory of the caller: no kernel operation, no allocation. The kernel tool uses the same package on the host |
-| Network service | `programs/network` | Gives each program with the grant one endpoint. For a segment endpoint: it checks each segment against the grant, writes and checks the IPv4 header, checks the TCP checksum of a segment that arrives, and copies the segment one time. It keeps no state of a connection |
+| Network service | `programs/network` | Gives each program with the grant one endpoint. It checks the header of each datagram and each segment against the grant, writes and checks the IPv4 header, and copies the datagram or the segment one time. It computes no checksum of UDP or TCP and keeps no state of a connection |
+| Protocol library | `support/network` | For the network service: Ethernet, ARP, IPv4, ICMP echo, and the checks of the header of UDP and TCP (`parse`). For a program with a datagram endpoint: the UDP header and its checksum (`udp_header_write`, `udp_data_read`) |
 | Server | `programs/server` | A program with a listen grant on the TCP port 80. One thread serves all its connections from one connection table. It speaks a small HTTP/1.1 |
 | Client | `programs/fetch` | A program with a segment grant of one remote. It fetches pages and measures |
 | QUIC server | `programs/quic_echo` | A program with a listen grant of UDP on the port 4433: QUIC in the program (`docs/QUIC.md`, section 6) |
@@ -36,14 +37,80 @@ Each part of the network is a program or a library of user space. The table name
 
 The kernel has no network code.
 
+## The path of a datagram and of a segment
+
+A datagram or a segment passes through several programs between the device and the program that uses it. This section names each hop, the bytes that the hop reads or writes, and the party that checks each field. Two terms sort the hops (`GLOSSARY.md`): the data path is the code that reads or writes the bytes of the data; the control path of a packet is the code that reads the headers and decides where the bytes go.
+
+The payload of a frame is what follows the IPv4 header: a whole datagram with its UDP header, or a whole segment with its TCP header. UDP and TCP take the same path through the network service: the program writes and reads the whole payload, and the network service treats the two alike.
+
+### A datagram or a segment that arrives
+
+| Hop | What runs | Bytes of the payload that it touches |
+|---|---|---|
+| The device | It writes the frame into a receive place of the frame region | Written one time by the device |
+| The frame service | It reads the used ring and gives the length of the frame to the network service | None: it reads no frame |
+| The network service | `network.parse` checks the headers of Ethernet and IPv4 (with the IPv4 checksum, 20 bytes), then the lengths of the header of UDP or TCP | The header only: the two ports, the length field of UDP, the data offset and the flags of TCP |
+| The network service | It finds the endpoint by the local port, checks the remote against the grant, and admits a remote of a listen grant | None |
+| The network service | `deliver` copies the payload into the place that the program gave | **One pass: the copy** |
+| The program | TCP: `tcp.step` checks the TCP checksum, then reads the header and copies the data into the receive buffer of the connection. UDP: `network.udp_data_read` checks the UDP checksum, when the program asks for it | The passes of the program itself |
+
+### A datagram or a segment that leaves
+
+| Hop | What runs | Bytes of the payload that it touches |
+|---|---|---|
+| The program | It writes the payload in a place of its datagram region: the header of UDP or TCP, the data, and the checksum over both (`tcp.header_write`, `network.udp_header_write`) | The passes of the program itself |
+| The network service | It copies the payload from the region to a send place of the frame region | **One pass: the copy** |
+| The network service | `header_granted` reads the two ports, and the length field of UDP, in its own copy, and checks them against the endpoint and the grant | The header only, in the copy |
+| The network service | `network.ipv4_frame` writes the headers of IPv4 and Ethernet | None |
+| The frame service | It gives the frame to the device | None |
+| The device | It reads the frame region | Read one time by the device |
+
+### The passes of the network service
+
+A pass is one read or one write of each byte of a payload by one program. The table gives the passes of the network service for each byte, in this form and in the form with the checksums of the transport in the network service.
+
+| Direction | Protocol | With the checksums in the network service | This form |
+|---|---|---|---|
+| Arrives | TCP | 2: the TCP checksum, then the copy | 1: the copy |
+| Arrives | UDP | 2: the UDP checksum, then the copy | 1: the copy |
+| Leaves | TCP | 1: the copy | 1: the copy |
+| Leaves | UDP | 2: the copy, then the UDP checksum | 1: the copy |
+
+The network service counts its passes. For each endpoint and each direction it counts the datagrams or the segments, their bytes, and the bytes of each pass (`data_pass` in `programs/network`, called at each place that reads the bytes). When an endpoint ends, the log has two lines: a measure, "network: a measure: the endpoint of server, TCP: the passes of this service over the data for each payload byte: 1.00 on receive (...), 1.00 on send (...)", and the structural fact, "network: the endpoint of server, TCP: this service read each payload byte one time on receive and one time on send, for the copy, and computed no checksum of it: as it must". The machine tests of `net`, `server` and `quic_echo` wait for the second line. It is a count of passes, not a speed.
+
+The one copy on receive cannot leave with this device. The device chooses the place of a frame before any program knows whose frame it is, so one program that is not the receiver must read the headers, and the bytes must then move to the receiver. The copy on send can leave: the device can read the data from the datagram region of the program, when the network service gives it a private copy of the headers. That form is not built. A device that gives each endpoint its own receive queue, and steers frames by the destination port, removes the copy on receive too; the device of the test machine has no such queues.
+
+### Who checks what
+
+| Field | Who checks it | Where |
+|---|---|---|
+| The headers of Ethernet and IPv4 of a frame that arrives, with the IPv4 checksum | The network service | `network.parse` |
+| The lengths of the header of UDP or TCP of a payload that arrives | The network service | `network.parse` |
+| The local port and the remote of a payload that arrives, against the endpoints and their grants | The network service | `arrived` in `programs/network` |
+| The checksum of a segment that arrives | The program | `tcp.step`: a wrong one adds to `Table.bad_checksums`, changes no connection and gets no answer |
+| The checksum of a datagram that arrives | The program | `network.udp_data_read` with the rule `Verify`. A QUIC program gives the rule `Do_Not_Verify`: QUIC authenticates each packet, so the checksum adds nothing (`docs/QUIC.md`, "One private copy of each datagram") |
+| The source port of a payload that leaves: a local port of the endpoint | The network service, in its copy | `header_granted` |
+| The remote of a payload that leaves: the address of the command and the destination port of the header, against the grant or the admitted remotes | The network service, in its copy | `header_granted` |
+| The length field of a datagram that leaves | The network service, in its copy | `header_granted` |
+| The source address of a payload that leaves | Nobody: the network service writes it | `network.ipv4_frame` |
+| The checksum of a payload that leaves | Nobody on this machine: the remote does | — |
+
+Three rules follow from the table.
+
+- **A program cannot send as another program.** The network service writes the source address. It reads the source port in its own copy of the header, after the copy, and never reads the region of the program a second time: the program cannot change what was checked. A program controls the data and the checksum of its own datagrams and segments, and nothing else.
+- **A wrong checksum harms its writer only.** A program that sends a wrong checksum loses its own datagram or segment: the remote drops it. A program that does not check the checksum of what it receives takes damaged bytes as data: the harm stays in that program. The TCP library always checks. A program with a datagram endpoint chooses the rule in its call of `network.udp_data_read`.
+- **The checksum comes after the choice of the endpoint.** The network service chooses the endpoint by a port that it did not check with the checksum. A frame whose port the wire damaged, and that the check of Ethernet let pass, can reach the endpoint of another port. The program of that endpoint then refuses it by its checksum, after it saw the bytes. The grant, not the checksum, is the guard against a hostile sender: a hostile sender writes a correct checksum.
+
+`net` shows the two sides in the machine test: the peer sends one datagram with a wrong UDP checksum to the port of `net` ("net: UDP from 10.0.2.2 port 7 with a wrong checksum: dropped by this program: 1 datagram; ..."), and `net` writes one datagram with another source port, which the network service refuses ("net: UDP from the source port 1234: refused: ...").
+
 ## The segment endpoint
 
 A program reaches the network through an endpoint: a ring of commands and a region of memory that it shares with the network service. A segment endpoint is the form for TCP: the program writes whole TCP segments, and the network service checks them and sends them. The grant of the endpoint says which remotes the program can reach.
 
 A segment endpoint is an endpoint (`contract/datagram`) whose grant has the protocol TCP. The ring, the region, the commands and the error records are the ones of a datagram endpoint. Two things differ:
 
-1. A Send names a whole segment in the region: the TCP header, its options and its data. The program writes the header and its checksum. A Receive gives a whole segment.
-2. The grant names TCP ports, not UDP ports.
+1. A Send names a whole segment in the region: the TCP header, its options and its data, where a datagram endpoint names a whole datagram: the UDP header and its data. In both, the program writes the header and its checksum, and a Receive gives the whole segment or datagram.
+2. The grant names TCP ports, not UDP ports, and a client grant has a block of local ports.
 
 The library writes the segments directly in the places of the datagram region, so a segment is copied one time on its path: by the network service, between the region and the frame.
 
@@ -55,7 +122,7 @@ The root service names the grant by the name of the program, as for UDP (`endpoi
 |---|---|---|---|
 | TCP client grant | A block of 64 TCP ports (`datagram.PORT_BLOCK`) that the network service chooses | One remote address and one remote TCP port | A program that connects to one server: `fetch` |
 | TCP listen grant | One TCP port that the root service names | Each remote that sent a SYN to that port | A server: `server`, on the port 80 |
-| UDP client grant | One UDP port that the network service gives, and whose UDP header it writes | One remote address and one remote UDP port | A program that talks to one remote over datagrams |
+| UDP client grant | One UDP port that the network service gives (`Info`); the program writes it as the source port of each datagram | One remote address and one remote UDP port | A program that talks to one remote over datagrams |
 | UDP listen grant | One UDP port that the root service names | Each remote that sent a first datagram of 1200 bytes at least, and with a named address, that address only | A QUIC server: `quic_echo` on the port 4433, `remote` on the port 7100 (section "The listen grant of UDP") |
 
 A client grant of TCP has 64 local ports, because a closed connection stays in TIME-WAIT (below) and one local port serves one connection at a time to one remote. The program chooses a port of its block for each connection.
@@ -68,7 +135,7 @@ This table is the one state of TCP in the network service: addresses and ports, 
 
 | Direction | Work | Why |
 |---|---|---|
-| Arrives | Checks the Ethernet, IPv4 and TCP headers, and the TCP checksum (`network.parse`) | The service reads the ports to choose the endpoint. A port that the wire damaged must not give a segment to another program. A refused segment is a problem row, as for UDP |
+| Arrives | Checks the Ethernet and IPv4 headers, and the length and the data offset of the TCP header (`network.parse`). It does not check the TCP checksum | The service reads the ports to choose the endpoint; it reads no byte of the data. A segment with a wrong checksum reaches the endpoint of its port, and the TCP library drops it |
 | Arrives | Finds the endpoint by the local port, checks the remote against the grant, admits a remote of a listen grant | Property 20, line 3 |
 | Arrives | Copies the segment from the frame to the region | The device writes the frame region of the service, not the region of the program |
 | Sent | Copies the segment from the region to the frame, then reads its ports from the copy | A port is checked in bytes that the program cannot change after the check |
@@ -76,18 +143,22 @@ This table is the one state of TCP in the network service: addresses and ports, 
 | Sent | Writes the IPv4 and Ethernet headers | It must check them anyway |
 | Sent | Does not check the TCP checksum | A wrong checksum harms only the program that wrote it: the remote drops the segment |
 
-The library computes the TCP checksum of each segment that it sends. It does not check the checksum of a segment that arrives through the network service: the service did. The function `tcp.checksum_valid` is for a caller that reads segments from another source.
+The work for a datagram is the same, with the UDP header in the place of the TCP header (section "The path of a datagram and of a segment").
 
-### The note of property 5
+The library computes the TCP checksum of each segment that it sends, and checks the checksum of each segment that arrives, in `tcp.step`, before any other read of the segment. The checksum covers the pseudo-header: the remote address that the network service gives with the segment, and the local address of the table. A segment with a wrong checksum adds one to `Table.bad_checksums`; it changes no connection and gets no answer, because its ports and its sequence numbers are not to be trusted. A SYN with a wrong checksum takes a place of the admitted remotes until the program releases it: `server` releases the remote of each segment that has no connection.
 
-Property 5 forbids a network stack in the kernel. Its two notes say where the system stands today: the protocol is in the program, but a service of user space still touches each frame. This section gives the reason.
+### Property 5 as it is built
 
-The note for UDP says that the network service reads each frame, writes the headers of UDP and IPv4, and copies each datagram one time; TCP and QUIC stay libraries in the program. The note for TCP says the same of TCP. For TCP the system does this:
+Property 5 says that the kernel is off the data path, and that the network stack is a library in the program. Its cost line names what one device with one pair of queues needs: a multiplexer in user space. The network service is that multiplexer. This section says what it does, and what it does not do.
 
-- The protocol of TCP is in the program: the state of each connection, the sequence numbers, the windows, the timers, the retransmissions, the congestion control, the reassembly. The program can read and change each field of its connections.
-- The network service is still on the data path for TCP, as for UDP, with the same work: one copy of each segment, the IPv4 header, a checksum, and the check of the grant. The reason is the same: the device of the first machine has one pair of queues, so one program reads each frame.
+- The kernel carries no data and has no network code. No kernel entry carries a datagram or a segment: an entry is a wait or a wake, and one entry serves a batch.
+- The transport is in the program: the whole of TCP (`support/tcp`), the whole of QUIC (`support/quic`), and the header and the checksum of UDP (`support/network`, `udp_header_write` and `udp_data_read`). The program can read and change each field of its connections.
+- The network service is on the control path of each datagram and each segment, in both directions: it reads the headers and checks them against the grant.
+- The network service is on the data path for one copy in each direction. It computes no checksum of the data and writes no header of the transport.
+- IPv4, ARP and ICMP echo stay in the network service: they are the shared identity of the machine.
+- The network service keeps only the ports and, for a listen grant, the remotes that came to it: no sequence number, no window and no key.
 
-QUIC is a library in the program over a datagram endpoint (`support/quic`), with the same data path as UDP. The network service keeps only the ports and, for a listen grant, the remotes that came to it: no sequence number, no window and no key.
+Two changes take the network service further off the data path. The first needs no other device: the device reads the data of a frame to send from the datagram region of the program, and the network service checks a private copy of the headers; then no byte of data that leaves passes through the service. The second needs a device with a receive queue for each endpoint and an exact filter by destination port that only the frame service programs; then the copy on receive leaves too. Neither is built.
 
 ## The TCP library
 
@@ -155,7 +226,9 @@ TCP is tested at three levels: the library alone on the host, the system against
 
 ### The library on the host
 
-`odin test support/tcp` (in `kerneltool check`): two connection tables on one link that the test controls, with loss, reorder and duplicates; the sequence numbers at the wrap of 2^32; the round trip estimate and the timer of RFC 6298, with its doubling; a zero window that opens; a RST in the window and out of it; a SYN in a synchronized state.
+`odin test support/tcp` (in `kerneltool check`): two connection tables on one link that the test controls, with loss, reorder and duplicates; the sequence numbers at the wrap of 2^32; the round trip estimate and the timer of RFC 6298, with its doubling; a zero window that opens; a RST in the window and out of it; a SYN in a synchronized state. The checksum has its own cases: a segment with one changed bit, in its data or in its header, changes no field of the connection and adds one to the count; a segment whose checksum is right for another pair of addresses is dropped.
+
+`odin test support/network` checks the other half: `parse` gives a datagram or a segment with a wrong checksum to its port, and `udp_data_read` refuses the datagram with the rule `Verify` and takes it with the rule `Do_Not_Verify`.
 
 ### Against an independent implementation
 
@@ -214,7 +287,7 @@ Written for QUIC (`docs/QUIC.md`, section 6); `kerneltool test quic` and `kernel
 - `Resolve` and `Echo` are refused, as for each listen grant: the program answers, but it does not reach.
 - The program releases a remote whose datagram it refused (a forged Initial, a datagram of no connection), so that a flood of many addresses does not hold the table.
 
-The kernel has no code for it. The network service does for a datagram of a listen grant what it does for each datagram: it checks the headers and the checksum, finds the endpoint by the local port, checks the remote, and copies the datagram one time.
+The kernel has no code for it. The network service does for a datagram of a listen grant what it does for each datagram: it checks the headers, finds the endpoint by the local port, checks the remote, and copies the datagram one time. The 1200 bytes of a first datagram and the 3 times of the limit count the data, with no UDP header.
 
 ## QUIC: what it reuses, and what it needs
 

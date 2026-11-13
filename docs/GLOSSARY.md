@@ -2639,7 +2639,7 @@ The network service is the one client of the frame service: it gives each progra
 
 Only one program can read the frames of the device of the first machine, because the device has one pair of queues. The network service is that program. It is also the place where the grant of each program is enforced: a program reaches only the remote that its grant names, so no program has ambient access to the network.
 
-The network service speaks Ethernet, ARP, IPv4, ICMP echo and UDP with the protocol library `support/network`. It has one static address, 10.0.2.15/24, and the gateway 10.0.2.2. For TCP it checks the headers, the TCP checksum and the ports of each segment, writes the IPv4 header, and keeps no state of a connection: the protocol of TCP is a library in the program (`support/tcp`). It copies the data of each datagram or segment one time, between the datagram region of the program and its own frame region. It has one thread, which waits on the frame ring, on the control ring of the root service and on the command queue of each endpoint.
+The network service speaks Ethernet, ARP, IPv4 and ICMP echo with the protocol library `support/network`. It has one static address, 10.0.2.15/24, and the gateway 10.0.2.2. For UDP and TCP it checks the lengths and the ports of the header of each datagram and each segment, writes the IPv4 header, and keeps no state of a connection: the protocol of TCP is a library in the program (`support/tcp`), and the program writes and checks the header and the checksum of UDP (`support/network`). It copies each datagram or segment one time, between the datagram region of the program and its own frame region, and computes no checksum of it: it is on the control path of each one, and on the data path for that one copy. It has one thread, which waits on the frame ring, on the control ring of the root service and on the command queue of each endpoint.
 
 The root service starts it when the first program with a network grant starts, and adds each endpoint with the command `Endpoint_Add` of its control ring. Example of its first line: "network: ok, the address 10.0.2.15/24 52:54:00:12:34:56, the gateway 10.0.2.2, the link is up, ..."; then, for each endpoint, a line such as "network: an endpoint for server: TCP, the listen port 80, the remotes that send to it".
 
@@ -2649,6 +2649,34 @@ The design: `docs/NETWORK.md`, "The parts", and `docs/ARCHITECTURE.md`, "U7. Net
 
 Do not use: network stack, TCP/IP stack, netd, network daemon.
 
+### Data path
+
+The data path is the code that reads or writes the bytes of the data that a program sends or receives through a device.
+
+The term sorts the parts of the system by one question: does this code touch the bytes? The kernel is off the data path: it maps a ring or a device queue one time, and no kernel entry carries data after that. A service of user space can be on it. One read or one write of each byte by one program is a pass: a copy is a pass, and a sum for a checksum is a pass. The fewer passes outside the program that uses the data, the nearer the system is to its rule.
+
+Example: the network service is on the data path of a datagram and of a segment for one pass in each direction, the copy between its frame region and the datagram region of the program. It computes no checksum, so it makes no second pass. It counts its passes for each endpoint, and writes them on the log when the endpoint ends. The frame service is not on the data path: it gives places of the frame region to the device and reads no frame.
+
+The data path is not the control path of a packet: code that reads only the headers and decides where the bytes go is not on the data path.
+
+The rule: `docs/PROPERTIES.md`, "Kernel off the data path". The hops: `docs/NETWORK.md`, "The path of a datagram and of a segment".
+
+Do not use: fast path, hot path (for this).
+
+### Control path of a packet
+
+The control path of a packet is the code that reads the headers of a datagram or a segment and decides where it goes, and that reads no byte of its data.
+
+A packet, in this term only, is the IPv4 packet that a frame carries: one datagram or one segment with its headers. The term names the work that one program must do for each of them when several programs share one device: read the ports, find the endpoint, check the grant. This work costs code for each packet, and no pass over the data.
+
+Example: the network service is on the control path of each datagram and each segment, in both directions. For one that arrives, it reads the headers of Ethernet, IPv4 and UDP or TCP, finds the endpoint by the local port and checks the remote against the grant. For one that leaves, it reads the two ports in its own copy of the header and checks them against the endpoint and the grant. A device with a receive queue for each endpoint and a filter by port takes this work for the frames that arrive.
+
+The control path of a packet is not the data path: the copy that the network service makes is on the data path, and its checks of the header are on the control path. It is not the control plane of the kernel either: the kernel sets up access one time and runs no code for a packet.
+
+The design: `docs/NETWORK.md`, "The path of a datagram and of a segment".
+
+Do not use: slow path, packet path.
+
 ### Endpoint
 
 An endpoint is what a program holds to send and receive datagrams or segments: a datagram ring and a datagram region, with a grant that names what it can reach.
@@ -2657,7 +2685,7 @@ An endpoint replaces the socket of other systems, with one difference: the progr
 
 The kinds of endpoint:
 
-- a datagram endpoint (UDP) with a client grant: one remote address and one remote UDP port; the network service gives the local UDP port and writes the UDP header.
+- a datagram endpoint (UDP) with a client grant: one remote address and one remote UDP port; the network service gives the local UDP port, and the program writes the UDP header of each datagram.
 - a datagram endpoint with a listen grant: one local UDP port; the program answers the admitted remotes only.
 - a segment endpoint (TCP), with a client grant or a listen grant.
 
@@ -2671,11 +2699,11 @@ Do not use: socket, port (for this), connection (for this).
 
 ### Datagram
 
-A datagram is the data of one UDP datagram and its remote: what a program sends and receives through a datagram endpoint, 1472 bytes at most.
+A datagram is one UDP datagram: its header of 8 bytes and its data, 1472 bytes of data at most, what a program sends and receives through a datagram endpoint.
 
-1472 bytes is the data of one Ethernet frame after the IPv4 header (20 bytes) and the UDP header (8 bytes): the system never fragments, so a datagram is one frame (`DATA_LIMIT` of `contract/datagram`). A larger `Send` fails with `Too_Large`.
+1472 bytes is the data of one Ethernet frame after the IPv4 header (20 bytes) and the UDP header (8 bytes): the system never fragments, so a datagram is one frame (`DATA_LIMIT` of `contract/datagram`; `DATAGRAM_LIMIT`, 1480 bytes, counts the header). A larger `Send` fails with `Too_Large`.
 
-A program sends a datagram with the command `Send` of its datagram ring: the place of the data in the datagram region, its count of bytes, and the remote address and port. The completion comes when the network service has copied the data: the place is then free again. A program gives a place for a datagram that arrives with `Receive`; its completion carries the place, the count of bytes and the remote. Example: QUIC is a library in the program over datagrams; `quic_echo` and `remote` send and receive each datagram of QUIC through their datagram endpoint.
+The program writes the whole datagram in a place of the datagram region: the data, then the header and its checksum with `network.udp_header_write`. It sends it with the command `Send` of its datagram ring: the place, the count of bytes with the header, and the remote address. The network service copies the datagram, reads the ports in its copy and checks them against the endpoint and the grant, and computes no checksum. The completion comes when the network service has copied the datagram: the place is then free again. A program gives a place for a datagram that arrives with `Receive`; its completion carries the place, the count of bytes and the remote. The program reads the data with `network.udp_data_read`, which checks the checksum when the program asks for it. Example: QUIC is a library in the program over datagrams; `quic_echo` and `remote` send and receive each datagram of QUIC through their datagram endpoint.
 
 A datagram is not a frame and not a segment: the frame is the whole Ethernet unit, and a segment is the unit of a segment endpoint, with its TCP header.
 
@@ -2699,7 +2727,7 @@ Do not use: peer (for this), destination, host.
 
 A UDP port is the 16-bit number of UDP that names one endpoint at an address.
 
-A datagram has a source UDP port and a destination UDP port. The network service finds the endpoint of a datagram that arrives by its destination port: the local UDP port of the endpoint. A program does not choose its local port with a client grant: the network service gives it, and the command `Info` returns it. A listen grant names its port: the remote service listens on the UDP port 7100, `quic_echo` on 4433.
+A datagram has a source UDP port and a destination UDP port. The network service finds the endpoint of a datagram that arrives by its destination port: the local UDP port of the endpoint. A program does not choose its local port with a client grant: the network service gives it, and the command `Info` returns it. The program writes that port as the source port of each datagram that it sends, and the network service refuses a datagram with another source port, in its own copy of the header. A listen grant names its port: the remote service listens on the UDP port 7100, `quic_echo` on 4433.
 
 A UDP port is not the Ports object of the kernel (a handle to ports of input and output of the processor), and not a TCP port: the same number is two different ports in UDP and in TCP.
 
@@ -2711,7 +2739,7 @@ Do not use: port (alone), socket number.
 
 A TCP port is the 16-bit number of TCP that names one end of a connection at an address.
 
-A segment has a source TCP port and a destination TCP port. The network service reads the ports of each segment to find the endpoint and to check the grant: a client grant has a block of 64 local TCP ports, and a listen grant has one local TCP port. Unlike a UDP port, the TCP port is in the header that the program writes, so the network service checks the local port of each segment that the program sends against its block or its listen port, in its own copy of the segment. Example: `server` has the listen grant of the TCP port 80.
+A segment has a source TCP port and a destination TCP port. The network service reads the ports of each segment to find the endpoint and to check the grant: a client grant has a block of 64 local TCP ports, and a listen grant has one local TCP port. As a UDP port, the TCP port is in the header that the program writes, so the network service checks the local port of each segment that the program sends against its block or its listen port, in its own copy of the segment. Example: `server` has the listen grant of the TCP port 80.
 
 A TCP port is not the Ports object of the kernel, and not a UDP port.
 
@@ -2725,7 +2753,7 @@ A segment is one TCP segment: its header, its options and its data, 1480 bytes a
 
 1480 bytes is the room of one Ethernet frame after the IPv4 header, so a segment is one frame and never a fragment (`SEGMENT_LIMIT` of `contract/datagram`). A segment has 20 bytes at least, a TCP header with no option (`SEGMENT_LEAST`); a shorter one fails with `Bad_Command`.
 
-The TCP library of the program writes each segment directly in a place of the datagram region, with its checksum, and the program sends it with `Send`. The network service copies it to a frame, reads its ports from the copy, checks them against the grant, and writes the IPv4 header. For a segment that arrives, the network service checks the TCP checksum before the program sees it.
+The TCP library of the program writes each segment directly in a place of the datagram region, with its checksum, and the program sends it with `Send`. The network service copies it to a frame, reads its ports from the copy, checks them against the grant, and writes the IPv4 header. For a segment that arrives, the network service checks the lengths and the ports of the header; the TCP library of the program checks the TCP checksum, and drops a segment with a wrong one.
 
 A segment is not a datagram and not a packet: the program sees no IPv4 header.
 
@@ -2737,7 +2765,7 @@ Do not use: packet, TCP packet, message.
 
 A segment endpoint is an endpoint whose grant has the protocol TCP: the program writes and reads whole segments, and the network service keeps no state of a connection.
 
-A segment endpoint puts TCP in the program. The program owns each connection, each window and each timer in its own memory, and can read each field; the network service only checks the grant and copies the bytes. The ring, the region, the commands and the error records are those of a datagram endpoint. Two things differ: a `Send` names a whole segment, header included, and the grant names TCP ports.
+A segment endpoint puts TCP in the program. The program owns each connection, each window and each timer in its own memory, and can read each field; the network service only checks the grant and copies the bytes. The ring, the region, the commands and the error records are those of a datagram endpoint, and the two take the same path through the network service: a `Send` names a whole segment, or a whole datagram, header included. One thing differs: the grant names TCP ports, and a client grant has a block of them.
 
 A segment endpoint has a client grant (one remote, a block of 64 local TCP ports) or a listen grant (one local TCP port). The program drives it with the TCP library: `tcp.step` takes the segments that arrived and writes the segments to send in the places of the datagram region. Examples: `server` has a segment endpoint with a listen grant of the TCP port 80; `fetch` has one with a client grant.
 
@@ -2882,7 +2910,7 @@ Do not use: socket, channel.
 
 The datagram region is the memory of an endpoint, 512 KiB, where the program writes the data to send and the network service writes the data that arrives.
 
-The root service makes the datagram region with the datagram ring and gives it to the program and to the network service (the role 13 of the context of the program). A program does not give a region of its own: if the program gave it, a revocation of that memory by the program stops the network service on a page fault, for all programs. A request names a place in the region in bytes; a byte outside it gives `Out_Of_Range`. The network service copies each datagram one time between the region and a frame, and computes no header and no checksum over bytes that the program can still change.
+The root service makes the datagram region with the datagram ring and gives it to the program and to the network service (the role 13 of the context of the program). A program does not give a region of its own: if the program gave it, a revocation of that memory by the program stops the network service on a page fault, for all programs. A request names a place in the region in bytes; a byte outside it gives `Out_Of_Range`. The network service copies each datagram or segment one time between the region and a frame. It checks the ports of what the program sends in that copy, never in the region, which the program can still change; it computes no checksum.
 
 The program organizes the region itself. Example: `server` divides it into 256 places of 2048 bytes, and its TCP library writes each segment directly in one place.
 

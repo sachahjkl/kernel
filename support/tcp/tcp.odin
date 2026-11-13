@@ -8,7 +8,11 @@
 // Who uses it: the HTTP server (`programs/server`), the program `fetch`
 // and the tests of TCP. The program gets its segments from a segment
 // endpoint of the network service and gives `step` the time of its clock;
-// the library holds no time and no thread of its own. The parts:
+// the library holds no time and no thread of its own. The network service
+// computes no checksum of a segment: this library writes the checksum of
+// each segment that it sends, and `step` checks the checksum of each
+// segment that arrives, before any other read of it (`bad_checksums` of
+// the table counts the segments that it dropped). The parts:
 //
 // - `Table`, `table_init`: the connections and their buffers.
 // - `connect`, `write`, `read`, `close`, `abort`: what the program asks.
@@ -217,6 +221,10 @@ Table :: struct {
 	reclaimed_remote_count: int,
 	unknown_segments: u64,
 	malformed:        u64,
+	// Segments whose checksum is not the one of their bytes and of the two
+	// addresses: the wire damaged them, or they are for another address.
+	// They change no connection and get no answer.
+	bad_checksums:    u64,
 }
 
 RECLAIMED_CAPACITY :: 64
@@ -227,7 +235,8 @@ Remote :: struct {
 	port:    u16,
 }
 
-// Incoming is one segment that arrived, from a remote address.
+// Incoming is one segment that arrived, from a remote address, to the
+// local address of the table: the two addresses of its checksum.
 Incoming :: struct {
 	remote_address: u32,
 	segment:        []u8,
@@ -946,9 +955,16 @@ connection_output :: proc "contextless" (table: ^Table, index: int, now: u64, ou
 	return true
 }
 
-// arrive reads one segment.
+// arrive reads one segment. The checksum comes first: nobody checked it
+// before, and a segment that the wire damaged must change nothing, also
+// not when its ports name a connection. No answer goes for it: its ports
+// and its sequence numbers are not to be trusted.
 @(private)
 arrive :: proc "contextless" (table: ^Table, item: Incoming, now: u64, output: ^Output) {
+	if !checksum_valid(item.remote_address, table.local_address, item.segment) {
+		table.bad_checksums += 1
+		return
+	}
 	header, ok := header_read(item.segment)
 	if !ok {
 		table.malformed += 1

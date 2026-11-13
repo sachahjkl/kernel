@@ -18,7 +18,8 @@ QUIC needs no new part of the kernel. The network service carries UDP datagrams,
 
 | Part | Where | Why |
 |---|---|---|
-| The datagrams | An endpoint of the network service, as for UDP today. A server needs datagrams from any remote on one port: a listen grant of UDP, with admitted remotes, as for TCP (section 6) | The service multiplexes the one pair of queues of the device (the note of property 5 in `PROPERTIES.md`) |
+| The datagrams | An endpoint of the network service, as for UDP today. A server needs datagrams from any remote on one port: a listen grant of UDP, with admitted remotes, as for TCP (section 6) | The service multiplexes the one pair of queues of the device (the line "As built" of property 5 in `PROPERTIES.md`) |
+| The UDP header and its checksum | The program, with `network.udp_header_write` on send and `network.udp_data_read` on receive (`support/network`) | The network service copies a datagram and computes no checksum of it (`NETWORK.md`, "The path of a datagram and of a segment") |
 | QUIC: packets, keys, streams, loss, congestion | `support/quic`, a library in the program that holds the connection | QUIC is a library in the program; its state is memory of the program |
 | TLS 1.3 | `support/quic` too: QUIC carries the handshake in CRYPTO frames, with no record layer | One library for one connection |
 | The primitives | The module `cryptography`, loaded in the program through its import slots | Proven code, one module, named by its hash (`docs/CRYPTOGRAPHY.md`) |
@@ -43,6 +44,12 @@ The same form as `support/tcp`:
 - the open, in place.
 
 So no byte is checked in one place and used from another, and the result of each export of the module is private memory, as section 6 of `docs/CRYPTOGRAPHY.md` asks.
+
+**The UDP checksum.** A place of the datagram region holds a whole UDP datagram: 8 bytes of header, then the bytes of QUIC. The program gives the library the bytes after the header. The network service checks the lengths and the ports of the header, and computes no checksum.
+
+- On receive, a QUIC program does not check the UDP checksum. The choice is one argument of one call: `quic_echo` and `remote` call `network.udp_data_read` with the rule `Do_Not_Verify`. QUIC authenticates each packet (the AEAD of packet protection), so a datagram that the wire damaged fails there, and one more pass over the bytes adds nothing. A program that gives the rule `Verify` loses nothing but that pass.
+- On send, a QUIC program writes a real checksum: `network.udp_header_write`, over the pseudo-header, the header and the bytes of QUIC. A remote, or a machine on the way, can drop a datagram with no checksum.
+- The library `support/quic` does not change: it reads and writes the bytes of QUIC, and knows no UDP header.
 
 ## 3. Packet protection (the first layer, built)
 

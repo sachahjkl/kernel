@@ -65,6 +65,14 @@ scenario_quic := [?]Step {
 	{kind = .Wait, text = ": the idle end held its bound: "},
 	{kind = .Front, text = "quic_echo"},
 	{kind = .Shot, text = "quic_echo"},
+	// The end of the endpoint: the passes of the network service over the
+	// bytes of the datagrams of QUIC: one copy each way, and no checksum
+	// (quic_echo writes the UDP checksum, and does not check one).
+	{kind = .Close, text = "quic_echo"},
+	{kind = .Wait, text = "root: quic_echo stopped with code 0"},
+	{kind = .Wait, text = "network: the endpoint of quic_echo ended: "},
+	{kind = .Wait, text = "network: a measure: the endpoint of quic_echo, UDP: the passes of this service over the data for each payload byte: "},
+	{kind = .Wait, text = "network: the endpoint of quic_echo, UDP: this service read each payload byte one time on receive and one time on send, for the copy, and computed no checksum of it: as it must"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
