@@ -124,16 +124,37 @@ fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> Fault_D
 		if program.debug_written - intrinsics.atomic_load(&record.fault_read) >= op.FAULT_RECORD_CAPACITY {
 			program.debug_full += 1
 			intrinsics.volatile_store(&record.fault_full, program.debug_full)
-			log_in("fault", .Warning, "kernel: program ", Module_Name{program_name(program)}, ": the ring of its debugger is full (", u64(program.debug_full), " times): the debugger does not see the fault")
-			// A breakpoint or a single step of the debugger that finds no
-			// place is lost for the debugger, and is no fault of the
-			// program: the thread goes on.
-			if vector == VECTOR_DEBUG && thread.frame.error != 0 {
+			// One line of the log for each time that the ring becomes
+			// full, with the count: a thread that steps through a full
+			// ring comes here at each instruction, and a line for each one
+			// would fill the log. The next record that finds room allows
+			// the next line.
+			if !program.debug_full_logged {
+				program.debug_full_logged = true
+				log_in("fault", .Warning, "kernel: program ", Module_Name{program_name(program)}, ": the ring of its debugger is full (", u64(program.debug_full), " times): the debugger does not see the fault")
+			}
+			// A breakpoint, or a single step that the debugger asked for,
+			// that finds no place is lost for the debugger, and is no
+			// fault of the program: the thread goes on. The step is over:
+			// its trap flag leaves the thread, so that the thread does not
+			// come here again at each instruction. A breakpoint belongs to
+			// the debugger: only the debugger writes one.
+			status := thread.frame.error
+			debugger_stepped := status & op.DEBUG_STATUS_STEP != 0 && thread.debugger_step
+			if vector == VECTOR_DEBUG && (status & op.DEBUG_STATUS_BREAKPOINTS != 0 || debugger_stepped) {
+				if debugger_stepped {
+					thread.debugger_step = false
+					thread.frame.rflags &~= FLAG_TRAP
+				}
 				breakpoint_resume_flag_set(thread)
 				return .Continues
 			}
+			// Each other one (int3, int1, a single step that the program
+			// asked for itself) stays with the program, as with no
+			// debugger: its own fault handler below, or its stop.
 		} else {
 			to_debugger = true
+			program.debug_full_logged = false
 		}
 	}
 	if !to_debugger {
@@ -187,11 +208,10 @@ fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> Fault_D
 	// valid for it: the handler writes after it reads this record.
 	thread.registers_written = false
 	run_unlock(home)
-	if to_debugger {
-		// The debugger sees this stop: a trap flag that it wrote is its
-		// own to clear or to keep from here.
-		thread.debugger_step = false
-	}
+	// The mark of a trap flag that the debugger wrote stays through its
+	// record: the flag is still in the frame of the thread, and only the
+	// next write of the registers, or the end of the debugging, takes it
+	// out (debug_handler_end).
 	access: u64
 	if vector == VECTOR_PAGE_FAULT {
 		access = thread.frame.error & 0b10011 // Present, Write, Execute: the bits of Fault_Access.
@@ -299,6 +319,11 @@ debug_handler_set :: proc "contextless" (caller_index: u32, handler_index: u32, 
 	if serves := intrinsics.atomic_load(&handler.debugs_program); serves != 0 && serves != debugged_index {
 		return .Bad_State
 	}
+	// Two programs do not debug each other: each one could hold the debug
+	// handler of the other, and both would wait for ever.
+	if debugger_is(caller_index, debugged_index) {
+		return .Bad_State
+	}
 	taken := program_lock(debugged_index)
 	defer program_unlock(debugged_index, taken)
 	program := &programs[debugged_index]
@@ -319,6 +344,10 @@ debug_handler_set :: proc "contextless" (caller_index: u32, handler_index: u32, 
 	program.debug_handler = handler_index
 	program.debug_record = record
 	program.debug_written = 0
+	// The counts of a full ring are those of this debugger.
+	program.debug_full = 0
+	program.debug_full_logged = false
+	intrinsics.volatile_store(&record.fault_full, 0)
 	intrinsics.atomic_store(&record.fault_written, 0)
 	intrinsics.atomic_store(&record.fault_read, 0)
 	intrinsics.atomic_store(&handler.debugs_program, debugged_index)
@@ -399,6 +428,9 @@ debug_handler_end :: proc "contextless" (debugged_index: u32) {
 			thread.frame.rflags &~= FLAG_TRAP
 			thread.debugger_step = false
 		}
+		// Only the stops of the debugger: a stop of the program itself, or
+		// of a holder of a thread handle, stays (thread_control.odin keeps
+		// debug_stops at most control_stops).
 		if stops != 0 {
 			thread.debug_stops = 0
 			thread_stops_release(&thread, stops)

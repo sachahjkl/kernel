@@ -87,6 +87,11 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	by_machine := false // The machine handle names the thread: a write sets its weight limit.
 	by_debugger := false // The program handle with Debug names the thread: the caller is the debugger of its program.
 	if v[0] == 0 {
+		// A breakpoint is written only by the debugger of the program of
+		// the thread, through its program handle.
+		if op.thread_control_needs_the_debugger(command) {
+			return .Bad_Handle
+		}
 		// A thread of this program, by its number: under the program lock,
 		// which the caller holds, no thread of this program starts or ends.
 		target_index = thread_of_number(caller_program_index, v[1])
@@ -133,6 +138,12 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			by_debugger = true
 			owner = named.object
 		} else {
+			// A thread handle writes no breakpoint: a program, and the
+			// holder of a handle of one of its threads, get no way to put
+			// a debug exception where the kernel copies its memory.
+			if op.thread_control_needs_the_debugger(command) {
+				return .Bad_Handle
+			}
 			// The right of the command: a handle that a program gave so
 			// that another one can end a thread (Control) does not let it
 			// hold the thread or write its registers.
@@ -187,9 +198,15 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		}
 		return status
 	case .Resume:
-		// The debugger takes back only the stops that it made: a stop of
-		// the program itself, or of a holder of a thread handle, stays.
+		// Each side takes back only its own stops. The debugger: the
+		// stops that it made. The program and the holder of a thread
+		// handle: the stops that are not of the debugger. So the count of
+		// the debugger is never above the stop count, and the end of the
+		// debugging takes back the stops of the debugger and no others.
 		if by_debugger && thread.debug_stops == 0 {
+			return .Bad_State
+		}
+		if !by_debugger && intrinsics.atomic_load(&thread.control_stops) <= thread.debug_stops {
 			return .Bad_State
 		}
 		status := thread_control_resume(thread, results)

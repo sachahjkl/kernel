@@ -373,7 +373,7 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "fault_ring":
 		return {pages = 4096, programs = 2, threads = 22} // One child at a time: 512 pages and 20 threads (17 that fault in a full ring, its main thread and its handler); one thread of its own that spins while a child tries to name it.
 	case "debugged":
-		return {pages = 2048, programs = 3, threads = 4} // Two children at a time (the program that is debugged and a second debugger), each with one thread; one thread of its own that only waits.
+		return {pages = 2048, programs = 3, threads = 6} // Two children at a time, the program that is debugged and a second debugger, each with a budget of two threads; its main thread, and one thread of its own that only waits.
 	case "kernel_events":
 		// Program_Create takes the program and its first thread from this
 		// budget. Pages: its module, stack, context, thread area and page
@@ -448,7 +448,7 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 // the log to them.
 log_grant :: proc "contextless" (name: string) -> system.Grant {
 	rights := system.Rights{.Write}
-	if name == "console" || name == "rings" || name == "errors" || name == "fault_ring" { // errors gives it to its child, which measures a refused Log; the child of fault_ring that repairs logs its own cases.
+	if name == "console" || name == "rings" || name == "errors" || name == "fault_ring" || name == "debugged" { // errors gives it to its child, which measures a refused Log; the child of fault_ring that repairs logs its own cases; a child of debugged writes one line from a buffer that its debugger watches.
 		rights += {.Give}
 	}
 	return {system.context_record().handles[op.CONTEXT_LOG], rights}
@@ -1022,7 +1022,7 @@ refusal :: proc "contextless" (command: system.Root_Command, name: string, value
 		case status == .Bad_Handle && find(name) == nil:
 			return errors.ring_fail(kind, .Absent, .Programs, 1)
 		case status == .Bad_State:
-			return errors.ring_fail(kind, .Reserved, .None, 1) // A program of the system, a service, or the caller itself.
+			return errors.ring_fail(kind, .Reserved, .None, 1) // A program with a grant that the caller does not hold, with no row in the grant table, or the caller itself.
 		case status == .Bad_Operation:
 			return errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
 		}
@@ -1337,16 +1337,24 @@ find :: proc "contextless" (name: string) -> ^Started {
 	return nil
 }
 
-// debug_refused_for says if no program debugs the program with this role:
-// a program of the system and a service hold what belongs to other
-// programs and to other principals (the keys of each program, the pictures
-// of each window, the stores, the frames of the network), and a debugger
-// reads each byte of the program that it debugs.
-debug_refused_for :: proc "contextless" (name: string) -> bool {
-	if name == "root" || name == "input" || name == "compositor" || name == "terminal" || name == "block" || name == "frame" {
-		return true
-	}
-	return grants_of(name) & {.Serve, .Data_Disk, .Scratch_Disk, .Network_Device, .Principals, .Settings, .Clock} != {}
+// debug_allowed_for says if a caller can debug the program with a name, by
+// the grants of the two (grants_of). A debugger acts with each handle of
+// the program that it debugs, and reads each byte of it: the right Debug on
+// a program is each grant of that program. So the rule is one comparison:
+// the program has a row in the grant table, and each of its grants is a
+// grant that the caller holds itself. The caller then gains nothing that
+// this service did not give it.
+//
+// What the rule refuses, with no list of names: a program with a grant
+// that the caller does not hold (a service, a device service, the storage
+// service, the programs with Schedule, Events, Network, Principals,
+// Settings or Clock); and a program with no row in the table, which
+// includes each program of the system that this service starts by itself
+// (input, compositor, terminal, block, frame) and each program that a later
+// change adds, until its row says what it holds.
+debug_allowed_for :: proc "contextless" (caller_name: string, name: string) -> bool {
+	held := grants_of(name)
+	return held != {} && held <= grants_of(caller_name)
 }
 
 // debug gives a caller the handle of the program with a name, with the
@@ -1360,15 +1368,16 @@ debug_refused_for :: proc "contextless" (name: string) -> bool {
 // This service records the grant (`debug` in Grants) and can revoke it:
 // the kernel then ends the handle, and the debugging with it.
 //
-// Bad_Handle: no program has the name. Bad_State: the program is never
-// debugged, or it is the caller. Bad_Operation: the caller does not act
+// Bad_Handle: no program has the name. Bad_State: the program holds a
+// grant that the caller does not hold or has no row in the grant table
+// (debug_allowed_for), it is the caller, or another program debugs it. Bad_Operation: the caller does not act
 // for the principal of the program. No_Right: the grant was revoked.
 debug :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64) -> system.Status {
 	target := find(name)
 	if target == nil {
 		return .Bad_Handle
 	}
-	if target == caller || debug_refused_for(name) {
+	if target == caller || !debug_allowed_for(system.name_of(caller.name[:]), name) {
 		return .Bad_State
 	}
 	if .Debug in caller.revoked {

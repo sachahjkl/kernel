@@ -418,7 +418,7 @@ fault_record_next :: proc "contextless" (deadline: u64 = WAIT_FOREVER) -> (recor
 // debug_attach makes a thread of this program (0: the thread that calls
 // it) the debug handler of another program: this program is then its
 // debugger. The handle of that program needs the right Debug. The faults
-// of the kinds Debug and Breakpoint of that program (no kinds: both) become
+// of the kinds Debug and Breakpoint of that program (always both) become
 // records of the fault ring of the handler, which reads them with
 // `fault_record_next`; each faulting thread waits for `debug_fault_answer`.
 // The debugging ends at `debug_detach`, when the handler thread ends, when
@@ -463,7 +463,9 @@ thread_control_stop :: proc "contextless" (thread: Handle, number: u64, error: ^
 }
 
 // thread_control_resume takes 1 from the stop count of a thread and gives
-// the count: at 0 the thread runs again.
+// the count: at 0 the thread runs again. A debugger takes back only its
+// own stops, and each other caller only the stops that the debugger did
+// not make (Bad_State with no stop of its own).
 thread_control_resume :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (count: u64, status: Status) {
 	results: [7]u64
 	results, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Resume))
@@ -493,7 +495,9 @@ thread_breakpoints_read :: proc "contextless" (thread: Handle, number: u64, erro
 
 // thread_breakpoints_write gives a held thread these breakpoints, and no
 // other: at most four, each an execute breakpoint or a data breakpoint at
-// an address of its program. A reached breakpoint is a fault of the kind
+// an address of its program. Only the debugger of the program writes them:
+// `thread` is its handle with the right Debug, and 0 or a thread handle
+// gives Bad_Handle. A reached breakpoint is a fault of the kind
 // Debug of that thread, with the number of the breakpoint in the debug
 // status of its record. Bad_Operation for a breakpoint that a thread
 // cannot have; the error record names the refused part.

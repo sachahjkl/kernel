@@ -585,7 +585,7 @@ handles_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 				machine_rights, by_machine_number := op.thread_control_machine_rights(command)
 				if slot, found := read_handle_find(program, v[0], .None); found && slot.kind == .Machine && by_machine_number {
 					kind, rights = .Machine, machine_rights
-				} else if found && slot.kind == .Program && op.thread_control_takes_debug_handle(command) {
+				} else if op.thread_control_needs_the_debugger(command) || found && slot.kind == .Program && op.thread_control_takes_debug_handle(command) {
 					// The debugger of a program names a thread by the
 					// program handle with Debug.
 					kind, rights = .Program, {.Debug}

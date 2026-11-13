@@ -938,8 +938,8 @@ Operation :: enum u32 {
 	//   [debug handler](docs/ARCHITECTURE.md#the-debugger-of-a-program) of that program: the caller is its
 	//   debugger. The faults of the kinds `Debug` and `Breakpoint` of that program become records of the ring
 	//   of this thread, before the fault handler of the program itself, and each faulting thread waits for a
-	//   `Fault_Answer` with the same handle. `kinds` is then 0 for both kinds, or a part of
-	//   `FAULT_KINDS_DEBUGGER`. `end` 1 ends the debugging (the detach). A program has one debugger at a
+	//   `Fault_Answer` with the same handle. `kinds` is then 0 or the whole of
+	//   `FAULT_KINDS_DEBUGGER`: the debugger takes both kinds. `end` 1 ends the debugging (the detach). A program has one debugger at a
 	//   time, and a thread is the debug handler of one program and not the fault handler of its own.
 	//
 	// The debugging ends at the detach, when the debug handler thread ends, when the last handle of the
@@ -957,7 +957,7 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Operation`: `end` is above 1; a kind that the kernel never delivers; kinds with the end of the
-	//   delivery; with `program`, a kind outside `FAULT_KINDS_DEBUGGER`.
+	//   delivery; with `program`, kinds that are not 0 and not the whole of `FAULT_KINDS_DEBUGGER`.
 	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with **Control**; `program` is not a
 	//   program handle with **Debug**.
 	// - `Bad_State`: the thread is not a live thread of this program; the thread is the debug handler of a
@@ -1508,16 +1508,16 @@ fault_kinds_of_argument :: proc "contextless" (argument: u64) -> (mask: u64, ok:
 }
 
 // fault_kinds_of_debugger_argument gives the kinds that the argument of
-// Fault_Handler_Set names for a debugger, as a mask of vectors: 0 is each
-// kind of FAULT_KINDS_DEBUGGER. ok is false for a kind outside it.
+// Fault_Handler_Set names for a debugger, as a mask of vectors: always
+// each kind of FAULT_KINDS_DEBUGGER. The argument is 0 or that whole set;
+// ok is false for any other. A debugger that took one of the two kinds
+// would leave the other to the program: a breakpoint that the debugger
+// set would then stop the program.
 fault_kinds_of_debugger_argument :: proc "contextless" (argument: u64) -> (mask: u64, ok: bool) {
-	if argument & ~FAULT_KINDS_DEBUGGER != 0 {
+	if argument != 0 && argument != FAULT_KINDS_DEBUGGER {
 		return 0, false
 	}
-	if argument == 0 {
-		return FAULT_KINDS_DEBUGGER, true
-	}
-	return argument, true
+	return FAULT_KINDS_DEBUGGER, true
 }
 
 // What a faulting access was: the bits of the error code of the processor.
@@ -1543,9 +1543,10 @@ Fault_Answer_Kind :: enum u64 {
 // What Thread_Control does. The results are in the completion record.
 //
 // Each command of the registers and of the stop count needs **Inspect** on
-// the thread handle, and a write of the registers or of the breakpoints
+// the thread handle, and a write of the registers
 // and a read of the memory need **Write** too
-// (`thread_control_rights`). A read or a write of the
+// (`thread_control_rights`). A write of the breakpoints takes only the
+// program handle with **Debug** of the debugger. A read or a write of the
 // registers or of the breakpoints needs the thread held: its stop count
 // above 0 and its processor
 // left (`Bad_State` before). The two commands of the schedule and the read
@@ -1568,7 +1569,10 @@ Thread_Control_Command :: enum u64 {
 	// it left.
 	Stop                 = 1,
 	// Takes 1 from the stop count -> the count. Bad_State at 0. At 0, a
-	// thread whose wait ended runs again.
+	// thread whose wait ended runs again. The debugger of the program
+	// takes back only the stops that it made, and the other callers only
+	// the stops that the debugger did not make: Bad_State when the caller
+	// has no stop of its own on the thread.
 	Resume               = 2,
 	// Writes a Thread_Registers at the address (size: at least its size) ->
 	// the bytes written.
@@ -1607,7 +1611,10 @@ Thread_Control_Command :: enum u64 {
 	// least its size) -> the bytes written. The thread is held.
 	Read_Breakpoints     = 9,
 	// Reads a Thread_Breakpoints at the address: the thread has these
-	// breakpoints from now on, and no other. The thread is held.
+	// breakpoints from now on, and no other. The thread is held. Only
+	// through the program handle with Debug, from the debugger of the
+	// program (thread_control_needs_the_debugger): Bad_Handle with 0 or a
+	// thread handle.
 	// Bad_Operation for a breakpoint that a thread cannot have
 	// (thread_breakpoints_refusal): nothing changes. A reached breakpoint is
 	// a fault of the kind Debug of the thread.
@@ -1631,13 +1638,13 @@ Thread_Control_Command :: enum u64 {
 // writes it. Control, the right to end a thread, gives none of them. It
 // gives the write of the schedule, which only lowers: a holder that can end
 // a thread can also give it a smaller share, which is less. A write of the
-// breakpoints needs Write as a write of the registers does: it stops the
-// thread where its holder chooses. A read of the memory of the program
+// breakpoints takes no thread handle and no number of an own thread
+// (thread_control_needs_the_debugger). A read of the memory of the program
 // needs Write too: a handle with Inspect alone sees how the thread runs,
 // and never the bytes that its program holds.
 thread_control_rights :: proc "contextless" (command: Thread_Control_Command) -> Rights {
 	#partial switch command {
-	case .Write_Registers, .Write_Extended_State, .Write_Breakpoints, .Read_Memory:
+	case .Write_Registers, .Write_Extended_State, .Read_Memory:
 		return {.Inspect, .Write}
 	case .Write_Schedule:
 		return {.Control}
@@ -1675,6 +1682,17 @@ thread_control_takes_debug_handle :: proc "contextless" (command: Thread_Control
 		return false
 	}
 	return true
+}
+
+// thread_control_needs_the_debugger says if a command of Thread_Control
+// takes only the program handle with Debug, from the debugger of the
+// program of the thread: the write of the breakpoints. A program has no
+// use for a breakpoint on itself, and a breakpoint that a program could
+// set on its own threads would let each program put a debug exception at
+// the place where the kernel copies its memory. With 0 or a thread handle
+// the command gives Bad_Handle.
+thread_control_needs_the_debugger :: proc "contextless" (command: Thread_Control_Command) -> bool {
+	return command == .Write_Breakpoints
 }
 
 // The most bytes of one `Read_Memory` of `Thread_Control`: one page.

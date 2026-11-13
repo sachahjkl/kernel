@@ -237,11 +237,16 @@ Thread :: struct #align (64) {
 	// the debugger answers it. Program lock.
 	fault_to_debugger: bool,
 	// The stops of control_stops that the debugger of the program made:
-	// the end of the debugging takes them back. Program lock.
+	// the end of the debugging takes them back, and no others. Never
+	// above control_stops: a Resume that is not of the debugger takes
+	// only a stop that is not of the debugger. Program lock.
 	debug_stops: u32,
-	// The debugger of the program wrote the trap flag in the frame of the
-	// thread: a single step that comes after the end of the debugging is
-	// dropped, and stops no program. Program lock.
+	// The debugger of the program wrote the trap flag that is in the
+	// frame of the thread: the end of the debugging clears that flag, and
+	// a single step that comes after that end is dropped and stops no
+	// program. It stays true through the record of a step, until the next
+	// write of the registers. A trap flag that the program set itself
+	// never has this mark. Program lock.
 	debugger_step: bool,
 	// The program whose debug handler this thread is (fault_ring.odin). 0:
 	// none. Written under the control lock (atomic: Fault_Handler_Set reads
@@ -327,7 +332,8 @@ Program :: struct {
 	// debugger. Written and read as fault_kinds.
 	debug_kinds:   u64,
 	debug_written: u32, // The records that the kernel wrote in the ring of the debug handler: the kernel's own count.
-	debug_full:    u32, // The faults that found that ring full.
+	debug_full:    u32, // The faults that found that ring full, since the debugger attached.
+	debug_full_logged: bool, // The log has the line of the full ring: no other line until a record finds room.
 }
 
 HOLDS_STOPPED :: u64(1) << 32

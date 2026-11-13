@@ -110,9 +110,14 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 	for command in Thread_Control_Command {
 		rights := thread_control_rights(command)
 		switch command {
-		case .Write_Registers, .Write_Extended_State, .Write_Breakpoints, .Read_Memory:
+		case .Write_Registers, .Write_Extended_State, .Read_Memory:
 			testing.expect_value(t, rights, Rights{.Inspect, .Write})
 			testing.expect(t, .Control not_in rights)
+		case .Write_Breakpoints:
+			// No thread handle writes a breakpoint: only the debugger of
+			// the program, through its program handle.
+			testing.expect(t, thread_control_needs_the_debugger(command))
+			testing.expect(t, thread_control_takes_debug_handle(command))
 		case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints:
 			testing.expect_value(t, rights, Rights{.Inspect})
 		case .Write_Schedule:
@@ -200,9 +205,13 @@ the_kinds_of_a_debugger :: proc(t: ^testing.T) {
 	mask, ok := fault_kinds_of_debugger_argument(0)
 	testing.expect(t, ok)
 	testing.expect_value(t, mask, FAULT_KINDS_DEBUGGER)
-	mask, ok = fault_kinds_of_debugger_argument(u64(1) << u64(Fault_Kind.Debug))
+	mask, ok = fault_kinds_of_debugger_argument(FAULT_KINDS_DEBUGGER)
 	testing.expect(t, ok)
-	testing.expect_value(t, mask, u64(1) << 1)
+	testing.expect_value(t, mask, FAULT_KINDS_DEBUGGER)
+	// One of the two kinds alone is refused: the other would stay with
+	// the program.
+	_, ok = fault_kinds_of_debugger_argument(u64(1) << u64(Fault_Kind.Debug))
+	testing.expect(t, !ok)
 	_, ok = fault_kinds_of_debugger_argument(u64(1) << u64(Fault_Kind.Page_Fault))
 	testing.expect(t, !ok)
 }

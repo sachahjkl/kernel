@@ -136,8 +136,9 @@ Root_Command :: enum u32 {
 	// the right Debug only: the caller becomes its debugger with
 	// `debug_attach` (docs/TOOLS.md, "The debugger: the design"). The root
 	// service gives it only to a caller that acts for the principal whose session
-	// runs that program, and never for a program of the system or a
-	// service, which hold what belongs to other programs. values[0] of the
+	// runs that program, and only for a program whose grants the caller
+	// holds itself: a debugger acts with each handle of the program that it
+	// debugs. values[0] of the
 	// completion is the handle. The grant is `debug` in `Grants`; `Revoke`
 	// ends each handle that came from it, and the debugging with them.
 	Debug = 14,

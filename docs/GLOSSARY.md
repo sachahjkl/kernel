@@ -1529,7 +1529,7 @@ Do not use: ptrace, debug API, SuspendThread, thread_suspend (for this).
 
 The stop count of a thread is the count of the stops of thread control that hold it: each `Stop` adds 1, each `Resume` takes 1, and the thread runs only at 0.
 
-A stop is a count, not a state, so two holders that each stop a thread each resume it, and neither releases the hold of the other. `Resume` at 0 gives `Bad_State`, and the count has a limit (`THREAD_STOP_COUNT_LIMIT`). When `Stop` returns, the thread runs no instruction: a thread on another processor left it, after an interrupt that the stop sent. The count does not change the wait of the thread: a thread in a word wait stays in it, and its wait ends as before, but the thread does not run until its count is 0.
+A stop is a count, not a state, so two holders that each stop a thread each resume it, and neither releases the hold of the other. The stops of the debugger of the program are counted apart: the debugger takes back only its own, and the end of the debugging takes back those and no others. `Resume` at 0 gives `Bad_State`, and the count has a limit (`THREAD_STOP_COUNT_LIMIT`). When `Stop` returns, the thread runs no instruction: a thread on another processor left it, after an interrupt that the stop sent. The count does not change the wait of the thread: a thread in a word wait stays in it, and its wait ends as before, but the thread does not run until its count is 0.
 
 The design: `docs/ARCHITECTURE.md`, "The control of a thread".
 
@@ -1565,7 +1565,7 @@ Do not use: register context, CONTEXT, user_regs_struct.
 
 A debugger is a program that holds the handle of another program with the right **Debug**, and that made one of its own threads the debug handler of that program.
 
-It receives the debug exceptions and the breakpoints of that program, names each of its threads by its number with the same handle, holds them, reads and writes their registers and their breakpoints, and reads the memory of the program. A program has one debugger at a time, and a program does not debug itself. Debug access is a handle to one program, never to the machine: the root service gives it on the command `Debug` of the root ring, to a caller that acts for the principal whose session runs the program, and it gives it to no program at its start. A program that creates a program has the right on it.
+It receives the debug exceptions and the breakpoints of that program, names each of its threads by its number with the same handle, holds them, reads and writes their registers and their breakpoints, and reads the memory of the program. A program has one debugger at a time, and a program does not debug itself. Debug access is a handle to one program, never to the machine. Two holders have it: the caller that the root service gives it to on the command `Debug` of the root ring (a caller that acts for the principal whose session runs the program, and that holds each grant of that program itself), and the program that created the program, on the handle that the creation gave it. The root service gives it to no program at its start. A debugger acts with each handle of the program that it debugs.
 
 The debugging ends when the debugger detaches, when its debug handler thread ends, when its last handle with Debug closes or is revoked, and when the program stops. The kernel then removes the breakpoints, clears the trap flag that the debugger wrote, takes back its stops and resumes each thread that waits for its answer: a debugger that ends never holds and never stops the program.
 
@@ -1589,7 +1589,7 @@ Do not use: tracer thread, exception port.
 
 A breakpoint is one of the four places where a thread stops with a fault of the kind Debug: an instruction that it reaches, or bytes that it writes or reads.
 
-It is a debug register of the processor, not a byte written in the code: the code of a module is shared by each program that maps it. Thread control reads and writes the breakpoints of a held thread (`op.Thread_Breakpoints`: `Read_Breakpoints`, `Write_Breakpoints`). An execute breakpoint stops the thread before its instruction; a data breakpoint (1, 2, 4 or 8 bytes) stops it after its access. The kernel refuses an address that is not below `USER_END`, so no breakpoint is ever at an address of the kernel. A breakpoint belongs to one thread: the processor that takes the thread loads it, and the processor that leaves the thread turns it off.
+It is a debug register of the processor, not a byte written in the code: the code of a module is shared by each program that maps it. Thread control reads the breakpoints of a held thread, and only the debugger of its program writes them (`op.Thread_Breakpoints`: `Read_Breakpoints`, `Write_Breakpoints`). An execute breakpoint stops the thread before its instruction; a data breakpoint (1, 2, 4 or 8 bytes) stops it after its access. The kernel refuses an address that is not below `USER_END`, so no breakpoint is ever at an address of the kernel. A breakpoint belongs to one thread: the processor that takes the thread loads it, and the processor that leaves the thread turns it off.
 
 It is not the fault kind `Breakpoint`, which is the instruction `int3` that a program runs itself.
 
