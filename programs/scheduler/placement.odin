@@ -227,9 +227,6 @@ placement_refusals :: proc "contextless" (processors: u64) -> bool {
 	return sets_right && rights_right
 }
 
-// 3. The limit.	return as_it_must
-}
-
 // 3. The limit. The first thread of the program gets a limit through the
 // machine handle, tries to leave it by its own writes and by a new thread,
 // and gets each processor back at the end.
