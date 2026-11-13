@@ -6,9 +6,11 @@
 // - one line that says what the module is, and a text;
 // - for each export: its name, the name and the type of each parameter, the type of the result, and a text.
 //
-// The build tool takes all of it from the comments of the source of the module, and removes the marks of their
-// Markdown: the manual draws plain lines with the cell font, where a list stays lines that start with "- ". This
-// program reads the file only: it **does not load the module**, and it does not start it.
+// The build tool takes all of it from the comments of the source of the module, and the text keeps their Markdown.
+// The manual reads it: a bold word is in the bold weight, a word in italics has a thin line under it, a name of
+// code is in the font of the cells, a list item has its mark and its indentation, and an example is a block. A
+// link is a colored name; a link to a module or to an export of the boot image has a line under it, and a click on
+// it shows that page. This program reads the file only: it **does not load the module**, and it does not start it.
 //
 // The page of a module also says how the module can be used. The system has *one kind of file* for a program, a
 // library and a service, so the answer comes from two facts: the module has an entry or not, and it has exports
@@ -21,7 +23,8 @@
 // - home: the start of the text;
 // - Tab: the table of all the modules, as `overview()` shows it.
 //
-// A click on a name of the list shows that module.
+// A click on a name of the list shows that module. A click on a link with a line under it shows the page that it
+// names.
 //
 // The manual is a service: another program asks for a page with [show](manual.show), and reads a description as
 // a text with [about](manual.about) and [signature](manual.signature). The other exports give the facts of the
@@ -73,18 +76,7 @@ COLOR_HEADING :: 0x6CB4F0
 COLOR_EXPORT :: 0x7CD890
 COLOR_CODE :: 0xE0A878
 
-// One line of the page. The text is in the file of the module, or in built.
-Line :: struct {
-	text:   string,
-	indent: int,
-	color:  graphics.Color,
-}
-
-LINE_CAPACITY :: 2048
-
 image: []u8
-lines: [LINE_CAPACITY]Line
-line_count: int
 built: [16384]u8 // The lines that this program writes: the signatures and the facts.
 built_count: int
 selected: int // The index of the module of the page, in the boot image.
@@ -160,13 +152,6 @@ write_signature :: proc "contextless" (writer: ^system.Writer, file: []u8, funct
 	}
 }
 
-put :: proc "contextless" (text: string, indent: int, color: graphics.Color) {
-	if line_count < LINE_CAPACITY {
-		lines[line_count] = {text = text[:min(len(text), max(COLUMNS - indent, 0))], indent = indent, color = color}
-		line_count += 1
-	}
-}
-
 // put_built writes a line from parts, and keeps its bytes in built.
 put_built :: proc "contextless" (indent: int, color: graphics.Color, parts: ..system.Part) {
 	writer := system.Writer {
@@ -202,31 +187,10 @@ put_paragraph :: proc "contextless" (text: string, indent: int, color: graphics.
 	}
 }
 
-// put_text writes a documentation text (module.Documentation says the form):
-// a line is a paragraph, and a line that starts with a space stays as it is.
-put_text :: proc "contextless" (text: string, indent: int, color: graphics.Color) {
-	rest := text
-	for len(rest) > 0 {
-		end := 0
-		for end < len(rest) && rest[end] != '\n' {
-			end += 1
-		}
-		line := rest[:end]
-		rest = rest[min(end + 1, len(rest)):]
-		switch {
-		case line == "":
-			put("", 0, color)
-		case line[0] == ' ':
-			put(line, indent, COLOR_CODE)
-		case:
-			put_paragraph(line, indent, color)
-		}
-	}
-}
-
 // page_build writes the page of the selected module.
 page_build :: proc "contextless" () {
-	line_count, built_count, first_line = 0, 0, 0
+	page_clear()
+	wanted_row = -1
 	entries := system.image_entries(image)
 	if selected < 0 || selected >= len(entries) {
 		return
@@ -314,7 +278,7 @@ page_build :: proc "contextless" () {
 
 	information_page(entry.hash)
 	put("DOCUMENTATION", 0, COLOR_HEADING)
-	put_text(text, 0, graphics.COLOR_TEXT)
+	put_markdown(text, 0, graphics.COLOR_TEXT)
 	if exports == 0 {
 		return
 	}
@@ -330,8 +294,11 @@ page_build :: proc "contextless" () {
 		}
 		write_signature(&writer, file, function)
 		built_count += writer.count
+		if wanted_export != "" && module.string_at(file, function.name_offset, function.name_count) == wanted_export {
+			wanted_row = row_count
+		}
 		put(system.written(&writer), 0, COLOR_EXPORT)
-		put_text(module.string_at(file, function.text_offset, function.text_count), 4, graphics.COLOR_TEXT)
+		put_markdown(module.string_at(file, function.text_offset, function.text_count), 4, graphics.COLOR_TEXT)
 		put("", 0, 0)
 	}
 	// The records that the exports use: the name, the size, and each field.
@@ -361,22 +328,6 @@ page_build :: proc "contextless" () {
 		}
 		put("", 0, 0)
 	}
-}
-
-// line_join puts the last line on the row of the line before it: a line
-// with two colors. Such a line has a negative indent.
-line_join :: proc "contextless" () {
-	if line_count >= 2 {
-		lines[line_count - 1].indent = -lines[line_count - 1].indent
-	}
-}
-
-// rows gives the count of rows that the page takes in the window.
-rows :: proc "contextless" () -> (count: int) {
-	for &line in lines[:line_count] {
-		count += line.indent < 0 ? 0 : 1
-	}
-	return count
 }
 
 // draw builds a frame of the window with the interface package.
@@ -422,26 +373,39 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	}
 
 	left := LIST_WIDTH + MARGIN
-	row := -first_line
-	for &line in lines[:line_count] {
-		if line.indent < 0 {
-			if row - 1 >= 0 && row - 1 < ROWS {
-				interface.draw_text(table, left - line.indent * CELL_WIDTH, MARGIN + (row - 1) * CELL_HEIGHT, line.text, line.color)
+	row := -first_line - 1
+	for &part in row_parts[:row_part_count] {
+		if .Row_Start in part.flags {
+			row += 1
+			if row >= ROWS {
+				break
 			}
+		}
+		if row < 0 {
 			continue
 		}
-		if row >= 0 && row < ROWS {
-			interface.draw_text(table, left + line.indent * CELL_WIDTH, MARGIN + row * CELL_HEIGHT, line.text, line.color)
+		x := left + int(part.x)
+		y := MARGIN + row * CELL_HEIGHT
+		if .Code_Block in part.flags {
+			// An example is a block: a band from its indentation to the end
+			// of the text, on each of its rows.
+			interface.draw_rectangle(table, x - 4, y, left + TEXT_WIDTH + 4 - (x - 4), CELL_HEIGHT, graphics.COLOR_TRACK)
 		}
-		row += 1
+		interface.draw_text(table, x, y, part.text, part.color, part.font)
+		switch {
+		case .Opens_A_Page in part.flags:
+			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 1, part.color)
+		case .Underlined in part.flags:
+			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 1, graphics.COLOR_DIM)
+		}
 	}
 	bottom := HEIGHT - CELL_HEIGHT - 6
 	interface.draw_rectangle(table, LIST_WIDTH, bottom - 4, WIDTH - LIST_WIDTH, 1, 0x30363C)
-	x := interface.draw_text(table, left, bottom, "up, down: module   page up, page down: text", graphics.COLOR_DIM)
+	hint := interface.draw_text(table, left, bottom, "up, down: module   page up, page down: text", graphics.COLOR_DIM)
 	buffer: [64]u8
 	total := rows()
 	place := system.format(buffer[:], "rows ", u64(min(first_line + 1, total)), " to ", u64(min(first_line + ROWS, total)), " of ", u64(total))
-	interface.draw_text(table, max(x + 16, WIDTH - MARGIN - len(place) * CELL_WIDTH), bottom, place, graphics.COLOR_DIM)
+	interface.draw_text(table, max(hint + 16, WIDTH - MARGIN - len(place) * CELL_WIDTH), bottom, place, graphics.COLOR_DIM)
 }
 
 select :: proc "contextless" (index: int) {
@@ -564,6 +528,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	select(max(find("manual"), 0))
 	system.log("manual: ok, ", u64(len(entries)), " modules, ", u64(documented), " have their documentation")
+	markdown_check()
 	changed := true
 	pressed := false
 	for {
@@ -583,6 +548,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// A new font: each record is the same, each pixel of text is
 				// not. The next frame of each picture is whole.
 				interface.draw_whole_window_next(&drawing)
+				// The widths of the words changed with the font: the rows
+				// of the page are made again, at the same place.
+				if !showing_overview {
+					kept := first_line
+					page_build()
+					first_line = clamp(kept, 0, max(rows() - ROWS, 0))
+				}
 				changed = true
 			case .Key:
 				if !event.pressed {
@@ -601,7 +573,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				case display.KEY_PAGE_DOWN:
 					scroll(ROWS - 2)
 				case display.KEY_HOME:
-					scroll(-LINE_CAPACITY)
+					scroll(-ROW_PART_CAPACITY)
 				case KEY_TAB:
 					overview_build()
 				}
@@ -613,6 +585,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					if index := list_first + (event.y - 4) / CELL_HEIGHT; index < len(entries) {
 						select(index)
 						page_log()
+						changed = true
+					}
+				}
+				if down && !pressed && event.x >= LIST_WIDTH {
+					if target := link_at_place(event.x, event.y); target != "" {
+						link_open(target)
 						changed = true
 					}
 				}

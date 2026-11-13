@@ -1416,6 +1416,9 @@ scenario := [?]Step {
 	// their exports, and one reverse question.
 	{kind = .Wait, text = "manual: information: ", any_order = true},
 	{kind = .Wait, text = "manual: ok, "},
+	// The manual reads the Markdown of the documentation: it checks its own
+	// page, whose comments have each mark.
+	{kind = .Wait, text = "manual: the Markdown of its page: bold, italics, code, list items and links that open a page; no mark is left and no row passes the window: as it must", fails_on = "manual: the Markdown of its page: FAILED"},
 	{kind = .Move, text = "manual", to_x = 208, to_y = 744},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"manual\")"},

@@ -827,7 +827,7 @@ The owner asked for the check of the pages on 2026-11-13: "il reste des référe
 
 ## The Markdown of a source comment
 
-The owner asked for it on 2026-11-13: "I suppose you extract text from the code BUT it lacks emphasis (bold, italics, lists, shit like that) and makes the paragraphs displayed in the docs look very plain and boring to read. we could use markdown for this (and have []() references to symbols and stuff if that's not already done". The code is `tools/kerneltool/comment_markdown.odin`, `site_comment_links.odin` and the mode for comments of `site_render.odin`; the host tests are `comment_markdown_test.odin`. `docs/TOOLS.md`, "The form of a documented comment", is the rule for the author of a comment.
+The owner asked for it on 2026-11-13: "I suppose you extract text from the code BUT it lacks emphasis (bold, italics, lists, shit like that) and makes the paragraphs displayed in the docs look very plain and boring to read. we could use markdown for this (and have []() references to symbols and stuff if that's not already done". The code is `tools/kerneltool/comment_markdown.odin`, `site_comment_links.odin` and the mode for comments of `site_render.odin`; the host tests are `comment_markdown_test.odin`. The reader of the same part for the programs of the system is `support/source_comment_markdown` (see "The reader of the system"). `docs/TOOLS.md`, "The form of a documented comment", is the rule for the author of a comment.
 
 A source comment is Markdown in a small part, written by the renderer of the guides (`Site_Renderer.comment`): one renderer, and a mode that refuses what a comment does not have.
 
@@ -865,9 +865,44 @@ The check: before it writes a page, the command reads every comment of the sourc
 
 ### The text that a module carries
 
-The documentation of a module is the same comments (`describe_package`). The module carries them with the marks removed (`documentation_text_of_markdown`), in the form of `contract/module/format.odin`, `Documentation`: a paragraph is one line, a list item stays a line that starts with its marker, a line of an example keeps its form behind four spaces, a link becomes its text, bold and italics lose their stars, and a code span keeps its backticks. The help of an export is the first sentence of that text, so it has no mark. The description keeps the Markdown too (`Module_Description.markdown`, `Export_Description.markdown`): the site renders it.
+The documentation of a module is the same comments (`describe_package`). The module carries each comment as its author wrote it, with its marks, in the form of `contract/module/format.odin`, `Documentation`. The one line of a module and the help of an export are the first sentence of the comment with the marks removed (`documentation_text_of_markdown`, `about_of`): the console prints that line, so it has no mark. The description keeps the Markdown too (`Module_Description.markdown`, `Export_Description.markdown`): the site renders it.
 
-Why the marks are removed at build time, and `manual` does not read Markdown: `manual` and the console draw plain lines with the cell font. A reader of the subset in the system would need a parser in a freestanding program, the bold cell font in the drawing of `manual` (`glyph_cache_bold` exists), and a target in the system for each link: a declaration and a guide have no page in the system. The text gains little from it in a window of 84 columns, and a link target would cost bytes in each module. What a reader in `manual` would need: a reader of the subset in `support` with no allocator, which gives runs (plain, bold, code) and blocks (paragraph, item, example); the bold font in `put_text`; the targets that the system has (a module, an export); and the form of `Documentation` stating that the text is Markdown.
+### The reader of the system
+
+The part of Markdown of a comment has two readers, and one rule: the table of this section. The site has the renderer of the guides in its mode for comments. The programs of the system have `support/source_comment_markdown`: a library with no allocator, which the program `manual` uses for the documentation text of a module.
+
+The library reads the text once and gives it in order, as Markdown blocks and Markdown spans (`GLOSSARY.md`), to two procedures of its caller (`read`) or into two tables of its caller (`read_into_table`). A block and a span are ranges of bytes of the text: nothing is copied.
+
+| Part | What the library gives |
+|---|---|
+| A paragraph | One block; its spans are its words with their styles. A line feed inside a span is one space |
+| A list item | One block with its mark (`-`, or the label of a number) and its depth; a line right after it continues it |
+| A fenced block | One block with the word after its opening fence; each span is one line, as it is. Inside a list item, the lines lose the indentation of the fence |
+| An example | One block; each span is one line with no shared indentation |
+| Bold, italics, a code span | A style of a span. A span can have several |
+| A link | The spans of its text have the style of a link and the range of its target |
+| A heading, a table, a quote, a line of HTML, a picture | Words of a paragraph, as on the site |
+
+The host tests of the library (`source_comment_markdown_test.odin`) read the inputs of the tests of the site (`comment_markdown_test.odin`) and expect the same structure. The two readers differ in four cases, all outside the form that `TOOLS.md` gives to an author:
+
+- A mark of two stars with no end is text in the library, with its stars. The site makes the rest of the paragraph bold.
+- The target of a link can hold pairs of parentheses in the library (`load()`), and has at most 256 bytes. On the site a target ends at its first `)`.
+- The text of a link has its italics in the library. On the site it has its bold and its code only.
+- A fenced block inside a list item is at its place in the library: the text of the item after it is a paragraph inside the item. The site writes all the text of the item, then its blocks.
+
+The text of a module can come from a file that another party wrote. The library checks each index against the length of the text. Its work is in proportion to the length of the text: a search for the end of a mark does not read the same bytes again for each mark that has no end.
+
+What `manual` does with the blocks and the spans:
+
+- The words of a documentation text are in the interface font, and the bold words in its bold weight. A code span, a fenced block and an example are in the font of the cells, in the color of code (`DESIGN.md`, section 5: a text that explains, and a text that a reader copies).
+- The system has no italic face. A word in italics has a line of 1 pixel under it, in the dim color: the color of the word does not change, so the sign is not a color alone.
+- A list item has its mark in the dim color, and its text starts after the mark. An item inside an item is 2 cells to the right.
+- A fenced block and an example have a band behind their rows, from their indentation to the end of the text.
+- A link is a name in the color of a link. A link whose target is a module of the boot image, or a module and one of its exports (`manual.show`), also has a line of 1 pixel under it: a click on it shows the page of that module, from the signature of that export. A term, a guide, a declaration and a kernel operation have no page in the system: their links are colored names only.
+- A row is broken between two words, at the width of the text, with the width of each word in the font that draws it. Two spans with no space between them, as a bold word and the comma after it, are one word. Only a word that is longer than a row is cut. A text longer than the window scrolls.
+- When the font setting changes, `manual` makes the rows of its page again, at the same place: the widths of the words changed.
+
+When it starts, `manual` checks the page of its own module, whose comments have each mark, and writes one line on the log: "manual: the Markdown of its page: bold, italics, code, list items and links that open a page; no mark is left and no row passes the window: as it must". The machine test waits for it.
 
 ## The types
 
