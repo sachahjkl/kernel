@@ -450,23 +450,28 @@ Do not use: SIMD version, kernel (for this), fast path, intrinsics version.
 
 ### Debug object
 
-A debug object is the file that names the procedures and the source lines of the code of one module, so that a reader can turn an address of the module into a name and a line.
+A debug object is the file that names the procedures, the source lines, the types and the variables of the code of one module, so that a reader can turn an address of the module into a name and a line, and a debugger can show a variable.
 
 A module names only its exports. A stop report with only the module and an offset ("fault + 0x1478") tells a reader little. The debug object fills that gap: with it, the same frame reads "fault::three + 0x8 in fault (programs/fault/main.odin:15)". It is a separate file, `build/modules/<name>.debug`, in the format `contract/debug_object`.
 
-The file has five parts, all numbers little-endian:
+The file has ten parts, all numbers little-endian:
 
-- a header of 64 bytes: the magic `DEBUGOBJ`, the version, the BLAKE3 hash of the module file, and the count of each table;
+- a header of 88 bytes: the magic `DEBUGOBJ`, the version, the BLAKE3 hash of the module file, and the count of each table;
 - the procedure table;
-- the file table: the path of each source file from the root of the repository (`programs/fault/main.odin`), or with the library of the compiler as a prefix (`base:runtime/print.odin`); the file 0 is "no file";
+- the file table: the path of each source file from the root of the repository (`programs/fault/main.odin`), or with the library of the compiler as a prefix (`base:runtime/print.odin`), and the BLAKE3 hash of the content of the file at the build; the file 0 is "no file";
 - the line table;
+- the type table, with the field table and the enumeration value table;
+- the global table;
+- the variable table, with the variable range table;
 - the strings: the bytes of the names and of the paths.
 
-The kernel tool writes the debug object at the build, from the linked ELF file of the module: the procedure table from its symbol table, the line table from the line program of its DWARF. The system itself reads no DWARF. A parser of DWARF is a large parser of hostile input; the tool runs it once on its own output, and a program reads only sorted tables of fixed records, with a binary search and no allocator. `debug_object.check` refuses every other form before the first lookup, and `debug_object.place_of` gives the procedure, the offset in it, the file and the line of an offset.
+The kernel tool writes the debug object at the build, from the linked ELF file of the module: the procedure table from its symbol table, the line table from the line program of its DWARF, the types and the variables from the entries of its DWARF. The system itself reads no DWARF. A parser of DWARF is a large parser of hostile input; the tool runs it once on its own output, and a program reads only sorted tables of fixed records, with a binary search and no allocator. `debug_object.check` refuses every other form before the first lookup, and `debug_object.place_of` gives the procedure, the offset in it, the file and the line of an offset.
 
-The debug object names its module by the hash of the module file. The module names nothing: its bytes are the same with and without its debug object, and `kerneltool check` proves it by a third build with no `-debug`. The hash proves only that the tool wrote the object for that module, not that the names are true. A reader shows the names; no decision of the system uses them.
+The debug object names its module by the hash of the module file. The module names nothing: its bytes are the same with and without its debug object, and `kerneltool check` proves it by a third build with no `-debug`. The hash proves only that the tool wrote the object for that module, not that the names are true. A reader shows the names; no decision of the system uses them. A reader uses a debug object only for a loaded module whose file has that hash (`debug_object.describes_module`): the tables of another build are wrong for it.
 
-A debug object is not a symbol file of the debugger of a host. It has no local variables, no types, no places of variables: a debugger of the host reads those in the DWARF of `build/modules/<name>/linked.elf`.
+The file table ties each line to one version of its source: a reader shows the text of a line only from a file whose BLAKE3 hash is the hash of the table (`debug_object.source_line_of`), and says so when the hash differs.
+
+A debug object is not the whole debug information of the compiler. A variable location that the compiler gives as an expression to compute is "not readable" in it: a debugger of the host reads those in the DWARF of `build/modules/<name>/linked.elf`.
 
 The design: `docs/MODULE_CONTRACT.md`, "Debug information".
 
@@ -499,6 +504,58 @@ Example: the machine test checks that the stack of `fault` names the lines 15 an
 The design: `docs/MODULE_CONTRACT.md`, "The debug object".
 
 Do not use: line program (the form of DWARF that the tool reads), line info.
+
+### Type table
+
+The type table is the table of a debug object that gives, for each type that a variable of the module uses, its name, its size, its kind, and what it is made of.
+
+A debugger needs the type of a variable to show its bytes as a value: an integer, a record with its fields, the name of an enumeration value. A record has 28 bytes: the name, the size in bytes, the kind, an element type, a count, and the first of its fields or values. The kinds are: signed integer, unsigned integer, boolean, float, pointer, array, slice, string, record, union, enumeration, procedure address, and "other", a type of which only the size and the name are true. The fields of the records are in the field table (name, offset, type, and the bits of a field of bits); the named values of the enumerations are in the enumeration value table.
+
+The type 0 is "no type". A typedef is a copy of its type with its own name. A type can name itself through a pointer, so a reader bounds the depth that it follows. The tool sorts the types by their content, and two types with the same content are one: two builds give the same table. `debug_object.type_by_index` and `debug_object.field_of_type` read it.
+
+It is not the Records table of the module metadata: that table describes the records of the exports, for callers; the type table describes the types of every variable, for a debugger.
+
+The design: `docs/MODULE_CONTRACT.md`, "The types and the variables".
+
+Do not use: type info, type section, DWARF types.
+
+### Global table
+
+The global table is the table of a debug object that gives, for each global variable of the module, its name, its address in the memory of the module, and its type.
+
+A record has 16 bytes. The address is an offset from the address where the module is mapped. The name has its package (`errors::UNIT_NAMES`). The records are sorted by their address, then by their name. A static variable of a procedure is in the table; a variable of a thread and a variable that the link dropped are not. `debug_object.global_by_name` finds a global with one pass over the table.
+
+The design: `docs/MODULE_CONTRACT.md`, "The types and the variables".
+
+Do not use: data symbols, static table.
+
+### Variable table
+
+The variable table is the table of a debug object that gives, for each parameter and each local variable of a procedure, its name, its type, a range of instructions, and its variable location in that range.
+
+A record has 16 bytes: the name, the role, the type, and the first of the ranges of the variable in the variable range table. A range has 12 bytes: its start, its size, and the variable location in it. A variable that the compiler moves has one range for each variable location. The variables are sorted by their procedure, so a reader finds the variables of the procedure of an instruction with binary searches (`debug_object.variable_range_of_offset`), then takes for each one the range that holds the instruction (`debug_object.variable_at`). A range that is "not readable" says where the variable is visible; a variable that is readable nowhere has one such range. A variable of a procedure that the compiler put inside its caller is a variable of the procedure that holds its instructions, and has its readable ranges only.
+
+Example: at the first instruction of `fault::three`, the parameter `address` is a `uintptr` in the register 5 (`rdi`).
+
+The design: `docs/MODULE_CONTRACT.md`, "The types and the variables".
+
+Do not use: locals table, scope table, symbol table.
+
+### Variable location
+
+A variable location is where the value of a variable is in one range of instructions: in a register, or in memory at a register plus an offset.
+
+A range of a variable has one of five kinds: in memory at the frame pointer plus an offset; in memory at the stack pointer plus an offset; in a register; in memory at another register plus an offset; and "not readable". The registers have the order of the register image: `rax` 0, `rbx` 1, `rcx` 2, `rdx` 3, `rsi` 4, `rdi` 5, `rbp` 6, `rsp` 7, `r8` to `r15`, then `rip` 16.
+
+"Not readable" is a kind of its own: the debug information of the compiler gives no register and no address that the table describes (the compiler removed the variable, keeps a known value, splits the variable over two registers, or computes its address). The tool never guesses a location, and a debugger shows "not readable".
+
+A variable location is true for the innermost frame, when the next instruction of the thread is in the range. For a frame of a caller only the frame pointer is known, so only a location from the frame pointer is readable there.
+
+It is not a place of the storage service, and not the place (procedure, file, line) that `debug_object.place_of` gives for an offset.
+
+The design: `docs/MODULE_CONTRACT.md`, "The types and the variables".
+
+Do not use: place (for a variable), location expression (the form of DWARF that the tool reads), storage (for a variable).
 
 ### Debug image
 
