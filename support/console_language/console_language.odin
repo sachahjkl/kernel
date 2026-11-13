@@ -383,3 +383,97 @@ signature_runs :: proc "contextless" (text: string, first: int, runs: []terminal
 	}
 	return count
 }
+
+// ---- The integers of a line.
+//
+// An Integer of the console has 64 bits with a sign. An operation whose
+// result does not fit gives ok false, and the console ends the line with an
+// error: a result that wrapped is a wrong number that looks right.
+
+INTEGER_LEAST :: min(i64) // The least Integer of a line.
+INTEGER_MOST :: max(i64) // The largest Integer of a line.
+
+// number_value gives the value of the decimal digits text[start:end]. ok is
+// false when the number is larger than INTEGER_MOST, or when a byte is not a
+// digit.
+number_value :: proc "contextless" (text: string, start, end: int) -> (value: i64, ok: bool) {
+	first := clamp(start, 0, len(text))
+	last := clamp(end, first, len(text))
+	for place in first ..< last {
+		if !digit(text[place]) {
+			return 0, false
+		}
+		digit_value := i64(text[place] - '0')
+		if value > (INTEGER_MOST - digit_value) / 10 {
+			return 0, false
+		}
+		value = value * 10 + digit_value
+	}
+	return value, true
+}
+
+// integer_add gives a + b. ok is false when the sum does not fit.
+integer_add :: proc "contextless" (a, b: i64) -> (sum: i64, ok: bool) {
+	if b > 0 && a > INTEGER_MOST - b || b < 0 && a < INTEGER_LEAST - b {
+		return 0, false
+	}
+	return a + b, true
+}
+
+// integer_subtract gives a - b. ok is false when the difference does not fit.
+integer_subtract :: proc "contextless" (a, b: i64) -> (difference: i64, ok: bool) {
+	if b > 0 && a < INTEGER_LEAST + b || b < 0 && a > INTEGER_MOST + b {
+		return 0, false
+	}
+	return a - b, true
+}
+
+// integer_multiply gives a * b. ok is false when the product does not fit.
+integer_multiply :: proc "contextless" (a, b: i64) -> (product: i64, ok: bool) {
+	if a == 0 || b == 0 {
+		return 0, true
+	}
+	// The one product with -1 that does not fit; the division below
+	// cannot take it.
+	if a == -1 || b == -1 {
+		other := a == -1 ? b : a
+		if other == INTEGER_LEAST {
+			return 0, false
+		}
+		return -other, true
+	}
+	if a > 0 {
+		if b > 0 && a > INTEGER_MOST / b || b < 0 && b < INTEGER_LEAST / a {
+			return 0, false
+		}
+	} else {
+		if b > 0 && a < INTEGER_LEAST / b || b < 0 && a < INTEGER_MOST / b {
+			return 0, false
+		}
+	}
+	return a * b, true
+}
+
+// integer_negate gives -a. ok is false for INTEGER_LEAST: its opposite does
+// not fit.
+integer_negate :: proc "contextless" (a: i64) -> (opposite: i64, ok: bool) {
+	if a == INTEGER_LEAST {
+		return 0, false
+	}
+	return -a, true
+}
+
+// integer_divide gives a / b and a % b. ok is false when b is 0, and when
+// the quotient does not fit (INTEGER_LEAST / -1). The caller tells the two
+// apart with b.
+integer_divide :: proc "contextless" (a, b: i64) -> (quotient, rest: i64, ok: bool) {
+	if b == 0 {
+		return 0, 0, false
+	}
+	// The processor refuses INTEGER_LEAST / -1: no division runs with -1.
+	if b == -1 {
+		opposite, fits := integer_negate(a)
+		return opposite, 0, fits
+	}
+	return a / b, a % b, true
+}

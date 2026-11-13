@@ -30,7 +30,7 @@ List_Mode :: enum u8 {
 }
 
 // The names that one list reads. Today the console has at most 128
-// commands, 8 services, 16 variables, the modules of the boot image and 64
+// commands, 12 services, 16 variables, the modules of the boot image and 64
 // programs; a name past this count is not read.
 CANDIDATE_CAPACITY :: 512
 SEARCH_CAPACITY :: 64 // The bytes of a search of the history.
@@ -247,7 +247,7 @@ names_collect :: proc "contextless" (table: ^Candidate_Table, place: line_editor
 			candidate_add(table, item.name, command_kind(&item), index)
 		}
 		for &sandbox, index in sandboxes {
-			if sandbox.service {
+			if sandbox.service && !sandbox.quiet {
 				candidate_add(table, sandbox.name, .Service, index)
 			}
 		}
@@ -296,7 +296,7 @@ programs_collect :: proc "contextless" (quote_place: int) {
 	report: op.System_Report
 	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
 		for &sandbox in sandboxes {
-			if sandbox.service && completion.program_count < PROGRAM_NAME_CAPACITY {
+			if sandbox.service && !sandbox.quiet && completion.program_count < PROGRAM_NAME_CAPACITY {
 				completion.program_names[completion.program_count] = {}
 				copy(completion.program_names[completion.program_count][:], sandbox.name)
 				completion.program_count += 1

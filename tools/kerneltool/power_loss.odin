@@ -708,7 +708,9 @@ scenario_power_loss_settings_first := [?]Step {
 	{kind = .Wait, text = "settings: ok, "},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"settings\")"},
-	{kind = .Wait, text = "[console] settings: 3 commands of a service that runs"},
+	{kind = .Wait, text = "[console]   module     settings"},
+	{kind = .Wait, text = "[console]   commands   3"},
+	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Type, text = "settings.repeat(1000)"},
 	{kind = .Power_Loss},
 }

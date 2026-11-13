@@ -174,14 +174,12 @@ history_clear :: proc "contextless" (arguments: []Value) -> Value {
 	history_place = 0
 	history_saved_lines = history.lines_written
 	if !history_connected {
-		print("the line history is cleared: ", u64(count), " lines; it had no store\n")
-		return {}
+		return {kind = .Integer, integer = i64(count)} // It had no store.
 	}
 	error: errors.Error_Record
 	result, status := storage.remove(&history_client, storage.ROOT, HISTORY_OBJECT_NAME, &error)
 	if status == .Ok || status == .Failed && result == storage.ERROR_ABSENT {
-		print("the line history is cleared: ", u64(count), " lines, and its store\n")
-		return {}
+		return {kind = .Integer, integer = i64(count)}
 	}
 	text: [240]u8
 	writer := system.Writer {

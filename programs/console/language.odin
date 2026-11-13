@@ -1,8 +1,8 @@
 package console
 
+import "contract:errors"
 import module "contract:module"
 import "support:console_language"
-import "support:sentence"
 import "support:system"
 
 // The language of the console.
@@ -12,13 +12,19 @@ import "support:system"
 //   term       = factor { ("*" | "/" | "%") factor }
 //   factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" expression ")"
 //
-// A value is an Integer, a Text, a Record, a Handle or a Table. "+" joins
-// two Texts. A Record has the description of a record of a module: the
+// A value is an Integer, a Text, a Record, a Handle, a Table or Bytes. An
+// operation on two Integers whose result does not fit in 64 bits with a
+// sign is an error of the line: no result wraps. "+" joins two Texts. A Record has the description of a record of a module: the
 // command with the name of the record makes one from its fields, and
 // `variable.field` reads one field. A Handle names an object of the kernel
 // that the console holds. A Table is records of one description, one after
 // the other: a Table result gives one, and the commands of tables.odin
-// combine them.
+// combine them. Bytes are bytes with no description: a command gives them,
+// and the console draws them; no variable keeps them.
+//
+// A line has one result: the value of its expression, or its failure. No
+// command writes to the terminal: the console draws the result of the line
+// by its kind (results.odin).
 
 // The values are those of module.Type: the kind of a parameter is its type.
 Kind :: enum u8 {
@@ -28,7 +34,7 @@ Kind :: enum u8 {
 	Record  = 3,
 	Handle  = 4,
 	Table   = 5,
-	Bytes   = 6, // A parameter only: a Text value is its argument.
+	Bytes   = 6, // A parameter: a Text value is its argument. A value: bytes with no description, which the console draws.
 }
 
 // A parameter of a command of the console with the kind None takes a value
@@ -112,48 +118,6 @@ field_value :: proc "contextless" (value: Value, name: string) -> (result: Value
 	return {}, false
 }
 
-// print_value writes a value, without the end of the line.
-//   Rectangle{x = 1, y = 2}        Handle 65541: Memory (Give, Read, Write)
-print_value :: proc "contextless" (value: Value, nested := false) {
-	switch value.kind {
-	case .Integer:
-		print(value.integer)
-	case .Text:
-		print(value.text)
-	case .Record:
-		described, ok := module.record_type(value.file, value.detail)
-		if !ok {
-			return
-		}
-		print(module.string_at(value.file, described.name_offset, described.name_count), "{")
-		for number in 0 ..< described.field_count {
-			item, _ := module.field(value.file, described, number)
-			name := module.string_at(value.file, item.name_offset, item.name_count)
-			print(number > 0 ? ", " : "", name, " = ")
-			field, _ := field_value(value, name)
-			print_value(field, true)
-		}
-		print("}")
-	case .Table:
-		table_print(value)
-	case .Handle:
-		print("Handle ", u64(value.integer))
-		if !nested {
-			kind, rights, _ := system.handle_state(system.Handle(value.integer))
-			buffer: [96]u8
-			writer := system.Writer {
-				buffer = buffer[:],
-			}
-			system.write_rights(&writer, rights, ", ")
-			print(": ", sentence.object_names[kind])
-			if kind != .None {
-				print(" (", system.written(&writer), ")")
-			}
-		}
-	case .None, .Bytes: // No value has the kind Bytes.
-	}
-}
-
 VARIABLE_CAPACITY :: 16
 VARIABLE_NAME_SIZE :: 16
 VARIABLE_TEXT_SIZE :: 96
@@ -185,16 +149,6 @@ scratch_text :: proc "contextless" (parts: ..system.Part) -> string {
 	return text
 }
 
-fail :: proc "contextless" (parts: ..system.Part) -> Value {
-	if !failed {
-		failed = true
-		print("error: ")
-		print(..parts)
-		print("\n")
-	}
-	return {}
-}
-
 // The parser reads its tokens with the scanner of support/console_language,
 // the one that colors the lines: the two agree on each token.
 skip_spaces :: proc "contextless" () {
@@ -221,38 +175,45 @@ read_name :: proc "contextless" () -> string {
 	return source[start:position]
 }
 
+// run_line runs one line: it evaluates the expression, shows the log
+// records of what the line called, then draws the one result of the line:
+// its failure, or the value of an expression. A line that keeps its value
+// in a variable draws nothing.
 run_line :: proc "contextless" (text: string) {
 	source, position, failed, scratch_count, table_used = text, 0, false, 0, 0
+	failure_reset()
+	line_records_start()
 
 	// An assignment starts with a name and "=".
 	name := read_name()
-	if len(name) > 0 && accept('=') {
-		value := expression()
-		if !failed && peek() != 0 {
-			fail("unexpected \"", source[position:], "\"")
-		}
-		if !failed {
-			assign(name, value)
-		}
-		return
+	assigned := len(name) > 0 && accept('=')
+	if !assigned {
+		position = 0
 	}
-	position = 0
 	value := expression()
 	if !failed && peek() != 0 {
 		fail("unexpected \"", source[position:], "\"")
 	}
+	line_records_show()
+	if !failed && assigned {
+		assign(name, value)
+	}
 	if failed {
+		failure_draw()
 		return
 	}
-	if value.kind != .None {
-		print_value(value)
-		print("\n")
+	if !assigned {
+		value_draw(value)
 	}
 }
 
 assign :: proc "contextless" (name: string, value: Value) {
 	if value.kind == .None {
 		fail("the expression has no value")
+		return
+	}
+	if value.kind == .Bytes {
+		fail("a variable keeps no Bytes value")
 		return
 	}
 	if len(name) > VARIABLE_NAME_SIZE || len(value.text) > VARIABLE_TEXT_SIZE {
@@ -314,7 +275,17 @@ expression :: proc "contextless" () -> Value {
 		}
 		switch {
 		case left.kind == .Integer && right.kind == .Integer:
-			left.integer = operator == '+' ? left.integer + right.integer : left.integer - right.integer
+			result: i64
+			fits: bool
+			if operator == '+' {
+				result, fits = console_language.integer_add(left.integer, right.integer)
+			} else {
+				result, fits = console_language.integer_subtract(left.integer, right.integer)
+			}
+			if !fits {
+				return fail_overflow(operator == '+' ? "+" : "-", left.integer, right.integer)
+			}
+			left.integer = result
 		case left.kind == .Text && right.kind == .Text && operator == '+':
 			left.text = scratch_text(left.text, right.text)
 		case:
@@ -341,16 +312,20 @@ term :: proc "contextless" () -> Value {
 		}
 		switch operator {
 		case '*':
-			left.integer *= right.integer
+			product, fits := console_language.integer_multiply(left.integer, right.integer)
+			if !fits {
+				return fail_overflow("*", left.integer, right.integer)
+			}
+			left.integer = product
 		case '/', '%':
 			if right.integer == 0 {
 				return fail("division by zero")
 			}
-			if operator == '/' {
-				left.integer /= right.integer
-			} else {
-				left.integer %= right.integer
+			quotient, rest, fits := console_language.integer_divide(left.integer, right.integer)
+			if !fits {
+				return fail_overflow("/", left.integer, right.integer)
 			}
+			left.integer = operator == '/' ? quotient : rest
 		}
 	}
 	return left
@@ -362,10 +337,17 @@ factor :: proc "contextless" () -> Value {
 	case c == '-':
 		position += 1
 		value := factor()
-		if !failed && value.kind != .Integer {
+		if failed {
+			return {}
+		}
+		if value.kind != .Integer {
 			return fail("\"-\" does not take ", kind_names[value.kind])
 		}
-		value.integer = -value.integer
+		opposite, fits := console_language.integer_negate(value.integer)
+		if !fits {
+			return fail_overflow("-", 0, value.integer)
+		}
+		value.integer = opposite
 		return value
 	case c == '(':
 		position += 1
@@ -375,12 +357,17 @@ factor :: proc "contextless" () -> Value {
 		}
 		return value
 	case console_language.digit(c):
-		value: i64
-		end := console_language.number_end(source, position)
-		for digit_byte in transmute([]u8)source[position:end] {
-			value = value * 10 + i64(digit_byte - '0')
-		}
+		start := position
+		end := console_language.number_end(source, start)
 		position = end
+		value, fits := console_language.number_value(source, start, end)
+		if !fits {
+			// The record: the limit is the largest Integer; the sentence
+			// has the digits, which no Integer holds.
+			result := fail("the number ", source[start:end], " does not fit in an Integer: the largest is ", i64(console_language.INTEGER_MOST))
+			failure_record_set(errors.error_make(.Over_Limit, .None, 0, 0, console_language.INTEGER_MOST), "a number", nil)
+			return result
+		}
 		return {kind = .Integer, integer = value}
 	case c == '"':
 		start := position + 1

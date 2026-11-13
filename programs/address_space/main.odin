@@ -1205,7 +1205,13 @@ page_tables_return :: proc "contextless" () {
 		touches_before := intrinsics.atomic_load(&neighbour.touches)
 		before, _ := system.budget_read()
 		rounds_right: u64
-		for round in u64(0) ..< NEIGHBOUR_ROUNDS {
+		rounds_wrong: u64
+		// The rounds go on after the count until the other thread ran
+		// beside one of them: the case is the two threads at the same
+		// time, and a processor can give the other thread no turn during
+		// a thousand rounds. The bound only ends a hang.
+		rounds_deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+		for round := u64(0); round < NEIGHBOUR_ROUNDS || (intrinsics.atomic_load(&neighbour.touches) == touches_before && system.time() < rounds_deadline); round += 1 {
 			near_address, near_status := system.memory_map(near, {.Write}, 0, SPREAD_ADDRESS + 3 * SPREAD_STRIDE + system.PAGE_SIZE)
 			far_address, far_status := system.memory_map(far, {.Write}, 0, SPREAD_ADDRESS + 4 * SPREAD_STRIDE)
 			if near_status != .Ok || far_status != .Ok {
@@ -1214,7 +1220,9 @@ page_tables_return :: proc "contextless" () {
 			intrinsics.volatile_store((^u64)(near_address), round)
 			intrinsics.volatile_store((^u64)(far_address), round + 1)
 			if intrinsics.volatile_load((^u64)(near_address)) == round && intrinsics.volatile_load((^u64)(far_address)) == round + 1 {
-				rounds_right += 1
+				rounds_right += round < NEIGHBOUR_ROUNDS ? 1 : 0
+			} else {
+				rounds_wrong += 1
 			}
 			system.memory_unmap(near_address)
 			system.memory_unmap(far_address)
@@ -1231,7 +1239,7 @@ page_tables_return :: proc "contextless" () {
 		system.close(far)
 		system.close(watched)
 		system.log("address_space: page tables: the other thread wrote and read its page ", touches_after - touches_before, " times during the rounds")
-		page_tables_line(thread_status == .Ok && rounds_right == NEIGHBOUR_ROUNDS && touches_before != 0 && touches_after > touches_before && value_right && after.pages == before.pages, u64(NEIGHBOUR_ROUNDS), " rounds of a map and an unmap beside a page that another thread writes and reads: ", rounds_right, " rounds right, the page of the other thread ", value_right ? string("stayed right") : string("changed"), ", ", before.pages - after.pages, " pages kept")
+		page_tables_line(thread_status == .Ok && rounds_right == NEIGHBOUR_ROUNDS && rounds_wrong == 0 && touches_before != 0 && touches_after > touches_before && value_right && after.pages == before.pages, u64(NEIGHBOUR_ROUNDS), " rounds of a map and an unmap beside a page that another thread writes and reads: ", rounds_right, " rounds right, the page of the other thread ", value_right ? string("stayed right") : string("changed"), ", ", before.pages - after.pages, " pages kept")
 	}
 }
 

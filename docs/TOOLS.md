@@ -92,7 +92,7 @@ The program `log` shows the last 30 records: the time, the mark of the level, th
 
 ### The console and the terminal
 
-A log record reaches the console only as the rows of these two tables: the console prints them as a table, with no colors. A program writes to its terminal apart from the log; a Text record of the terminal already carries a color for each run (`Style.color`), so a console that writes a record as runs of text, one run for each value run, needs no new form of the terminal.
+A log record reaches the console only as the rows of these two tables. The console draws them as a table when a line asks for them. It also reads them itself for the programs that a line calls, and shows those records under the line, with each value run in the color of its value kind (`docs/CONSOLE.md`, "The log records of a line"). A program writes to its terminal apart from the log; a Text record of the terminal already carries a color for each run (`Style.color`), so a console that writes a record as runs of text, one run for each value run, needs no new form of the terminal.
 
 ## The program `inspect`
 

@@ -95,7 +95,7 @@ Tables as parameters: one description, three ways to call (a direct call, a call
 
 ![The replacement of an import: agenda imports calendar, which has a fault; the loader gives calendar_fixed in its place after it compared the description of each export that agenda uses](docs/screenshots/imports.png)
 
-![The console sets a replacement through the root service; programs() shows the modules of each program and the replacements that the loader applied](docs/screenshots/replacement.png)
+![The console sets a replacement through the root service; program_modules() gives the modules of each program and the replacements that the loader applied](docs/screenshots/replacement.png)
 
 ![The information of the modules: the manual shows the table of all the modules, read from their flat tables, with who imports each one and the programs that run it; the console combines the same tables with where, sort and join](docs/screenshots/modules.png)
 
@@ -168,7 +168,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 - `kerneltool call <key> "monitor.programs()"` calls an export of a service of the running machine from the host, and prints the typed result: a table with its field names, a record, a text, or the sentence of its error record. The call goes over QUIC to the program `remote`, whose public key (`<key>`, in its window) the host pins; the root service decides which services it reaches, and the console revokes its grant with `revoke("remote", "acts_for_principal")`. The test reads the place of the pointer from the compositor before each press, and waits for log records with typed fields through `log.records()`.
 - `inspect` shows one program live: its address space, its modules, its threads with the state of the scheduler, the stop report of a program that faulted, and the bytes of its own memory, from reports of the kernel that give no byte of another program.
 - The compositor owns the framebuffer. Each program draws into a surface in shared memory.
-- The console is a normal program. A command is a typed function: `hash("abc")`, `start("life")`, `programs()`.
+- The console is a normal program. A command is a typed function: `hash("abc")`, `start("life")`, `programs()`. A command gives a result and never prints: the console draws a number, a text, a record, a table, a handle, bytes or an error, each with its own drawer, and a line filters the table of a built-in command as the table of an export: `where(grants("notes"), "state", "held")`. The log records of the programs that a line calls show under the line.
 - The line of the console has a caret, a completion list that opens while a line is typed (a fuzzy match over the commands, the exports of the descriptions, the services, the variables, the modules), the signature of the call at the caret, and a history of 256 lines with Control-R and Control-S (`docs/CONSOLE.md`).
 - `load("math")` loads a module: its exports become commands. The module describes them: the tool makes each description from the source (parameter names, types, help).
 - `isolate("probe")` runs a module in a sandboxed program with no handle. The same calls go through a ring. A module that faults, loops or tries to stop the machine does not harm the console.
