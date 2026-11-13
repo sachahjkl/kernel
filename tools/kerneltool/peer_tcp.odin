@@ -98,6 +98,8 @@ Client :: struct {
 	challenge:    bool, // After the response: a RST and a SYN that the server must answer with an ACK.
 	challenged:   int,
 	again:        bool, // After the challenges, one more request.
+	dropped_segments: bool, // After the response: two segments that the library of the server drops, then two more requests.
+	dropped_segments_requests: int, // The requests after those segments.
 	failure:      string,
 	attack:       Attack,
 	delayed:      bool, // The client connects when each attack ended.
@@ -315,6 +317,10 @@ peer_case_start :: proc(state: ^Peer_Tcp, name: string) -> bool {
 		client := client_page(true)
 		client.challenge = true
 		add(state, client)
+	case "damaged":
+		client := client_page(true)
+		client.dropped_segments = true
+		add(state, client)
 	case "crowd":
 		for _ in 0 ..< 16 {
 			add(state, client_page(true))
@@ -524,6 +530,8 @@ peer_case_summary :: proc(state: ^Peer_Tcp) -> string {
 		return fmt.aprintf("a RST in the window and a SYN on the connection: the server answered with %d ACKs and kept the connection, then served one more request", state.acks_seen)
 	case "reset":
 		return "the peer sent a RST after 100 KiB of /large"
+	case "damaged":
+		return "on a live connection, a segment with a wrong checksum and a malformed option, then the same segment with its checksum whole: the server kept the connection and served two more requests on it"
 	case "crowd":
 		return fmt.aprintf("%d connections at once, each with GET / and a close from the peer", state.client_count)
 	case "large", "large again":
@@ -887,6 +895,21 @@ client_run :: proc(peer: ^Peer, state: ^Peer_Tcp, client: ^Client, now: u64) {
 			fail(client, fmt.aprintf("the body \"%s\" does not start with \"%s\"", string(client.content[:min(client.bytes, 80)]), client.expect_text))
 			return
 		}
+		// The segments that the library of the server drops, then two more
+		// requests on the same connection. The server can answer the first
+		// one before its network service acts on what the segments made the
+		// server ask; the second one comes after, so it is the one that
+		// shows that the remote of the connection is still admitted.
+		if client.dropped_segments && client.dropped_segments_requests < 2 {
+			if client.dropped_segments_requests == 0 {
+				peer_dropped_segments(peer, connection)
+			}
+			client.dropped_segments_requests += 1
+			client.written, client.head_length, client.bytes, client.response = 0, 0, 0, {}
+			client.hash = web.FNV_START
+			client.phase = .Request
+			return
+		}
 		// The challenges, one at a time: a RST in the window but not at
 		// RCV.NXT of the server, then a SYN on the connection. Each gets a
 		// challenge ACK (RFC 5961), and the connection stays.
@@ -948,6 +971,24 @@ peer_inject :: proc(peer: ^Peer, state: ^Peer_Tcp, connection: ^tcp.Connection, 
 	segment: [tcp.HEADER]u8
 	header := tcp.Header{source_port = connection.local_port, destination_port = connection.remote_port, sequence = sequence, flags = flags, window = 8192}
 	tcp.header_write(segment[:], PEER_TCP_ADDRESS, MACHINE_TCP_ADDRESS, header, tcp.HEADER)
+	peer_tcp_send(peer, segment[:], false)
+}
+
+// peer_dropped_segments sends, on the connection of a client, two segments
+// that the TCP library of the server drops: an ACK with an option of
+// length 0 and one bit of its checksum changed, as the wire can damage a
+// segment, then the same ACK with the checksum of its bytes. The first
+// one adds to the wrong checksums of the server, the second one to its
+// malformed segments; neither changes the connection.
+peer_dropped_segments :: proc(peer: ^Peer, connection: ^tcp.Connection) {
+	segment: [tcp.HEADER_MSS]u8
+	header := tcp.Header{source_port = connection.local_port, destination_port = connection.remote_port, sequence = connection.send_next, acknowledgment = connection.receive_next, flags = {.Ack}, window = 8192, mss = 1460}
+	tcp.header_write(segment[:], PEER_TCP_ADDRESS, MACHINE_TCP_ADDRESS, header, tcp.HEADER_MSS)
+	segment[21] = 0 // An option of length 0: the library refuses the segment.
+	whole := tcp.checksum(PEER_TCP_ADDRESS, MACHINE_TCP_ADDRESS, segment[:])
+	tcp.write_16(segment[:], 16, whole ~ 0x0040)
+	peer_tcp_send(peer, segment[:], false)
+	tcp.write_16(segment[:], 16, whole)
 	peer_tcp_send(peer, segment[:], false)
 }
 

@@ -167,10 +167,12 @@ COMMANDS :: [?]Command {
 	//   of the locks, the frames).
 	// - `with_debug_information` or `without_debug_information`: the debug
 	//   object beside the module.
+	// - `compile` or `convert`: one step alone. `compile` writes the linked
+	//   file; `convert` writes the module and its debug object from it.
 	//
-	// The parallel build of `build` runs this command once for each module.
+	// The parallel build of `build` runs this command once for each step of a module.
 	// Run it by hand to see the errors of one module alone.
-	{name = "module", about = "module <name> with_checks|without_checks with_debug_information|without_debug_information: build one module of the table, and its debug object with the debug information (the parallel build runs this command)", run = run_module},
+	{name = "module", about = "module <name> with_checks|without_checks with_debug_information|without_debug_information [compile|convert]: build one module of the table, and its debug object with the debug information, or run one of its two steps alone (the parallel build runs this command for each step)", run = run_module},
 	// Builds one boot volume in this process: its boot image with the system
 	// description, its boot program, and the volume file.
 	//
@@ -837,7 +839,7 @@ run_check :: proc(args: []string) -> int {
 	// compiler assembles runtime/memory_for_host_tests.asm itself and links
 	// its object by its path (a library found through `-L/` is refused by
 	// the linker of the Nix sandbox).
-	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/sentence", "support/cryptography/vectors", "modules/cryptography", "support/quic", "contract/date", "support/storage_mount", "support/storage_object", "support/storage_tree", "support/storage_retention", "support/principals", "support/calendar", "support/line_editor", "support/console_language", "support/debugging", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/palette", "contract/palette_table", "support/bootscreen/image_card", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/virtio", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool", "contract/fixed_addresses", "contract/settings", "modules/text_shaping", "support/text_shaping", "support/mark", "support/terminal", "contract/cut_mark", "runtime/without_vector_registers", "support/instruction_sets", "contract/system_description", "contract/operation", "contract/debug_object", "contract/value_kinds", "support/source_comment_markdown", "support/console_results"}) {
+	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/sentence", "support/cryptography/vectors", "modules/cryptography", "support/quic", "contract/date", "support/storage_mount", "support/storage_object", "support/storage_tree", "support/storage_retention", "support/principals", "support/calendar", "support/line_editor", "support/console_language", "support/debugging", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/palette", "contract/palette_table", "support/bootscreen/image_card", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/virtio", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool", "contract/fixed_addresses", "contract/settings", "modules/text_shaping", "support/text_shaping", "support/mark", "support/terminal", "contract/cut_mark", "runtime/without_vector_registers", "support/instruction_sets", "contract/system_description", "contract/operation", "contract/debug_object", "contract/value_kinds", "support/source_comment_markdown", "support/console_results", "support/key_path"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE

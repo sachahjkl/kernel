@@ -2017,11 +2017,27 @@ The program `date` writes there the date of the time 0 of the system. So a progr
 
 Do not use: wall-clock page, vDSO, clock page.
 
+### Back pressure
+
+Back pressure is the rule of a queue whose writer waits while the queue is full, so that no record is lost.
+
+It is the first form of the rule of the path of a key: the input service takes no byte of the keyboard from the controller while the input ring has no room, and the console takes no key from the terminal ring while 128 keys wait for the end of a line. The writer waits with `system.wait_room`; the reader wakes it when half of the queue is free. A writer that cannot wait (the compositor for a window, the terminal for its program) uses the second form: a stated capacity, and a loss period for each refusal. The design: `ARCHITECTURE.md`, "The path of a key".
+
+Do not use: writer stall, push back.
+
+### Loss period
+
+A loss period is the time from the first record that a full queue refuses to the moment when the queue takes a record again.
+
+A writer that cannot wait counts each record that it loses, and writes two lines in the log for one period: one when the loss begins, one with the count when it ends. It writes no line for each record: a queue that refuses 1000 keys must not fill the log. The compositor has one for each window, the terminal one for its program, the console one for the keys that wait during a line. The code: `key_path.Loss_Period` (`support/key_path`). The design: `ARCHITECTURE.md`, "The path of a key".
+
+Do not use: drop window, loss burst.
+
 ### Terminal ring
 
 The terminal ring is the ring between a program and its terminal.
 
-In the command queue, a record from the program has a kind (text, status, clear, edit line, hint line, completion list, runs of code), a count of bytes in the text region and a style; it has no place on the screen. In the completion queue, a record from the terminal is a key record. When the queue of keys is full, the newest keys are lost: the terminal never waits for a program.
+In the command queue, a record from the program has a kind (text, status, clear, edit line, hint line, completion list, runs of code), a count of bytes in the text region and a style; it has no place on the screen. In the completion queue, a record from the terminal is a key record. The queue of keys holds 4096 keys: the keys typed ahead. The terminal never waits for a program: when the queue is full, a new key is lost, the terminal counts it, and the log has a line when the loss begins and a line with the count when it ends (a loss period).
 
 The contract: `support/terminal/terminal.odin`.
 
@@ -2639,7 +2655,7 @@ The network service is the one client of the frame service: it gives each progra
 
 Only one program can read the frames of the device of the first machine, because the device has one pair of queues. The network service is that program. It is also the place where the grant of each program is enforced: a program reaches only the remote that its grant names, so no program has ambient access to the network.
 
-The network service speaks Ethernet, ARP, IPv4, ICMP echo and UDP with the protocol library `support/network`. It has one static address, 10.0.2.15/24, and the gateway 10.0.2.2. For TCP it checks the headers, the TCP checksum and the ports of each segment, writes the IPv4 header, and keeps no state of a connection: the protocol of TCP is a library in the program (`support/tcp`). It copies the data of each datagram or segment one time, between the datagram region of the program and its own frame region. It has one thread, which waits on the frame ring, on the control ring of the root service and on the command queue of each endpoint.
+The network service speaks Ethernet, ARP, IPv4 and ICMP echo with the protocol library `support/network`. It has one static address, 10.0.2.15/24, and the gateway 10.0.2.2. For UDP and TCP it checks the lengths and the ports of the header of each datagram and each segment, writes the IPv4 header, and keeps no state of a connection: the protocol of TCP is a library in the program (`support/tcp`), and the program writes and checks the header and the checksum of UDP (`support/network`). It copies each datagram or segment one time, between the datagram region of the program and its own frame region, and computes no checksum of it: it is on the control path of each one, and on the data path for that one copy. It has one thread, which waits on the frame ring, on the control ring of the root service and on the command queue of each endpoint.
 
 The root service starts it when the first program with a network grant starts, and adds each endpoint with the command `Endpoint_Add` of its control ring. Example of its first line: "network: ok, the address 10.0.2.15/24 52:54:00:12:34:56, the gateway 10.0.2.2, the link is up, ..."; then, for each endpoint, a line such as "network: an endpoint for server: TCP, the listen port 80, the remotes that send to it".
 
@@ -2649,6 +2665,34 @@ The design: `docs/NETWORK.md`, "The parts", and `docs/ARCHITECTURE.md`, "U7. Net
 
 Do not use: network stack, TCP/IP stack, netd, network daemon.
 
+### Data path
+
+The data path is the code that reads or writes the bytes of the data that a program sends or receives through a device.
+
+The term sorts the parts of the system by one question: does this code touch the bytes? The kernel is off the data path: it maps a ring or a device queue one time, and no kernel entry carries data after that. A service of user space can be on it. One read or one write of each byte by one program is a pass: a copy is a pass, and a sum for a checksum is a pass. The fewer passes outside the program that uses the data, the nearer the system is to its rule.
+
+Example: the network service is on the data path of a datagram and of a segment for one pass in each direction, the copy between its frame region and the datagram region of the program. It computes no checksum, so it makes no second pass. It counts its passes for each endpoint, and writes them on the log when the endpoint ends. The frame service is not on the data path: it gives places of the frame region to the device and reads no frame.
+
+The data path is not the control path of a packet: code that reads only the headers and decides where the bytes go is not on the data path.
+
+The rule: `docs/PROPERTIES.md`, "Kernel off the data path". The hops: `docs/NETWORK.md`, "The path of a datagram and of a segment".
+
+Do not use: fast path, hot path (for this).
+
+### Control path of a packet
+
+The control path of a packet is the code that reads the headers of a datagram or a segment and decides where it goes, and that reads no byte of its data.
+
+A packet, in this term only, is the IPv4 packet that a frame carries: one datagram or one segment with its headers. The term names the work that one program must do for each of them when several programs share one device: read the ports, find the endpoint, check the grant. This work costs code for each packet, and no pass over the data.
+
+Example: the network service is on the control path of each datagram and each segment, in both directions. For one that arrives, it reads the headers of Ethernet, IPv4 and UDP or TCP, finds the endpoint by the local port and checks the remote against the grant. For one that leaves, it reads the two ports in its own copy of the header and checks them against the endpoint and the grant. A device with a receive queue for each endpoint and a filter by port takes this work for the frames that arrive.
+
+The control path of a packet is not the data path: the copy that the network service makes is on the data path, and its checks of the header are on the control path. It is not the control plane of the kernel either: the kernel sets up access one time and runs no code for a packet.
+
+The design: `docs/NETWORK.md`, "The path of a datagram and of a segment".
+
+Do not use: slow path, packet path.
+
 ### Endpoint
 
 An endpoint is what a program holds to send and receive datagrams or segments: a datagram ring and a datagram region, with a grant that names what it can reach.
@@ -2657,7 +2701,7 @@ An endpoint replaces the socket of other systems, with one difference: the progr
 
 The kinds of endpoint:
 
-- a datagram endpoint (UDP) with a client grant: one remote address and one remote UDP port; the network service gives the local UDP port and writes the UDP header.
+- a datagram endpoint (UDP) with a client grant: one remote address and one remote UDP port; the network service gives the local UDP port, and the program writes the UDP header of each datagram.
 - a datagram endpoint with a listen grant: one local UDP port; the program answers the admitted remotes only.
 - a segment endpoint (TCP), with a client grant or a listen grant.
 
@@ -2671,11 +2715,11 @@ Do not use: socket, port (for this), connection (for this).
 
 ### Datagram
 
-A datagram is the data of one UDP datagram and its remote: what a program sends and receives through a datagram endpoint, 1472 bytes at most.
+A datagram is one UDP datagram: its header of 8 bytes and its data, 1472 bytes of data at most, what a program sends and receives through a datagram endpoint.
 
-1472 bytes is the data of one Ethernet frame after the IPv4 header (20 bytes) and the UDP header (8 bytes): the system never fragments, so a datagram is one frame (`DATA_LIMIT` of `contract/datagram`). A larger `Send` fails with `Too_Large`.
+1472 bytes is the data of one Ethernet frame after the IPv4 header (20 bytes) and the UDP header (8 bytes): the system never fragments, so a datagram is one frame (`DATA_LIMIT` of `contract/datagram`; `DATAGRAM_LIMIT`, 1480 bytes, counts the header). A larger `Send` fails with `Too_Large`.
 
-A program sends a datagram with the command `Send` of its datagram ring: the place of the data in the datagram region, its count of bytes, and the remote address and port. The completion comes when the network service has copied the data: the place is then free again. A program gives a place for a datagram that arrives with `Receive`; its completion carries the place, the count of bytes and the remote. Example: QUIC is a library in the program over datagrams; `quic_echo` and `remote` send and receive each datagram of QUIC through their datagram endpoint.
+The program writes the whole datagram in a place of the datagram region: the data, then the header and its checksum with `network.udp_header_write`. It sends it with the command `Send` of its datagram ring: the place, the count of bytes with the header, and the remote address. The network service copies the datagram, reads the ports in its copy and checks them against the endpoint and the grant, and computes no checksum. The completion comes when the network service has copied the datagram: the place is then free again. A program gives a place for a datagram that arrives with `Receive`; its completion carries the place, the count of bytes and the remote. The program reads the data with `network.udp_data_read`, which checks the checksum when the program asks for it. Example: QUIC is a library in the program over datagrams; `quic_echo` and `remote` send and receive each datagram of QUIC through their datagram endpoint.
 
 A datagram is not a frame and not a segment: the frame is the whole Ethernet unit, and a segment is the unit of a segment endpoint, with its TCP header.
 
@@ -2699,7 +2743,7 @@ Do not use: peer (for this), destination, host.
 
 A UDP port is the 16-bit number of UDP that names one endpoint at an address.
 
-A datagram has a source UDP port and a destination UDP port. The network service finds the endpoint of a datagram that arrives by its destination port: the local UDP port of the endpoint. A program does not choose its local port with a client grant: the network service gives it, and the command `Info` returns it. A listen grant names its port: the remote service listens on the UDP port 7100, `quic_echo` on 4433.
+A datagram has a source UDP port and a destination UDP port. The network service finds the endpoint of a datagram that arrives by its destination port: the local UDP port of the endpoint. A program does not choose its local port with a client grant: the network service gives it, and the command `Info` returns it. The program writes that port as the source port of each datagram that it sends, and the network service refuses a datagram with another source port, in its own copy of the header. A listen grant names its port: the remote service listens on the UDP port 7100, `quic_echo` on 4433.
 
 A UDP port is not the Ports object of the kernel (a handle to ports of input and output of the processor), and not a TCP port: the same number is two different ports in UDP and in TCP.
 
@@ -2711,7 +2755,7 @@ Do not use: port (alone), socket number.
 
 A TCP port is the 16-bit number of TCP that names one end of a connection at an address.
 
-A segment has a source TCP port and a destination TCP port. The network service reads the ports of each segment to find the endpoint and to check the grant: a client grant has a block of 64 local TCP ports, and a listen grant has one local TCP port. Unlike a UDP port, the TCP port is in the header that the program writes, so the network service checks the local port of each segment that the program sends against its block or its listen port, in its own copy of the segment. Example: `server` has the listen grant of the TCP port 80.
+A segment has a source TCP port and a destination TCP port. The network service reads the ports of each segment to find the endpoint and to check the grant: a client grant has a block of 64 local TCP ports, and a listen grant has one local TCP port. As a UDP port, the TCP port is in the header that the program writes, so the network service checks the local port of each segment that the program sends against its block or its listen port, in its own copy of the segment. Example: `server` has the listen grant of the TCP port 80.
 
 A TCP port is not the Ports object of the kernel, and not a UDP port.
 
@@ -2725,7 +2769,7 @@ A segment is one TCP segment: its header, its options and its data, 1480 bytes a
 
 1480 bytes is the room of one Ethernet frame after the IPv4 header, so a segment is one frame and never a fragment (`SEGMENT_LIMIT` of `contract/datagram`). A segment has 20 bytes at least, a TCP header with no option (`SEGMENT_LEAST`); a shorter one fails with `Bad_Command`.
 
-The TCP library of the program writes each segment directly in a place of the datagram region, with its checksum, and the program sends it with `Send`. The network service copies it to a frame, reads its ports from the copy, checks them against the grant, and writes the IPv4 header. For a segment that arrives, the network service checks the TCP checksum before the program sees it.
+The TCP library of the program writes each segment directly in a place of the datagram region, with its checksum, and the program sends it with `Send`. The network service copies it to a frame, reads its ports from the copy, checks them against the grant, and writes the IPv4 header. For a segment that arrives, the network service checks the lengths and the ports of the header; the TCP library of the program checks the TCP checksum, and drops a segment with a wrong one.
 
 A segment is not a datagram and not a packet: the program sees no IPv4 header.
 
@@ -2737,7 +2781,7 @@ Do not use: packet, TCP packet, message.
 
 A segment endpoint is an endpoint whose grant has the protocol TCP: the program writes and reads whole segments, and the network service keeps no state of a connection.
 
-A segment endpoint puts TCP in the program. The program owns each connection, each window and each timer in its own memory, and can read each field; the network service only checks the grant and copies the bytes. The ring, the region, the commands and the error records are those of a datagram endpoint. Two things differ: a `Send` names a whole segment, header included, and the grant names TCP ports.
+A segment endpoint puts TCP in the program. The program owns each connection, each window and each timer in its own memory, and can read each field; the network service only checks the grant and copies the bytes. The ring, the region, the commands and the error records are those of a datagram endpoint, and the two take the same path through the network service: a `Send` names a whole segment, or a whole datagram, header included. One thing differs: the grant names TCP ports, and a client grant has a block of them.
 
 A segment endpoint has a client grant (one remote, a block of 64 local TCP ports) or a listen grant (one local TCP port). The program drives it with the TCP library: `tcp.step` takes the segments that arrived and writes the segments to send in the places of the datagram region. Examples: `server` has a segment endpoint with a listen grant of the TCP port 80; `fetch` has one with a client grant.
 
@@ -2882,7 +2926,7 @@ Do not use: socket, channel.
 
 The datagram region is the memory of an endpoint, 512 KiB, where the program writes the data to send and the network service writes the data that arrives.
 
-The root service makes the datagram region with the datagram ring and gives it to the program and to the network service (the role 13 of the context of the program). A program does not give a region of its own: if the program gave it, a revocation of that memory by the program stops the network service on a page fault, for all programs. A request names a place in the region in bytes; a byte outside it gives `Out_Of_Range`. The network service copies each datagram one time between the region and a frame, and computes no header and no checksum over bytes that the program can still change.
+The root service makes the datagram region with the datagram ring and gives it to the program and to the network service (the role 13 of the context of the program). A program does not give a region of its own: if the program gave it, a revocation of that memory by the program stops the network service on a page fault, for all programs. A request names a place in the region in bytes; a byte outside it gives `Out_Of_Range`. The network service copies each datagram or segment one time between the region and a frame. It checks the ports of what the program sends in that copy, never in the region, which the program can still change; it computes no checksum.
 
 The program organizes the region itself. Example: `server` divides it into 256 places of 2048 bytes, and its TCP library writes each segment directly in one place.
 
@@ -5776,7 +5820,7 @@ Do not use: CI run, test suite, full test.
 
 An incremental build is a build that keeps each output of an earlier build whose inputs are the same, and builds only the others.
 
-It rests on the rule of the reproducible build: the same inputs give the same bytes, so the output of an earlier build with the same inputs is the output of this build. `kerneltool build` keeps a module when its build record has the build key of its inputs as they are now and each output has its recorded hash; it keeps each boot volume by the same rule, and builds only the boot volumes that the command boots. The tool builds in every case of doubt: no record, a damaged record, an input or an output that changed or is gone. It prints the count of the modules that it kept.
+It rests on the rule of the reproducible build: the same inputs give the same bytes, so the output of an earlier build with the same inputs is the output of this build. `kerneltool build` keeps a module when the build record of each of its two steps has the build key of its inputs as they are now and each output has its recorded hash; it runs the conversion alone when only the file of an import changed; it keeps each boot volume by the same rule, and builds only the boot volumes that the command boots. The tool builds in every case of doubt: no record, a damaged record, an input or an output that changed or is gone. It prints the count of the modules that it kept.
 
 It is not a cache of the compiler and holds no second copy of an output: the kept output is the file of the build folder itself.
 
@@ -5786,9 +5830,9 @@ Do not use: build cache, cached build, partial build.
 
 ### Build key
 
-A build key is one BLAKE3 hash over the inputs of the build of one thing (a module, or one boot volume), in a fixed order.
+A build key is one BLAKE3 hash over the inputs of the build of one thing (one step of a module, or one boot volume), in a fixed order.
 
-The inputs of a module: each source file that the compiler lists, with the files of `#load`; every other file of the folder of each of these packages; its assembly files; the module file of each import; the commands of the compiler and of `llc` with each flag; the programs of the build; and the sources of the tool. The inputs of a boot volume: the boot image and the kernel that its boot program holds, the debug image, the public key of the system, the sources of the boot program, the commands with each flag, and the tool. Two builds with the same key had the same inputs. A key is complete only when each input can be read; the tool never records and never compares a key that is not complete.
+A module has two keys, one for each step of its build. The inputs of its compile step: each source file that the compiler lists, with the files of `#load`; every other file of the folder of each of these packages; its assembly files; the commands of the compiler and of `llc` with each flag; the programs of the build; and the sources of the tool. The inputs of its conversion: the key of the compile step, the linked file, the module file of each import with the order of the imports, and the sources of the tool. The inputs of a boot volume: the boot image and the kernel that its boot program holds, the debug image, the public key of the system, the sources of the boot program, the commands with each flag, and the tool. Two builds with the same key had the same inputs. A key is complete only when each input can be read; the tool never records and never compares a key that is not complete.
 
 It is not the hash of a module, which names the output, and it is not a signing key.
 
@@ -5800,13 +5844,37 @@ Do not use: cache key, fingerprint, input hash (for the whole key).
 
 A build record is the small text file that the tool writes after it built one thing: its build key, the hash of each output, and the list of the files that the compiler read.
 
-A module has `build/modules/<name>.build_record`; a boot volume has `build/boot/<name>.build_record`. At the next build, the tool computes the build key again from the files of the recorded list as they are now, and keeps the outputs when the key is the same and each output has its recorded hash. A record that is absent or damaged is no record: the tool builds, with no error. The tool writes no record when it cannot prove that the hash and the compiler read the same bytes of each input.
+A module has one for each step of its build, `build/modules/<name>.compile.build_record` and `build/modules/<name>.convert.build_record`; a boot volume has `build/boot/<name>.build_record`. At the next build, the tool computes the build key again from the files of the recorded list as they are now, and keeps the outputs when the key is the same and each output has its recorded hash. A record that is absent or damaged is no record: the tool builds, with no error. The tool writes no record when it cannot prove that the hash and the compiler read the same bytes of each input.
 
 It is not the measure record and not the line of the reproducible build that the site quotes.
 
 The design: `docs/TOOLS.md`, "The incremental build".
 
 Do not use: cache entry, stamp, manifest (for this).
+
+### Compile step
+
+The compile step is the first of the two steps of the build of a module: the compiler, `llc`, the assembler and the link, which give the linked file of the module.
+
+It reads the sources of the module and no file of an import: a source declares an export of an import in a `foreign` block, and the link leaves that symbol not defined. So its build key holds no import, and a change inside an import does not run it. The tool runs it when a source, a command, a program of the build or the tool changed, or when the linked file is gone.
+
+It is not the whole build of a module: the conversion follows it.
+
+The design: `docs/TOOLS.md`, "The incremental build".
+
+Do not use: compile phase, compiler stage, object step.
+
+### Conversion
+
+The conversion is the second of the two steps of the build of a module: the tool writes the module file from the linked file, with the description of the exports and the hash of the file of each import, then the debug object.
+
+It is the one step that reads the file of an import, and it runs no compiler. When the file of an import changed and the sources of the importer did not, the tool runs the conversion alone: the module is converted, not built. A converted module has a new hash, so each module that imports it is converted too. Example: a change of the body of an export of a library builds the library and converts each of its importers.
+
+It is not a link: no code of the import enters the module.
+
+The design: `docs/TOOLS.md`, "The incremental build", and `docs/MODULE_CONTRACT.md`, "The steps of one module, as implemented".
+
+Do not use: relink, repackage, packaging step.
 
 ### Whole build
 

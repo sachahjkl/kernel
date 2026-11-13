@@ -319,7 +319,7 @@ The network steering service owns the network identity of the machine and decide
 - Owns the network identity of the machine: address, ports.
 - Gives a program a network queue and a port range, then leaves the data path.
 - The TCP stack is a library inside each program (P5).
-- **Implemented, first layer** (`programs/frame`, `programs/network`, `contract/frame`, `contract/datagram`, `support/network`): the frame service drives the virtio network device; the network service is its one client and gives each program with the grant one endpoint of UDP datagrams, with a grant of one remote. This differs from the lines above: the virtio device of QEMU has one pair of queues, so the network service is on the data path (one copy) and writes the headers of UDP and IPv4 that it must check anyway. TCP and QUIC are libraries in the program.
+- **Implemented, first layer** (`programs/frame`, `programs/network`, `contract/frame`, `contract/datagram`, `support/network`): the frame service drives the virtio network device; the network service is its one client and gives each program with the grant one endpoint of UDP datagrams, with a grant of one remote. This differs from the lines above: the virtio device of QEMU has one pair of queues, so the network service is on the data path for one copy in each direction, and writes the header of IPv4. It computes no checksum of data: TCP, QUIC, and the header and the checksum of UDP are libraries in the program (`NETWORK.md`, "The path of a datagram and of a segment").
 - **TCP** (`support/tcp`, `programs/server`, `programs/fetch`): the design is in `NETWORK.md`. TCP is a library in the program; the network service checks each segment against a client grant or a listen grant, and keeps no state of a connection.
 
 ### U7b. The remote service
@@ -351,6 +351,42 @@ The program that the principal sees: starts programs, shows windows, shows grant
 - **Today**: the compositor is the desktop shell too: its bar has the menu of the programs, the menu of the windows, the palette, the clock and the date (`DESIGN.md`). The grants are shown by the console (`grants`), not by the shell.
 
 ![The desktop: the bar of the compositor, its menus, and four windows](screenshots/desktop.png)
+
+### The path of a key
+
+**The rule: the system never loses a key in silence.** A key goes through four queues between the keyboard and the program that reads it. For each queue, one of two forms holds:
+
+1. **Back pressure.** When the writer can wait, a full queue stops the writer. Nothing is lost.
+2. **A stated bound and a counted refusal.** When the writer cannot wait, the queue has a capacity with a reason. Each record that it refuses is counted. The log has one line when the loss begins and one line, with the count, when it ends: not one line for each record.
+
+| Queue | Capacity | When it is full |
+|---|---|---|
+| The keyboard controller, to the input service | The queue of the device (16 bytes in QEMU) | The device holds its bytes; a writer of the device waits for the status bit of the controller |
+| The input service, to the compositor (the input ring) | 32 records | Back pressure. The input service takes no byte of the keyboard from the controller while the ring has no room for its record, and waits for room (`system.wait_room`). The log has `input: the input ring is full: the keyboard controller keeps its bytes`, then `input: the input ring has room again` |
+| The compositor, to a window (the ring of the window) | 32 records in the ring, then 256 records that wait in the compositor for this window | A stated bound. The compositor cannot wait for a window: one program that does not read must not stop the desktop. It keeps the records that the ring refused and sends them, in order, before any newer record. With 256 records waiting, a record is refused and counted |
+| The terminal, to its program (the terminal ring) | 4096 keys | A stated bound: the keys typed ahead during one line. The terminal cannot wait: its first thread also draws the window and moves the view. A key that finds the ring full is counted |
+| The console, the keys that wait for the end of a line | 128 keys | Back pressure on the terminal ring: the console takes no more key until the line ends. One exception has a counted refusal (`CONSOLE.md`, "When a line ends, and the keys typed during a line") |
+
+**The input service** (`programs/input`). One byte of the controller makes at most one record, so the service reads a byte only when that record has a place (`key_path.input_byte_can_be_read`). A byte that it does not read stays in the controller, the status bit stays set, and the keyboard holds the bytes after it. The compositor wakes the service when half of the ring is free, and before it waits itself. The mouse shares the controller and the ring. A move of the pointer that finds the ring full joins the move that waits: the two relative moves add up, and the end place is the same. A change of a button waits in order, in one of 8 entries; when none is free, the bytes of the mouse stay in the controller too. So the service drops no key and no change of a button.
+
+**No wait can form a cycle.** The input service waits only for the compositor. The compositor waits for no program: its one wait has each of its rings and a deadline, each of its sends gives `false` at once on a full queue, and it keeps a record for a window in its own memory. The terminal and the console wait for no program before them on the path. So the wait of the input service ends when the compositor runs a turn of its loop.
+
+**The compositor** (`programs/compositor/window_events.odin`, `support/key_path`). Each window has a queue of the compositor. Its memory, 4 pages, is taken at the first time that the ring of the window is full.
+
+- A key, a change of a button and a change of the settings have an order: they wait in the queue, the oldest first, and a newer record never passes an older one.
+- A move of the pointer with the same buttons has no order: only the newest place counts. One record holds the move that waits, and a newer move replaces it. A move takes no place of the queue of the keys.
+- The records stay with their window. A change of the focus moves none: a key was typed for the window that had the focus when it arrived.
+- A window that closes ends its queue.
+- The compositor learns that a ring has room again from the ring itself: it waits for room on the ring of each window that has records waiting (`system.wait_room`), in the one wait of its loop, and it sends the records that wait at the start of each turn. It waits only on a ring that is exactly full: a program writes the read counter of its ring, and a false count must not make the compositor run with no end.
+- At 256 records, a record is refused. The log has `compositor: window NAME does not read its events: 256 records wait for it, and a new record is lost`, then `compositor: window NAME reads its events again: N key records, M pointer records and K other records were lost` when the window read each record that waited.
+
+The counts are exports of the compositor, for a caller that acts for the principal: `compositor.pointer()` gives `keys` (the key records from the input service), `keys_waiting` and `keys_refused`; `compositor.windows()` gives, for each window, `events_sent`, `events_unread`, `events_waiting` and `keys_refused`. `keys_refused` is 0 on a system that works.
+
+**The terminal** (`programs/terminal`). The log has `terminal: NAME does not read its keys: its queue of 4096 keys is full, and a new key is lost` when a loss begins, and `terminal: NAME reads its keys again: N keys were lost` at the first key that the ring takes again.
+
+**The proof.** The host tests of `support/key_path` type 200 keys into a window that reads nothing, then let it read a few records at a time: each key arrives in order and none is refused; they also check the merge of the moves, the count at the capacity, and the rule of the input service. The machine test types a line of 100 keys while a call that does not return holds the console, and waits for the count of the keys that wait, the echo of the exact line, and no line of a lost record (`TOOLS.md`, "How the tool sends input and waits").
+
+**Not built.** The machine test does not fill the queue of the compositor: no program of the test stops reading its window for a time that the test controls. The wait of the compositor holds 64 words; with about 30 windows it is full and ends at once, with or without records that wait.
 
 ### A text is never cut in silence
 

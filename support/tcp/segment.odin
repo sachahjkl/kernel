@@ -127,9 +127,11 @@ checksum :: proc "contextless" (source, destination: u32, segment: []u8) -> u16 
 	return fold(sum(sum(pseudo(source, destination, len(segment)), segment[:16]), segment[18:]))
 }
 
-// checksum_valid says if a segment holds its checksum. The network service
-// checks each segment that arrives (support/network): a program that reads
-// segments from it does not call this.
+// checksum_valid says if a segment from source to destination holds its
+// checksum, over the pseudo-header of the two addresses, the header and
+// the data. The network service does not check it: it finds the endpoint
+// by the port and copies the segment. `step` calls this for each segment
+// that arrives, and drops a segment with a wrong checksum.
 checksum_valid :: proc "contextless" (source, destination: u32, segment: []u8) -> bool {
 	return len(segment) >= HEADER && fold(sum(pseudo(source, destination, len(segment)), segment)) == 0
 }

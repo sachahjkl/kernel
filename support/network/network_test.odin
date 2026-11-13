@@ -29,10 +29,14 @@ known_checksums :: proc(t: ^testing.T) {
 	testing.expect_value(t, sum(0, header), 0xFFFF)
 }
 
+// udp_example writes a frame as the two parts write it: the program writes
+// the header and the checksum of the datagram, the network service the
+// headers of IPv4 and Ethernet.
 @(private = "file")
 udp_example :: proc(frame: []u8, data: string) -> int {
-	copy(frame[UDP_DATA:], data)
-	return udp_frame(frame, GATEWAY, LOCAL, LOCAL_ADDRESS, GATEWAY_ADDRESS, 49152, 7, len(data), 1)
+	copy(frame[IPV4_DATA + UDP_HEADER:], data)
+	length := udp_header_write(frame[IPV4_DATA:], LOCAL_ADDRESS, GATEWAY_ADDRESS, 49152, 7, len(data))
+	return ipv4_frame(frame, GATEWAY, LOCAL, LOCAL_ADDRESS, GATEWAY_ADDRESS, PROTOCOL_UDP, length, 1)
 }
 
 @(test)
@@ -47,15 +51,118 @@ udp_written_then_read :: proc(t: ^testing.T) {
 	testing.expect_value(t, packet.destination_port, 7)
 	testing.expect_value(t, packet.source_address, LOCAL_ADDRESS)
 	testing.expect_value(t, packet.destination_address, GATEWAY_ADDRESS)
-	testing.expect_value(t, string(packet.data), "a datagram")
+	// The packet holds the whole datagram: the program reads its data, and
+	// checks its checksum with the two addresses.
+	testing.expect_value(t, len(packet.data), UDP_HEADER + len("a datagram"))
+	data, ok := udp_data_read(packet.data, LOCAL_ADDRESS, GATEWAY_ADDRESS, .Verify)
+	testing.expect(t, ok)
+	testing.expect_value(t, string(data), "a datagram")
 	testing.expect(t, packet.destination == GATEWAY && packet.source == LOCAL)
 	// The largest datagram of one frame, and one byte more.
-	large := udp_frame(frame[:], GATEWAY, LOCAL, LOCAL_ADDRESS, GATEWAY_ADDRESS, 1, 2, UDP_DATA_LIMIT, 2)
-	testing.expect_value(t, large, ETHERNET_HEADER + MTU)
-	_, problem = parse(frame[:large])
+	datagram := frame[IPV4_DATA:]
+	large := udp_header_write(datagram, LOCAL_ADDRESS, GATEWAY_ADDRESS, 1, 2, UDP_DATA_LIMIT)
+	testing.expect_value(t, large, MTU - IPV4_HEADER)
+	whole := ipv4_frame(frame[:], GATEWAY, LOCAL, LOCAL_ADDRESS, GATEWAY_ADDRESS, PROTOCOL_UDP, large, 2)
+	testing.expect_value(t, whole, ETHERNET_HEADER + MTU)
+	_, problem = parse(frame[:whole])
 	testing.expect_value(t, problem.kind, Problem_Kind.None)
-	testing.expect_value(t, udp_frame(frame[:], GATEWAY, LOCAL, LOCAL_ADDRESS, GATEWAY_ADDRESS, 1, 2, UDP_DATA_LIMIT + 1, 2), 0)
-	testing.expect_value(t, udp_frame(frame[:100], GATEWAY, LOCAL, LOCAL_ADDRESS, GATEWAY_ADDRESS, 1, 2, 80, 2), 0)
+	testing.expect_value(t, udp_header_write(datagram, LOCAL_ADDRESS, GATEWAY_ADDRESS, 1, 2, UDP_DATA_LIMIT + 1), 0)
+	testing.expect_value(t, udp_header_write(datagram[:80], LOCAL_ADDRESS, GATEWAY_ADDRESS, 1, 2, 80), 0)
+	testing.expect_value(t, ipv4_frame(frame[:100], GATEWAY, LOCAL, LOCAL_ADDRESS, GATEWAY_ADDRESS, PROTOCOL_UDP, 88, 2), 0)
+}
+
+// The checksum of a datagram is for the program: parse gives a datagram
+// with a wrong checksum to the endpoint of its port, and udp_data_read
+// refuses it with the rule Verify. The pseudo-header counts: the same
+// bytes with another address are refused too.
+@(test)
+udp_checksum_is_checked_by_the_program :: proc(t: ^testing.T) {
+	frame: [128]u8
+	length := udp_example(frame[:], "a datagram")
+	frame[IPV4_DATA + UDP_HEADER + 3] ~= 1 // One bit of the data.
+	packet, problem := parse(frame[:length])
+	testing.expect_value(t, problem.kind, Problem_Kind.None)
+	testing.expect_value(t, packet.kind, Packet_Kind.Udp)
+	_, ok := udp_data_read(packet.data, LOCAL_ADDRESS, GATEWAY_ADDRESS, .Verify)
+	testing.expect(t, !ok)
+	// A protocol that authenticates each datagram itself takes the bytes.
+	data, taken := udp_data_read(packet.data, LOCAL_ADDRESS, GATEWAY_ADDRESS, .Do_Not_Verify)
+	testing.expect(t, taken && len(data) == len("a datagram"))
+	// A correct datagram, and the same bytes from another address.
+	length = udp_example(frame[:], "a datagram")
+	packet, problem = parse(frame[:length])
+	_, ok = udp_data_read(packet.data, LOCAL_ADDRESS, GATEWAY_ADDRESS, .Verify)
+	testing.expect(t, problem.kind == .None && ok)
+	_, ok = udp_data_read(packet.data, LOCAL_ADDRESS + 1, GATEWAY_ADDRESS, .Verify)
+	testing.expect(t, !ok)
+	// A datagram whose length field is not its length, and one shorter than
+	// its header: refused with each rule.
+	_, ok = udp_data_read(packet.data[:len(packet.data) - 1], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Do_Not_Verify)
+	testing.expect(t, !ok)
+	_, ok = udp_data_read(packet.data[:4], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Do_Not_Verify)
+	testing.expect(t, !ok)
+}
+
+// A checksum that sums to zero goes on the wire as 0xFFFF, and is taken.
+@(test)
+udp_checksum_of_zero_is_written_as_ones :: proc(t: ^testing.T) {
+	datagram: [UDP_HEADER + 2]u8
+	// Find the two bytes of data that make the checksum zero: the sum of
+	// the other words, complemented.
+	length := udp_header_write(datagram[:], LOCAL_ADDRESS, GATEWAY_ADDRESS, 49152, 7, 2)
+	testing.expect_value(t, length, UDP_HEADER + 2)
+	field := read_16(datagram[:], 6)
+	write_16(datagram[:], UDP_HEADER, field) // The data takes what the checksum held: the sum is now all ones.
+	length = udp_header_write(datagram[:], LOCAL_ADDRESS, GATEWAY_ADDRESS, 49152, 7, 2)
+	testing.expect_value(t, read_16(datagram[:], 6), 0xFFFF)
+	_, ok := udp_data_read(datagram[:length], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Verify)
+	testing.expect(t, ok)
+}
+
+// A datagram with an odd count of bytes: its last byte is the high byte of
+// the last word of the sum. The test sums the words by hand, apart from the
+// library: the pseudo-header, the header with its checksum and the data
+// fold to all ones. The last byte is in the checksum: one changed bit of it
+// is refused.
+@(test)
+udp_checksum_with_an_odd_length :: proc(t: ^testing.T) {
+	for text in ([]string{"after a key", "x", "an odd text of 23 bytes"}) {
+		datagram: [UDP_HEADER + 32]u8
+		copy(datagram[UDP_HEADER:], text)
+		length := udp_header_write(datagram[:], LOCAL_ADDRESS, GATEWAY_ADDRESS, 49152, 7, len(text))
+		testing.expect_value(t, length, UDP_HEADER + len(text))
+		testing.expect_value(t, length % 2, 1)
+		total := u32(LOCAL_ADDRESS >> 16) + u32(LOCAL_ADDRESS & 0xFFFF) + u32(GATEWAY_ADDRESS >> 16) + u32(GATEWAY_ADDRESS & 0xFFFF) + u32(PROTOCOL_UDP) + u32(length)
+		for index := 0; index < length; index += 2 {
+			total += u32(datagram[index]) << 8
+			if index + 1 < length {
+				total += u32(datagram[index + 1])
+			}
+		}
+		for total > 0xFFFF {
+			total = (total & 0xFFFF) + (total >> 16)
+		}
+		testing.expect_value(t, total, 0xFFFF)
+		data, ok := udp_data_read(datagram[:length], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Verify)
+		testing.expect(t, ok && string(data) == text)
+		datagram[length - 1] ~= 0x01
+		_, ok = udp_data_read(datagram[:length], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Verify)
+		testing.expect(t, !ok, "the last byte of an odd datagram is not in the checksum")
+		datagram[length - 1] ~= 0x01
+		// The length field one more and one less than the count: refused
+		// with each rule, before any read of the checksum.
+		write_16(datagram[:], 4, u16(length + 1))
+		_, ok = udp_data_read(datagram[:length], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Do_Not_Verify)
+		testing.expect(t, !ok)
+		write_16(datagram[:], 4, u16(length - 1))
+		_, ok = udp_data_read(datagram[:length], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Verify)
+		testing.expect(t, !ok)
+	}
+	// A datagram of 7 bytes, whose field would say 7: under its header.
+	short: [7]u8
+	write_16(short[:], 4, 7)
+	_, short_taken := udp_data_read(short[:], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Do_Not_Verify)
+	testing.expect(t, !short_taken)
 }
 
 @(test)
@@ -116,7 +223,6 @@ malformed_frames :: proc(t: ^testing.T) {
 		{"UDP of 4 bytes", proc(frame: []u8) -> int {write_16(frame, 16, 24); fix_ipv4(frame); return 60}, .Too_Short, .Udp, 34, 4, 8},
 		{"UDP length after the datagram", proc(frame: []u8) -> int {write_16(frame, 38, 300); return 60}, .Bad_Length, .Udp, 38, 300, 18},
 		{"UDP length under the header", proc(frame: []u8) -> int {write_16(frame, 38, 3); return 60}, .Bad_Length, .Udp, 38, 3, 8},
-		{"UDP checksum", proc(frame: []u8) -> int {frame[45] ~= 1; return 60}, .Bad_Checksum, .Udp, 40, 0, 0},
 		{"ARP of 20 bytes", proc(frame: []u8) -> int {write_16(frame, 12, KIND_ARP); return 34}, .Too_Short, .Arp, 14, 20, 28},
 		{"ARP hardware size 8", proc(frame: []u8) -> int {
 				arp_frame(frame, ARP_REQUEST, LOCAL, LOCAL_ADDRESS, {}, GATEWAY_ADDRESS)
@@ -156,7 +262,8 @@ udp_with_no_checksum :: proc(t: ^testing.T) {
 	length := udp_example(frame[:], "no check")
 	write_16(frame[:], 40, 0)
 	packet, problem := parse(frame[:length])
-	testing.expect(t, problem.kind == .None && string(packet.data) == "no check")
+	data, ok := udp_data_read(packet.data, LOCAL_ADDRESS, GATEWAY_ADDRESS, .Verify)
+	testing.expect(t, problem.kind == .None && ok && string(data) == "no check")
 }
 
 // Random damage: each byte can change, and the frame can end anywhere.
@@ -250,7 +357,6 @@ tcp_malformed :: proc(t: ^testing.T) {
 		{"a segment of 10 bytes", proc(frame: []u8) -> int {write_16(frame, 16, 30); fix_ipv4(frame); return 60}, .Too_Short, 34, 10, 20},
 		{"a data offset of 16 bytes", proc(frame: []u8) -> int {frame[46] = 4 << 4; return 74}, .Bad_Header, 46, 4, 5},
 		{"a data offset after the segment", proc(frame: []u8) -> int {frame[46] = 15 << 4; return 74}, .Bad_Length, 46, 60, 40},
-		{"the checksum", proc(frame: []u8) -> int {frame[60] ~= 1; return 74}, .Bad_Checksum, 50, 0, 0},
 	}
 	for item in cases {
 		frame: [128]u8
@@ -258,9 +364,20 @@ tcp_malformed :: proc(t: ^testing.T) {
 		length := item.change(frame[:])
 		packet, problem := parse(frame[:length])
 		testing.expectf(t, problem.kind == item.kind && problem.layer == .Tcp && problem.offset == item.offset, "%s: %v", item.name, problem)
-		if item.kind != .Bad_Checksum {
-			testing.expectf(t, problem.value == item.value && problem.limit == item.limit, "%s: %v", item.name, problem)
-		}
+		testing.expectf(t, problem.value == item.value && problem.limit == item.limit, "%s: %v", item.name, problem)
 		testing.expectf(t, packet.kind == .None, "%s: a packet from a malformed frame", item.name)
 	}
+}
+
+// The checksum of a segment is for TCP in the program: parse gives a
+// segment with a wrong checksum to the endpoint of its port.
+@(test)
+tcp_checksum_is_not_checked_here :: proc(t: ^testing.T) {
+	frame: [128]u8
+	length := tcp_example(frame[:], "twenty bytes of data")
+	frame[60] ~= 1 // One bit of the data.
+	packet, problem := parse(frame[:length])
+	testing.expect_value(t, problem.kind, Problem_Kind.None)
+	testing.expect_value(t, packet.kind, Packet_Kind.Tcp)
+	testing.expect_value(t, len(packet.data), TCP_HEADER + 20)
 }

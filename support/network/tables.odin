@@ -54,6 +54,37 @@ problem_rows :: proc "contextless" (own: ^Problem_Table, machine: ^Problem_Table
 	return count
 }
 
+// The local ports of one endpoint, as its creation gave them: one block of
+// ports of UDP or of TCP. They are a fact of the endpoint, apart from its
+// grant: a revocation clears the grant and keeps the ports, until the
+// endpoint is removed.
+Local_Ports :: struct {
+	tcp:   bool, // The ports are TCP ports. UDP and TCP ports are two spaces.
+	first: u16, // The first port.
+	count: u16, // The ports of the block. 0: the place of the table is free.
+}
+
+// listen_port_taken says if a listen port cannot go to a new endpoint: it
+// is in the range of the ports that the network service assigns to client
+// grants (client_count ports from client_first), or an endpoint of the same
+// protocol holds it.
+//
+// held has the ports of each endpoint that exists, also of an endpoint
+// whose grant was revoked. This is the point of the rule: if a revocation
+// freed the port, a second endpoint could take it while the first one
+// still names it as its local port, and one port would have two holders.
+listen_port_taken :: proc "contextless" (tcp: bool, port: u16, client_first: int, client_count: int, held: []Local_Ports) -> bool {
+	if int(port) >= client_first && int(port) < client_first + client_count {
+		return true
+	}
+	for item in held {
+		if item.count != 0 && item.tcp == tcp && port >= item.first && port - item.first < item.count {
+			return true
+		}
+	}
+	return false
+}
+
 // The admitted remotes of a listen grant: a remote that sent a SYN to the
 // listen port. A segment to send goes out only to an admitted remote
 // (docs/NETWORK.md). Each place has the time of its last segment, in or

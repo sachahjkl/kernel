@@ -8,6 +8,14 @@
 // address to choose and no port to open. The window shows each case, the
 // answer, and whether it is the expected answer.
 //
+// The program writes the UDP header and the checksum of each datagram that
+// it sends, and checks the checksum of each datagram that it receives
+// (support/network, udp_header_write and udp_data_read): the network
+// service copies a datagram and computes no checksum of it. Two cases show
+// what follows: a datagram with a wrong checksum reaches this endpoint,
+// and this program drops it; a datagram that this program writes with
+// another source port is refused by the network service.
+//
 // **What it is for.** It shows that a network grant is a capability: the
 // program reaches the one remote of its grant, and the network service
 // refuses each other request with the detail of the grant. It also measures
@@ -26,6 +34,8 @@
 // for each case ("net: ...: answer", with "(WRONG)" after an unexpected
 // answer), then "net: ok, N cases", then the measures:
 //
+// - the header and the checksum of one datagram of 1472 bytes, in this
+//   program;
 // - the round trip of one datagram of 64 bytes, least and middle;
 // - the time from a refused command to its completion;
 // - the rate of a burst with 64 datagrams in flight;
@@ -61,6 +71,7 @@ GATEWAY :: 0x0A000202 // 10.0.2.2: the gateway, and the echo server of the test.
 LOCAL :: 0x0A00020F // 10.0.2.15
 ECHO_PORT :: 7 // The port of the grant.
 OTHER_PORT :: 9 // A port that the grant does not give.
+FORGED_SOURCE_PORT :: 1234 // A source port that is not the local port of the endpoint.
 
 PLACE_SIZE :: 2048
 RECEIVE_COUNT :: 128 // Places 0 to 127 of the region: datagrams that arrive.
@@ -76,10 +87,12 @@ DATA_BYTES :: 64
 
 // The frames that the peer of the test sends before its first answer, and
 // that the network service must refuse: one of each row (tools/kerneltool,
-// peer.odin). Ten have no endpoint: facts of the machine, that this program
+// peer.odin). Nine have no endpoint: facts of the machine, that this program
 // reads with the right Inspect of its grant. One came to the local port of
 // this endpoint from a remote that its grant does not name: a fact of this
-// endpoint.
+// endpoint. One more frame of the peer has a wrong UDP checksum: the
+// network service does not read the data of a datagram, so it gives that
+// one to this endpoint, and this program drops it (wrong_checksums).
 Expected_Row :: struct {
 	kind:  datagram.Problem_Kind,
 	layer: datagram.Layer,
@@ -92,7 +105,6 @@ expected_machine_rows := [?]Expected_Row {
 	{.Bad_Header, .Ipv4},
 	{.Bad_Length, .Ipv4},
 	{.Unsupported, .Ipv4},
-	{.Bad_Checksum, .Udp},
 	{.Bad_Length, .Udp},
 	{.No_Endpoint, .Udp},
 	{.Bad_Header, .Arp},
@@ -106,7 +118,7 @@ LINE :: 24
 LEFT :: 16
 ANSWER_X :: 376
 WIDTH :: 864
-CASE_CAPACITY :: 11
+CASE_CAPACITY :: 15 // The cases of cases_run, and one more after a key.
 HEIGHT :: 16 + 2 * LINE + CASE_CAPACITY * LINE + 4 * LINE + 16
 
 
@@ -122,6 +134,10 @@ case_count: int
 
 datagrams: ring.Ring
 region: [^]u8
+local_address: u32 // The address of this machine: the source of each datagram, in its checksum.
+local_port: u16 // The local port of the endpoint: the source port of each datagram.
+wrong_checksums: u64 // Datagrams that this program dropped: their checksum is not the one of their bytes.
+malformed_datagrams: u64 // Datagrams with no whole header: the network service never gives one.
 next_tag: u32 = CALL_TAG
 cycle_frequency: u64
 
@@ -193,8 +209,22 @@ post :: proc "contextless" (place: int) {
 	request(.Receive, u32(place), {0 = u64(place * PLACE_SIZE), 1 = PLACE_SIZE})
 }
 
-send :: proc "contextless" (place: int, count: int, port: u64 = ECHO_PORT) {
-	request(.Send, SEND_TAG + u32(place), {0 = u64(place * PLACE_SIZE), 1 = u64(count), 2 = GATEWAY, 3 = port})
+// data_of gives the place of the data of a datagram to send: after the
+// place of its UDP header.
+data_of :: proc "contextless" (place: int) -> []u8 {
+	return place_of(place)[network.UDP_HEADER:]
+}
+
+// datagram_write writes the UDP header and the checksum of a datagram
+// whose count bytes of data are at data_of(place), and gives the bytes of
+// the whole datagram: the count of its Send. 0: the data is too large.
+datagram_write :: proc "contextless" (place: int, count: int, port: u16 = ECHO_PORT, source_port: u16 = 0) -> int {
+	return network.udp_header_write(place_of(place), local_address, GATEWAY, source_port != 0 ? source_port : local_port, port, count)
+}
+
+// send sends count bytes of data that are at data_of(place).
+send :: proc "contextless" (place: int, count: int) {
+	request(.Send, SEND_TAG + u32(place), {0 = u64(place * PLACE_SIZE), 1 = u64(datagram_write(place, count)), 2 = GATEWAY})
 }
 
 address_text :: proc "contextless" (buffer: []u8, address: u32) -> string {
@@ -219,13 +249,28 @@ hundredths :: proc "contextless" (buffer: []u8, value: u64) -> string {
 }
 
 // datagram_wait waits for the answer of one datagram: the Receive of a
-// place. It gives the place, its bytes and the remote.
-datagram_wait :: proc "contextless" (deadline: u64) -> (place: int, count: u64, remote: u64, port: u64, ok: bool) {
+// place. It gives the place, the data and the remote. The network service
+// checked the lengths and the remote, not the checksum: this program
+// checks it here, drops a datagram with a wrong one, counts it, gives the
+// place back and waits for the next datagram.
+datagram_wait :: proc "contextless" (deadline: u64) -> (place: int, data: []u8, remote: u64, port: u64, ok: bool) {
 	for {
 		record := answer(deadline) or_return
-		if record.tag < SEND_TAG && datagram.Status(record.kind) == .Ok {
-			return int(record.tag), record.values[1], record.values[2], record.values[3], true
+		if record.tag >= SEND_TAG || datagram.Status(record.kind) != .Ok {
+			continue
 		}
+		place = int(record.tag)
+		whole := place_of(place)[:min(record.values[1], PLACE_SIZE)]
+		found, right := network.udp_data_read(whole, u32(record.values[2]), local_address, .Verify)
+		if right {
+			return place, found, record.values[2], record.values[3], true
+		}
+		if len(whole) < network.UDP_HEADER || int(network.read_16(whole, 4)) != len(whole) {
+			malformed_datagrams += 1
+		} else {
+			wrong_checksums += 1
+		}
+		post(place)
 	}
 }
 
@@ -238,6 +283,7 @@ cases_run :: proc "contextless" () {
 	link := has_info && datagram.Status(info.kind) == .Ok
 	grant := datagram.grant_unpack(info.values[6])
 	inspect = grant.inspect
+	local_address, local_port = u32(info.values[0]), u16(info.values[1])
 	note("the link and the address", link && info.values[0] == LOCAL && info.values[3] == 24 && info.values[5] == 1 && grant.address == GATEWAY && grant.port == ECHO_PORT && !grant.tcp, address_text(text[:], u32(info.values[0])), "/24, the link is ", info.values[5] == 1 ? "up, " : "down, ", hardware_text(other[:], info.values[4]))
 
 	// 2. The hardware address of the gateway (ARP).
@@ -257,23 +303,24 @@ cases_run :: proc "contextless" () {
 		post(place)
 	}
 	MESSAGE :: "the first datagram of the network service"
-	copy(place_of(SEND_FIRST), MESSAGE)
+	copy(data_of(SEND_FIRST), MESSAGE)
 	start = system.cycles()
 	send(SEND_FIRST, len(MESSAGE))
-	place, count, remote, port, has_answer := datagram_wait(system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
+	place, data, remote, port, has_answer := datagram_wait(system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
 	took = microseconds(system.cycles() - start)
-	same := has_answer && count == len(MESSAGE) && string(place_of(place)[:count]) == MESSAGE && remote == GATEWAY && port == ECHO_PORT
+	same := has_answer && string(data) == MESSAGE && remote == GATEWAY && port == ECHO_PORT
 	note("UDP to 10.0.2.2 port 7, 41 bytes", same, "the same 41 bytes came back from ", address_text(text[:], u32(remote)), " port ", port, " in ", took, " us")
 	if has_answer {
 		post(place)
 	}
 
-	// 5. A port that the grant does not give.
-	copy(place_of(SEND_FIRST + 1), "not granted")
+	// 5. A port that the grant does not give. The network service reads the
+	// port in the header that this program wrote.
+	copy(data_of(SEND_FIRST + 1), "not granted")
 	// The completion of a refusal holds its error record: the note shows
 	// its sentence.
 	sentence: [240]u8
-	refused, has_refused := call(.Send, {0 = (SEND_FIRST + 1) * PLACE_SIZE, 1 = 11, 2 = GATEWAY, 3 = OTHER_PORT})
+	refused, has_refused := call(.Send, {0 = (SEND_FIRST + 1) * PLACE_SIZE, 1 = u64(datagram_write(SEND_FIRST + 1, 11, OTHER_PORT)), 2 = GATEWAY})
 	refusal_writer := system.Writer{buffer = sentence[:]}
 	error := network.completion_error_text(&refusal_writer, refused)
 	note("UDP to 10.0.2.2 port 9", has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(error.kind) == .No_Grant && error.argument == 3 && error.value == errors.endpoint_pack(GATEWAY, OTHER_PORT) && error.limit == errors.endpoint_pack(GATEWAY, ECHO_PORT), "refused: ", system.written(&refusal_writer))
@@ -285,12 +332,43 @@ cases_run :: proc "contextless" () {
 	note("ICMP echo to 10.0.2.3", has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(error.kind) == .No_Grant && error.value == errors.endpoint_pack(0x0A000203, 0), "refused: ", system.written(&refusal_writer))
 
 	// 7. A datagram larger than one frame.
-	refused, has_refused = call(.Send, {0 = 0, 1 = 2000, 2 = GATEWAY, 3 = ECHO_PORT})
+	refused, has_refused = call(.Send, {0 = 0, 1 = 2000, 2 = GATEWAY})
 	refusal_writer = {buffer = sentence[:]}
 	error = network.completion_error_text(&refusal_writer, refused)
-	note("UDP of 2000 bytes", has_refused && datagram.Status(refused.kind) == .Too_Large && errors.Kind(error.kind) == .Too_Long && error.value == 2000 && error.limit == datagram.DATA_LIMIT, "refused, no fragment: ", system.written(&refusal_writer))
+	note("UDP of 2000 bytes", has_refused && datagram.Status(refused.kind) == .Too_Large && errors.Kind(error.kind) == .Too_Long && error.value == 2000 && error.limit == datagram.DATAGRAM_LIMIT, "refused, no fragment: ", system.written(&refusal_writer))
 
-	// 8 and 9. The frames that the network service refused. The peer sent
+	// 8. A datagram that this program wrote with another source port, to
+	// the remote of the grant, with a correct checksum. The network service
+	// reads the source port in its own copy of the header: a program sends
+	// from the local port of its endpoint only.
+	copy(data_of(SEND_FIRST + 2), "a forged source port")
+	refused, has_refused = call(.Send, {0 = (SEND_FIRST + 2) * PLACE_SIZE, 1 = u64(datagram_write(SEND_FIRST + 2, 20, ECHO_PORT, FORGED_SOURCE_PORT)), 2 = GATEWAY})
+	error = errors.completion_record(refused.values)
+	note("UDP from the source port 1234", has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(error.kind) == .No_Grant && error.found == FORGED_SOURCE_PORT && error.limit == errors.endpoint_pack(GATEWAY, ECHO_PORT), "refused: the source port ", u64(error.found), " of the header is not the local port of this endpoint, ", u64(local_port))
+
+	// A datagram whose length field is not its count of bytes: the field
+	// says one byte more than the Send gives. The network service reads the
+	// field in its own copy of the header, so each datagram that leaves has
+	// a length field that is its length.
+	copy(data_of(SEND_FIRST + 3), "a wrong length field")
+	whole_count := datagram_write(SEND_FIRST + 3, 20)
+	network.write_16(place_of(SEND_FIRST + 3), 4, u16(whole_count + 1))
+	refused, has_refused = call(.Send, {0 = (SEND_FIRST + 3) * PLACE_SIZE, 1 = u64(whole_count), 2 = GATEWAY})
+	error = errors.completion_record(refused.values)
+	note("UDP with a wrong length field", has_refused && datagram.Status(refused.kind) == .Bad_Command && errors.Kind(error.kind) == .Bad_Value && error.argument == 2 && error.value == i64(whole_count + 1) && error.limit == i64(whole_count) && whole_count == network.UDP_HEADER + 20, "refused: the length field of the header says ", u64(error.value), " bytes, the Send has ", u64(error.limit))
+
+	// A datagram shorter than the UDP header: it has no ports to check.
+	refused, has_refused = call(.Send, {0 = (SEND_FIRST + 3) * PLACE_SIZE, 1 = network.UDP_HEADER - 1, 2 = GATEWAY})
+	error = errors.completion_record(refused.values)
+	note("UDP of 7 bytes", has_refused && datagram.Status(refused.kind) == .Bad_Command && errors.Kind(error.kind) == .Too_Small && error.argument == 2 && error.value == network.UDP_HEADER - 1 && error.limit == datagram.DATAGRAM_LEAST, "refused: the Send has ", u64(error.value), " bytes, a datagram has ", u64(error.limit), " bytes at least, its header")
+
+	// 9. The datagram of the peer with a wrong checksum. The peer sent it
+	// before its first answer, so case 4 saw it first: the network service
+	// gave it to this endpoint (the port and the remote are the ones of the
+	// grant), and datagram_wait dropped it.
+	note("UDP from 10.0.2.2 port 7 with a wrong checksum", wrong_checksums == 1 && malformed_datagrams == 0, "dropped by this program: ", wrong_checksums, wrong_checksums == 1 ? " datagram" : " datagrams", "; the network service gave it to the endpoint of its port")
+
+	// 10 and 11. The frames that the network service refused. The peer sent
 	// them before its first answer, so they arrived before case 4. A row of
 	// this endpoint: any endpoint reads its own. A row of the machine: only
 	// with the right Inspect of the grant. No row of another endpoint.
@@ -333,7 +411,7 @@ cases_run :: proc "contextless" () {
 		note("malformed frames from the wire", has_problems && machine_rows == 0, "not shown: the grant has no right Inspect")
 	}
 
-	// 10. The echo requests of the gateway, that the network service answered.
+	// 12. The echo requests of the gateway, that the network service answered.
 	statistics, has_statistics := call(.Statistics)
 	if inspect {
 		note("ICMP echo from 10.0.2.2 to this machine", has_statistics && statistics.values[5] >= 1, "the network service answered ", statistics.values[5], statistics.values[5] == 1 ? " request" : " requests")
@@ -378,13 +456,26 @@ measure_refusals :: proc "contextless" () {
 	start := system.cycles()
 	refused := 0
 	for _ in 0 ..< REFUSALS {
-		record, ok := call(.Send, {0 = 0, 1 = 2000, 2 = GATEWAY, 3 = ECHO_PORT})
+		record, ok := call(.Send, {0 = 0, 1 = 2000, 2 = GATEWAY})
 		if ok && datagram.Status(record.kind) == .Too_Large {
 			refused += 1
 		}
 	}
 	nanoseconds := microseconds(system.cycles() - start) * 1000 / REFUSALS
 	system.log("net: a refused request of the datagram ring (Send of 2000 bytes, Too_Large), from the command to its completion: ", nanoseconds, " ns, ", u64(refused), " of ", u64(REFUSALS), " refused")
+}
+
+// measure_checksum measures what this program writes for each datagram
+// that it sends: the UDP header, and the checksum over the largest data of
+// one frame. The network service computes no checksum of a datagram.
+measure_checksum :: proc "contextless" () {
+	ROUNDS :: 20_000
+	start := system.cycles()
+	for _ in 0 ..< ROUNDS {
+		datagram_write(SEND_FIRST, datagram.DATA_LIMIT)
+	}
+	nanoseconds := microseconds(system.cycles() - start) * 1000 / ROUNDS
+	system.log("net: the header and the checksum of a datagram of ", u64(datagram.DATA_LIMIT), " bytes: ", nanoseconds, " ns, in this program (no offload)")
 }
 
 // measure_burst keeps BURST_IN_FLIGHT datagrams in flight for one second:
@@ -532,6 +623,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	} else {
 		system.log("net: WRONG: ", u64(wrong), " of ", u64(case_count), " cases")
 	}
+	measure_checksum()
 	measure_round_trips()
 	measure_refusals()
 	measure_burst()
@@ -551,8 +643,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 // after_key sends one datagram to the remote of the grant, and shows the
 // answer: after a revocation of the grant, the network service refuses it.
 after_key :: proc "contextless" () {
-	copy(place_of(SEND_FIRST), "after a key")
-	sent, has_sent := call(.Send, {0 = SEND_FIRST * PLACE_SIZE, 1 = 11, 2 = GATEWAY, 3 = ECHO_PORT})
+	copy(data_of(SEND_FIRST), "after a key")
+	sent, has_sent := call(.Send, {0 = SEND_FIRST * PLACE_SIZE, 1 = u64(datagram_write(SEND_FIRST, 11)), 2 = GATEWAY})
 	item := &cases[CASE_CAPACITY - 1]
 	item.text = "UDP to 10.0.2.2 port 7, after a key"
 	switch {
@@ -566,12 +658,12 @@ after_key :: proc "contextless" () {
 		item.count = len(system.written(&writer))
 		item.right = true
 	case datagram.Status(sent.kind) == .Ok:
-		place, count, _, _, ok := datagram_wait(system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
+		place, data, _, _, ok := datagram_wait(system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
 		if ok {
 			post(place)
 		}
 		item.count = len(system.format(item.answer[:], ok ? "sent, and " : "sent, and no ", "answer"))
-		item.right = ok && count == 11
+		item.right = ok && len(data) == 11
 	case:
 		writer := system.Writer{buffer = item.answer[:]}
 		system.write_part(&writer, "refused: ")

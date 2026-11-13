@@ -13,7 +13,18 @@ package line_editor
 Running_Key_Action :: enum u8 {
 	Wait      = 0, // The key waits for the end of the line, after the keys before it.
 	Stop_Call = 1, // The key stops the call that the line waits in.
-	Drop      = 2, // No room: the key is lost.
+	Drop      = 2, // No room, and the program reads on to find an Escape (`running_key_can_be_taken`): the key is lost, and the program counts it.
+}
+
+// running_key_can_be_taken says if the program takes the next key from its
+// queue while a line runs. With a place for the key, yes. With no place,
+// only while the line waits in a call that Escape can stop: the program
+// must read each key to find that Escape, and a key that is not Escape is
+// then lost (`Drop`). In each other case the key stays in the queue of the
+// program, in order, and nothing is lost: the full queue then stops its
+// writer or is the stated bound of the keys typed ahead.
+running_key_can_be_taken :: proc "contextless" (call_stoppable: bool, waiting: int, capacity: int) -> bool {
+	return waiting < capacity || call_stoppable
 }
 
 // running_key_action says what a key does while a line runs.

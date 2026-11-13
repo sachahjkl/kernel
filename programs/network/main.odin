@@ -2,10 +2,12 @@
 // device, and the service that gives each program with the grant one
 // endpoint of datagrams (contract/datagram).
 //
-// It speaks Ethernet, ARP, IPv4, ICMP echo (request and answer) and UDP,
-// with the protocol library support/network: this program does the input
-// and output, the library reads and writes the frames. It has one static
-// address (10.0.2.15/24, the gateway 10.0.2.2: the network of QEMU).
+// It speaks Ethernet, ARP, IPv4 and ICMP echo (request and answer), with
+// the protocol library support/network: this program does the input and
+// output, the library reads and writes the frames. UDP and TCP are in the
+// program that holds the endpoint: this service reads the header of a
+// datagram or a segment, never its data. It has one static address
+// (10.0.2.15/24, the gateway 10.0.2.2: the network of QEMU).
 //
 // The root service names the grant of each endpoint. A datagram endpoint
 // reaches one remote address and one remote UDP port, or listens on one
@@ -14,22 +16,30 @@
 // a listen grant (one local TCP port, and the remotes that sent a segment
 // to it). A request to another remote is refused with the detail of the
 // grant; a datagram or a segment from another remote does not reach the
-// program. TCP itself is in the program (support/tcp): this service checks
-// the IPv4 header, the TCP checksum and the ports of each segment, and
-// keeps no state of a connection (docs/NETWORK.md).
+// program. TCP itself is in the program (support/tcp), and so are the
+// header and the checksum of UDP (support/network, udp_header_write and
+// udp_data_read): this service checks the IPv4 header, the lengths and the
+// ports of each datagram and each segment, computes no checksum of their
+// bytes, and keeps no state of a connection
+// (docs/NETWORK.md, "The path of a datagram and of a segment").
 //
 // One thread. It waits on the completions of the frame ring, on the
 // control ring of the root service, and on the command queue of each
 // endpoint, with the deadline of the oldest request that waits for an
-// answer. The data of a datagram is copied one time, between the datagram
-// region of the program and the frame region; the kernel is not on the path
-// of the data, so data moves with no kernel entry.
+// answer. A datagram or a segment is copied one time, between the datagram
+// region of the program and the frame region, and that copy is the one
+// pass of this service over its bytes: the service counts the bytes of
+// each pass, for each endpoint and each direction, and writes the counts
+// when the endpoint ends. The kernel is not on the path of the data, so
+// data moves with no kernel entry.
 //
 // **What it is for.** It is the one place where the frames of the machine
 // meet the grants of the programs. A program never sees a frame and never
 // names an address that its grant does not hold, so a program with a
 // network grant reaches one remote, or answers on one port, and nothing
-// else.
+// else. A program writes the header of what it sends; this service checks
+// the ports of that header in its own copy, so a program sends only from
+// the local ports of its endpoint.
 //
 // **Start**: no line starts it. The root service starts it, with the frame
 // service of the device, before the first program with the grant
@@ -44,7 +54,9 @@
 //
 // **What a reader sees**: no window. The log has "network: ok, the address
 // 10.0.2.15/24 ..., the gateway 10.0.2.2, the link is up, ...", then the
-// cost of the headers and the checksum of one datagram of 1472 bytes.
+// cost of the headers of IPv4 and Ethernet of one frame. When an endpoint
+// ends, the log has its counts, and how many times this service read each
+// byte of its datagrams or segments: one time on receive, one time on send.
 // A program reads its own counts and problem rows through its endpoint;
 // a program with the grant to inspect the machine also reads the counts of
 // the whole service.
@@ -53,8 +65,9 @@
 // fragments of IPv4 (a fragment is a problem `Unsupported`), and no state
 // of a TCP connection.
 //
-// The design: `docs/NETWORK.md`, and (docs/NETWORK.md, "The listen grant of
-// UDP").
+// The design: `docs/NETWORK.md`,
+// (docs/NETWORK.md, "The path of a datagram and of a segment") and
+// (docs/NETWORK.md, "The listen grant of UDP").
 package network_service
 
 import "contract:datagram"
@@ -109,9 +122,18 @@ Pending :: struct {
 	start:    u64,
 	place:    int, // Send: the send place.
 	bytes:    int, // Echo: the bytes of data.
-	length:   int, // Send: the bytes of the frame.
+	length:   int, // Send: the bytes of the datagram or the segment.
 	sequence: u16, // Echo.
-	port:     u16, // Send: the remote port.
+}
+
+// What this service did to the datagrams or the segments of one endpoint in
+// one direction. bytes_passed counts each byte one time for each pass of
+// this service over it: a copy, or a sum for a checksum. With one copy and
+// no checksum, bytes_passed is payload_bytes.
+Data_Count :: struct {
+	units:         u64, // The datagrams or the segments.
+	payload_bytes: u64, // Their bytes: the header of UDP or TCP, and the data.
+	bytes_passed:  u64, // The bytes that this service read, one count for each pass.
 }
 
 Posted :: struct {
@@ -127,6 +149,7 @@ Endpoint :: struct {
 	region:          []u8,
 	grant:           datagram.Grant, // All zero: no grant (a revocation).
 	tcp:             bool, // A segment endpoint. It stays after a revocation.
+	listen:          bool, // Its local port is a listen port that its creation named. It stays after a revocation, as its port does.
 	local_port:      u16, // The first local port.
 	port_count:      u16, // 1, or datagram.PORT_BLOCK for a client grant of TCP.
 	admitted:        network.Admitted, // A listen grant: the remotes that sent a segment to its port.
@@ -141,6 +164,8 @@ Endpoint :: struct {
 	sent:            u64,
 	received:        u64,
 	dropped:         u64,
+	arrived_data:    Data_Count, // What this service did to the bytes that it gave to the program.
+	left_data:       Data_Count, // What it did to the bytes that it took from the program.
 	// The datagrams that reached the local port of this endpoint from a
 	// remote that its grant does not name: facts of this endpoint only.
 	problems:        network.Problem_Table,
@@ -278,17 +303,27 @@ problem :: proc "contextless" (found: datagram.Problem) {
 
 // payload_send builds the frame of a datagram or a segment that is in the
 // send place, for a next hop with a known hardware address, and sends it.
-// A datagram gets its UDP header; a segment has its TCP header already.
-payload_send :: proc "contextless" (endpoint: ^Endpoint, place: int, destination: network.Hardware, address: u32, port: u16, length: int) {
-	bytes := place_bytes(place)
-	total: int
-	if endpoint.tcp {
-		total = network.ipv4_frame(bytes, destination, hardware, LOCAL_ADDRESS, address, network.PROTOCOL_TCP, length, next_identification())
-	} else {
-		total = network.udp_frame(bytes, destination, hardware, LOCAL_ADDRESS, address, endpoint.local_port, port, length, next_identification())
-	}
+// The program wrote the header of UDP or TCP and its checksum: this
+// service writes the headers of IPv4 and Ethernet, and reads no byte of
+// the payload.
+payload_send :: proc "contextless" (endpoint: ^Endpoint, place: int, destination: network.Hardware, address: u32, length: int) {
+	protocol := u8(endpoint.tcp ? network.PROTOCOL_TCP : network.PROTOCOL_UDP)
+	total := network.ipv4_frame(place_bytes(place), destination, hardware, LOCAL_ADDRESS, address, protocol, length, next_identification())
 	frame_send(place, total)
 	endpoint.sent += 1
+}
+
+// data_pass counts one pass of this service over bytes of a datagram or a
+// segment. Each place of this program that reads those bytes calls it, so
+// the count says how many times the service is on the path of the data.
+data_pass :: proc "contextless" (count: ^Data_Count, bytes: int) {
+	count.bytes_passed += u64(bytes)
+}
+
+// data_counted counts one datagram or one segment that this service handled.
+data_counted :: proc "contextless" (count: ^Data_Count, bytes: int) {
+	count.units += 1
+	count.payload_bytes += u64(bytes)
 }
 
 echo_send :: proc "contextless" (endpoint_index: int, destination: network.Hardware, address: u32, sequence: u16, bytes: int) -> bool {
@@ -310,7 +345,7 @@ region_range :: proc "contextless" (endpoint: ^Endpoint, place, count: u64) -> b
 
 // granted checks a remote against the grant of an endpoint, and completes
 // the command with the detail of a refusal. A listen grant names no remote:
-// a segment goes to an admitted remote only (segment_granted).
+// a datagram or a segment goes to an admitted remote only (header_granted).
 granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u64, port: u64, check_port: bool, command: u32, argument: i64) -> bool {
 	grant := endpoint.grant
 	if !grant.listen && grant.address != 0 && address == u64(grant.address) && (!check_port || port == u64(grant.port)) {
@@ -332,29 +367,61 @@ not_granted :: proc "contextless" (command: u32, argument: i64, address: u32, po
 	return errors.ring_fail(command, .No_Grant, .Endpoint, argument, errors.endpoint_pack(address, port), granted, i64(local))
 }
 
-// segment_granted checks a segment to send, in the copy that this service
-// made: its local port is a port of the endpoint, and its remote is the
-// remote of a client grant, or an admitted remote of a listen grant.
-segment_granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u32, segment: []u8, now: u64) -> (port: u16, ok: bool) {
+// header_granted checks a datagram or a segment to send, in the copy that
+// this service made: the program cannot change that copy, and this
+// procedure reads no byte of the region of the program. The two ports are
+// at the same place in the header of UDP and of TCP.
+//
+// - The source port is a local port of the endpoint: a program sends from
+//   its own ports only.
+// - The remote (the address of the command, which goes in the IPv4 header
+//   that this service writes, and the destination port of the copy) is the
+//   remote of a client grant, or an admitted remote of a listen grant.
+// - A datagram: its length field is its count of bytes, and a UDP listen
+//   grant sends to a remote that did not prove its address at most 3 times
+//   the bytes of data that came from it. A send does not keep a place of
+//   the admitted remotes alive.
+//
+// The checksum is not checked: a wrong one harms only the packet of the
+// program that wrote it.
+header_granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u32, packet: []u8, now: u64) -> bool {
 	SEND :: u32(datagram.Command.Send)
-	local := network.read_16(segment, 0)
-	port = network.read_16(segment, 2)
+	local := network.read_16(packet, 0)
+	port := network.read_16(packet, 2)
 	grant := endpoint.grant
 	in_block := local >= endpoint.local_port && local - endpoint.local_port < endpoint.port_count
-	switch {
-	case !in_block:
+	if !in_block {
 		complete(endpoint, tag, .Not_Granted, not_granted(SEND, 3, address, port, grant_remote(grant), local))
-	case grant.listen:
+		return false
+	}
+	if !endpoint.tcp {
+		if length := network.read_16(packet, 4); int(length) != len(packet) {
+			complete(endpoint, tag, .Bad_Command, errors.ring_fail(SEND, .Bad_Value, .Bytes, 2, i64(length), i64(len(packet))))
+			return false
+		}
+	}
+	switch {
+	case grant.listen && endpoint.tcp:
 		if network.admitted_find(&endpoint.admitted, address, port, now) {
-			return port, true
+			return true
 		}
 		complete(endpoint, tag, .Not_Granted, not_granted(SEND, 3, address, port, 0))
+	case grant.listen:
+		allowed, admitted, send_limit, would_send := network.admitted_send_allowed(&endpoint.admitted, address, port, u64(len(packet) - network.UDP_HEADER))
+		switch {
+		case allowed:
+			return true
+		case !admitted:
+			complete(endpoint, tag, .Not_Granted, not_granted(SEND, 3, address, port, 0))
+		case:
+			complete(endpoint, tag, .Amplification, errors.ring_fail(SEND, .Over_Limit, .Bytes, 2, i64(min(would_send, 1 << 62)), i64(min(send_limit, 1 << 62))))
+		}
 	case grant.address != 0 && address == grant.address && port == grant.port:
-		return port, true
+		return true
 	case:
 		complete(endpoint, tag, .Not_Granted, not_granted(SEND, 3, address, port, grant_remote(grant)))
 	}
-	return port, false
+	return false
 }
 
 // command does one command of an endpoint. false: the command waits for a
@@ -380,29 +447,14 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 			complete(endpoint, tag, .Out_Of_Range, region_refusal(endpoint, kind, place, count))
 			return true
 		}
-		limit := u64(endpoint.tcp ? datagram.SEGMENT_LIMIT : datagram.DATA_LIMIT)
+		limit := u64(endpoint.tcp ? datagram.SEGMENT_LIMIT : datagram.DATAGRAM_LIMIT)
 		if count > limit {
 			complete(endpoint, tag, .Too_Large, errors.ring_fail(kind, .Too_Long, .Bytes, 2, i64(count), i64(limit)))
 			return true
 		}
-		if endpoint.tcp && count < datagram.SEGMENT_LEAST {
-			complete(endpoint, tag, .Bad_Command, errors.ring_fail(kind, .Too_Small, .Bytes, 2, i64(count), datagram.SEGMENT_LEAST))
-			return true
-		}
-		if !endpoint.tcp && endpoint.grant.listen {
-			// A UDP listen grant answers only an admitted remote, and sends to
-			// a remote that did not prove its address at most 3 times the
-			// bytes that came from it. A send does not keep a place alive.
-			allowed, admitted, send_limit, would_send := network.admitted_send_allowed(&endpoint.admitted, u32(values[2]), u16(values[3]), count)
-			if !admitted {
-				complete(endpoint, tag, .Not_Granted, not_granted(kind, 3, u32(values[2]), u16(values[3]), 0))
-				return true
-			}
-			if !allowed {
-				complete(endpoint, tag, .Amplification, errors.ring_fail(kind, .Over_Limit, .Bytes, 2, i64(min(would_send, 1 << 62)), i64(min(send_limit, 1 << 62))))
-				return true
-			}
-		} else if !endpoint.tcp && !granted(endpoint, tag, values[2], values[3], true, kind, 3) {
+		least := u64(endpoint.tcp ? datagram.SEGMENT_LEAST : datagram.DATAGRAM_LEAST)
+		if count < least {
+			complete(endpoint, tag, .Bad_Command, errors.ring_fail(kind, .Too_Small, .Bytes, 2, i64(count), i64(least)))
 			return true
 		}
 		if !link_up {
@@ -413,28 +465,26 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 		if !ok {
 			return false
 		}
-		// The one copy: from the region of the program to the frame. The
-		// ports of a segment are checked in the copy, which the program
-		// cannot change.
-		remote_port := u16(values[3])
-		if endpoint.tcp {
-			copy(place_bytes(send_place)[network.IPV4_DATA:], endpoint.region[place:][:count])
-			port, allowed := segment_granted(endpoint, tag, u32(values[2]), place_bytes(send_place)[network.IPV4_DATA:][:count], now)
-			if !allowed {
-				send_place_free(send_place)
-				return true
-			}
-			remote_port = port
-		} else {
-			copy(place_bytes(send_place)[network.UDP_DATA:], endpoint.region[place:][:count])
+		// The one copy, and the one pass of this service over the bytes:
+		// from the region of the program to the frame. Each check of the
+		// header reads the copy, which the program cannot change; the region
+		// is not read again.
+		copied := place_bytes(send_place)[network.IPV4_DATA:][:count]
+		copy(copied, endpoint.region[place:][:count])
+		data_counted(&endpoint.left_data, int(count))
+		data_pass(&endpoint.left_data, int(count))
+		remote_address := u32(values[2])
+		if !header_granted(endpoint, tag, remote_address, copied, now) {
+			send_place_free(send_place)
+			return true
 		}
-		hop := next_hop(u32(values[2]))
+		hop := next_hop(remote_address)
 		if destination, known := neighbor_of(hop); known {
-			payload_send(endpoint, send_place, destination, u32(values[2]), remote_port, int(count))
+			payload_send(endpoint, send_place, destination, remote_address, int(count))
 			complete(endpoint, tag, .Ok)
 			return true
 		}
-		if !pending_add({kind = .Send, endpoint = index, tag = tag, address = hop, target = u32(values[2]), deadline = now + ANSWER_TIME, start = now, place = send_place, length = int(count), port = remote_port}) {
+		if !pending_add({kind = .Send, endpoint = index, tag = tag, address = hop, target = remote_address, deadline = now + ANSWER_TIME, start = now, place = send_place, length = int(count)}) {
 			send_place_free(send_place)
 			complete(endpoint, tag, .Busy, busy(kind, PENDING_CAPACITY))
 			return true
@@ -666,12 +716,15 @@ udp_endpoint_of :: proc "contextless" (port: u16) -> ^Endpoint {
 	index := int(port) - PORT_FIRST
 	if index >= 0 && index < ENDPOINT_CAPACITY {
 		item := &endpoints[index]
-		if item.ring_memory != 0 && !item.tcp && !item.grant.listen {
+		if item.ring_memory != 0 && !item.tcp && !item.listen {
 			return item
 		}
 	}
+	// By the port that the creation of the endpoint named, not by its
+	// grant: an endpoint whose grant was revoked still owns its listen
+	// port, and the check of its grant then refuses the datagram.
 	for &item in endpoints {
-		if item.ring_memory != 0 && !item.tcp && item.grant.listen && item.local_port == port {
+		if item.ring_memory != 0 && !item.tcp && item.listen && item.local_port == port {
 			return &item
 		}
 	}
@@ -680,12 +733,15 @@ udp_endpoint_of :: proc "contextless" (port: u16) -> ^Endpoint {
 
 // udp_remote_admitted says if a datagram reaches a UDP listen endpoint: its
 // remote is admitted, or it is admitted now. A new remote is admitted on a
-// datagram of datagram.LISTEN_FIRST_LEAST bytes at least (a stray small
+// datagram of datagram.LISTEN_FIRST_LEAST bytes of data at least (a stray small
 // datagram takes no place), from an address that can answer, and only when
 // a Receive waits for it: the rules of the TCP listen grant, with the size
 // in the place of the SYN.
 udp_remote_admitted :: proc "contextless" (endpoint: ^Endpoint, packet: network.Packet, now: u64) -> bool {
-	if network.admitted_received(&endpoint.admitted, packet.source_address, packet.source_port, u64(len(packet.data)), now) {
+	// The bytes of data: the length of the datagram less its header, which
+	// network.parse checked. The data itself is not read.
+	data_bytes := len(packet.data) - network.UDP_HEADER
+	if network.admitted_received(&endpoint.admitted, packet.source_address, packet.source_port, u64(data_bytes), now) {
 		return true
 	}
 	offset := u16(network.ETHERNET_HEADER + network.IPV4_HEADER)
@@ -696,8 +752,8 @@ udp_remote_admitted :: proc "contextless" (endpoint: ^Endpoint, packet: network.
 		// whatever its size.
 		network.problem_count(&endpoint.problems, {kind = .Not_Granted, layer = .Udp, offset = network.ETHERNET_HEADER + 12, value = packet.source_address, limit = endpoint.grant.address}, .Endpoint)
 		return false
-	case len(packet.data) < datagram.LISTEN_FIRST_LEAST:
-		network.problem_count(&endpoint.problems, {kind = .Bad_Length, layer = .Udp, offset = offset + 4, value = u32(len(packet.data)), limit = datagram.LISTEN_FIRST_LEAST}, .Endpoint)
+	case data_bytes < datagram.LISTEN_FIRST_LEAST:
+		network.problem_count(&endpoint.problems, {kind = .Bad_Length, layer = .Udp, offset = offset + 4, value = u32(data_bytes), limit = datagram.LISTEN_FIRST_LEAST}, .Endpoint)
 		return false
 	case !network.source_valid(packet.source_address, LOCAL_ADDRESS, NETWORK_MASK):
 		network.problem_count(&endpoint.problems, {kind = .Bad_Header, layer = .Ipv4, offset = network.ETHERNET_HEADER + 12, value = packet.source_address}, .Endpoint)
@@ -711,7 +767,7 @@ udp_remote_admitted :: proc "contextless" (endpoint: ^Endpoint, packet: network.
 	}
 	// The bytes of the first datagram count for the limit of what goes to
 	// this remote.
-	network.admitted_received(&endpoint.admitted, packet.source_address, packet.source_port, u64(len(packet.data)), now)
+	network.admitted_received(&endpoint.admitted, packet.source_address, packet.source_port, u64(data_bytes), now)
 	return true
 }
 
@@ -724,11 +780,15 @@ deliver :: proc "contextless" (endpoint: ^Endpoint, packet: network.Packet) {
 	posted := endpoint.posted[endpoint.posted_first]
 	endpoint.posted_first = (endpoint.posted_first + 1) % RECEIVE_CAPACITY
 	endpoint.posted_count -= 1
-	// The one copy: from the frame to the region of the program. The place
+	// The one copy, and the one pass of this service over the bytes: from
+	// the frame to the region of the program. No checksum of the datagram
+	// or the segment was computed before: the program checks it. The place
 	// was checked when it was posted.
 	count := min(u64(len(packet.data)), posted.room)
+	data_counted(&endpoint.arrived_data, int(count))
 	if region_range(endpoint, posted.place, count) {
 		copy(endpoint.region[posted.place:][:count], packet.data[:count])
+		data_pass(&endpoint.arrived_data, int(count))
 	}
 	endpoint.received += 1
 	complete_taken(endpoint, posted.tag, .Ok, {0 = posted.place, 1 = count, 2 = u64(packet.source_address), 3 = u64(packet.source_port), 4 = u64(packet.destination_port)})
@@ -744,7 +804,7 @@ resolved :: proc "contextless" (address: u32, found: network.Hardware, now: u64)
 		endpoint := &endpoints[item.endpoint]
 		#partial switch item.kind {
 		case .Send:
-			payload_send(endpoint, item.place, found, item.target, item.port, item.length)
+			payload_send(endpoint, item.place, found, item.target, item.length)
 			complete_taken(endpoint, item.tag, .Ok)
 			item = {}
 		case .Resolve:
@@ -793,6 +853,24 @@ expire :: proc "contextless" (now: u64) -> (deadline: u64) {
 	return deadline
 }
 
+// sends_waiting_refuse ends each Send of an endpoint that waits for a
+// hardware address, when the grant of the endpoint changes. The grant that
+// was checked for such a Send is gone: without this, the frame would leave
+// after a revocation, when the answer of ARP comes. The place is free
+// again, and the program gets the refusal of a remote that the grant does
+// not name.
+sends_waiting_refuse :: proc "contextless" (endpoint: ^Endpoint, index: int) {
+	for &waiting in pending {
+		if waiting.kind != .Send || waiting.endpoint != index {
+			continue
+		}
+		port := network.read_16(place_bytes(waiting.place)[network.IPV4_DATA:], 2)
+		send_place_free(waiting.place)
+		complete_taken(endpoint, waiting.tag, .Not_Granted, not_granted(u32(datagram.Command.Send), 3, waiting.target, port, grant_remote(endpoint.grant)))
+		waiting = {}
+	}
+}
+
 // controlled does one command of the root service.
 controlled :: proc "contextless" (record: ring.Record) {
 	result := datagram.Status.Ok
@@ -810,26 +888,24 @@ controlled :: proc "contextless" (record: ring.Record) {
 				break
 			}
 		}
-		// A listen port is one port of one endpoint: a TCP port that no other
-		// segment endpoint has and not in a block of client ports; a UDP port
-		// that no other UDP listen grant has and not a port PORT_FIRST + n of
-		// a client grant.
+		// A listen port is one port of one endpoint: a port that no other
+		// endpoint of the same protocol has, and not in the range of the
+		// ports of client grants. The ports of an endpoint are the ones of
+		// its creation, whatever its grant is now: an endpoint whose grant
+		// was revoked keeps its port taken until it is removed.
 		asked := datagram.grant_unpack(record.values[2])
 		taken := false
-		if asked.tcp && asked.listen {
-			taken = asked.port >= TCP_PORT_FIRST && asked.port < TCP_PORT_FIRST + ENDPOINT_CAPACITY * datagram.PORT_BLOCK
-			for &item in endpoints {
-				if item.ring_memory != 0 && item.tcp && asked.port >= item.local_port && asked.port - item.local_port < item.port_count {
-					taken = true
+		if asked.listen {
+			held: [ENDPOINT_CAPACITY]network.Local_Ports
+			for &item, index in endpoints {
+				if item.ring_memory != 0 {
+					held[index] = {tcp = item.tcp, first = item.local_port, count = item.port_count}
 				}
 			}
-		}
-		if !asked.tcp && asked.listen {
-			taken = asked.port >= PORT_FIRST && asked.port < PORT_FIRST + ENDPOINT_CAPACITY
-			for &item in endpoints {
-				if item.ring_memory != 0 && !item.tcp && item.grant.listen && item.local_port == asked.port {
-					taken = true
-				}
+			if asked.tcp {
+				taken = network.listen_port_taken(true, asked.port, TCP_PORT_FIRST, ENDPOINT_CAPACITY * datagram.PORT_BLOCK, held[:])
+			} else {
+				taken = network.listen_port_taken(false, asked.port, PORT_FIRST, ENDPOINT_CAPACITY, held[:])
 			}
 		}
 		if taken {
@@ -874,7 +950,7 @@ controlled :: proc "contextless" (record: ring.Record) {
 			endpoint := &endpoints[free]
 			name := system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
 			grant := datagram.grant_unpack(record.values[2])
-			endpoint^ = {ring_memory = handle, datagram_ring = opened, region_memory = region_handle, region = ([^]u8)(region_address)[:datagram.REGION_PAGES * system.PAGE_SIZE], grant = grant, tcp = grant.tcp, local_port = u16(PORT_FIRST + free), port_count = 1, name = name}
+			endpoint^ = {ring_memory = handle, datagram_ring = opened, region_memory = region_handle, region = ([^]u8)(region_address)[:datagram.REGION_PAGES * system.PAGE_SIZE], grant = grant, tcp = grant.tcp, listen = grant.listen, local_port = u16(PORT_FIRST + free), port_count = 1, name = name}
 			text: [32]u8
 			writer := system.Writer{buffer = text[:]}
 			network.address_write(&writer, grant.address)
@@ -900,19 +976,24 @@ controlled :: proc "contextless" (record: ring.Record) {
 	case .Endpoint_Grant:
 		result = .Bad_Command
 		values = errors.ring_fail(record.kind, .Absent, .None, 1, i64(handle))
-		for &item in endpoints {
+		for &item, index in endpoints {
 			if item.ring_memory != 0 && item.ring_memory == handle {
 				// A grant changes to none (a revocation), or to a grant of the
 				// same form and the same local ports: the local ports and their
 				// check of overlap come from Endpoint_Add only.
+				// The form is the one of the creation of the endpoint, not the
+				// one of its grant now: after a revocation, a client grant on an
+				// endpoint that was made for a listen port would send from that
+				// port.
 				new_grant := datagram.grant_unpack(record.values[1])
-				same_form := new_grant.tcp == item.tcp && new_grant.listen == item.grant.listen && (!new_grant.listen || new_grant.port == item.local_port)
+				same_form := new_grant.tcp == item.tcp && new_grant.listen == item.listen && (!new_grant.listen || new_grant.port == item.local_port)
 				if datagram.granted(new_grant) && !same_form {
 					values = errors.ring_fail(record.kind, .Bad_Value, .None, 2, i64(record.values[1]))
 					break
 				}
 				item.grant = new_grant
 				item.admitted = {}
+				sends_waiting_refuse(&item, index)
 				system.log("network: the grant of the endpoint of ", system.name_of(item.name[:]), " changed: ", datagram.granted(item.grant) ? "a new remote" : "none")
 				result = .Ok
 				values = {}
@@ -940,6 +1021,7 @@ controlled :: proc "contextless" (record: ring.Record) {
 				system.close(item.region_memory)
 			}
 			system.log("network: the endpoint of ", system.name_of(item.name[:]), " ended: ", item.sent, " datagrams sent, ", item.received, " received")
+			data_passes_log(&item)
 			item = {}
 			result = .Ok
 			values = {}
@@ -949,6 +1031,27 @@ controlled :: proc "contextless" (record: ring.Record) {
 		values = errors.ring_fail(record.kind, .Unsupported, .None, 0, i64(record.kind))
 	}
 	system.send(&control.completions, ring.Record{kind = u32(result), tag = record.tag, values = values})
+}
+
+// data_passes_log writes what this service did to the bytes of the
+// datagrams or the segments of an endpoint that ends: a measure, the
+// passes for each byte in hundredths, then the structural fact: one pass
+// on receive (the copy to the region of the program) and one pass on send
+// (the copy to the frame), with no pass for a checksum.
+data_passes_log :: proc "contextless" (endpoint: ^Endpoint) {
+	hundredths :: proc "contextless" (buffer: []u8, count: Data_Count) -> string {
+		value := count.bytes_passed * 100 / max(count.payload_bytes, 1)
+		fraction := value % 100
+		return system.format(buffer, value / 100, ".", fraction < 10 ? "0" : "", fraction)
+	}
+	name := system.name_of(endpoint.name[:])
+	protocol := endpoint.tcp ? "TCP" : "UDP"
+	unit := endpoint.tcp ? " segments), " : " datagrams), "
+	arrived, left := endpoint.arrived_data, endpoint.left_data
+	arrived_text, left_text: [24]u8
+	system.log("network: a measure: the endpoint of ", name, ", ", protocol, ": the passes of this service over the data for each payload byte: ", hundredths(arrived_text[:], arrived), " on receive (", arrived.payload_bytes, " bytes in ", arrived.units, unit, hundredths(left_text[:], left), " on send (", left.payload_bytes, " bytes in ", left.units, unit, "the payload is the datagram or the segment with its header")
+	one_pass := arrived.bytes_passed == arrived.payload_bytes && left.bytes_passed == left.payload_bytes
+	system.log("network: the endpoint of ", name, ", ", protocol, ": this service read each payload byte ", one_pass ? "one time on receive and one time on send, for the copy, and computed no checksum of it: as it must" : "more or less than one time (WRONG)")
 }
 
 // call sends one command to the frame service and waits for its completion.
@@ -978,7 +1081,7 @@ call :: proc "contextless" (command: frame.Command, tag: u32, values: [7]u64 = {
 // 3. reads the hardware address and the state of the link, and posts the
 //    places for the frames that arrive;
 // 4. writes "network: ok, the address 10.0.2.15/24 ...", then measures the
-//    headers and the checksum of one datagram 20000 times and writes the
+//    headers of IPv4 and Ethernet of one frame 20000 times and writes the
 //    cost of one.
 //
 // Then one loop runs for ever. Each pass takes the frames that arrived and
@@ -1036,18 +1139,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.write_bytes(&writer, {'/', '2', '4', ' '})
 	network.hardware_write(&writer, hardware)
 	system.log("network: ok, the address ", system.written(&writer), ", the gateway 10.0.2.2, the link is ", link_up ? "up" : "down", ", ", u64(min(RECEIVE_PLACES, int(info.values[3]))), " places for frames that arrive")
-	// The cost of the checksums in this program (no offload to the device):
-	// the headers and the checksum of the largest datagram, many times.
+	// The cost of what this program writes for each datagram or segment that leaves:
+	// the headers of IPv4 and Ethernet, with the checksum of the IPv4
+	// header. No byte of the payload is read: its checksum is the work of
+	// the program that sends it.
 	{
 		ROUNDS :: 20_000
+		PAYLOAD :: network.MTU - network.IPV4_HEADER
 		place, _ := send_place_take()
 		start := system.time()
 		for round in 0 ..< ROUNDS {
-			network.udp_frame(place_bytes(place), hardware, hardware, LOCAL_ADDRESS, GATEWAY_ADDRESS, PORT_FIRST, 7, network.UDP_DATA_LIMIT, u16(round))
+			network.ipv4_frame(place_bytes(place), hardware, hardware, LOCAL_ADDRESS, GATEWAY_ADDRESS, network.PROTOCOL_UDP, PAYLOAD, u16(round))
 		}
 		took := system.time() - start
 		send_place_free(place)
-		system.log("network: the headers and the checksum of a datagram of 1472 bytes: ", took * 1_000_000 / ROUNDS, " ns, in this program (no offload)")
+		system.log("network: the headers of IPv4 and Ethernet of a frame with a payload of ", u64(PAYLOAD), " bytes: ", took * 1_000_000 / ROUNDS, " ns, in this program (no checksum of the payload)")
 	}
 
 	for {

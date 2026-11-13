@@ -641,7 +641,7 @@ This reuses the compiler, the linker and the debugger formats.
 
 ### The steps of one module, as implemented
 
-`build_module` (`tools/kerneltool/modules.odin`) builds one module in its own folder, `build/modules/<name>/`. `kerneltool build` runs it for each module of the module table, several at once (`REPRODUCIBLE_BUILD.md`, "5. The parallelism of the tool"). It runs it only for a module whose inputs changed since its last build (`TOOLS.md`, "The incremental build").
+`build_module` (`tools/kerneltool/modules.odin`) builds one module in its own folder, `build/modules/<name>/`. `kerneltool build` runs it for each module of the module table, several at once (`REPRODUCIBLE_BUILD.md`, "5. The parallelism of the tool"). The steps 1 to 5 are the compile step (`module_compile`) and the steps 6 and 7 are the conversion (`module_convert`). The build runs the compile step only for a module whose sources changed since its last build, and the conversion alone for a module whose import has a new file (`TOOLS.md`, "The incremental build").
 
 | Step | Program | What it gives |
 |---|---|---|

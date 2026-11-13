@@ -111,6 +111,7 @@
 package console
 
 import "support:display"
+import "support:key_path"
 import "support:line_editor"
 import "support:random"
 import "support:system"
@@ -144,6 +145,7 @@ work: Work
 running: bool // For the first thread: a line runs.
 pending: [PENDING_CAPACITY]Key // The keys that the input typed during a line.
 pending_count: int
+keys_loss: key_path.Loss_Period // The keys that found `pending` full while Escape could stop the call of the line.
 // The second thread adds 1 when it ends a line. The first thread waits on
 // this word.
 changes: u32
@@ -194,7 +196,12 @@ program_generator: random.Generator
 // line running, the key edits the line, opens the completion list, walks
 // the history, or runs the line (`key`). While a line runs, Escape asks the
 // second thread to stop the isolated call, and each other key waits, in
-// order, until the line ends (at most 128 keys). The thread then waits for
+// order, until the line ends. 128 keys wait in the console; the keys after
+// them stay in the terminal ring, in order, and the console takes them
+// when the line ends. Only while Escape can stop a call of the line does
+// the console read on with 128 keys waiting, to find that Escape: a key
+// that is not Escape is then lost, and the log has the count
+// (docs/CONSOLE.md, "When a line ends, and the keys typed during a line"). The thread then waits for
 // a key, for a change of the second thread, or for 100 ms while a line
 // runs, so that the time of the line on the screen moves.
 //
@@ -233,6 +240,12 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 	for {
 		seen := intrinsics.atomic_load_explicit(&changes, .Relaxed)
 		for {
+			if !keys_are_taken() {
+				// No place for a key, and no key can act now: the keys
+				// stay in the terminal ring, in order, and none is lost.
+				break
+			}
+			stoppable := running && intrinsics.atomic_load_explicit(&work.call_stoppable, .Relaxed) != 0
 			pressed := terminal.key(&output) or_break
 			if !running {
 				key(pressed)
@@ -242,7 +255,6 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 			// means what it means when typed slowly. Escape acts at once
 			// only when the line waits in a call that it can stop; if not,
 			// it is a key of the next line, as the keys before it.
-			stoppable := intrinsics.atomic_load_explicit(&work.call_stoppable, .Relaxed) != 0
 			switch line_editor.running_key_action(pressed.code == display.KEY_ESCAPE, stoppable, pending_count, PENDING_CAPACITY) {
 			case .Stop_Call:
 				system.log("console: Escape stops the line after ", system.time() - work.since, " ms; keys that wait: ", u64(pending_count))
@@ -252,10 +264,18 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 				pending[pending_count] = pressed
 				pending_count += 1
 			case .Drop:
+				// The console must read each key to find an Escape that
+				// stops the call, and it has no place for this one.
+				if key_path.loss_count(&keys_loss) {
+					system.log("console: ", u64(PENDING_CAPACITY), " keys wait for the end of the line, and the console reads on to find an Escape: a new key is lost")
+				}
 			}
 		}
 		if running && intrinsics.atomic_load_explicit(&work.finished, .Relaxed) == work.started {
 			running = false
+			if lost, ended := key_path.loss_end(&keys_loss); ended {
+				system.log("console: the line ended: ", lost, " keys were lost while it ran")
+			}
 			// The keys that waited, until one of them starts a line.
 			taken := 0
 			for taken < pending_count && !running {
@@ -270,13 +290,35 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 		palette_turn()
 		edit_show()
 		wait: system.Wait
-		system.wait_records(&wait, &output.ring.completions)
+		// While the keys stay in the terminal ring, a key that waits there
+		// must not end the wait: the end of the line does, and the time of
+		// the status, after which the console looks again at what Escape
+		// can do.
+		if keys_are_taken() {
+			system.wait_records(&wait, &output.ring.completions)
+		}
+		// A choice of the palette is taken only when no line runs: while
+		// one runs, a choice that waits in its ring must not end the wait
+		// either, and the end of the line does.
 		if palette_active() && !running {
 			system.wait_records(&wait, &palette_ring.commands)
 		}
 		system.wait_word(&wait, &changes, seen)
 		system.wait_end(&wait, running ? system.time() + STATUS_INTERVAL : system.WAIT_FOREVER)
 	}
+}
+
+// keys_are_taken says if the first thread takes keys from the terminal ring
+// now. With no line running, and while a key has a place to wait, yes.
+// With no place, only while an Escape can still stop the call of the line:
+// the console must then read each key to find it. After that Escape, and
+// during a line with no such call, the keys stay in the terminal ring.
+keys_are_taken :: proc "contextless" () -> bool {
+	if !running {
+		return true
+	}
+	escape_can_act := intrinsics.atomic_load_explicit(&work.call_stoppable, .Relaxed) != 0 && intrinsics.atomic_load_explicit(&work.cancel, .Relaxed) == 0
+	return line_editor.running_key_can_be_taken(escape_can_act, pending_count, PENDING_CAPACITY)
 }
 
 // run_lines is the entry of the second thread: it runs each line that the

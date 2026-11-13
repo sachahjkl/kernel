@@ -47,10 +47,15 @@ MOUSE_STEP :: 40
 // The exit status of QEMU when the kernel stops the machine with code 0.
 MACHINE_STOP_OK :: 1
 
+// A line of 100 keys, none with Shift, so that the terminal sends 100 key
+// presses for it: 1000 less 24 times 1, which is 976.
+KEYS_HELD_LINE :: "1000 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1"
+#assert(len(KEYS_HELD_LINE) == 100)
+
 Step_Kind :: enum {
 	Wait, // The log of the kernel has text, after the text of the last Wait.
 	Date, // As Wait; then the number after text is a date of the machine in seconds since 1970, which date_check checks by order against the clock of the host.
-	Type, // Press the keys of text, then Enter.
+	Type, // Press the keys of text, then Enter. When the console is in front, the tool then waits for the echo of the line on the log (console_echo.odin).
 	Keys, // Press the keys of text, with no Enter.
 	Key, // Press one key: text is its QEMU name.
 	Click, // Press the left button at (x, y).
@@ -400,7 +405,7 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "frame: ok, the hardware address 52:54:00:12:34:56, the link is up", any_order = true},
 	{kind = .Wait, text = "root: started network"},
 	{kind = .Wait, text = "network: ok, the address 10.0.2.15/24 52:54:00:12:34:56, the gateway 10.0.2.2, the link is up", any_order = true},
-	{kind = .Wait, text = "network: the headers and the checksum of a datagram of 1472 bytes: ", any_order = true},
+	{kind = .Wait, text = "network: the headers of IPv4 and Ethernet of a frame with a payload of 1480 bytes: ", any_order = true},
 	{kind = .Wait, text = "network: an endpoint for net: the local port 49152, the grant 10.0.2.2 port 7", any_order = true},
 	{kind = .Wait, text = "root: started net"},
 	{kind = .Wait, text = "net: the link and the address: 10.0.2.15/24, the link is up, 52:54:00:12:34:56"},
@@ -409,15 +414,27 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "net: UDP to 10.0.2.2 port 7, 41 bytes: the same 41 bytes came back from 10.0.2.2 port 7 in "},
 	{kind = .Wait, text = "net: UDP to 10.0.2.2 port 9: refused: datagram.Send: the argument address, 10.0.2.2 port 9, is refused: the grant names 10.0.2.2 port 7 only"},
 	{kind = .Wait, text = "net: ICMP echo to 10.0.2.3: refused: datagram.Echo: the argument address, 10.0.2.3, is refused: the grant names 10.0.2.2 port 7 only"},
-	{kind = .Wait, text = "net: UDP of 2000 bytes: refused, no fragment: datagram.Send: the argument count has 2000 bytes; it can have at most 1472 bytes"},
+	{kind = .Wait, text = "net: UDP of 2000 bytes: refused, no fragment: datagram.Send: the argument count has 2000 bytes; it can have at most 1480 bytes"},
+	// The program writes the UDP header: the network service checks the
+	// source port in its own copy of it.
+	{kind = .Wait, text = "net: UDP from the source port 1234: refused: the source port 1234 of the header is not the local port of this endpoint, 49152"},
+	// The network service refuses a datagram whose length field is not its
+	// count of bytes, and a datagram shorter than its header.
+	{kind = .Wait, text = "net: UDP with a wrong length field: refused: the length field of the header says 29 bytes, the Send has 28"},
+	{kind = .Wait, text = "net: UDP of 7 bytes: refused: the Send has 7 bytes, a datagram has 8 bytes at least, its header"},
+	// The network service computes no checksum of a datagram: the datagram
+	// of the peer with a wrong one reaches the endpoint of its port, and
+	// the program drops it.
+	{kind = .Wait, text = "net: UDP from 10.0.2.2 port 7 with a wrong checksum: dropped by this program: 1 datagram; the network service gave it to the endpoint of its port"},
 	// The row of the endpoint names its own grant; the rows of the machine
 	// need the right Inspect, that `net` has with the machine.
 	{kind = .Wait, text = "net: refused for this endpoint: 1 x udp, byte 34: the remote port 9 is not the port of the grant, 7"},
-	{kind = .Wait, text = "net: refused for the machine: 1 x udp, byte 40: the checksum is 0x"},
+	{kind = .Wait, text = "net: refused for the machine: 1 x ipv4, byte 24: the checksum is 0x"},
 	{kind = .Wait, text = "net: UDP from 10.0.2.2 port 9 to this endpoint: refused: from port 9; a row of this endpoint"},
-	{kind = .Wait, text = "net: malformed frames from the wire: 10 refused in 10 kinds, 10 of 10 expected; no fault"},
+	{kind = .Wait, text = "net: malformed frames from the wire: 9 refused in 9 kinds, 9 of 9 expected; no fault"},
 	{kind = .Wait, text = "net: ICMP echo from 10.0.2.2 to this machine: the network service answered 1 request"},
-	{kind = .Wait, text = "net: ok, 10 cases"},
+	{kind = .Wait, text = "net: ok, 14 cases"},
+	{kind = .Wait, text = "net: the header and the checksum of a datagram of 1472 bytes: "},
 	{kind = .Wait, text = "net: the round trip of one datagram of 64 bytes: "},
 	{kind = .Wait, text = "net: a burst with 64 datagrams in flight: "},
 	{kind = .Wait, text = " datagrams in one second, sent and answered, 0 lost"},
@@ -440,6 +457,11 @@ scenario_network := [?]Step {
 	{kind = .Close, text = "net"},
 	{kind = .Wait, text = "root: net stopped with code 0"},
 	{kind = .Wait, text = "network: the endpoint of net ended: "},
+	// The passes of the network service over the bytes of the datagrams of
+	// `net`: a measure, then the structural count: one copy each way, and no
+	// checksum.
+	{kind = .Wait, text = "network: a measure: the endpoint of net, UDP: the passes of this service over the data for each payload byte: "},
+	{kind = .Wait, text = "network: the endpoint of net, UDP: this service read each payload byte one time on receive and one time on send, for the copy, and computed no checksum of it: as it must"},
 	// The calls of the host (docs/MODULE_CONTRACT.md, "A call from the
 	// host"). The remote service holds an endpoint whose grant names the
 	// host, and connects to the services that the root service names for it.
@@ -1209,6 +1231,25 @@ scenario := [?]Step {
 	{kind = .Wait, text = "console: Escape stops the line after "},
 	{kind = .Wait, text = "[console] error: Escape stopped the call of spin"},
 	{kind = .Wait, text = "[console] 13"},
+	// No key is lost while the console does not take a line: 100 keys
+	// typed during a call that does not return wait, in order, and are the
+	// next line. The count of the keys that wait is exact, the echo is the
+	// exact line, and no queue of the path of a key wrote that a record is
+	// lost (docs/ARCHITECTURE.md, "The path of a key").
+	{kind = .Type, text = "spin()"},
+	{kind = .Keys, text = KEYS_HELD_LINE},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "console: Escape stops the line after "},
+	{kind = .Wait, text = " ms; keys that wait: 100"},
+	{kind = .Wait, text = "[console] error: Escape stopped the call of spin"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "[console] > " + KEYS_HELD_LINE, fails_on = "is lost"},
+	{kind = .Wait, text = "[console] 976"},
+	// The Escape stopped the sandboxed program of probe: a call starts it
+	// again, so that the list of the programs has it for the picture.
+	{kind = .Type, text = "count()"},
+	{kind = .Wait, text = "[probe] host: ready"},
+	{kind = .Wait, text = "[console] 1"},
 	{kind = .Type, text = "where(programs(), \"name\", \"probe\")"},
 	{kind = .Wait, text = "probe  "},
 	{kind = .Shot, text = "isolated"},
@@ -2634,6 +2675,7 @@ Machine :: struct {
 	started_at:  time.Tick, // When QEMU started: the first Wait says how long the boot took.
 	started_unix: i64, // When QEMU started, in seconds since 1970: no date that the machine prints is before it.
 	times:       Machine_Step_Times, // The times of the step that runs (test_times.odin).
+	echo:        Console_Echo, // The lines typed into the console whose echo the tool waits for (console_echo.odin).
 }
 
 monitor_send :: proc(machine: ^Machine, parts: ..string) {
@@ -3122,6 +3164,9 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		step_started := time.tick_now()
 		test_times_step_start(machine)
 		defer test_times_step_end(machine, index, given_step, step_started)
+		if index > 0 {
+			console_echo_note_step(&machine.echo, steps[index - 1]) // The step before passed.
+		}
 		if index > 0 && remote_starts_or_ends(steps[index - 1]) && machine.peer != nil && machine.peer.remote != nil {
 			// The step before started or closed `remote`: its key of the
 			// start before is forgotten, and the tool no longer reads the
@@ -3218,8 +3263,17 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			if step.kind == .Type {
 				append(&keys, "ret")
 			}
+			// A line that goes to the console: the console writes it on the
+			// log when it enters it (console_echo.odin).
+			echo_wanted := step.kind == .Type && console_echo_wanted(&machine.echo, step.text)
+			if echo_wanted {
+				console_echo_owe(machine, step.text)
+			}
 			if !keys_send(machine, keys[:], fmt.tprintf("\"%s\"", step.text)) {
 				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not take the keys of \"%s\"", index + 1, step.text)
+				return false
+			}
+			if echo_wanted && !machine.echo.line_can_run && !console_echo_wait(machine, index + 1) {
 				return false
 			}
 		case .Key:

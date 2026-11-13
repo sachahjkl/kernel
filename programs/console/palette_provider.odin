@@ -286,6 +286,13 @@ palette_turn :: proc "contextless" () {
 	if !palette_active() || running {
 		return
 	}
+	// The keys first: a key that waits for the end of a line, or that is
+	// still in the terminal ring, was typed before the choice, and acts
+	// before it. The loop reads the terminal ring at its next turn, which
+	// comes at once: the ring is in its wait while no line runs.
+	if pending_count > 0 || ring.count(&output.ring.completions) > 0 {
+		return
+	}
 	// The typed values of a choice come before it, with its tag: they are
 	// taken with it.
 	for {
@@ -365,14 +372,18 @@ palette_command_named :: proc "contextless" (name: string) -> (found: ^Command) 
 }
 
 // palette_line_run runs a line that the console built for the palette, as
-// a line that the input typed.
+// a line that the input typed. What the input typed in the edit line and
+// did not enter yet is kept: it is in the edit line again after the line
+// of the palette is entered, so no typed key is lost.
 palette_line_run :: proc "contextless" (tag: u32, text: string) {
 	completion_close()
 	history_place = 0
+	typed_before := line
 	line_editor.line_set(&line, text)
 	system.log("console: the palette runs ", text)
 	palette_tag = tag
 	line_enter()
+	line = typed_before
 }
 
 // palette_choice takes one choice of the compositor.

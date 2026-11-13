@@ -407,11 +407,11 @@ build_measure_lines_name_the_counts_and_the_steps :: proc(t: ^testing.T) {
 	append(&steps, Build_Step_Time{name = "the debug image", duration = 250 * time.Millisecond})
 	volume_times := make([dynamic]Build_Step_Time, context.temp_allocator)
 	append(&volume_times, Build_Step_Time{name = "main", duration = 3 * time.Second}, Build_Step_Time{name = "shortage", duration = 2500 * time.Millisecond})
-	measure := Build_Measure{input_files = 1200, input_bytes = 9000000, input_hash = 200 * time.Millisecond, modules = 4 * time.Second, modules_built = 3, modules_kept = 81, steps = steps, volumes_built = 2, volumes_kept = 1, volumes_not_needed = 15, volume_processes = 2, volume_times = volume_times}
+	measure := Build_Measure{input_files = 1200, input_bytes = 9000000, input_hash = 200 * time.Millisecond, modules = 4 * time.Second, modules_built = 3, modules_converted = 33, modules_kept = 48, module_compile_steps = 3500 * time.Millisecond, module_conversions = 250 * time.Millisecond, steps = steps, volumes_built = 2, volumes_kept = 1, volumes_not_needed = 15, volume_processes = 2, volume_times = volume_times}
 	lines := build_measure_lines(measure, 60 * time.Second)
 	testing.expect_value(t, len(lines), 5)
 	testing.expect(t, strings.contains(lines[0], "the hash of 1200 input files (9000000 bytes) 0.20 s"), lines[0])
-	testing.expect(t, strings.contains(lines[0], "3 built, 81 kept"), lines[0])
+	testing.expect(t, strings.contains(lines[0], "3 built, 33 converted, 48 kept (the compile steps 3.50 s, the conversions 0.25 s, "), lines[0])
 	testing.expect(t, strings.contains(lines[1], "0.25 s: the debug image"), lines[1])
 	testing.expect(t, strings.contains(lines[2], "the boot volumes: 2 built, 1 kept, 15 not needed by this command; 2 volume processes at once"), lines[2])
 	testing.expect(t, strings.contains(lines[3], "3.00 s: the process of the boot volume main"), lines[3])
@@ -424,4 +424,364 @@ build_measure_lines_name_the_counts_and_the_steps :: proc(t: ^testing.T) {
 	lines = build_measure_lines(measure, time.Second)
 	testing.expect_value(t, len(lines), 3)
 	testing.expect(t, strings.contains(lines[2], "0 built, 18 kept, 0 not needed"), lines[2])
+}
+
+// A library and a program that imports it, in a new folder: the sources of
+// each, and the files of a build of the two. No compiler runs: the test
+// writes the output of each step itself, as a function of what the step
+// reads, so a step that the tool skips leaves a stale file that the test
+// can see.
+@(private = "file")
+Two_Modules :: struct {
+	root:    string,
+	table:   ^Input_File_Table,
+	library: Module_Steps,
+	program: Module_Steps,
+	final:   Module_Steps, // A module that imports the program: the second level of the chain.
+}
+
+@(private = "file")
+two_modules_steps :: proc(root, name: string, imports: []string) -> Module_Steps {
+	sources := make([]string, 1, context.temp_allocator)
+	sources[0] = fmt.tprintf("%s/%s/main.odin", root, name)
+	compile_settings := make([]string, 2, context.temp_allocator)
+	compile_settings[0] = "odin"
+	compile_settings[1] = "-o:speed"
+	convert_settings := make([dynamic]string, context.temp_allocator)
+	import_files := make([dynamic]string, context.temp_allocator)
+	for imported in imports {
+		append(&convert_settings, "imports", imported)
+		append(&import_files, fmt.tprintf("%s/build/%s.module", root, imported))
+	}
+	compile_outputs := make([]string, 1, context.temp_allocator)
+	compile_outputs[0] = fmt.tprintf("%s/build/%s.linked", root, name)
+	convert_outputs := make([]string, 2, context.temp_allocator)
+	convert_outputs[0] = fmt.tprintf("%s/build/%s.module", root, name)
+	convert_outputs[1] = fmt.tprintf("%s/build/%s.debug", root, name)
+	return {
+		compile_record_path = fmt.tprintf("%s/build/%s%s", root, name, COMPILE_RECORD_SUFFIX),
+		convert_record_path = fmt.tprintf("%s/build/%s%s", root, name, CONVERT_RECORD_SUFFIX),
+		// The list of the compiler is a part of the inputs here only to
+		// give the test its list: the tool takes it from the record.
+		compile_inputs = {subject = fmt.tprintf("the compile step of the module %s", name), settings = compile_settings, source_files = sources},
+		convert_inputs = {subject = fmt.tprintf("the conversion of the module %s", name), settings = convert_settings[:], built_files = import_files[:]},
+		compile_outputs = compile_outputs,
+		convert_outputs = convert_outputs,
+	}
+}
+
+@(private = "file")
+two_modules_make :: proc(t: ^testing.T) -> (modules: Two_Modules) {
+	folder, error := os.make_directory_temp("", "module_steps_test_*", context.temp_allocator)
+	testing.expect_value(t, error, nil)
+	for name in ([]string{"library", "program", "final", "build"}) {
+		_ = os.make_directory_all(fmt.tprintf("%s/%s", folder, name))
+	}
+	file_write(folder, "library/main.odin", "package library\n\n@(export)\nwork :: proc \"c\" (count: i64) -> i64 {return count}\n")
+	file_write(folder, "program/main.odin", "package program\n\nforeign _ {\n\twork :: proc \"c\" (count: i64) -> i64 ---\n}\n")
+	file_write(folder, "final/main.odin", "package final\n\nforeign _ {\n\trun :: proc \"c\" () -> i64 ---\n}\n")
+	modules.root = folder
+	modules.library = two_modules_steps(folder, "library", nil)
+	modules.program = two_modules_steps(folder, "program", {"library"})
+	modules.final = two_modules_steps(folder, "final", {"program"})
+	two_modules_new_build(&modules)
+	return modules
+}
+
+// A new build starts: a new table of the sources, as each build has. The
+// build starts one hour after the files were written, so the tool can
+// record each of them.
+@(private = "file")
+two_modules_new_build :: proc(modules: ^Two_Modules) {
+	if modules.table != nil {
+		input_file_table_destroy(modules.table)
+	}
+	modules.table = input_file_table_make(modules.root, {"library", "program", "final"})
+	modules.table.started = time.time_add(time.now(), time.Hour)
+}
+
+@(private = "file")
+two_modules_destroy :: proc(modules: ^Two_Modules) {
+	input_file_table_destroy(modules.table)
+	_ = os.remove_all(modules.root)
+}
+
+@(private = "file")
+file_text :: proc(path: string) -> string {
+	bytes, error := os.read_entire_file(path, context.temp_allocator)
+	return error == nil ? string(bytes) : "(absent)"
+}
+
+// The compile step of the test: the linked file is the sources of the
+// module, and nothing of an import.
+@(private = "file")
+test_compile :: proc(steps: Module_Steps) {
+	text := strings.builder_make(context.temp_allocator)
+	for source in steps.compile_inputs.source_files {
+		fmt.sbprintf(&text, "linked from: %s", file_text(source))
+	}
+	_ = os.write_entire_file(steps.compile_outputs[0], strings.to_string(text))
+}
+
+// The conversion of the test: the module file is the linked file and the
+// hash of the file of each import, as the import table of a module.
+@(private = "file")
+test_convert :: proc(steps: Module_Steps) {
+	text := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(&text, "module of: %s", file_text(steps.compile_outputs[0]))
+	for imported in steps.convert_inputs.built_files {
+		bytes := file_text(imported)
+		fmt.sbprintf(&text, "import %s\n", hash_as_hexadecimal(blake3.hash(transmute([]u8)bytes)))
+	}
+	_ = os.write_entire_file(steps.convert_outputs[0], strings.to_string(text))
+	_ = os.write_entire_file(steps.convert_outputs[1], fmt.tprintf("debug object of: %s", file_text(steps.compile_outputs[0])))
+}
+
+// One module of one build, as the tool builds it: the tool says which
+// step runs, the test runs it, the tool writes the records.
+@(private = "file")
+test_build_one :: proc(t: ^testing.T, modules: ^Two_Modules, steps: Module_Steps) -> Module_Step {
+	step, _ := module_step_needed(steps, modules.table)
+	if step == .Kept {
+		return step
+	}
+	source_files := steps.compile_inputs.source_files
+	if step == .Built {
+		test_compile(steps)
+	}
+	test_convert(steps)
+	testing.expect(t, module_step_records_write(steps, modules.table, step == .Built, source_files, nil), "the records of the steps are written")
+	return step
+}
+
+// One build of the three modules, in the order of their levels.
+@(private = "file")
+test_build_all :: proc(t: ^testing.T, modules: ^Two_Modules) -> (library, program, final: Module_Step) {
+	two_modules_new_build(modules)
+	library = test_build_one(t, modules, modules.library)
+	program = test_build_one(t, modules, modules.program)
+	final = test_build_one(t, modules, modules.final)
+	return
+}
+
+// The files that a whole build of the sources as they are now gives.
+@(private = "file")
+expect_the_modules_of_a_whole_build :: proc(t: ^testing.T, modules: ^Two_Modules) {
+	kept: [3]string
+	for steps, index in ([3]Module_Steps{modules.library, modules.program, modules.final}) {
+		kept[index] = strings.clone(file_text(steps.convert_outputs[0]), context.temp_allocator)
+	}
+	for steps, index in ([3]Module_Steps{modules.library, modules.program, modules.final}) {
+		test_compile(steps)
+		test_convert(steps)
+		testing.expectf(t, file_text(steps.convert_outputs[0]) == kept[index], "module %d of the incremental build is the module of a whole build", index)
+	}
+}
+
+// The first build builds each module; the second keeps each one.
+@(test)
+module_steps_build_first_and_keep_after :: proc(t: ^testing.T) {
+	modules := two_modules_make(t)
+	defer two_modules_destroy(&modules)
+	library, program, final := test_build_all(t, &modules)
+	testing.expect_value(t, library, Module_Step.Built)
+	testing.expect_value(t, program, Module_Step.Built)
+	testing.expect_value(t, final, Module_Step.Built)
+	library, program, final = test_build_all(t, &modules)
+	testing.expect_value(t, library, Module_Step.Kept)
+	testing.expect_value(t, program, Module_Step.Kept)
+	testing.expect_value(t, final, Module_Step.Kept)
+}
+
+// A change of the body of a procedure of a library builds the library,
+// and converts its importer with no compile step. The importer of the
+// importer is converted too: its import has a new hash. Each module is
+// then the module of a whole build.
+@(test)
+change_inside_an_import_converts_the_importers_in_a_chain :: proc(t: ^testing.T) {
+	modules := two_modules_make(t)
+	defer two_modules_destroy(&modules)
+	test_build_all(t, &modules)
+	linked_before := strings.clone(file_text(modules.program.compile_outputs[0]), context.temp_allocator)
+	module_before := strings.clone(file_text(modules.program.convert_outputs[0]), context.temp_allocator)
+	final_before := strings.clone(file_text(modules.final.convert_outputs[0]), context.temp_allocator)
+
+	// The same export, with the same description, and another body.
+	file_write(modules.root, "library/main.odin", "package library\n\n@(export)\nwork :: proc \"c\" (count: i64) -> i64 {return count + 1}\n")
+	library, program, final := test_build_all(t, &modules)
+	testing.expect_value(t, library, Module_Step.Built)
+	testing.expect_value(t, program, Module_Step.Converted)
+	testing.expect_value(t, final, Module_Step.Converted)
+	testing.expect_value(t, file_text(modules.program.compile_outputs[0]), linked_before)
+	testing.expect(t, file_text(modules.program.convert_outputs[0]) != module_before, "the module of the importer names the new hash of its import")
+	testing.expect(t, file_text(modules.final.convert_outputs[0]) != final_before, "the module of the second level names the new hash of the importer")
+	expect_the_modules_of_a_whole_build(t, &modules)
+
+	library, program, final = test_build_all(t, &modules)
+	testing.expect_value(t, library, Module_Step.Kept)
+	testing.expect_value(t, program, Module_Step.Kept)
+	testing.expect_value(t, final, Module_Step.Kept)
+}
+
+// A change of the description of an export changes the file of the
+// library, so its importer is converted. The importer is compiled when
+// its own source changes: the declaration of the export that it calls is
+// in its source, in a `foreign` block, and nowhere else.
+@(test)
+change_of_the_declaration_of_an_import_compiles_the_importer :: proc(t: ^testing.T) {
+	modules := two_modules_make(t)
+	defer two_modules_destroy(&modules)
+	test_build_all(t, &modules)
+
+	// The library gives its export one more parameter. The importer still
+	// declares the old form: its compiled code is the same.
+	file_write(modules.root, "library/main.odin", "package library\n\n@(export)\nwork :: proc \"c\" (count, step: i64) -> i64 {return count + step}\n")
+	library, program, final := test_build_all(t, &modules)
+	testing.expect_value(t, library, Module_Step.Built)
+	testing.expect_value(t, program, Module_Step.Converted)
+	testing.expect_value(t, final, Module_Step.Converted)
+
+	// The importer declares the new form: this is a change of its source.
+	file_write(modules.root, "program/main.odin", "package program\n\nforeign _ {\n\twork :: proc \"c\" (count, step: i64) -> i64 ---\n}\n")
+	library, program, final = test_build_all(t, &modules)
+	testing.expect_value(t, library, Module_Step.Kept)
+	testing.expect_value(t, program, Module_Step.Built)
+	testing.expect_value(t, final, Module_Step.Converted)
+	expect_the_modules_of_a_whole_build(t, &modules)
+}
+
+// An import that is built again to the same bytes changes nothing above it.
+@(test)
+import_built_to_the_same_bytes_keeps_the_importer :: proc(t: ^testing.T) {
+	modules := two_modules_make(t)
+	defer two_modules_destroy(&modules)
+	test_build_all(t, &modules)
+	_ = os.remove(modules.library.compile_record_path)
+	library, program, final := test_build_all(t, &modules)
+	testing.expect_value(t, library, Module_Step.Built)
+	testing.expect_value(t, program, Module_Step.Kept)
+	testing.expect_value(t, final, Module_Step.Kept)
+}
+
+// A record with a missing or a changed output forces its step: the
+// linked file forces the two steps, the module file or the debug object
+// forces the conversion. A lost or a damaged record does the same.
+@(test)
+missing_output_or_record_forces_its_step :: proc(t: ^testing.T) {
+	modules := two_modules_make(t)
+	defer two_modules_destroy(&modules)
+	test_build_all(t, &modules)
+	program := modules.program
+
+	expect_step :: proc(t: ^testing.T, modules: ^Two_Modules, wanted: Module_Step, wanted_reason: string, what: string) {
+		two_modules_new_build(modules)
+		step, reason := module_step_needed(modules.program, modules.table)
+		testing.expectf(t, step == wanted, "%s: the step is %v, not %v", what, step, wanted)
+		testing.expectf(t, reason == wanted_reason, "%s: the reason is \"%s\", not \"%s\"", what, reason, wanted_reason)
+		// The build that follows puts each file back.
+		test_build_one(t, modules, modules.program)
+		again, _ := module_step_needed(modules.program, modules.table)
+		testing.expectf(t, again == .Kept, "%s: after its step the module is kept", what)
+	}
+
+	_ = os.remove(program.convert_outputs[0])
+	expect_step(t, &modules, .Converted, OUTPUT_CHANGED_REASON, "the module file is gone")
+	_ = os.write_entire_file(program.convert_outputs[1], "another debug object")
+	expect_step(t, &modules, .Converted, OUTPUT_CHANGED_REASON, "the debug object changed")
+	_ = os.remove(program.convert_record_path)
+	expect_step(t, &modules, .Converted, "no build record of the conversion", "the record of the conversion is gone")
+	_ = os.write_entire_file(program.convert_record_path, "not a record")
+	expect_step(t, &modules, .Converted, "no build record of the conversion", "the record of the conversion is damaged")
+	_ = os.remove(program.compile_outputs[0])
+	expect_step(t, &modules, .Built, OUTPUT_CHANGED_REASON, "the linked file is gone")
+	_ = os.write_entire_file(program.compile_outputs[0], "another linked file")
+	expect_step(t, &modules, .Built, OUTPUT_CHANGED_REASON, "the linked file changed")
+	_ = os.remove(program.compile_record_path)
+	expect_step(t, &modules, .Built, "no build record", "the record of the compile step is gone")
+	// The file of the import is gone: the conversion runs, and says so.
+	_ = os.remove(modules.library.convert_outputs[0])
+	two_modules_new_build(&modules)
+	step, reason := module_step_needed(modules.program, modules.table)
+	testing.expect_value(t, step, Module_Step.Converted)
+	testing.expect_value(t, reason, "the file of an import cannot be read")
+	test_convert(modules.program)
+	testing.expect(t, !module_step_records_write(modules.program, modules.table, false, modules.program.compile_inputs.source_files, nil), "no record of a conversion whose import cannot be read")
+	testing.expect(t, !os.exists(program.convert_record_path), "the old record of the conversion is removed")
+}
+
+// A record of the conversion is the record of one compile step: a linked
+// file of other sources never passes for the linked file of the record,
+// and a compile step that ran with no conversion after it leaves no
+// module that the tool keeps.
+@(test)
+conversion_record_holds_the_key_of_its_compile_step :: proc(t: ^testing.T) {
+	modules := two_modules_make(t)
+	defer two_modules_destroy(&modules)
+	test_build_all(t, &modules)
+	program := modules.program
+
+	// The compile step runs for a new source, and the build stops before
+	// the conversion: the record of the compile step is new, the record of
+	// the conversion and the module file are old.
+	file_write(modules.root, "program/main.odin", "package program\n\nforeign _ {\n\twork :: proc \"c\" (count: i64) -> i64 ---\n}\n\nmore :: 1\n")
+	two_modules_new_build(&modules)
+	test_compile(program)
+	inputs := program.compile_inputs
+	key, complete := build_key(inputs, modules.table, true)
+	testing.expect(t, complete, "the key of the new source is complete")
+	testing.expect(t, build_record_write(program.compile_record_path, key, program.compile_outputs, inputs.source_files, nil), "the record of the compile step is written")
+	step, reason := module_step_needed(program, modules.table)
+	testing.expect_value(t, step, Module_Step.Converted)
+	testing.expect_value(t, reason, CONVERSION_INPUT_CHANGED_REASON)
+
+	// The order of the imports is an input of the conversion: it is the
+	// order of the import table of the module file.
+	first, first_complete := module_convert_key(two_modules_steps(modules.root, "program", {"library", "final"}), key, nil, modules.table)
+	second, second_complete := module_convert_key(two_modules_steps(modules.root, "program", {"final", "library"}), key, nil, modules.table)
+	testing.expect(t, first_complete && second_complete, "the files of the two imports can be read")
+	testing.expect(t, first != second, "two orders of the imports give two keys")
+}
+
+// No record of the conversion is written when a source changed after the
+// tool hashed it: the conversion reads the sources for the description.
+@(test)
+no_conversion_record_with_a_source_that_changed_during_the_build :: proc(t: ^testing.T) {
+	modules := two_modules_make(t)
+	defer two_modules_destroy(&modules)
+	test_build_all(t, &modules)
+	// The import changes, so the program is converted in the next build.
+	file_write(modules.root, "library/main.odin", "package library\n\n@(export)\nwork :: proc \"c\" (count: i64) -> i64 {return count + 2}\n")
+	two_modules_new_build(&modules)
+	testing.expect_value(t, test_build_one(t, &modules, modules.library), Module_Step.Built)
+	step, _ := module_step_needed(modules.program, modules.table)
+	testing.expect_value(t, step, Module_Step.Converted)
+	// A source of the program is saved while the conversion runs.
+	file_write(modules.root, "program/main.odin", "package program\n\nforeign _ {\n\twork :: proc \"c\" (count: i64) -> i64 ---\n}\n\nlate :: 1\n")
+	test_convert(modules.program)
+	testing.expect(t, !module_step_records_write(modules.program, modules.table, false, modules.program.compile_inputs.source_files, nil), "no record with a source that changed during the build")
+	testing.expect(t, !os.exists(modules.program.convert_record_path), "the old record of the conversion is removed")
+	testing.expect(t, os.exists(modules.program.compile_record_path), "the record of the compile step stays: its linked file is the same")
+	two_modules_new_build(&modules)
+	step, _ = module_step_needed(modules.program, modules.table)
+	testing.expect_value(t, step, Module_Step.Built)
+}
+
+// The key of the compile step of a module of the table names no import
+// and no built file: the compile step reads none.
+@(test)
+compile_key_of_a_module_holds_no_import :: proc(t: ^testing.T) {
+	importer := Module_Build{name = "importer", source = "modules/agenda", imports = {"calendar"}}
+	alone := Module_Build{name = "importer", source = "modules/agenda"}
+	with_import, readable := module_compile_key_inputs(importer)
+	without_import, readable_alone := module_compile_key_inputs(alone)
+	testing.expect(t, readable && readable_alone, "the folder of the module can be listed")
+	testing.expect_value(t, len(with_import.built_files), 0)
+	testing.expect_value(t, len(with_import.hashed_built_files), 0)
+	testing.expect_value(t, strings.join(with_import.settings, "\n", context.temp_allocator), strings.join(without_import.settings, "\n", context.temp_allocator))
+	for setting in with_import.settings {
+		testing.expect(t, setting != "imports" && !strings.contains(setting, "calendar"), setting)
+	}
+	conversion := module_convert_key_inputs(importer)
+	testing.expect_value(t, len(conversion.built_files), 1)
+	testing.expect(t, strings.has_suffix(conversion.built_files[0], "/calendar.module"), conversion.built_files[0])
 }

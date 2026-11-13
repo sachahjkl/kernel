@@ -3,6 +3,7 @@ package compositor
 import "contract:errors"
 import "contract:isolated"
 import "contract:pointer_pictures"
+import "contract:ring"
 import "support:system"
 
 // The compositor is also a service: its exports give the place of the
@@ -28,7 +29,9 @@ Pointer :: struct {
 	y:       i64, // From the top of the screen.
 	buttons: i64, // Bit 0: the left button is down; bit 1: the right one; bit 2: the middle one.
 	moves:   i64, // The pointer records that the input service sent since the start.
-	keys:    i64, // The key records that the input service sent since the start: each press and each release is one.
+	keys:    i64, // The key records that the input service sent since the start: each press and each release is one. The palette takes some of them, and a record goes to no window when none is open.
+	keys_waiting: i64, // The key records that wait in the compositor for a window whose ring is full.
+	keys_refused: i64, // The key records that the compositor lost since the start: the ring of the window and the queue of the compositor for it were full. 0 on a system that works.
 	menu:    [16]u8, // The menu of the bar that is open: "programs", "windows", or empty.
 	palette:  i64, // The state of the palette: 0 closed; 1 the search; 2 it asks for a second Enter; 3 it waits for its provider; 4 it shows a result; 5 it has the form of a command. Not 0: it takes the keys.
 	shape:    [32]u8, // The name of the pointer shape on the screen: "arrow", "move", "text", ... (docs/POINTERS.md).
@@ -46,6 +49,10 @@ Window :: struct {
 	keyboard: i64, // 1: the keys go to the window: the one with the focus, while the palette is closed.
 	presents: i64, // The Present records that the program of the window sent since it created its surface.
 	waits:    i64, // 1: a Present of the program changed a part of the screen, and no frame drew it yet.
+	events_sent: i64, // The event records that the ring of the window took since the window opened: keys, pointer records, changes of the settings.
+	events_unread: i64, // The event records in the ring that the program did not read yet. The program writes the count of its reads: it says this of itself.
+	events_waiting: i64, // The event records that wait in the compositor, because the ring of the window is full.
+	keys_refused: i64, // The key records of this window that the compositor lost: the ring and the queue were full.
 }
 
 // What the screen shows against what the compositor received: screen().
@@ -95,6 +102,13 @@ acts_for_principal :: proc "contextless" () -> bool {
 //   middle one.
 // - `moves`, `keys`: the pointer records and the key records that the
 //   input service sent since the start.
+// - `keys_waiting`: the key records that wait in the compositor for a
+//   window whose ring is full. They go to that window, in order, when it
+//   reads.
+// - `keys_refused`: the key records that the compositor lost since the
+//   start, because the ring of a window and the queue of the compositor
+//   for it were both full. It is 0 on a system that works; the log has a
+//   line for each loss period.
 // - `menu`: `programs`, `windows`, or empty.
 // - `palette`: the state of the palette: 0 while it is closed; 1 while it
 //   is open and the input searches; 2 while it asks for a second Enter; 3
@@ -118,7 +132,7 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	if len(result^) > 0 {
-		result[0] = {x = i64(pointer_x), y = i64(pointer_y), buttons = i64(buttons), moves = i64(pointer_moves), keys = i64(key_records), palette = i64(palette_panel.state)}
+		result[0] = {x = i64(pointer_x), y = i64(pointer_y), buttons = i64(buttons), moves = i64(pointer_moves), keys = i64(key_records), keys_waiting = i64(keys_waiting_of_all_windows()), keys_refused = i64(key_records_refused), palette = i64(palette_panel.state)}
 		copy(result[0].shape[:len(result[0].shape) - 1], pointer_pictures.SHAPE_NAMES[pointer_shape_under()])
 		#partial switch menu_open {
 		case .Programs:
@@ -151,6 +165,13 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 // - `waits`: 1 while a `Present` of the program changed a part of the
 //   screen and no frame drew it yet. 0: the screen shows the last picture
 //   that the program sent before the call.
+// - `events_sent`, `events_unread`: the event records that the ring of the
+//   window took, and the ones in the ring that the program did not read
+//   yet.
+// - `events_waiting`: the event records that wait in the compositor while
+//   the ring of the window is full (256 at most).
+// - `keys_refused`: the key records of this window that were lost, because
+//   256 records already waited.
 //
 // Only a program that created its surface has a window. If the table of
 // the caller has fewer places than windows, the rows of the windows at the
@@ -174,6 +195,7 @@ windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
 			continue
 		}
 		client := &clients[order[position]]
+		queue := &window_queues[order[position]]
 		result[row] = {
 			x        = i64(client.x),
 			y        = i64(client.y),
@@ -184,6 +206,10 @@ windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
 			keyboard = row == 0 && !palette_is_open() ? 1 : 0,
 			presents = i64(client.presents),
 			waits    = client.present_waits ? 1 : 0,
+			events_sent = i64(queue.delivered),
+			events_unread = i64(ring.count(&client.ring.completions)),
+			events_waiting = i64(queue.count + (queue.move_waits ? 1 : 0)),
+			keys_refused = i64(queue.refused[.Key]),
 		}
 		copy(result[row].title[:len(result[row].title) - 1], system.name_of(client.title[:]))
 	}
