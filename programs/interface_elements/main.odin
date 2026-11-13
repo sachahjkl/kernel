@@ -45,7 +45,7 @@ drawing: interface.Window_Drawing
 
 // What the window shows: the state of the program.
 presses: u64
-names := [?]string{"boot", "clock", "remote", "scheduler", "launcher", "compositor"}
+names := [?]string{"boot", "clock", "remote", "scheduler", "palette", "compositor"}
 choice: int
 typed: [32]u8
 typed_count: int

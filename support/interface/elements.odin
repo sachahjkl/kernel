@@ -326,3 +326,174 @@ find_without_case :: proc "contextless" (name, part: string) -> int {
 	}
 	return -1
 }
+
+// What a row of a list of rows is.
+List_Row_Kind :: enum u8 {
+	Entry, // A thing that the input can choose: a mark, a name, a text at the right.
+	Heading, // A dim line that names the group of the rows under it. It is never the chosen row.
+}
+
+// One row of a list of rows (list_of_rows). The texts stay in the memory of
+// the caller.
+List_Row :: struct {
+	kind:           List_Row_Kind, // An entry or the heading of a group.
+	name:           string, // The name, in the interface font.
+	matched_places: u128, // Bit n: the byte n of the name matched the search. A line of 2 pixels is under each such character.
+	mark_shown:     bool, // A square of 8 pixels is before the name.
+	mark_outlined:  bool, // The mark is the outline of the square, 2 pixels wide: a second form, for a reader who does not tell two colors apart.
+	mark_color:     graphics.Color, // The color of that square: one fact of the entry.
+	right_text:     string, // A dim text at the right of the row: what the entry is, in words.
+	name_in_cells:  bool, // The name is code: it is in the font of the cells.
+	name_color:     graphics.Color, // The color of the name on a row that is not chosen. 0: the text color.
+	detail:         string, // A quiet text right after the name, in the font of the cells: the parameters and the result of a command. It is cut to its room.
+}
+
+// List_Rows_Options: what a list of rows shows beside its rows.
+List_Rows_Options :: struct {
+	chosen:       int, // The chosen row, as an index in the rows given; -1: none.
+	chosen_color: graphics.Color, // The fill of the chosen row. 0: COLOR_CHOSEN.
+	chosen_hint:  string, // On the chosen row, this text takes the place of right_text, in white ("enter: start").
+	first:        int, // The index of the first row given in the whole list: the place of the bar at the right.
+	total:        int, // The rows of the whole list. More than the rows of the area: a bar of 2 pixels at the right.
+}
+
+LIST_ROW_MARK_X :: 16 // From the left of a row to its mark.
+LIST_ROW_MARK_SIZE :: 8 // The side of the mark.
+LIST_ROW_NAME_X :: LIST_ROW_MARK_X + LIST_ROW_MARK_SIZE + 8 // From the left of a row to its name.
+LIST_ROW_RIGHT_MARGIN :: 16 // From the text at the right to the right of a row.
+LIST_ROW_SCROLL_WIDTH :: 2 // The bar at the right of a list that does not show each row.
+
+// list_of_rows draws rows of 24 pixels: for each one a mark (a full square
+// or the outline of one), a name with a line of 2 pixels under each matched
+// character, a quiet detail after a name that is code, and a dim text at
+// the right; the chosen row filled, with its text in white, and at its
+// right its hint when the caller gives one, else the same text as the
+// other rows. It takes no input: the caller owns the choice and gives only the
+// rows that the area shows, so the work is the rows on the screen, not the
+// rows of the list. It gives the count of the rows that it drew.
+list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row, options: List_Rows_Options) -> int {
+	table := frame.table
+	shown_count := min(len(rows), area.height / TABLE_LINE, LIST_MEASURE_CAPACITY)
+	visible_rows := area.height / TABLE_LINE
+	scroll_width := options.total > visible_rows ? LIST_ROW_SCROLL_WIDTH : 0
+	line_width := area.width - scroll_width
+	chosen_color := options.chosen_color != 0 ? options.chosen_color : graphics.Color(graphics.COLOR_CHOSEN)
+	// The names of the rows, measured in one call.
+	names: [LIST_MEASURE_CAPACITY]string
+	widths: [LIST_MEASURE_CAPACITY]int
+	for index in 0 ..< shown_count {
+		names[index] = rows[index].name
+	}
+	if shown_count > 0 {
+		texts_measure(table, FONT_INTERFACE, names[:shown_count], widths[:shown_count])
+	}
+	for index in 0 ..< shown_count {
+		row := rows[index]
+		y := area.y + index * TABLE_LINE
+		if row.kind == .Heading {
+			draw_text(table, area.x + LIST_ROW_MARK_X, y + 4, text_fit(table, FONT_INTERFACE, row.name, line_width - 2 * LIST_ROW_MARK_X), graphics.COLOR_DIM, FONT_INTERFACE)
+			continue
+		}
+		chosen := index == options.chosen
+		if chosen {
+			draw_rectangle(table, area.x, y, line_width, TABLE_LINE, chosen_color)
+		}
+		if row.mark_shown {
+			mark_color := row.mark_color
+			// A mark in the color of its own row, or in the blue that the
+			// chosen blue is made from, has no contrast there: it is white.
+			if chosen && (mark_color == chosen_color || mark_color == graphics.COLOR_TITLE) {
+				mark_color = graphics.COLOR_WHITE
+			}
+			mark_y := y + (TABLE_LINE - LIST_ROW_MARK_SIZE) / 2
+			if row.mark_outlined {
+				draw_outline(table, area.x + LIST_ROW_MARK_X, mark_y, LIST_ROW_MARK_SIZE, LIST_ROW_MARK_SIZE, 2, mark_color)
+			} else {
+				draw_rectangle(table, area.x + LIST_ROW_MARK_X, mark_y, LIST_ROW_MARK_SIZE, LIST_ROW_MARK_SIZE, mark_color)
+			}
+		}
+		// The text at the right takes its room first; the name takes the rest.
+		right_text := chosen && options.chosen_hint != "" ? options.chosen_hint : row.right_text
+		name_room := line_width - LIST_ROW_NAME_X - LIST_ROW_RIGHT_MARGIN
+		if right_text != "" {
+			right_width := text_measured_width(table, FONT_INTERFACE, right_text)
+			if right_width <= name_room - 16 {
+				draw_text_right(table, area.x + line_width - LIST_ROW_RIGHT_MARGIN, y + 4, right_text, chosen ? graphics.COLOR_WHITE : graphics.COLOR_DIM, FONT_INTERFACE)
+				name_room -= right_width + 16
+			}
+		}
+		name := row.name
+		name_font := row.name_in_cells ? Font{} : FONT_INTERFACE
+		name_width := row.name_in_cells ? text_width(name_font, name) : widths[index]
+		if name_width > name_room {
+			name = text_fit(table, name_font, name, name_room)
+			name_width = text_measured_width(table, name_font, name)
+		}
+		name_x := area.x + LIST_ROW_NAME_X
+		name_color := row.name_color != 0 ? row.name_color : graphics.Color(graphics.COLOR_TEXT)
+		draw_text(table, name_x, y + 4, name, chosen ? graphics.COLOR_WHITE : name_color, name_font)
+		if row.detail != "" {
+			draw_text(table, name_x + name_width, y + 4, text_fit(table, {}, row.detail, name_room - name_width), chosen ? graphics.COLOR_WHITE : graphics.COLOR_DIM)
+		}
+		// One line under each run of matched characters, measured in the
+		// font of the name: at most one measure for each end of a run.
+		places := row.matched_places
+		at := 0
+		for places != 0 && at < min(len(name), 128) {
+			if places & (u128(1) << uint(at)) == 0 {
+				at += 1
+				continue
+			}
+			run_start := at
+			for at < min(len(name), 128) && places & (u128(1) << uint(at)) != 0 {
+				places &~= u128(1) << uint(at)
+				at += 1
+			}
+			start_x := text_measured_width(table, name_font, name[:run_start])
+			end_x := text_measured_width(table, name_font, name[:at])
+			draw_rectangle(table, name_x + start_x, y + 20, end_x - start_x, 2, chosen ? graphics.COLOR_WHITE : graphics.COLOR_KERNEL)
+		}
+	}
+	if scroll_width != 0 && options.total > 0 {
+		track := visible_rows * TABLE_LINE
+		x := area.x + area.width - scroll_width
+		draw_rectangle(table, x, area.y, scroll_width, track, graphics.COLOR_TRACK)
+		draw_rectangle(table, x, area.y + clamp(options.first, 0, options.total) * track / options.total, scroll_width, max(visible_rows * track / options.total, 2), graphics.COLOR_DIM)
+	}
+	return shown_count
+}
+
+TEXT_INPUT_LINE_MARGIN :: 16 // From the left and the right of the field to its text.
+
+// text_input_line draws a field of one line whose text has a caret at any
+// place, at a scale of 1 to 3: the track, the line of 2 pixels in the blue
+// of the title bar at its bottom, the text in white in the font of the
+// cells, the caret (2 pixels wide for each unit of the scale, as high as
+// the text), and the placeholder in the dim color when the text is empty.
+// The field has no border: its fill reaches each edge of its area. A text
+// longer than the field shows the part that holds the caret. It takes no
+// input: the caller edits the line (support/line_editor).
+text_input_line :: proc "contextless" (frame: ^Frame, area: Area, text: string, caret: int, scale: int, placeholder := "") {
+	table := frame.table
+	used_scale := clamp(scale, 1, 3)
+	font := Font{scale = u8(used_scale)}
+	cell_width := graphics.CELL_WIDTH * used_scale
+	text_height := graphics.CELL_HEIGHT * used_scale
+	caret_width := 2 * used_scale
+	draw_rectangle(table, area.x, area.y, area.width, area.height - 2, graphics.COLOR_TRACK)
+	draw_rectangle(table, area.x, area.y + area.height - 2, area.width, 2, graphics.COLOR_TITLE)
+	text_x := area.x + TEXT_INPUT_LINE_MARGIN
+	text_y := area.y + (area.height - text_height) / 2
+	fit := max((area.width - 2 * TEXT_INPUT_LINE_MARGIN - caret_width) / cell_width, 1)
+	caret_place := clamp(caret, 0, len(text))
+	first := len(text) > fit ? max(caret_place - fit, 0) : 0
+	shown := text[first:min(first + fit, len(text))]
+	// The caret first: a glyph beside it draws over its edge, not under it.
+	draw_rectangle(table, text_x + (caret_place - first) * cell_width, text_y, caret_width, text_height, graphics.COLOR_TITLE)
+	draw_text(table, text_x, text_y, shown, graphics.COLOR_WHITE, font)
+	if len(text) == 0 && placeholder != "" {
+		placeholder_x := text_x + cell_width
+		placeholder_font := Font{kind = .Interface, scale = u8(used_scale)}
+		draw_text(table, placeholder_x, text_y, text_fit(table, placeholder_font, placeholder, area.x + area.width - TEXT_INPUT_LINE_MARGIN - placeholder_x), graphics.COLOR_DIM, placeholder_font)
+	}
+}

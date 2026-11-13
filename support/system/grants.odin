@@ -155,6 +155,16 @@ Root_Command :: enum u32 {
 	// forgets the debug access. Only the program with the grant Debugger
 	// sends this command.
 	Debug = 14,
+	// Palette_Provide makes the caller the palette provider of the desktop
+	// (docs/CONSOLE.md, "8. The palette provider"). The root service makes the
+	// entry table (contract:palette_table) and one ring, and gives both to
+	// the caller and to the compositor: the caller writes the table, the
+	// compositor maps it read-only. The name of the command is not read.
+	// The completion: values[0] the handle of the table, values[1] the
+	// handle of the ring. The root service refuses it to a program that
+	// does not have the grant Palette, after a revocation of that grant,
+	// and when a provider exists already (Bad_State).
+	Palette_Provide = 15,
 }
 
 // The state of a principal in the root service.
@@ -255,6 +265,7 @@ root_command_names := [Root_Command]string {
 	.Principal_Record = "Principal_Record",
 	.Principal_Unlock = "Principal_Unlock",
 	.Debug      = "Debug",
+	.Palette_Provide = "Palette_Provide",
 }
 
 // root_command_name gives the name of a command of the root ring, or "an
@@ -298,6 +309,7 @@ Root_Grant :: enum u32 {
 	Acts_For_Principal = 6, // To act for the principal of its session in each service that the program is connected to (isolated.CALLER_ACTS_FOR_PRINCIPAL).
 	History     = 7, // The store of the line history of the console in the storage service (Root_Command.Connect_History).
 	Debug       = 8, // The handle of another program with the right Debug, for each program that the command Debug named (Root_Command.Debug).
+	Palette     = 9, // The entry table and the ring of the palette provider (Root_Command.Palette_Provide): the commands of the program show in the palette of the desktop.
 }
 // A set of grants: bit n is the grant n. The completion of `Grants` holds
 // two of them.
@@ -314,6 +326,7 @@ root_grant_names := [Root_Grant]string {
 	.Acts_For_Principal = "acts_for_principal",
 	.History     = "history",
 	.Debug       = "debug",
+	.Palette     = "palette",
 }
 
 // A name of a program in a command of the root ring: 31 bytes at most, zero

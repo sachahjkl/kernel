@@ -68,6 +68,11 @@ Control :: enum u32 {
 	Client_Remove = 2, // root to compositor. values: the same handle
 	Start         = 3, // compositor to root. values: name (4 values)
 	Stop          = 4, // compositor to root. values: the handle of the client
+	// root to compositor: a program is the palette provider. values: the
+	// handle of its ring, then the handle of its entry table, read-only
+	// (contract:palette_table), both in the compositor.
+	Palette_Provider_Add    = 5,
+	Palette_Provider_Remove = 6, // root to compositor: the palette provider ended. values: the same two handles.
 }
 
 // The ring from the input service to the compositor.
@@ -93,7 +98,7 @@ KEY_HOME :: KEY_EXTENDED | 0x47
 KEY_END :: KEY_EXTENDED | 0x4F
 KEY_PAGE_UP :: KEY_EXTENDED | 0x49
 KEY_PAGE_DOWN :: KEY_EXTENDED | 0x51
-KEY_SUPER :: KEY_EXTENDED | 0x5B // The left key with the logo. The compositor keeps it: it opens the launcher.
+KEY_SUPER :: KEY_EXTENDED | 0x5B // The left key with the logo. The compositor keeps it: it opens the palette.
 
 MODIFIER_SHIFT :: 1 // The bit of `Event.modifiers` set while a Shift key is down.
 MODIFIER_CONTROL :: 2 // The bit set while a Control key is down.

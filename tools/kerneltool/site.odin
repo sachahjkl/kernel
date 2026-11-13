@@ -34,7 +34,7 @@ Site_Picture :: struct {
 
 site_pictures := [?]Site_Picture {
 	{"The desktop", "docs/screenshots/desktop.png"},
-	{"The desktop", "docs/screenshots/launcher.png"},
+	{"The desktop", "docs/screenshots/palette.png"},
 	{"The desktop", "docs/screenshots/menu.png"},
 	{"The console", "docs/screenshots/console_completion.png"},
 	{"The console", "docs/screenshots/console.png"},

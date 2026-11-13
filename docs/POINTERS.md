@@ -66,7 +66,7 @@ One enum of the system, `Pointer_Shape` in `contract/pointer_pictures`, with one
 | Number | Name | CSS name | Where the system uses it today |
 |---|---|---|---|
 | 0 | `arrow` | `default` | the desktop, the bar, the frame of a window, a surface by default |
-| 1 | `text` | `text` | the input line of the launcher; the surface of the terminal (a request of the program `terminal`) |
+| 1 | `text` | `text` | the input band of the palette; the surface of the terminal (a request of the program `terminal`) |
 | 2 | `pointing_hand` | `pointer` | the close button of a window, the buttons of the bar, a line of an open menu |
 | 3 | `move` | `move` | a title bar, and a window while the pointer moves it |
 | 4 | `grab` | `grab` | a request of a program |
@@ -103,7 +103,7 @@ Two programs ask today: `terminal` (the shape `text` over its surface) and `poin
 `pointer_shape_under` (`programs/compositor/pointer_picture.odin`) gives the shape for the place of the pointer. The first rule that holds wins:
 
 1. While the pointer drags a window: `move`.
-2. While the launcher is open: `text` over its input line, `arrow` elsewhere.
+2. While the palette is open: `text` over its input band, `pointing_hand` over an entry of its list, `arrow` elsewhere.
 3. Over a line of an open menu, or over a button of the bar: `pointing_hand`.
 4. Over the rest of the bar: `arrow`.
 5. Over the window in front at that place: `pointing_hand` over its close button, `move` over its title bar, the shape that its program asked for over its surface, `arrow` over its border.

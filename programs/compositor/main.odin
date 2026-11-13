@@ -18,24 +18,31 @@
 // of points, the [bar](term:bar) at the top (the
 // [menu of the programs](term:menu-of-the-programs), the
 // [menu of the windows](term:menu-of-the-windows), the hint of the
-// [launcher](term:launcher), the date and the time), the windows with their
+// [palette](term:palette), the date and the time), the windows with their
 // [title bar](term:title-bar) and their close button, and the
 // [pointer](term:pointer). The input can:
 //
 // - press a line of the menu of the programs: the compositor asks the root
 //   service to start that program;
-// - press the key super: the launcher opens; typed letters filter the names
-//   of the programs, and Enter starts the chosen one;
+// - press the key super: the palette opens; typed letters narrow one list
+//   of the programs and of the windows, and Enter starts the chosen
+//   program or brings the chosen window to the front (palette.odin);
 // - drag a title bar: the window moves; a press on a window brings it to the
 //   front and gives it the [focus](term:focus);
 // - press the close button: the root service stops the program.
 //
-// The keys go to the window in front, unless the launcher is open.
+// The keys go to the window in front, unless the palette is open.
 //
 // **Its lines in the log**: `compositor: ok <width>x<height>` at the start,
 // `compositor: first frame`, then, on the channel `surfaces`, one line for
 // each new surface, each move and each window brought to the front, the
-// time of a full frame, and the events of the launcher.
+// time of a full frame, and the events of the palette.
+//
+// **Its two threads.** The first thread runs the loop below. The second
+// one makes the lists of the palette: it collects the entries, copies and
+// checks the table of the [palette provider](term:palette-provider), and
+// ranks them for the typed part, so the loop never does that work
+// (palette.odin).
 //
 // **How it starts.** The root service starts it at each boot, after the
 // input service and before the console. Its context is not the context of
@@ -104,9 +111,9 @@ PLACE_STEP_Y :: 32
 CLIENT_CAPACITY :: 32 // The root service starts 32 programs at most.
 DAMAGE_CAPACITY :: 8
 CLOCK_WIDTH :: 19 * 8 // "2026-11-11 16:30:05", or the time since boot "00:00:00" when the system has no date.
-// The hint of the launcher in the bar, at the left of the time: "launcher: super".
-LAUNCHER_HINT_NAME :: "launcher: "
-LAUNCHER_HINT_KEY :: "super"
+// The hint of the palette in the bar, at the left of the time: "palette: super".
+PALETTE_HINT_NAME :: "palette: "
+PALETTE_HINT_KEY :: "super"
 
 Client :: struct {
 	ring_memory: system.Handle, // 0: the slot is free.
@@ -154,7 +161,7 @@ damage_count: int
 frames: u64
 presents: u64 // The Present records of all the programs since the start.
 // A change of the desktop itself (the pointer, the bar, a menu, the
-// launcher, a window that appeared, moved or closed) is damage that no
+// palette, a window that appeared, moved or closed) is damage that no
 // frame drew yet. The damage of a Present is counted for its window, not
 // here: a caller tells a window that draws with no end from the rest.
 desktop_change_waits: bool
@@ -164,21 +171,6 @@ desktop_change_waits: bool
 // input drags a window.
 full_measure: bool // The next frame draws the whole screen, and the log has its time.
 move_frames, move_time, move_longest: u64 // Nanoseconds.
-// The launcher: the panel that the key super opens (docs/DESIGN.md, section 9).
-launcher_open: bool
-typed: [bar.TYPED_CAPACITY]u8 // The part of a name that the input typed.
-typed_count: int
-matches: [len(bar.names)]int // Indexes in bar.names: the names that contain the typed part.
-match_count: int
-choice: int // The chosen line: an index in matches.
-kept_key: u32 // A key that the launcher took when it was pressed: its release goes to no program.
-launcher_frames, launcher_time: u64 // The frames drawn while the launcher is open, and their time in nanoseconds.
-// The panel of the launcher, built with the interface package: the table of
-// now, the table that the screen shows, the interface state.
-launcher_records_now, launcher_records_before: [128]interface.Draw_Record
-launcher_text_now, launcher_text_before: [2048]u8
-launcher_now, launcher_before: interface.Draw_Table
-launcher_state: interface.Interface_State
 // The colors of one line of a title bar, and of its lighter top line.
 title_row, title_light: [display.SURFACE_LIMIT + 2 * BORDER]graphics.Color
 
@@ -254,7 +246,7 @@ damage_menu_of :: proc "contextless" (layout: bar.Layout) {
 // The texts that the compositor draws itself follow the rule of the two
 // fonts (docs/DESIGN.md, section 5): the names (the buttons of the bar, the
 // lines of the menus, the titles of the windows, the names of the
-// launcher, a hint) in the interface font; the values (the clock, the date,
+// palette, a hint) in the interface font; the values (the clock, the date,
 // the text that the input types, a count) in the font of the cells. The
 // interface font is the one of support/display (interface_font_load); with
 // none, or with the setting Spleen 8x16, each text is in the font of the
@@ -413,8 +405,9 @@ canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
 //
 // 1. A change of the settings: the new font, the new pointer theme, and an
 //    event to each window, which draws again.
-// 2. The control ring: a window to add or to remove.
-// 3. The input ring: a key goes to the launcher, or to the window in
+// 2. The control ring: a window to add or to remove, the palette provider
+//    to add or to remove.
+// 3. The input ring: a key goes to the palette, or to the window in
 //    front; a move or a button of the pointer moves the pointer, drags a
 //    window, opens a menu or starts a program. Before the new records, the
 //    records that wait for a window whose ring was full go to it, in order
@@ -456,8 +449,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	pointer_x, pointer_y = width / 2, height / 2
 	bar_mark_build()
-	launcher_now = {records = launcher_records_now[:], text = launcher_text_now[:]}
-	launcher_before = {records = launcher_records_before[:], text = launcher_text_before[:]}
 	memory_measure()
 	title_measure()
 	pointer_theme_open(ctx) // pointer_picture.odin
@@ -469,8 +460,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// (contract:settings); a change of the settings wakes this loop.
 	display.text_settings_open(ctx)
 	display.interface_font_load(ctx)
-	launcher_now.interface_font = display.interface_font_of()
-	launcher_before.interface_font = launcher_now.interface_font
+	palette_start() // palette.odin
 	bar_layout_update()
 	bar_measure()
 	settings_seen: u32
@@ -507,6 +497,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if display.settings_page != nil {
 			system.wait_word(&wait, &display.settings_page.change_count, settings_seen)
 		}
+		palette_wait(&wait) // palette.odin
 		now := system.wait_end(&wait, deadline)
 		if display.settings_page != nil {
 			if choice := settings.read(display.settings_page); choice.change_count != settings_seen {
@@ -524,6 +515,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				client_add(system.Handle(record.values[0]))
 			case .Client_Remove:
 				client_remove(system.Handle(record.values[0]))
+			case .Palette_Provider_Add:
+				palette_provider_add(system.Handle(record.values[0]), system.Handle(record.values[1])) // palette.odin
+			case .Palette_Provider_Remove:
+				palette_provider_remove()
 			}
 		}
 		window_events_pass() // The records that wait go before the new ones.
@@ -531,7 +526,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			#partial switch display.Input(record.kind) {
 			case .Key:
 				key_records += 1
-				if !launcher_key(u32(record.values[0]), u8(record.values[1]), record.values[2] != 0) && order_count > 0 {
+				if !palette_key(u32(record.values[0]), u8(record.values[1]), record.values[2] != 0, u32(record.values[3])) && order_count > 0 {
 					send(&clients[order[order_count - 1]], ring.Record{kind = u32(display.Event_Kind.Key), values = record.values})
 				}
 			case .Pointer:
@@ -573,6 +568,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 			}
 		}
+		palette_turn() // A list of the ranking thread, an answer of the palette provider.
 		// The calls read the place of the pointer after the input records,
 		// and the state of the screen after each Present that a program
 		// sent before the call: a caller that reads "nothing waits" then
@@ -609,6 +605,7 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 		}
 	}
 	damage_add(0, 0, screen.width, screen.height)
+	palette_refresh() // An open panel is measured again in the new font.
 	buffer: [256]u8
 	writer := system.Writer{buffer = buffer[:]}
 	for setting in settings.Setting {
@@ -666,6 +663,7 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		system.ring_close(&client.ring)
 		system.close(client.ring_memory)
 		client = {}
+		palette_entries_refresh() // A window left.
 		return
 	}
 }
@@ -713,6 +711,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	order_count += 1
 	damage_window(client)
 	system.log_in("surfaces", .Info, "compositor: surface ", system.name_of(client.title[:]), " ", width, "x", height, " at ", u64(client.x), ",", u64(client.y))
+	palette_entries_refresh() // A window appeared.
 }
 
 raise :: proc "contextless" (position: int) {
@@ -724,6 +723,7 @@ raise :: proc "contextless" (position: int) {
 	damage_window(&clients[index])
 	copy(order[position:order_count - 1], order[position + 1:order_count]) // The last place has no next one.
 	order[order_count - 1] = index
+	palette_entries_refresh() // Another window is in front.
 }
 
 inside :: proc "contextless" (x, y, left, top, width, height: int) -> bool {
@@ -744,15 +744,13 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 		}
 	}
 	pressed := new_buttons & display.BUTTON_LEFT != 0 && buttons & display.BUTTON_LEFT == 0
+	released := new_buttons & display.BUTTON_LEFT == 0 && buttons & display.BUTTON_LEFT != 0
 	held := buttons != 0 || new_buttons != 0
 	buttons = new_buttons
 
-	if launcher_open {
-		// Any press closes the launcher. The pointer does nothing else
-		// while the launcher is open.
-		if pressed {
-			launcher_close("a press of the pointer")
-		}
+	if palette_is_open() {
+		// The panel takes the pointer: no menu and no window receives it.
+		palette_pointer(motion_x != 0 || motion_y != 0, pressed, released)
 		return
 	}
 	if dragging >= 0 {
@@ -864,9 +862,10 @@ draw :: proc "contextless" (now: u64) {
 		client.present_waits = false
 	}
 	spent := system.nanoseconds() - start
-	if launcher_open {
-		launcher_frames += 1
-		launcher_time += spent
+	if palette_is_open() {
+		palette_frames += 1
+		palette_time += spent
+		palette_frame_drawn() // The screen shows the chosen entry: Enter runs it.
 	}
 	if dragging >= 0 {
 		move_frames += 1
@@ -892,8 +891,8 @@ draw_area :: proc "contextless" (area: Rectangle, now: u64) {
 	// (screen_build), each record cut to this area.
 	interface.execute_in_rectangle(&screen_table, canvas, {area.left, area.top, area.right, area.bottom}, origin_x, origin_y)
 
-	if launcher_open {
-		interface.execute_in_rectangle(&launcher_now, canvas, {area.left, area.top, area.right, area.bottom}, origin_x, origin_y)
+	if palette_is_open() {
+		interface.execute_in_rectangle(&palette_now, canvas, {area.left, area.top, area.right, area.bottom}, origin_x, origin_y)
 	}
 
 	pointer_draw(canvas, origin_x, origin_y) // pointer_picture.odin
@@ -988,169 +987,6 @@ close_button_under_pointer :: proc "contextless" () -> ^Client {
 	return nil
 }
 
-// The panel of the launcher, in the middle of the screen, on the grid.
-LAUNCHER_WIDTH :: 384
-LAUNCHER_ROWS :: 10 // The lines of the list that the panel shows.
-LAUNCHER_INPUT :: graphics.CARD_TITLE // The top of the input line, in the panel.
-LAUNCHER_LIST :: LAUNCHER_INPUT + 24 + 8 // The top of the list.
-LAUNCHER_HEIGHT :: LAUNCHER_LIST + LAUNCHER_ROWS * bar.LINE_HEIGHT + 8 + graphics.LINE_HEIGHT + graphics.CARD_MARGIN
-
-launcher_place :: proc "contextless" () -> (x, y: int) {
-	return (screen.width - LAUNCHER_WIDTH) / 2 / graphics.GRID * graphics.GRID, (screen.height - LAUNCHER_HEIGHT) / 2 / graphics.GRID * graphics.GRID
-}
-
-damage_launcher :: proc "contextless" () {
-	x, y := launcher_place()
-	damage_add(x, y, LAUNCHER_WIDTH, LAUNCHER_HEIGHT)
-}
-
-// launcher_key takes a key for the launcher. It gives true if the key is
-// for the launcher, and false if it goes to the window that has the focus.
-// The key super opens and closes the launcher. While the launcher is open,
-// it takes each key: a character adds to the typed part, backspace removes
-// the last one, up and down move the choice, enter starts the chosen
-// program, escape closes the launcher.
-launcher_key :: proc "contextless" (code: u32, character: u8, pressed: bool) -> bool {
-	if !pressed {
-		if code == kept_key {
-			kept_key = 0
-			return true
-		}
-		return launcher_open || code == display.KEY_SUPER
-	}
-	if code == display.KEY_SUPER {
-		if launcher_open {
-			launcher_close("the key super")
-		} else {
-			launcher_open = true
-			typed_count = 0
-			if menu_open != .None {
-				menu_open = .None
-				menu_line = -1
-				damage_menu()
-			}
-			launcher_filter()
-			launcher_refresh(nil)
-			system.log_in("surfaces", .Info, "compositor: the launcher is open")
-		}
-		return true
-	}
-	if !launcher_open {
-		return false
-	}
-	kept_key = code
-	switch {
-	case code == display.KEY_ESCAPE:
-		launcher_close("the key escape")
-	case code == interface.KEY_TAB:
-		// The text input keeps the focus: Tab does nothing in the launcher.
-	case code == display.KEY_UP || code == display.KEY_DOWN:
-		// The text input has the focus: the arrows move the choice of the list.
-		if match_count > 0 {
-			choice = (choice + (code == display.KEY_UP ? match_count - 1 : 1)) % match_count
-			system.log_in("surfaces", .Info, "compositor: the launcher chooses ", bar.names[matches[choice]])
-			launcher_refresh(nil)
-		}
-	case:
-		// A character, Backspace and Enter go to the text input of the panel.
-		input: interface.Input
-		input.keys[0] = {code = code, character = character}
-		input.key_count = 1
-		typed_result := launcher_refresh(&input)
-		if !typed_result.activated {
-			break
-		}
-		if match_count == 0 {
-			system.log_in("surfaces", .Info, "compositor: the launcher has no program to start")
-			break
-		}
-		name := bar.names[matches[choice]]
-		packed := system.name_pack(name)
-		system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
-		system.log_in("surfaces", .Info, "compositor: the launcher starts ", name)
-		launcher_close("")
-	}
-	return true
-}
-
-// launcher_refresh builds the panel again with the input of one key, and
-// with the list of the new typed part when the text changed. The damage is
-// the difference with the panel on the screen. It gives what the input did
-// to the text input.
-launcher_refresh :: proc "contextless" (input: ^interface.Input) -> interface.Element_Result {
-	nothing: interface.Input
-	result := launcher_build(input != nil ? input : &nothing)
-	if result.changed {
-		launcher_filter()
-		launcher_build(&nothing)
-	}
-	launcher_damage: interface.Damage
-	interface.damage_by_difference(&launcher_before, &launcher_now, &launcher_damage)
-	for rectangle in launcher_damage.rectangles[:launcher_damage.count] {
-		damage_add(rectangle.left, rectangle.top, rectangle.right - rectangle.left, rectangle.bottom - rectangle.top)
-	}
-	interface.draw_table_copy(&launcher_before, &launcher_now)
-	return result
-}
-
-// launcher_build builds the panel of the launcher with the elements of the
-// interface package: a card with the count of the names that match, the
-// text input with the typed part, the list with the chosen line, the keys.
-launcher_build :: proc "contextless" (input: ^interface.Input) -> interface.Element_Result {
-	text_input_identity := interface.identity("launcher text input")
-	launcher_state.focus = text_input_identity // The text input always has the focus.
-	frame := interface.frame_begin(&launcher_now, &launcher_state, input)
-	left, top := launcher_place()
-	count: interface.Text_Builder
-	interface.text_put_number(&count, u64(match_count))
-	interface.text_put(&count, " of ")
-	interface.text_put_number(&count, len(bar.names))
-	content := interface.card(&frame, {left, top, LAUNCHER_WIDTH, LAUNCHER_HEIGHT}, "LAUNCHER", "bar.names", graphics.COLOR_KERNEL, interface.text_of(&count))
-	result := interface.text_input(&frame, {content.x, top + LAUNCHER_INPUT, content.width, 24}, text_input_identity, typed[:], &typed_count, "type a part of a name")
-	names: [len(bar.names)]string
-	for name_index, line_number in matches[:match_count] {
-		names[line_number] = bar.names[name_index]
-	}
-	empty: interface.Text_Builder
-	interface.text_put(&empty, "no program has \"")
-	interface.text_put(&empty, string(typed[:typed_count]))
-	interface.text_put(&empty, "\" in its name")
-	interface.list_with_choice(&frame, {content.x, top + LAUNCHER_LIST, content.width, LAUNCHER_ROWS * interface.TABLE_LINE}, interface.identity("launcher list"), names[:match_count], &choice, {marked = string(typed[:typed_count]), chosen_hint = "enter: start", empty_text = interface.text_of(&empty)})
-	interface.draw_text(frame.table, content.x, top + LAUNCHER_LIST + LAUNCHER_ROWS * interface.TABLE_LINE + 8, "up down: choose   enter: start   esc: close", graphics.COLOR_DIM, interface.FONT_INTERFACE)
-	interface.frame_end(&frame)
-	return result
-}
-
-// launcher_filter makes the list again from the typed part, and writes it
-// on the log: "compositor: the launcher lists 2 of 31 for "lo": log, locks".
-launcher_filter :: proc "contextless" () {
-	match_count = bar.filter(string(typed[:typed_count]), matches[:])
-	choice = 0
-	buffer: [len(bar.names) * 16]u8
-	writer := system.Writer {
-		buffer = buffer[:],
-	}
-	for index, number in matches[:match_count] {
-		if number > 0 {
-			system.write_part(&writer, ", ")
-		}
-		system.write_part(&writer, bar.names[index])
-	}
-	system.log_in("surfaces", .Info, "compositor: the launcher lists ", u64(match_count), " of ", u64(len(bar.names)), " for \"", string(typed[:typed_count]), "\": ", system.written(&writer))
-}
-
-launcher_close :: proc "contextless" (cause: string) {
-	launcher_open = false
-	damage_launcher()
-	interface.draw_table_clear(&launcher_before)
-	system.log_in("surfaces", .Info, "compositor: the launcher was open for ", launcher_frames, " frames, ", launcher_time / max(launcher_frames, 1) / 1000, ".", launcher_time / max(launcher_frames, 1) / 100 % 10, " us per frame")
-	launcher_frames, launcher_time = 0, 0
-	if cause != "" {
-		system.log_in("surfaces", .Info, "compositor: the launcher is closed by ", cause)
-	}
-}
-
-
 // memory_measure measures copy_bytes_without_overlap and fill_bytes_with_value
 // (runtime/memory.asm; the compiler calls them as memcpy and memset) on the two
 // canvases of the screen, before the first frame, for the sizes where the
@@ -1230,7 +1066,7 @@ loop_copy :: proc "contextless" (to, from: [^]u8, count: int) {
 // The draw table of the screen: for each window, from the back to the front,
 // its frame and its surface (a Picture record), then the bar and the menus.
 // The compositor builds it once for each frame and draws it in each damage
-// area. The launcher has its own table; the pointer is drawn after both.
+// area. The palette has its own table; the pointer is drawn after both.
 screen_records: [512]interface.Draw_Record
 screen_text: [8192]u8
 screen_pictures: [CLIENT_CAPACITY + 1]graphics.Canvas // The surfaces, then the heron of the bar.
@@ -1294,11 +1130,11 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	bar_button_records(table, left, top, button_width, button_height, bar.LABEL, menu_open == .Programs)
 	left, top, button_width, button_height = bar.windows_button(bar_layout)
 	bar_button_records(table, left, top, button_width, button_height, bar.WINDOWS_LABEL, menu_open == .Windows)
-	// The hint of the launcher: a name, in the interface font, measured in
+	// The hint of the palette: a name, in the interface font, measured in
 	// its two parts as they are drawn.
-	hint_width := interface.text_measured_width(table, interface.FONT_INTERFACE, LAUNCHER_HINT_NAME) + interface.text_measured_width(table, interface.FONT_INTERFACE, LAUNCHER_HINT_KEY)
+	hint_width := interface.text_measured_width(table, interface.FONT_INTERFACE, PALETTE_HINT_NAME) + interface.text_measured_width(table, interface.FONT_INTERFACE, PALETTE_HINT_KEY)
 	hint_x := width - CLOCK_WIDTH - 32 - hint_width
-	interface.draw_text(table, interface.draw_text(table, hint_x, 8, LAUNCHER_HINT_NAME, graphics.COLOR_DIM, interface.FONT_INTERFACE), 8, LAUNCHER_HINT_KEY, graphics.COLOR_TEXT, interface.FONT_INTERFACE)
+	interface.draw_text(table, interface.draw_text(table, hint_x, 8, PALETTE_HINT_NAME, graphics.COLOR_DIM, interface.FONT_INTERFACE), 8, PALETTE_HINT_KEY, graphics.COLOR_TEXT, interface.FONT_INTERFACE)
 	seconds := now / 1000
 	x := width - CLOCK_WIDTH - 16
 	if milliseconds, known := date.milliseconds_now(date_page, now); known {

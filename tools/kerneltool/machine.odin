@@ -563,7 +563,7 @@ scenario_network := [?]Step {
 	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
 	{kind = .Front, text = "remote"},
 	{kind = .Shot, text = "remote"},
-	// The desktop: the scenario closes remote and manual, the launcher starts
+	// The desktop: the scenario closes remote and manual, the palette starts
 	// two programs, and the scenario places four windows. The title bar of
 	// the window in front goes from blue to a darker blue; the other title
 	// bars are quiet.
@@ -572,16 +572,16 @@ scenario_network := [?]Step {
 	{kind = .Close, text = "manual"},
 	{kind = .Wait, text = "root: manual stopped"},
 	{kind = .Key, text = "meta_l"},
-	{kind = .Wait, text = "compositor: the launcher is open"},
+	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = "lif"},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "compositor: the launcher starts life"},
+	{kind = .Wait, text = "compositor: the palette starts life"},
 	{kind = .Wait, text = "compositor: surface life"},
 	{kind = .Key, text = "meta_l"},
-	{kind = .Wait, text = "compositor: the launcher is open"},
+	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = "pla"},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "compositor: the launcher starts plasma"},
+	{kind = .Wait, text = "compositor: the palette starts plasma"},
 	{kind = .Wait, text = "compositor: surface plasma"},
 	// The windows move from the one in front to the one at the back: no
 	// window covers the title bar of the next one. The console covers the
@@ -596,27 +596,30 @@ scenario_network := [?]Step {
 	{kind = .Front, text = "monitor"},
 	{kind = .Front, text = "plasma"},
 	{kind = .Shot, text = "desktop"},
-	// The list narrows at each key: the names that start with the typed
-	// part come first. The arrows move the choice.
+	// The list narrows at each key, over the programs and the windows in
+	// one ranking. Each name that starts with the typed part has one score:
+	// the program that the palette started last comes first, then the
+	// window, then the programs in the order of their table. The arrows
+	// move the choice.
 	{kind = .Key, text = "meta_l"},
-	{kind = .Wait, text = "compositor: the launcher is open"},
+	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = "p"},
-	{kind = .Wait, text = " for \"p\": pages, plasma, paint, processors, "},
+	{kind = .Wait, text = " for \"p\": plasma (program), plasma (window), pages (program), paint (program), ..."},
 	{kind = .Key, text = "down"},
-	{kind = .Wait, text = "compositor: the launcher chooses plasma"},
-	{kind = .Shot, text = "launcher"},
+	{kind = .Wait, text = "compositor: the palette chooses plasma (window)"},
+	{kind = .Shot, text = "palette"},
 	{kind = .Key, text = "esc"},
-	{kind = .Wait, text = "compositor: the launcher is closed by the key escape"},
-	// A part that no name has: the list is empty, and Enter starts nothing.
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// A part that no name has: the list is empty, and Enter runs nothing.
 	{kind = .Key, text = "meta_l"},
-	{kind = .Wait, text = "compositor: the launcher is open"},
+	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = "xyz"},
-	{kind = .Wait, text = "compositor: the launcher lists 0 of "},
+	{kind = .Wait, text = "compositor: the palette lists 0 of "},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "compositor: the launcher has no program to start"},
-	{kind = .Shot, text = "launcher_empty"},
+	{kind = .Wait, text = "compositor: the palette has no entry to run"},
+	{kind = .Shot, text = "palette_empty"},
 	{kind = .Key, text = "meta_l"},
-	{kind = .Wait, text = "compositor: the launcher is closed by the key super"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key super"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = "free_pages_no_budget_holds  0"},
@@ -842,7 +845,7 @@ self_tests_run :: proc() -> bool {
 	return true
 }
 
-// The positions below come from programs/compositor/main.odin: the launcher
+// The positions below come from programs/compositor/main.odin: the buttons
 // in the bar, and the place of window n at (60 + 36 n, 52 + 30 n).
 scenario := [?]Step {
 	{kind = .Wait, text = "boot program: ok"},
@@ -889,7 +892,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: surface life"},
 	{kind = .Shot, text = "console"},
 
-	// The desktop: start programs from the launcher, and move the windows.
+	// The desktop: start programs from the menu of the bar and from the
+	// palette, and move the windows.
 	{kind = .Move, text = "life", to_x = 24, to_y = 408},
 	{kind = .Launch, text = "monitor"},
 	{kind = .Wait, text = "compositor: surface monitor"},
@@ -902,19 +906,51 @@ scenario := [?]Step {
 	{kind = .Click, x = 140, y = 10, inside_window = "paint"}, // The blue color.
 	{kind = .Drag, x = 760, y = 520, to_x = 560, to_y = 700},
 	{kind = .Drag, x = 800, y = 600, to_x = 960, to_y = 600},
-	// The launcher: the key super opens it, the typed part narrows the
-	// list, and Enter starts the chosen program.
+	// The palette: the key super opens it. With no letter it lists the
+	// windows, the front one first, then the programs.
 	{kind = .Key, text = "meta_l"},
-	{kind = .Wait, text = "compositor: the launcher is open"},
-	{kind = .Keys, text = "pla"},
-	{kind = .Wait, text = "compositor: the launcher lists 1 of "},
-	{kind = .Wait, text = " for \"pla\": plasma"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Shot, text = "palette_open"},
+	// Letters of a program: the list narrows at each key, over the windows
+	// and the programs in one ranking, and each matched letter is marked.
+	// Enter starts the chosen program.
+	{kind = .Keys, text = "p"},
+	{kind = .Wait, text = "compositor: the palette lists "},
+	{kind = .Wait, text = " for \"p\": "},
+	{kind = .Shot, text = "palette_programs"},
+	{kind = .Keys, text = "la"},
+	{kind = .Wait, text = " for \"pla\": plasma (program)"},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "compositor: the launcher starts plasma"},
+	{kind = .Wait, text = "compositor: the palette starts plasma"},
 	{kind = .Wait, text = "plasma: ok", any_order = true},
 	{kind = .Wait, text = "compositor: surface plasma"},
 	{kind = .Move, text = "plasma", to_x = 232, to_y = 144},
 	{kind = .Shot, text = "desktop_moved"},
+	// Letters of the title of a window: with equal scores the window comes
+	// before the program of the same name. Enter brings the window to the
+	// front.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "mon"},
+	{kind = .Wait, text = " for \"mon\": monitor (window), monitor (program)"},
+	{kind = .Shot, text = "palette_windows"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette brings monitor to the front"},
+	{kind = .Wait, text = "compositor: window monitor in front"},
+	// Escape closes the panel, and no program gets the key.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// A part that no name has: the list is empty, and Enter runs nothing.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "xyz"},
+	{kind = .Wait, text = "compositor: the palette lists 0 of "},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette has no entry to run"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key super"},
 	// The menu of the programs: the button of the bar opens and closes it.
 	{kind = .Click, text = BAR_PROGRAMS_BUTTON},
 	{kind = .Shot, text = "menu"},
@@ -928,12 +964,193 @@ scenario := [?]Step {
 	{kind = .Front, text = "console"},
 	{kind = .Front, text = "plasma"},
 
-	// A program that fails stops alone. The close button stops a program.
+	// A program that fails stops alone.
 	{kind = .Launch, text = "fault"},
 	{kind = .Wait, text = "stopped: page fault"},
 	{kind = .Wait, text = "root: fault stopped"},
+	// The palette closes a window. The match is fuzzy: "closepla" has the
+	// letters of "close plasma" in their order. The entry destroys, so the
+	// panel asks for a second Enter; another key goes back to the search
+	// and stops nothing.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "closepla"},
+	{kind = .Wait, text = " for \"closepla\": close plasma (close a window)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette asks to confirm: close plasma"},
+	{kind = .Shot, text = "palette_confirm"},
+	{kind = .Key, text = "down"},
+	{kind = .Wait, text = "compositor: the palette goes back to the search"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette asks to confirm: close plasma"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette closes the window plasma"},
+	{kind = .Wait, text = "root: plasma stopped"},
+
+	// The commands of the console in the palette: the console is the
+	// palette provider. A command with no parameter runs from the panel,
+	// as a line of the console: memory() gives a Record, which the panel
+	// shows.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "memo"},
+	{kind = .Wait, text = " for \"memo\": memory (command)"},
+	{kind = .Shot, text = "palette_commands"},
+	{kind = .Key, text = "ret"},
+	// The compositor and the console write their lines on one log, in the
+	// order of their own threads: the line of the compositor is looked for
+	// with no move of the place in the log, here and in the steps below.
+	{kind = .Wait, text = "compositor: the palette sends memory to the console", any_order = true},
+	{kind = .Wait, text = "console: the palette runs memory()"},
+	{kind = .Wait, text = "console: the palette gets Record, "},
+	{kind = .Wait, text = "compositor: the palette shows a Record"},
+	{kind = .Shot, text = "palette_result"},
+	// Another key leaves the result; Escape then closes the panel.
+	{kind = .Key, text = "down"},
+	{kind = .Wait, text = "compositor: the palette goes back to the search"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// A Table is too large for the panel: the panel closes, and the
+	// window of the console comes to the front with the line and its table.
+	{kind = .Front, text = "monitor"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "programs"},
+	{kind = .Wait, text = " for \"programs\": programs (command)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette sends programs to the console", any_order = true},
+	{kind = .Wait, text = "console: the palette runs programs()"},
+	{kind = .Wait, text = "console: the result of the palette choice is in the console: Table"},
+	{kind = .Wait, text = "compositor: the result of the palette is in the console"},
+	{kind = .Wait, text = "compositor: window console in front"},
+	// A command with parameters: Enter turns the input band into its form,
+	// one field for each parameter. The console gives the candidates of a
+	// field: the modules of the boot image for start. Tab takes the chosen
+	// one, and Enter in the last field runs the line that the console
+	// builds from the typed values.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "start"},
+	{kind = .Wait, text = " for \"start\": start (command)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette asks for the arguments of start"},
+	{kind = .Wait, text = " candidates for the parameter 0 of start"},
+	{kind = .Wait, text = " candidates for the field 0"},
+	{kind = .Keys, text = "plasm"},
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "compositor: the palette takes the candidate plasma"},
+	{kind = .Shot, text = "palette_arguments"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette sends start with 1 arguments to the console", any_order = true},
+	{kind = .Wait, text = "console: the palette runs start(\"plasma\")"},
+	{kind = .Wait, text = "compositor: the palette shows no value", any_order = true},
+	{kind = .Wait, text = "compositor: surface plasma"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// Two fields, and a command that destroys: the programs that run for
+	// the first field, the grants for the second one. The panel asks for a
+	// second Enter after the arguments.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "revoke"},
+	{kind = .Wait, text = " for \"revoke\": revoke (command)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette asks for the arguments of revoke"},
+	{kind = .Wait, text = " candidates for the parameter 0 of revoke"},
+	{kind = .Wait, text = " candidates for the field 0"},
+	{kind = .Keys, text = "plasm"},
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "compositor: the palette takes the candidate plasma"},
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = " candidates for the parameter 1 of revoke"},
+	{kind = .Wait, text = " candidates for the field 1"},
+	{kind = .Keys, text = "log"},
+	{kind = .Shot, text = "palette_arguments_two"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette asks to confirm: revoke"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette sends revoke with 2 arguments to the console", any_order = true},
+	{kind = .Wait, text = "console: the palette runs revoke(\"plasma\", \"log\")"},
+	{kind = .Wait, text = "root: revoked the grant log of plasma"},
+	{kind = .Wait, text = "compositor: the palette shows an Integer"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// A prefix restricts the kinds: ">" lists the commands only.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = ">mem"},
+	{kind = .Wait, text = " for \">mem\": memory (command)"},
+	{kind = .Shot, text = "palette_prefix"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// The settings: the palette starts the program settings, then ":"
+	// lists one entry for each value of each setting. The font changes
+	// behind the open panel, and the value in use has the mark. After the
+	// first choice a new list comes for the same typed part (the console
+	// has new commands, and the chosen entry is a recent one): the choice
+	// stays on its entry at whatever row it has, so one arrow down from
+	// "spleen" is "vector" in each order of the two rows, and Enter runs
+	// the row that the screen shows.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "settings"},
+	{kind = .Wait, text = " for \"settings\": settings (program)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette starts settings"},
+	{kind = .Wait, text = "compositor: surface settings", any_order = true},
+	{kind = .Wait, text = "settings: ok, "},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = ":font"},
+	{kind = .Wait, text = " for \":font\": set font to vector (setting), set font to spleen (setting)"},
+	{kind = .Key, text = "down"},
+	{kind = .Wait, text = "compositor: the palette chooses set font to spleen (setting)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette sends set font to spleen to the console", any_order = true},
+	{kind = .Wait, text = "console: the palette runs setting(\"font\", \"spleen\")"},
+	{kind = .Wait, text = "compositor: the settings changed: font spleen", any_order = true},
+	{kind = .Wait, text = "compositor: the palette did: set font to spleen"},
+	{kind = .Shot, text = "palette_settings"},
+	{kind = .Key, text = "down"},
+	{kind = .Wait, text = "compositor: the palette chooses set font to vector (setting)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "console: the palette runs setting(\"font\", \"vector\")"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector", any_order = true},
+	{kind = .Wait, text = "compositor: the palette did: set font to vector"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	{kind = .Close, text = "settings"},
+	{kind = .Wait, text = "root: settings stopped"},
 	{kind = .Close, text = "plasma"},
 	{kind = .Wait, text = "root: plasma stopped"},
+	// A command that destroys asks for a second Enter, on a row that says
+	// the act in full. Another key goes back, and nothing stops.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "shutd"},
+	{kind = .Wait, text = " for \"shutd\": shutdown (command)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette asks to confirm: shutdown"},
+	{kind = .Shot, text = "palette_confirm_command"},
+	{kind = .Key, text = "down"},
+	{kind = .Wait, text = "compositor: the palette goes back to the search"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// The grant of the provider ends: the commands leave the list, and the
+	// palette keeps the programs and the windows.
+	{kind = .Type, text = "revoke(\"console\", \"palette\")"},
+	{kind = .Wait, text = "console: the console is no more the palette provider"},
+	// The root service and the compositor write in an order that the
+	// system does not fix.
+	{kind = .Wait, text = "root: revoked the grant palette of console, holdings ended: ", any_order = true},
+	{kind = .Wait, text = "compositor: the palette has no provider"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "shutd"},
+	{kind = .Wait, text = "compositor: the palette lists 0 of "},
+	{kind = .Shot, text = "palette_no_provider"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key super"},
 
 	// Back to the console: the system tools, then stop the machine.
 	{kind = .Front, text = "console"},
@@ -1933,7 +2150,8 @@ scenario := [?]Step {
 	{kind = .Type, text = "storage.stores()"},
 	{kind = .Wait, text = "[console] console: 1 objects, 0 trees, 0 versions, 3 of 3 blocks, 0 shared, 0 connections"},
 	{kind = .Type, text = "where(grants(\"console\"), \"state\", \"lost\")"},
-	{kind = .Wait, text = "[console] console  store  lost"},
+	// The grant palette was revoked before: the column has its width.
+	{kind = .Wait, text = "[console] console  store    lost"},
 	{kind = .Shot, text = "storage"},
 	// Versions: notes commits each key, and the storage service
 	// keeps the state before each commit. The scenario steps back through the
@@ -2158,10 +2376,12 @@ scenario := [?]Step {
 	{kind = .Point, inside_window = "console", x = 200, y = 120, text = "text"}, // The surface of the terminal: its request.
 	{kind = .Shot, text = "pointer_text"},
 	{kind = .Key, text = "meta_l"},
-	{kind = .Wait, text = "compositor: the launcher is open"},
-	{kind = .Point, x = 400, y = 260, text = "text"}, // The input line of the launcher.
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Point, x = 400, y = 120, text = "text"}, // The input band of the palette.
+	{kind = .Point, x = 400, y = 180, text = "pointing_hand"}, // The first entry of its list, under the heading of its group.
+	{kind = .Point, x = 400, y = 476, text = "arrow"}, // Its footer.
 	{kind = .Key, text = "meta_l"},
-	{kind = .Wait, text = "compositor: the launcher is closed by the key super"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key super"},
 	// The settings of the system: the font, the order of the stripes, the
 	// pointer theme and the grid fit change while the programs run; each
 	// window draws again, with no code of its own for it. Each change is
@@ -2511,6 +2731,14 @@ key_name :: proc(character: u8) -> string {
 		return "bracket_right"
 	case '^':
 		return "shift-6"
+	case '>':
+		return "shift-dot"
+	case '<':
+		return "shift-comma"
+	case '?':
+		return "shift-slash"
+	case '@':
+		return "shift-2"
 	}
 	return ""
 }

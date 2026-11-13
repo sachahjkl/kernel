@@ -21,6 +21,7 @@ This guide describes the line that is typed at the console: the language that th
 | "1. The keys" | What each key does, with the list closed, the completion list open, or the history search open |
 | "2. What the console completes" | Which names come where the caret is, and from which table |
 | "3. The fuzzy match" | How a query matches a name, and the score that orders the list |
+| "8. The palette provider" | How the commands of the console show in the palette of the desktop, and how a chosen one runs |
 | "4. The bounds, and the cost of one key" | The limits that keep one key fast against a hostile description |
 | "5. Who draws the list, and the line under the edit line" | What the console sends and what the terminal lays out |
 | "6. The line history across a stop" | The store of the history, its load, its save and who can read it |
@@ -463,6 +464,8 @@ The tests pin these orders on real names of the system (the exports of `monitor`
 
 The pass back takes the latest place of each character: `set` in `manual.segments` takes the second `e`, not the `e` beside the `s`. A search of the best window costs more work for each name; the order above is the result of the bounded rule.
 
+The palette of the desktop ranks its entries with the same match and the same order (`support/line_editor`; `DESIGN.md`, "Palette"). Its tie order is: the entries chosen lately, the newest first; then the kind of the entry; then the order of its table.
+
 ## 4. The bounds, and the cost of one key
 
 The names in the list come from descriptions that other programs wrote, and a hostile description can hold very many or very long names. Each bound below keeps the work of one key below a fixed count of steps, whatever the names are.
@@ -571,3 +574,57 @@ A part with no class has the color of the text around it: the tone of the line, 
 **The bound, and a hostile list.** A row has at most 64 runs: a line with more parts keeps its first 64 runs, and the text after them is whole, in the plain color. The text is never cut by the runs: only the color stops. The terminal checks the runs against the row that takes them: each run inside the row, after the run before it, with at least one byte and a kind that exists. One run that fails, or bytes that are not a whole count of runs, or a target that takes no runs: the row is plain, its text whole, and the terminal counts it and writes once on the log "terminal: console sent runs of code that do not fit their row: the row is drawn plain, its text whole".
 
 **The cost.** The runs of the edit line are made only when its text or its caret changes, on at most 202 bytes, with one look in the tables of names (256 commands, 16 variables, 12 services, the loaded modules) for each name. `measure_completion()` gives the time of the runs of one key in its fourth part (section 4). When Tab opens the list, the log line says the count of the runs of the first row ("...; its first row has 13 runs of code"), so that a test checks the colors with no pixel.
+
+## 8. The palette provider
+
+The console is the palette provider of the desktop: each of its commands is an entry of the palette (`DESIGN.md`, "Palette"), and the console runs the entry that the input chose there. The panel is in the compositor and holds no right; a command runs in the console, with the grants of the console.
+
+**The grant.** The console has the grant `Palette`. At its start it sends `Palette_Provide` to the root service, which makes two memory objects and gives them to the console and to the compositor: the entry table, which the console writes and the compositor maps read-only, and one ring. `grants("console")` shows the grant as `palette`. `revoke("console", "palette")` ends the table and the ring in the console, and the compositor unmaps its side: the palette then lists the programs and the windows only, and its footer says "the console gives no commands". The console stops its use of the two objects before it asks for the revocation. No kernel operation is new.
+
+**The entry table** (`contract/palette_table`). A header (a magic number, a version, the change count, the count of entries), a result area of 2048 bytes, a candidate area of 96 names, then at most 256 entries of 440 bytes. One entry is one command of the command table of now: a built-in command, a short name bound to an export, or an export of a module or of a service. A command that makes a record from its fields is not listed, and of two commands with one name the table has the one that a call runs.
+
+| Field of an entry | Content |
+|---|---|
+| `kind` | `Command` (a command of the console itself), `Export`, or `Setting` |
+| `parameter_names` | The name of each parameter, 16 bytes at most each |
+| `setting`, `setting_value` | A `Setting` entry: the number of the setting and of its value |
+| `flags` | `Destroys` for `shutdown`, `stop`, `revoke`, `lock`, `history_clear`, `unload` and `replace` |
+| `parameter_count`, `parameters` | The count of the parameters, and the kind of each one |
+| `result` | The kind of the result |
+| `name` | At most 64 bytes |
+| `signature` | The name, the parameters and the result, as `describe` gives them: `revoke(Text, Text) -> Integer`. One that passes 128 bytes shows `(...)` |
+| `about` | The help sentence, its first 128 bytes |
+
+The console writes the table again after each line, when the command table changed (`load`, `isolate`, `unload`, `connect`). It adds 1 to the change count before the change and 1 after it: an odd count says that the table changes now. The change count is the generation of the table.
+
+**A choice.** The compositor sends `Choose` on the ring: the generation of the table that the panel showed, the index of the entry, the hash of its name (FNV-1a, 64 bits), and a mode. The console checks them against its own copy of the entries: an index past the table, and a hash that is not the hash of the entry at that index, are refused with "the commands changed: choose again". So the console never runs an entry that the panel did not show. It then finds the command by its name in its command table, and builds the line itself: no text of a line comes from the compositor.
+
+- **An entry with no parameter** runs as a line that the input typed: the line is echoed, it goes in the line history, the log records show under it, and the drawers draw its result in the window of the console. A choice that comes while a line runs waits for the end of that line, as a key does.
+- **An entry with parameters**, with the mode `Edit`, does not run: the console writes `name()` in its edit line, with the caret between the parentheses, and answers `Edit_Opened`. The compositor brings the window of the console to the front, and the input types the arguments there. With the mode `Run_With_Arguments` it runs with the typed values of the form (below).
+
+**The answer** is one record: an outcome, the kind of the value, and the count of the bytes of the result area in use.
+
+| Outcome | When | What the panel does |
+|---|---|---|
+| `Shown_In_Panel` | An Integer; a Text of one line; a Record; no value ("done"); each one in at most 12 lines of at most 76 cells | Shows the result |
+| `Shown_In_Console` | A Table, a Handle, Bytes, a Text of several lines, a result that does not fit | Closes; the window of the console comes to the front |
+| `Failed` | The line failed | Shows the error, in the color of a failure |
+| `Refused` | The choice names no entry that the console can run | Shows the sentence |
+| `Edit_Opened` | An entry with parameters | The window of the console comes to the front |
+
+The result area holds what the drawer of the kind of the result wrote (`support/console_results`), as runs: a byte that says what the run is (a label, a number, the name of a record, a failure), a byte of length, then the bytes. The panel draws each run in the color of what it is, the colors of the same parts in the console. It parses no text.
+
+**What the compositor checks.** The console is another program for the compositor: its table and its answers are hostile input. The compositor copies the table, then checks the copy, and reads only the copy after that: the magic number and the version; a count of entries of at most 256; a change count that is even and the same before and after the copy, in at most 4 tries; for each entry, each kind and each flag in its range, each reserved byte 0, each length inside its field, a name of 1 byte at least, each byte of a text from 32 to 126, a signature that starts with the name, and for a `Setting` entry a setting and a value that `contract/settings` has. A table that fails gives a palette with the programs and the windows only, one line of the log with the problem and its entry, and "the commands of the console were refused" in the footer. An answer is checked the same way: the count of bytes inside the result area, each run inside the count, each part in its range, each byte from 32 to 126, at most 12 lines.
+
+**The log.** The console writes "console: the palette table has N entries, generation G" at each change of the table, "console: the palette runs memory()" or "console: the palette opens stop() in the edit line" for a choice, then "console: the palette gets Record, N lines" or "console: the result of the palette choice is in the console: Table".
+
+**The form of a command with parameters.** An entry carries the name of each parameter (16 bytes at most; a longer name is absent) beside its kind. When each parameter is an Integer or a Text, the palette shows one field for each one. The built-in commands that take the name of a program, of a module or of a grant have names for their parameters (`revoke(name: Text, grant: Text)`); `help()` and `describe()` show them too.
+
+- **Candidates.** The compositor sends `Candidates` with the entry (generation, index, hash) and the number of a parameter. The console writes at most 96 names of at most 31 bytes in the candidate area of the table, and answers `Candidates_Ready` with what they are and their count: the programs that run (`stop`, `grants`, `connect`, `debug`, the first parameter of `revoke`), the modules of the boot image (`start`, `load`, `isolate`, `replace`, `manual_page`), the grants (the second parameter of `revoke`). For each other parameter the count is 0. The compositor copies the area and checks the copy: the count, each length from 1 to 31, each byte from 32 to 126.
+- **Typed values.** The compositor sends one `Argument` record for each field, then `Choose` with the mode `Run_With_Arguments` and their count, all with one tag. An Integer is a number in one value of the record; a Text is its bytes, 48 at most, in six values. The console checks each one: the number of the parameter, the kind, the length, each byte from 32 to 126, and no quote, which a line cannot hold in a text. It then checks that the count is the count of the parameters of the command and that each value has the kind of its parameter, as it checks a typed line, and builds the line itself: `revoke("plasma", "log")`. A choice whose values do not fit is refused: "the arguments do not fit the command: type the line in the console".
+
+**The settings.** The table has one entry of the kind `Setting` for each value of each setting of `contract/settings`: "set font to spleen", with the number of the setting and of the value. The compositor checks both against the same contract. A choice runs the line `setting("font", "spleen")`: `setting(name, value)` is a built-in command, the export `settings.set` under a short name, so the console connects to `settings` at the first use. The program `settings` must run.
+
+**The manual.** With the prefix `?` the compositor sends `Manual` with the name of a program, as a typed value. The console checks the name and runs `manual_page("plasma")`: the export `manual.show` under a short name, which makes the window of the manual show the page of that module. The answer is `Manual_Opened`, and the compositor brings the window of the manual to the front. The program `manual` must run: the command starts no program, and its error shows in the panel.
+
+**Not done.** The entries do not carry the age of their last use in the line history: the recent choices are those of the panel only. An export of a service that the console is not connected to is not listed. The scheduling strategy has no export, so no entry sets it. A press of the pointer does not move the caret to a field of a form.

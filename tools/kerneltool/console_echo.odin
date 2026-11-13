@@ -21,7 +21,7 @@ import "core:time"
 //
 // - The console is in front: the last step that changed the front window
 //   was the step Front of the console. A step Launch, Move, Close, Click
-//   or Drag, the key of the launcher, and a line that starts a program
+//   or Drag, the key of the palette, and a line that starts a program
 //   make the front window unknown, and the tool then waits for no echo.
 // - No line can still run: a step Wait passed since the step Type before.
 //   The console enters a line only after the line before it ended, so a
@@ -31,7 +31,7 @@ import "core:time"
 
 CONSOLE_TITLE :: "console"
 CONSOLE_ECHO_START :: "[console] > "
-LAUNCHER_KEY :: "meta_l"
+PALETTE_KEY :: "meta_l" // The key super: it opens the palette, and the keys then go to it.
 // The texts of the log lines of a lost record, in the programs of the path
 // of a key: the failure message of an echo shows each such line.
 loss_line_marks := [?]string{" is lost", " are lost", " were lost", "input: the input ring is full"}
@@ -52,7 +52,7 @@ console_echo_note_step :: proc(echo: ^Console_Echo, step: Step) {
 	case .Launch, .Move, .Close, .Click, .Drag:
 		echo.console_in_front = false
 	case .Key:
-		if step.text == LAUNCHER_KEY {
+		if step.text == PALETTE_KEY {
 			echo.console_in_front = false
 		}
 	case .Type:

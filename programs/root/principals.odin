@@ -51,7 +51,7 @@ principal_name :: proc "contextless" (number: u64) -> string {
 }
 
 // desktop_principal gives the principal of a program that the desktop
-// starts (the menu, the launcher): the named principal whose session runs,
+// starts (the menu, the palette): the named principal whose session runs,
 // else the machine.
 desktop_principal :: proc "contextless" () -> u64 {
 	for &record, number in principal_records {

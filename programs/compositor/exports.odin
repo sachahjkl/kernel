@@ -29,11 +29,11 @@ Pointer :: struct {
 	y:       i64, // From the top of the screen.
 	buttons: i64, // Bit 0: the left button is down; bit 1: the right one; bit 2: the middle one.
 	moves:   i64, // The pointer records that the input service sent since the start.
-	keys:    i64, // The key records that the input service sent since the start: each press and each release is one. The launcher takes some of them, and a record goes to no window when none is open.
+	keys:    i64, // The key records that the input service sent since the start: each press and each release is one. The palette takes some of them, and a record goes to no window when none is open.
 	keys_waiting: i64, // The key records that wait in the compositor for a window whose ring is full.
 	keys_refused: i64, // The key records that the compositor lost since the start: the ring of the window and the queue of the compositor for it were full. 0 on a system that works.
 	menu:    [16]u8, // The menu of the bar that is open: "programs", "windows", or empty.
-	launcher: i64, // 1: the launcher is open, and it takes the keys.
+	palette:  i64, // The state of the palette: 0 closed; 1 the search; 2 it asks for a second Enter; 3 it waits for its provider; 4 it shows a result; 5 it has the form of a command. Not 0: it takes the keys.
 	shape:    [32]u8, // The name of the pointer shape on the screen: "arrow", "move", "text", ... (docs/POINTERS.md).
 }
 
@@ -46,7 +46,7 @@ Window :: struct {
 	height:   i64,
 	order:    i64, // 0: the front window; 1: the one under it; ...
 	focus:    i64, // 1: the window has the focus: the front one.
-	keyboard: i64, // 1: the keys go to the window: the one with the focus, while the launcher is closed.
+	keyboard: i64, // 1: the keys go to the window: the one with the focus, while the palette is closed.
 	presents: i64, // The Present records that the program of the window sent since it created its surface.
 	waits:    i64, // 1: a Present of the program changed a part of the screen, and no frame drew it yet.
 	events_sent: i64, // The event records that the ring of the window took since the window opened: keys, pointer records, changes of the settings.
@@ -60,7 +60,7 @@ Screen :: struct {
 	frames:   i64, // The frames that the compositor drew since the start.
 	presents: i64, // The Present records of all the programs since the start.
 	damage:   i64, // The damage rectangles that wait for the next frame.
-	desktop:  i64, // 1: a change of the desktop itself waits for the next frame: the pointer, the bar, a menu, the launcher, a window that appeared, moved or closed.
+	desktop:  i64, // 1: a change of the desktop itself waits for the next frame: the pointer, the bar, a menu, the palette, a window that appeared, moved or closed.
 }
 
 ERROR_ACTS_FOR_PRINCIPAL :: -1
@@ -86,7 +86,7 @@ acts_for_principal :: proc "contextless" () -> bool {
 	return caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 }
 
-// pointer gives the place of the pointer on the screen, its buttons, the menu of the bar that is open, whether the launcher is open, and the name of the pointer shape, as one row. The result is 1, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+// pointer gives the place of the pointer on the screen, its buttons, the menu of the bar that is open, the state of the palette, and the name of the pointer shape, as one row. The result is 1, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
 //
 // **What it is for.** A caller that drives the desktop from outside, as
 // the machine test does through the remote service, reads where the
@@ -110,7 +110,11 @@ acts_for_principal :: proc "contextless" () -> bool {
 //   for it were both full. It is 0 on a system that works; the log has a
 //   line for each loss period.
 // - `menu`: `programs`, `windows`, or empty.
-// - `launcher`: 1 while the launcher is open and takes the keys.
+// - `palette`: the state of the palette: 0 while it is closed; 1 while it
+//   is open and the input searches; 2 while it asks for a second Enter; 3
+//   while it waits for what its provider gives; 4 while it shows a result;
+//   5 while its input band is the form of a command with parameters.
+//   Open, it takes the keys.
 // - `shape`: the name of the pointer shape on the screen (`arrow`, `move`,
 //   `text`...; docs/POINTERS.md).
 //
@@ -128,7 +132,7 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	if len(result^) > 0 {
-		result[0] = {x = i64(pointer_x), y = i64(pointer_y), buttons = i64(buttons), moves = i64(pointer_moves), keys = i64(key_records), keys_waiting = i64(keys_waiting_of_all_windows()), keys_refused = i64(key_records_refused), launcher = launcher_open ? 1 : 0}
+		result[0] = {x = i64(pointer_x), y = i64(pointer_y), buttons = i64(buttons), moves = i64(pointer_moves), keys = i64(key_records), keys_waiting = i64(keys_waiting_of_all_windows()), keys_refused = i64(key_records_refused), palette = i64(palette_panel.state)}
 		copy(result[0].shape[:len(result[0].shape) - 1], pointer_pictures.SHAPE_NAMES[pointer_shape_under()])
 		#partial switch menu_open {
 		case .Programs:
@@ -155,7 +159,7 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 // - `order`: 0 for the window in front, 1 for the one under it, and so on.
 // - `focus`: 1 for the window in front.
 // - `keyboard`: 1 when the keys go to the window: the window in front,
-//   while the launcher is closed.
+//   while the palette is closed.
 // - `presents`: the `Present` records that the program of the window sent
 //   since it created its surface.
 // - `waits`: 1 while a `Present` of the program changed a part of the
@@ -199,7 +203,7 @@ windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
 			height   = i64(client.surface.height + TITLE_HEIGHT + BORDER),
 			order    = i64(row),
 			focus    = row == 0 ? 1 : 0,
-			keyboard = row == 0 && !launcher_open ? 1 : 0,
+			keyboard = row == 0 && !palette_is_open() ? 1 : 0,
 			presents = i64(client.presents),
 			waits    = client.present_waits ? 1 : 0,
 			events_sent = i64(queue.delivered),
@@ -227,7 +231,7 @@ windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
 // - `damage`: the damage rectangles that wait for the next frame, of the
 //   desktop and of the programs.
 // - `desktop`: 1 while a change of the desktop itself waits for the next
-//   frame: the pointer, the bar, a menu, the launcher, a window that
+//   frame: the pointer, the bar, a menu, the palette, a window that
 //   appeared, moved or closed. The `Present` of a program is not in it:
 //   `windows()` gives it for each window, in `waits`.
 //

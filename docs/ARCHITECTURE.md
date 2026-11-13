@@ -348,7 +348,7 @@ A set of modules that most programs use. It is not a C library and no program is
 
 The program that the principal sees: starts programs, shows windows, shows grants. It is a normal program with handles from the root service.
 
-- **Today**: the compositor is the desktop shell too: its bar has the menu of the programs, the menu of the windows, the launcher, the clock and the date (`DESIGN.md`). The grants are shown by the console (`grants`), not by the shell.
+- **Today**: the compositor is the desktop shell too: its bar has the menu of the programs, the menu of the windows, the palette, the clock and the date (`DESIGN.md`). The grants are shown by the console (`grants`), not by the shell.
 
 ![The desktop: the bar of the compositor, its menus, and four windows](screenshots/desktop.png)
 

@@ -16,6 +16,7 @@ import "contract:ring"
 import "contract:settings"
 import "support:bar"
 import "support:graphics"
+import "support:palette"
 import "support:system"
 
 // The values of the context that give the theme file, mapped read-only.
@@ -129,10 +130,14 @@ pointer_shape_under :: proc "contextless" () -> pointer_pictures.Pointer_Shape {
 	if dragging >= 0 {
 		return .Move
 	}
-	if launcher_open {
-		left, top := launcher_place()
-		if inside(pointer_x, pointer_y, left + graphics.CARD_MARGIN, top + LAUNCHER_INPUT, LAUNCHER_WIDTH - 2 * graphics.CARD_MARGIN, 24) {
+	if palette_is_open() {
+		// The input band is a text; an entry of the list can be pressed.
+		left, top := palette_place()
+		if palette.part_at(left, top, pointer_x, pointer_y) == .Input_Band {
 			return .Text
+		}
+		if palette.row_is_entry(&palette_panel, palette.row_at(&palette_panel, left, top, pointer_x, pointer_y)) {
+			return .Pointing_Hand
 		}
 		return .Arrow
 	}

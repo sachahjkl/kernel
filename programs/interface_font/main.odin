@@ -50,7 +50,7 @@ PARAGRAPH := [?]string {
 	"Each character has its own advance, and pairs such as To, LT and Ty come closer.",
 	"The interface takes it for titles, labels, buttons, menus and the bar.",
 }
-BOLD_LINE :: "Settings   Launcher   Notes   Console   Monitor"
+BOLD_LINE :: "Settings   Palette   Notes   Console   Monitor"
 PAIRS :: "To  LT  Ty"
 ENLARGED_WORD :: "Rag To"
 ENLARGED :: 4

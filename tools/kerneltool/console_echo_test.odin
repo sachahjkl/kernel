@@ -61,7 +61,7 @@ the_tool_knows_when_the_console_takes_a_line :: proc(t: ^testing.T) {
 		{kind = .Close, text = "life"},
 		{kind = .Click},
 		{kind = .Drag},
-		{kind = .Key, text = LAUNCHER_KEY},
+		{kind = .Key, text = PALETTE_KEY},
 		{kind = .Type, text = "start(\"life\")"},
 	}
 	for change in changes {
