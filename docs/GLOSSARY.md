@@ -196,7 +196,7 @@ Do not use: link map, address space (for this).
 
 ### Load error
 
-A load error is the record of a load that failed (`module.Load_Error`, 288 bytes): the stage, the module that was being loaded, the import, a replacement on the path, the export, and the two descriptions that differ.
+A load error is the record of a load that failed (`module.Load_Error`, 392 bytes): the stage, the module that was being loaded, the import, a replacement on the path, the export, and the two descriptions that differ.
 
 A load error is the error record of the loader. It is larger than an error record because it names modules by hash and by name: the caller of a call host does not have these names. Zero is "no error". The caller owns the record; no global state keeps the last error.
 
