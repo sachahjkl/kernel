@@ -565,8 +565,13 @@ run_test :: proc(args: []string) -> int {
 		fmt.eprintfln("kerneltool: %s", problem)
 		return EXIT_USAGE
 	}
-	if code := run_build(nil); code != 0 {
-		return code
+	// The times of the test are measures: the report never changes the result.
+	test_started := time.tick_now()
+	defer test_times_report(test_started)
+	build_code := run_build(nil)
+	test_times_build_end(test_started)
+	if build_code != 0 {
+		return build_code
 	}
 	if !reset_folder(SCREENSHOT_FOLDER) {
 		return EXIT_FAILURE
@@ -1016,8 +1021,12 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	}
 	if test_output != "" {
 		// No window. The log of the kernel (the serial port) goes to a file.
-		// The QEMU monitor is on the standard input: the tool sends keys through it.
+		// The monitor of QEMU for a reader is on the standard input: the tool
+		// ends QEMU through it. The machine protocol of QEMU is on a socket
+		// beside the log: the tool sends the keys and the moves of the
+		// pointer through it, and each command has a reply (qmp.odin).
 		append(&list, "-display", "none", "-serial", strings.concatenate({"file:", test_output}, context.temp_allocator), "-monitor", "stdio")
+		append(&list, "-qmp", strings.concatenate({"unix:", qmp_socket_of(test_output), ",server=on,wait=off"}, context.temp_allocator))
 	} else {
 		append(&list, "-serial", "stdio")
 	}

@@ -22,7 +22,7 @@ A developer tool (`GLOSSARY.md`) shows how the system runs. It reads reports of 
 | "Names and lines", "The debugger: the design" | How an address becomes a procedure and a source line, and the debugger that is designed |
 | "What `inspect` does not read: the bytes of another program", "The cost" | The limit of the grant, and the price of a sample |
 | "The comments of the sources", "The form of a documented comment" | The rules that the tool checks on every comment, and the form of a comment that the site and the console show |
-| "The commands of the tool" | The commands of `kerneltool`, and the parts of the machine test that `kerneltool test` runs alone |
+| "The commands of the tool" | The commands of `kerneltool`, the parts of the machine test that `kerneltool test` runs alone, the times of a test, and how the tool sends input and waits |
 | "The bounds of the tests" | How a test waits, and why no test asserts a speed |
 
 ![The program inspect: the address space of the console as a band scaled by pages, its mappings, its modules and its threads](screenshots/inspect.png)
@@ -288,7 +288,7 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `module <name> ...` | Builds one module of the table, and its debug object. The parallel build runs it; run it by hand to see the errors of one module alone |
 | `run [without_checks]` | Builds, then starts the machine under QEMU in a window, with the log of the kernel on the terminal. The data disk stays from run to run. It starts the peer that takes the calls of `kerneltool call` |
 | `call <key> "<call>"` | Calls an export of a service of the machine that `run` started, through the program `remote` over QUIC, and prints the typed result |
-| `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "kerneltool: all tests passed" |
+| `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "kerneltool: all tests passed", then the times of the test (below) |
 | `measure ...` | A machine that measures with no other load: the locks, `scheduler N`, `windows`, `address_space`, `shortage`. The numbers are measures, never conditions |
 | `screenshots` | The whole test and a second build, then the measure record and the copy of the pictures to `docs/screenshots` and to the development log. `screenshots compress` compresses the PNG files that are stored with no compression |
 | `check` | `odin check -vet` and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the changelog, the news), then `test` and a second build that must give the same bytes |
@@ -329,12 +329,80 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 
 The persistence and the self tests of the kernel have no part of their own: only the whole run starts them. An argument that is not a part is refused before the build: the command prints the parts that it knows and ends with the exit code 2.
 
+### The times of a test
+
+`kerneltool test` reads the monotonic clock of the host at the start and at the end of the build, of each machine and of each step. At the end of a test that ran a machine, passed or failed, it writes `build/test_times.txt` and prints a summary. Each number is a measure: no test reads one, and no time makes a test fail ("The bounds of the tests").
+
+The file has one line for each machine: its log file, its result, its whole time, the time from the start of QEMU to the first line of its log, the time of its steps and the time of its stop. Under it, one line for each step, in the order of the run, in fixed columns:
+
+| Column | What it holds |
+|---|---|
+| `step` | The number of the step in its scenario, from 1 |
+| `kind` | The kind of the step (`Wait`, `Type`, `Launch`, `Shot`, `Call`, ...) |
+| `duration` | The time of the step, in seconds |
+| `waited` | The part of that time in a wait for a line of the log |
+| `keys`, `key_time` | The keys that the step sent, and the time in their sends, with the wait after each send |
+| `pictures` | The pictures of the screen that the step saved |
+| `text` | The first 60 bytes of the text of the step |
+
+The last step of a machine that failed is the step that failed, when a step failed.
+
+The summary is a list of lines that start with `kerneltool: measure:`:
+
+- the whole test, the build, and the machines (the start to the first line of the log, the steps, the stops);
+- for each kind of step, the count of its steps and the sum of their durations;
+- the count of the keys and the time in their sends;
+- the count of the pictures and their time: in the step, the fixed wait before the picture, the `screendump` of QEMU and the read of the file; on a worker thread, while the scenario goes on, the conversion to PNG and the write;
+- the time waited for lines of the log, added by the program of the line. The program is the first word of the text of the step before its first `:` (`clock`, `scheduler`, `[console]`);
+- the 25 slowest steps, with their text.
+
+The time of a wait says how late the line came after the step before, not what the program did: a program that runs during several steps has its time in the step that waits for its line.
+
+One run of `kerneltool test main`, before the tool sent its input in batches, is the measure that the batches answer. The whole test took 625.6 s: the build 147.0 s, the machine 478.4 s for 1013 steps.
+
+| Part | Steps | Time |
+|---|---|---|
+| Typed lines (`Type`) | 224 | 280.9 s; 4818 keys in all the steps, 285.6 s in their sends |
+| Pointer (`Launch`, `Front`, `Move`, `Close`, `Point`, `Click`, `Drag`) | 140 | 100.4 s |
+| Waits for a line of the log (`Wait`) | 454 | 49.6 s |
+| Pictures (`Shot`) | 66 | 41.2 s: the fixed wait 26.5 s, the `screendump` 6.6 s, the conversion to PNG 8.1 s |
+
+About 400 s of the 478 s were pauses of the tool, not work of the system.
+
+### How the tool sends input and waits
+
+The machine test acts as the keyboard and the mouse of the machine. Each key and each move goes to the virtual keyboard and the virtual mouse of QEMU, so the input service of the system reads them from the keyboard controller as it reads real devices. The tool has no other way in: no export of the system takes a key or a move.
+
+The tool talks to QEMU on its machine protocol (QMP), on a Unix socket beside the log of the machine (`build/test_output*.qmp`). A command is one line of JSON, and QEMU answers each command with one line: the tool knows when QEMU did it (`tools/kerneltool/qmp.odin`, `qmp_socket_linux.odin`, `machine_input.odin`). The monitor of QEMU for a reader stays on the standard input: the tool ends QEMU through it.
+
+**No wait is a fixed time.** After an input, the tool waits for a condition, with the bound of a hang ("The bounds of the tests"):
+
+- **Keys.** The keys of a typed line, with its Enter, are one list. One command of QMP (`input-send-event`) presses and releases several keys with no time between two events. The queue of the virtual keyboard holds 16 bytes, and QEMU drops, with no error, a byte that finds it full; a key is 3 bytes, a key with a prefix (an arrow, Page Up) 5, a key with Shift 6. So the tool cuts the list into commands of 16 bytes at most, and sends the next command when the keyboard controller says that it holds no byte: the system read the bytes before. The tool reads the status of the controller through QEMU, and the read changes nothing in the machine.
+- **The condition after the keys.** When the program `remote` runs, the tool reads the count of key records of `compositor.pointer()` before the list, and goes on when the count grew by one record for each press and each release: one call for each read of the count, not several for each key. A count that stops short is a failure, and the message has the count. Before `remote` runs, and when the scenario revoked its grant, the condition is that the system read each byte of the keyboard.
+- **The pointer.** A move is a list of relative moves of 40 pixels at most, one packet of the virtual mouse for each, with the same rule of 16 bytes. With `remote`, the tool then reads `compositor.pointer()` until the pointer is at the place, or until the compositor received each packet: a pointer that is elsewhere moves again from the place that the compositor gives (a confirmed place, `GLOSSARY.md`). A press and a release wait until the compositor has the button in that state. Without `remote`, each waits until the system read its packet. The line of the log that the step already waits for (the menu is open, the window is in front, the window moved) then shows the effect.
+- **The log.** A wait for a line of the log ends when QEMU wrote in the file: the kernel of the host tells the tool (inotify, `log_watch_linux.odin`). A poll with a short period of the whole file would cost a read of the file at each turn. The poll of 50 ms stays under the watch, for the time before QEMU made the file.
+- **A picture.** The command `screendump` of QMP answers when the file of the picture is whole. A worker thread of the tool then makes the PNG file while the scenario goes on; the tool waits for each worker before the test of the machine ends, and a picture that is not written fails the test.
+
+**The numbers of time that stay in the step runner:**
+
+| Constant | Value | Role |
+|---|---|---|
+| `HANG_BOUND`, `BOOT_HANG_BOUND`, `PROGRESS_CASE_HANG_BOUND_SECONDS` | 120 s, 180 s, 660 s | The bound of a hang |
+| `CONDITION_POLL_PERIOD` | 1 ms | The period between two reads of a condition through QEMU or through `remote` |
+| `LOG_POLL_PERIOD` | 50 ms | The period of the poll of the log when no change of the file woke the wait |
+| The poll of the step `Power_Loss` | 1 ms | The period between two reads of the state of the disk that the tool serves |
+| `FILM_RATE` | 25 pictures in one second | The rate of the film (`kerneltool film`): a rate, not a wait |
+| `PICTURE_SETTLE_PAUSE` | 400 ms | A fixed time before each picture: see below |
+| The pause of the step `Peer_Quic` | 1500 ms | A fixed time before the tool reads the counts of `quic_echo` for its message: the program writes them at most once in one second |
+
+**The fixed time before a picture stays.** A picture shows a window that its program drew after the line of the log that the step before waited for. Nothing that the tool can read says when that last picture of the program is on the screen. The compositor counts its frames and its damage, but no export gives these counts, and they say only that the compositor drew what it received, not that the program sent its last picture. The condition needs two facts from the system: no program that draws is ready to run, and the compositor has no damage and drew a frame after the last record that it received.
+
 ## The bounds of the tests
 
 A test checks a condition: a value, a state, a line of the log. A test that depends on the speed of the computer that runs it fails on a loaded host with no fault of the system, so no test asserts a speed.
 
 - **A time in a test has one role: to end a hang.** The bound is generous, and the same for each wait that has no reason of its own. It is never tuned to how fast the work is on some host.
-  - A step of a machine test: `HANG_BOUND`, 120 s (`tools/kerneltool/machine.odin`). The QUIC cases and the cases of `remote` of the peer, the HTTP client of the host, the calls of the host, the wait for a key and the start of swtpm use the same bound. A TCP case of the peer has `CASE_TIME_LIMIT`, 180 s: one case runs several timers of the server of 10 s and more, in time of the machine.
+  - A step of a machine test, and each wait of the tool after an input (the keys, the pointer, a reply of QEMU): `HANG_BOUND`, 120 s (`tools/kerneltool/machine.odin`). The QUIC cases and the cases of `remote` of the peer, the HTTP client of the host, the calls of the host, the wait for a key and the start of swtpm use the same bound. A TCP case of the peer has `CASE_TIME_LIMIT`, 180 s: one case runs several timers of the server of 10 s and more, in time of the machine.
   - The first Wait of a machine, its boot: `BOOT_HANG_BOUND`, 180 s.
   - The checks of a program that a machine test runs: `system.TEST_HANG_BOUND_MILLISECONDS`, 60 s (`support/system/test_bounds.odin`). It is under the bound of a step, so that the program writes its own report of the hang before the tool ends the machine.
 - **A case that can count its progress has a bound on a stall.** It ends when its count does not grow for `system.TEST_HANG_BOUND_MILLISECONDS`, or after `system.TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS` (600 s) in all. The report names the step where the count stopped: a step that stays still tells a lost wake from a slow host. The Wait for the line of such a case has `PROGRESS_CASE_HANG_BOUND_SECONDS` (660 s), more than the overall bound of the program.
