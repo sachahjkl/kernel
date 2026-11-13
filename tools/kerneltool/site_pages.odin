@@ -398,7 +398,7 @@ site_guides_add :: proc(site: ^Site) -> bool {
 	// The index of the guides.
 	guides_page := site_section_page(.Guides)
 	b := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(&b, "<h1>Guides</h1>\n<p>The documents of the repository: how each part of the system is designed, and why. The tables of what exists are in the <a href=\"%s\">reference</a>.</p>\n", site_page_link(site, guides_page, site_section_page(.Reference)))
+	fmt.sbprintf(&b, "<h1>Guides</h1>\n<p>The documents of the repository: how each part of the system is designed, and why. The tables of what exists are in the <a href=\"%s\">reference</a>.</p>\n<p>A guide states the rules of one part, the reasons for them, and what the code does not do yet. The guides are in their reading order: the first ones give the properties of the system and its architecture, which the others build on. A term in a guide links to its entry in the glossary at its first use on the page; a name of the code links to its row in the reference.</p>\n", site_page_link(site, guides_page, site_section_page(.Reference)))
 	guides_table := site_table_start(&b, "Guides", {{"Guide", .Prose}, {"What it holds", .Prose}, {"File", .Name}}, {.None, .None, .File})
 	for guide in site.guides {
 		fmt.sbprintf(&b, "<tr><td><a href=\"%s\">", site_page_link(site, guides_page, guide.path))
@@ -465,29 +465,53 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		commands := COMMANDS
 		main_text, _ := site_read_quiet(SITE_TOOL_MAIN_FILE)
 		main_lines := site_lines(main_text)
-		fmt.sbprintf(&b, "<h1>Commands of kerneltool</h1>\n<p>All the automation of the project is one program, <code>kerneltool</code>. Run a command with <code>nix develop -c kerneltool &lt;command&gt;</code>. %d commands.</p>\n<p>The table names each command; under it, each command has its text, as <code>COMMANDS</code> writes it, and a link to its line.</p>\n", len(commands))
+		fmt.sbprintf(&b, "<h1>Commands of kerneltool</h1>\n<p>All the automation of the project is one program, <code>kerneltool</code>. Run a command with <code>nix develop -c kerneltool &lt;command&gt;</code>. %d commands.</p>\n", len(commands))
+		site_about_paragraph(site, &b, path, site_comment_above(main_text, "COMMANDS ::"), SITE_TOOL_MAIN_FILE, "COMMANDS")
+		strings.write_string(&b, "<p>The table names each command; under it, each command has its documentation, the help that <code>kerneltool help</code> prints, and a link to its line.</p>\n")
 		site_source_line(site, &b, SITE_TOOL_MAIN_FILE)
+		// The line of each command in the table COMMANDS, and the comment
+		// lines just above it: its documentation.
+		lines := make([]int, len(commands), context.temp_allocator)
+		documentation := make([]string, len(commands), context.temp_allocator)
+		for command, number in commands {
+			wanted := strings.concatenate({"{name = \"", command.name, "\","}, context.temp_allocator)
+			for text, index in main_lines {
+				if strings.has_prefix(strings.trim_space(text), wanted) {
+					lines[number] = index + 1
+					above := index
+					for above > 0 && strings.has_prefix(strings.trim_space(main_lines[above - 1]), "//") {
+						above -= 1
+					}
+					comment := ""
+					for comment_line in main_lines[above:index] {
+						_, comment_text, _ := markdown_comment_line(comment_line)
+						comment = markdown_comment_add(comment, comment_text)
+					}
+					documentation[number] = markdown_comment_end(comment)
+					break
+				}
+			}
+		}
 		commands_table := site_table_start(&b, "Commands of kerneltool", {{"Command", .Name}, {"What it does", .Prose}}, {.Command, .None})
-		for command in commands {
+		for command, number in commands {
 			fmt.sbprintf(&b, "<tr><td class=\"code name\"><a href=\"#tool-command-%s\"><code>", site_slug(command.name))
 			site_escape(&b, command.name)
 			strings.write_string(&b, "</code></a></td>")
-			site_cell(&b, command.about)
+			// A summary: the first sentence of the documentation, or the help.
+			summary := documentation[number] != "" ? site_source_comment_plain(site, site_first_sentence(documentation[number])) : command.about
+			site_cell(&b, summary)
 			strings.write_string(&b, "</tr>\n")
 		}
 		site_table_end(&b, commands_table)
 		strings.write_string(&b, "<h2 id=\"each-command\">Each command</h2>\n")
-		for command in commands {
-			// The line of the command in the table COMMANDS: the link to its source.
-			wanted := strings.concatenate({"{name = \"", command.name, "\","}, context.temp_allocator)
-			line := 0
-			for text, index in main_lines {
-				if strings.has_prefix(strings.trim_space(text), wanted) {
-					line = index + 1
-					break
-				}
-			}
-			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"tool-command-", site_slug(command.name)}, context.temp_allocator), name = command.name, signature = strings.concatenate({"nix develop -c kerneltool ", command.name}, context.temp_allocator), description = command.about, page = path, source = SITE_TOOL_MAIN_FILE, line = line})
+		for command, number in commands {
+			// The help is the line of `kerneltool help`; the documentation,
+			// when the source has one, is the text of the symbol.
+			help_html := strings.builder_make(context.temp_allocator)
+			site_escape(&help_html, command.about)
+			facts := []Site_Symbol_Fact{{label = "What kerneltool help prints", kind = .None, html = strings.to_string(help_html)}}
+			description := documentation[number] != "" ? documentation[number] : command.about
+			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"tool-command-", site_slug(command.name)}, context.temp_allocator), name = command.name, signature = strings.concatenate({"nix develop -c kerneltool ", command.name}, context.temp_allocator), description = description, facts = facts, page = path, source = SITE_TOOL_MAIN_FILE, line = lines[number]})
 		}
 		site_page_add(site, Site_Page{path = path, title = "Commands of kerneltool", description = site_description_cut(fmt.tprintf("The %d commands of kerneltool, the one tool of the project: the build, the machine tests, the pictures, the changelog and the site.", len(commands))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_TOOL_MAIN_FILE), layout = .Documentation})
 		append(&entries, Site_Reference_Entry{path = path, title = "Commands of kerneltool", what = "Each command of the tool of the project, with what it does.", source = SITE_TOOL_MAIN_FILE, count = len(commands), kind = .Command})
@@ -504,7 +528,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 	{
 		path := site_page_file(SITE_LICENSES_FOLDER)
 		b := strings.builder_make(context.temp_allocator)
-		strings.write_string(&b, "<h1>Licenses</h1>\n<p>The license of the system, and of each part that it holds or uses. A cell with no source in the repository says \"" + SITE_NOT_RECORDED + "\".</p>\n<h2 id=\"system\">What the system holds</h2>\n")
+		strings.write_string(&b, "<h1>Licenses</h1>\n<p>The license of the system, and of each part that it holds or uses. A cell with no source in the repository says \"" + SITE_NOT_RECORDED + "\".</p>\n<p>Two tables. <strong>What the system holds</strong>: the code of the system and each part of another author that goes into it, as the fonts, the pointer themes and the cryptography; the last column says whether the part is in the boot image. <strong>What builds and tests it</strong>: the compiler, the tools of the development shell and the firmware of the test machine, which are not in the system. Each cell is read from a file of the repository: its license, its author or origin, and its version or the pinned source.</p>\n<h2 id=\"system\">What the system holds</h2>\n")
 		system_ids, build_ids := site_license_row_ids(site.licenses)
 		site_license_table(site, &b, "What the system holds", site.licenses.system_rows, system_ids)
 		strings.write_string(&b, "<h2 id=\"build\">Used to build and test, not a part of the system</h2>\n")
@@ -520,7 +544,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 	// The index of the reference.
 	reference_page := site_section_page(.Reference)
 	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, "<h1>Reference</h1>\n<p>Tables that the tool generates from the code and the files that define each thing. The guides explain why; these tables say what exists in this build.</p>\n")
+	strings.write_string(&b, "<h1>Reference</h1>\n<p>Tables that the tool generates from the code and the files that define each thing. The guides explain why; these tables say what exists in this build.</p>\n<p>Each table is read again at each build of the site, from the source of the thing: no row is typed for the site, so a table cannot say what the code no longer does. Each row links to its line in the source, at the commit of the build, and its text is the comment of that line. A name in a table links to its own row or card: a type to its card, a grant to its row, a module to its page.</p>\n")
 	reference_table := site_table_start(&b, "Reference tables", {{"Table", .Prose}, {"What it holds", .Prose}, {"Generated from", .Name}}, {.None, .None, .File})
 	for entry in entries {
 		fmt.sbprintf(&b, "<tr><td><a href=\"%s\">", site_page_link(site, reference_page, entry.path))
@@ -632,6 +656,19 @@ site_numbers_body :: proc(site: ^Site) -> string {
 		strings.write_string(&b, "</td></tr>\n")
 	}
 	site_table_end(&b, numbers_table)
+	// How to read each number: the table quotes the line, this section
+	// says what the line measures and what it does not say.
+	strings.write_string(&b, "<h2 id=\"how-to-read\">How to read each number</h2>\n<p>A number is <strong>one run</strong> on the host of the record, under QEMU: it says what the system did there, not what it does on another machine. No test asserts a number: a test checks that a thing happens, and the number is printed for a reader. Compare two numbers only when the same host and the same build gave them.</p>\n")
+	for number in site.measured {
+		if number.measure.reading == "" {
+			continue
+		}
+		fmt.sbprintf(&b, "<section class=\"symbol\">\n<h3 id=\"reading-%s\">", site_slug(number.measure.sentence))
+		site_inline(&b, number.measure.sentence)
+		strings.write_string(&b, "</h3>\n<p>")
+		site_inline(&b, number.measure.reading)
+		strings.write_string(&b, "</p>\n</section>\n")
+	}
 	fmt.sbprintf(&b, "<p class=\"source\">The lines come from the measure record <code>%s</code>, which <code>kerneltool screenshots</code> writes after a full check that passed, or from the logs in <code>%s/</code> that a later <code>kerneltool test</code> or <code>kerneltool measure</code> wrote; the list of the numbers is <code>site_measures</code> in ", MEASURE_RECORD_FILE, BUILD_FOLDER)
 	strings.write_string(&b, "<a href=\"")
 	site_escape(&b, site_repository_file(site, "tools/kerneltool/site.odin"))
@@ -702,7 +739,7 @@ site_releases_add :: proc(site: ^Site) {
 	types := CHANGE_TYPES
 	releases := site.changelog.releases
 	oldest := release_number_text(releases[len(releases) - 1].number)
-	fmt.sbprintf(&b, "<h1>Releases</h1>\n<p>Every release of the system, newest first: %d releases, from %s to %s. The merge of step N on <code>master</code> is the release 0.N.0.</p>\n", len(releases), oldest, site.release)
+	fmt.sbprintf(&b, "<h1>Releases</h1>\n<p>Every release of the system, newest first: %d releases, from %s to %s. The merge of step N on <code>master</code> is the release 0.N.0.</p>\n<p>A release lists its changes by type, in the form of Keep a Changelog: Added, Changed, Deprecated, Removed, Fixed, Security. Each change is written once, in the commit that made it, as one fragment; <code>kerneltool changelog release</code> gathers the fragments into the release. Under a release, a line links to each news entry that names it: the news tell in prose what a reader can now see, and this page lists each change.</p>\n", len(releases), oldest, site.release)
 	site_source_line(site, &b, CHANGELOG_FILE)
 	for changelog_release in releases {
 		number := release_number_text(changelog_release.number)

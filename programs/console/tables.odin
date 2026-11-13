@@ -137,13 +137,94 @@ table_argument :: proc "contextless" (command: string, value: Value, name: strin
 	return
 }
 
+// tables_start adds the commands of tables. Each one takes a table of any
+// record and reads only its description, so one command serves each table
+// of each service. A command that gives a table gives a new table in the
+// memory of the line: the table of its argument does not change.
+//
+// The tables of one line share 256 KiB; a variable keeps at most 32 KiB of
+// rows. The console prints a table as a line of the names of its fields, a
+// line for each row, and the count: "2 rows of Import". A text longer than
+// 24 characters ends with "..".
 tables_start :: proc "contextless" () {
+	// Gives the rows of a table whose field has a value, in their order.
+	//
+	// - `table`: a table of any record.
+	// - `field`: the name of a field of its record.
+	// - `value`: an `Integer` for an integer or a handle field, a `Text`
+	//   for a text field. The rows match on equality.
+	//
+	// The result has the record of the table.
+	//
+	// ```
+	// > columns(where(manual.running(), "module", "calendar_fixed"), "program slot module replaces")
+	// ```
+	//
+	// Errors: the records have no such field (the error lists their
+	// fields); the kind of the value is not the kind of the field: "error:
+	// where: the field code is Integer, the value is Text".
 	command("where", {.Table, .Text, .None}, .Table, "the rows of a table whose field has a value", table_where)
+	// Gives the rows of a table in the increasing order of a field.
+	//
+	// - `table`: a table of any record.
+	// - `field`: the name of the field: integers by value, texts byte by
+	//   byte.
+	//
+	// Rows with one value keep their order, so two sorts give an order by
+	// two fields. The result has the record of the table.
+	//
+	// ```
+	// > sort(columns(manual.handles("Write"), "module name rights"), "name")
+	// ```
 	command("sort", {.Table, .Text}, .Table, "the rows of a table in the order of a field", table_sort)
+	// Gives one row for each pair of a row of the left table and a row of
+	// the right table that have one value of a field.
+	//
+	// - `left`, `right`: two tables of any records.
+	// - `field`: a field that both records have, of one kind.
+	//
+	// The new record has each field of the left record, then each field of
+	// the right record whose name the left record does not have, at most 40
+	// fields. Its name is `<left>_<right>`. The console writes its
+	// description in the format of the module contract.
+	//
+	// ```
+	// > join(columns(manual.running(), "program hash"), columns(manual.modules(), "hash name code exports"), "hash")
+	// ```
+	//
+	// Errors: the field is a text on one side and an integer on the other;
+	// the new record is larger than a record can be: choose fewer fields
+	// with `columns` first.
 	command("join", {.Table, .Table, .Text}, .Table, "each pair of rows of two tables with one value of a field", table_join)
+	// Gives the rows with only the fields that a text names, in the order
+	// of the text.
+	//
+	// - `table`: a table of any record.
+	// - `names`: the names of the fields, separated by spaces or commas.
+	//
+	// The new record keeps the name of the record. A table that `columns`
+	// made is not the table that an export takes: an export checks the
+	// whole record.
+	//
+	// ```
+	// > columns(manual.importers("calendar_fixed"), "module name replacement slots")
+	// ```
+	//
+	// Errors: a name names no field (the error lists the fields); the text
+	// names no field.
 	command("columns", {.Table, .Text}, .Table, "the rows with the fields that a text names: \"a b c\"", table_columns)
+	// Gives the first rows of a table, at most a count: a count larger than
+	// the table gives the whole table, and 0 or less gives no row.
 	command("first", {.Table, .Integer}, .Table, "the first rows of a table", table_first)
+	// Gives the count of rows of a table, as an `Integer`.
+	//
+	// Its name is not `count`: the module `probe` exports `count`, and a
+	// command of a module hides a command of the console with its name.
 	command("rows", {.Table}, .Integer, "the count of rows of a table", table_count)
+	// Gives one row of a table as a `Record`, from 1. After `r = row(t, 1)`,
+	// `r.value` reads one field of the first row.
+	//
+	// Error: "row: the table has N rows, not a row M".
 	command("row", {.Table, .Integer}, .Record, "one row of a table, from 1", table_one)
 }
 

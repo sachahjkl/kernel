@@ -71,6 +71,18 @@ Site_Reference :: struct {
 	start_grants_about: string,
 	root_grants_about:  string,
 	fixed_ranges_about: string,
+	// The comment above the record of a command of the console, and above
+	// the procedure that adds the commands of tables: the introduction of
+	// the page of the commands.
+	console_about:        string,
+	console_tables_about: string,
+	// The comments above the two sizes of the context: what the context is,
+	// and how its values are numbered.
+	context_about:        string,
+	context_values_about: string,
+	// The comment of the package of the fixed ranges: why the addresses are
+	// fixed, and the band that holds them.
+	fixed_ranges_package_about: string,
 }
 
 // site_about_paragraph writes the comment above a declaration as a quote
@@ -168,6 +180,12 @@ site_reference_read :: proc(site: ^Site) -> bool {
 		found, problem = site_console_commands_read(text, file)
 		note(&problems, problem)
 		append(&commands, ..found)
+		if about := site_comment_above(text, "Command :: struct"); about != "" {
+			reference.console_about = about
+		}
+		if about := site_comment_above(text, "tables_start :: proc"); about != "" {
+			reference.console_tables_about = about
+		}
 	}
 	reference.console_commands = commands[:]
 	reference.operations_about = site_comment_above(operation_text, "Operation :: enum")
@@ -177,6 +195,9 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	reference.start_grants_about = site_comment_above(root_text, "Grant :: enum")
 	reference.root_grants_about = site_comment_above(grants_text, "Root_Grant :: enum")
 	reference.fixed_ranges_about = site_comment_above(fixed_text, "Fixed_Range :: enum")
+	reference.context_about = site_comment_above(operation_text, "CONTEXT_HANDLES ::")
+	reference.fixed_ranges_package_about = site_comment_above(fixed_text, "package fixed_addresses")
+	reference.context_values_about = site_comment_above(operation_text, "CONTEXT_VALUES ::")
 
 	// The modules: each one of module_builds, with the description that the
 	// build writes into the module, read from the same source.
@@ -619,15 +640,31 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		b := strings.builder_make(context.temp_allocator)
 		strings.write_string(&b, "<h1>The context of a program</h1>\n")
 		fmt.sbprintf(&b, "<p>The one record that a program receives when it starts: %d handles and %d values. A role is a place of the record with a meaning.</p>\n", op.CONTEXT_HANDLES, op.CONTEXT_VALUES)
+		site_about_paragraph(site, &b, site_page_file(SITE_CONTEXT_FOLDER), reference.context_about, SITE_OPERATION_FILE, "CONTEXT_HANDLES")
+		// The roles of the first program are in the same file, under their
+		// own heading: no other program has them.
+		every_program := make([dynamic]Site_Constant, context.temp_allocator)
+		first_program := make([dynamic]Site_Constant, context.temp_allocator)
+		for role in reference.context_roles {
+			if strings.has_prefix(role.name, "ROOT_") {
+				append(&first_program, role)
+			} else {
+				append(&every_program, role)
+			}
+		}
 		groups := [?]struct {
 			id, title, file: string,
 			roles:           []Site_Constant,
 		} {
-			{"every-program", "The roles that the system fixes for each program", SITE_OPERATION_FILE, reference.context_roles},
+			{"every-program", "The roles that the system fixes for each program", SITE_OPERATION_FILE, every_program[:]},
+			{"first-program", "The roles of the first program, the root service", SITE_OPERATION_FILE, first_program[:]},
 			{"started-by-root", "The roles of a program that the root service starts", SITE_SYSTEM_GRANTS_FILE, reference.grant_roles},
 		}
 		for group in groups {
 			fmt.sbprintf(&b, "<h2 id=\"%s\">%s</h2>\n", group.id, group.title)
+			if group.id == "every-program" {
+				site_about_paragraph(site, &b, site_page_file(SITE_CONTEXT_FOLDER), reference.context_values_about, SITE_OPERATION_FILE, "CONTEXT_VALUES")
+			}
 			roles_table := site_table_start(&b, group.title, {{"Constant", .Name}, {"Place", .Number}, {"Handle or value", .Short}, {"What the file says", .Prose}})
 			for role in group.roles {
 				size := false
@@ -730,6 +767,8 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 	{
 		b := strings.builder_make(context.temp_allocator)
 		strings.write_string(&b, "<h1>Fixed ranges</h1>\n<p>The addresses of the mappings that the system gives a program: one slot of the band for each range, so that no two ranges overlap.</p>\n")
+		site_about_paragraph(site, &b, site_page_file(SITE_FIXED_RANGES_FOLDER), reference.fixed_ranges_package_about, SITE_FIXED_ADDRESSES_FILE, "package fixed_addresses")
+		fmt.sbprintf(&b, "<p>The band starts at <code>0x%016X</code>; each slot is <code>0x%X</code> bytes (1 TiB) from the start of the one before. The table gives the slot of each range, its address, and what is mapped there.</p>\n", u64(fixed_addresses.BAND_START), u64(fixed_addresses.SLOT))
 		site_about_paragraph(site, &b, site_page_file(SITE_FIXED_RANGES_FOLDER), reference.fixed_ranges_about, SITE_FIXED_ADDRESSES_FILE, "Fixed_Range")
 		ranges_table := site_table_start(&b, "Fixed ranges", {{"Slot", .Number}, {"Range", .Name}, {"Address", .Name}, {"What is mapped there", .Prose}}, {.None, .None, .Number, .None})
 		for fixed_range in reference.fixed_ranges {
@@ -749,18 +788,25 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 	{
 		b := strings.builder_make(context.temp_allocator)
 		fmt.sbprintf(&b, "<h1>Commands of the console</h1>\n<p>The %d commands that the console has before any module is loaded, as <code>help()</code> prints them. A module that the console loads adds its exports: see the <a href=\"%s\">modules</a>.</p>\n", len(reference.console_commands), site_page_link(site, site_page_file(SITE_CONSOLE_FOLDER), site_page_file(SITE_MODULES_FOLDER)))
+		files := SITE_CONSOLE_COMMAND_FILES
+		site_about_paragraph(site, &b, site_page_file(SITE_CONSOLE_FOLDER), reference.console_about, files[0], "Command")
 		console_table := site_table_start(&b, "Commands of the console", {{"Command", .Name}, {"What it does", .Prose}}, {.Command, .None})
 		for command in reference.console_commands {
 			fmt.sbprintf(&b, "<tr><td class=\"code name\"><a href=\"#command-%s\"><code>", site_slug(command.name))
 			site_escape(&b, site_console_signature(command))
 			strings.write_string(&b, "</code></a></td>")
-			// A summary: the symbol under the table shows the whole help with its references.
-			site_text_cell(&b, site_source_comment_plain(site, command.about))
+			// A summary: the first sentence of the documentation, or the help;
+			// the symbol under the table shows the whole text with its references.
+			summary := command.documentation != "" ? site_first_sentence(command.documentation) : command.about
+			site_text_cell(&b, site_source_comment_plain(site, summary))
 			strings.write_string(&b, "</tr>\n")
 		}
 		site_table_end(&b, console_table)
-		files := SITE_CONSOLE_COMMAND_FILES
 		site_source_line(site, &b, ..files[:])
+		if reference.console_tables_about != "" {
+			strings.write_string(&b, "<h2 id=\"tables\">The commands of tables</h2>\n")
+			site_about_paragraph(site, &b, site_page_file(SITE_CONSOLE_FOLDER), reference.console_tables_about, files[1], "tables_start")
+		}
 		strings.write_string(&b, "<h2 id=\"each-command\">Each command</h2>\n")
 		for command in reference.console_commands {
 			facts := make([dynamic]Site_Symbol_Fact, context.temp_allocator)
@@ -772,7 +818,13 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 			parameters_html := len(parameters) == 0 ? site_value_html(.Type, "none") : site_value_list_html(parameters[:])
 			append(&facts, Site_Symbol_Fact{label = "Parameters", kind = .Type, html = parameters_html})
 			append(&facts, Site_Symbol_Fact{label = "Result", kind = .Type, html = site_type_reference_html(site, strings.concatenate({"wire.", command.result}, context.temp_allocator), command.result, true)})
-			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"command-", site_slug(command.name)}, context.temp_allocator), name = command.name, signature = site_console_signature(command), signature_html = site_console_signature_html(site, command), description = command.about, page = site_page_file(SITE_CONSOLE_FOLDER), facts = facts[:], source = command.file, line = command.line})
+			// The help is the line of help(); the documentation, when the
+			// source has one, is the text of the symbol.
+			help_html := strings.builder_make(context.temp_allocator)
+			site_escape(&help_html, command.about)
+			append(&facts, Site_Symbol_Fact{label = "What help() prints", kind = .None, html = strings.to_string(help_html)})
+			description := command.documentation != "" ? command.documentation : command.about
+			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"command-", site_slug(command.name)}, context.temp_allocator), name = command.name, signature = site_console_signature(command), signature_html = site_console_signature_html(site, command), description = description, page = site_page_file(SITE_CONSOLE_FOLDER), facts = facts[:], source = command.file, line = command.line})
 		}
 		add(site, entries, site_page_file(SITE_CONSOLE_FOLDER), "Commands of the console", fmt.tprintf("The %d built-in commands of the console of %s, with their parameters, their results and their help.", len(reference.console_commands), SITE_SYSTEM_NAME), "Each built-in command of the console, as help() prints it.", files[0], len(reference.console_commands), .Command, &b, ..files[:])
 	}

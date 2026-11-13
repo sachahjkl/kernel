@@ -1951,6 +1951,33 @@ Program_Report :: struct {
 // The context: the one record that a program receives when it starts, in
 // place of text arguments that it must parse. The address of the record is
 // the parameter of the entry.
+//
+// The record has 16 handles and 24 values of 64 bits. Its starter writes
+// it, and the kernel maps it read-write at `CONTEXT_ADDRESS` before the
+// first thread runs. A program finds each thing at a **fixed place**: the
+// index of a handle or of a value is its role. So a program needs no name,
+// no path and no parser to find what it was given:
+// `ctx.handles[CONTEXT_LOG]` is its log, and a handle that its starter did
+// not give is 0. A program that starts with a context of zeros has no
+// handle: it can compute and stop, and reach nothing.
+//
+// Three groups of places exist:
+//
+// - **The places that the system fixes for every program**: the log, the
+//   budget, the seed, the fixed ranges that the starter mapped. Every
+//   starter writes them in the same way.
+// - **The places of the first program**, the root service: the kernel
+//   writes them at boot, with every handle that exists then (the machine,
+//   the framebuffer, the boot image, the records of the log).
+// - **The places that a starter and its program agree on**: the handles
+//   0 to 13 and the values 0 to 8. The root service gives each program the
+//   handles of its grants there (`support/system`, `GRANT_...`); a call
+//   host receives its call ring at 0 and its call region at 1.
+//
+// A handle of the context has the rights that the starter chose, never
+// more than the starter holds. Who starts a program decides what it can
+// reach: the context is the whole of its authority at its start. The
+// design: (docs/MODULE_CONTRACT.md, "The context").
 CONTEXT_HANDLES :: 16
 // The values 0 to 15 began as free values, and the roles of the system
 // took 9 to 15 one after the other until two roles wanted one number. The
@@ -1968,27 +1995,51 @@ Context :: struct {
 
 // The two roles that the system fixes for each program. A handle that the
 // program was not granted is 0.
+//
+// The handle 14: the log of the kernel, with the right **Write**. A program
+// writes its lines with the kernel operation `Log` on it (`system.log`
+// does). The starter gives it, and the root service gives it to each
+// program that has the grant log; a call host gets it from the console.
+// With no log handle, a line of the program goes nowhere.
 CONTEXT_LOG :: 14 // The log of the kernel.
 // The values 9 to 12: the random seed of the program, 32 bytes, that its
 // starter writes (docs/RANDOMNESS.md). A start with a seed of zeros is
 // refused. The root service has none: it gathers its own. A program does
 // not use the values 9 to 12 for another role.
+//
+// The generator of the program (`support/random`) reads the seed, then
+// writes zeros over the four values: a copy of the context made later
+// holds no seed. A starter makes the seed of each child from its own
+// generator (`random.values_with_seed`).
 CONTEXT_VALUE_SEED :: 9
 CONTEXT_VALUE_SEED_COUNT :: 4
 // The value 16: the strength of the seed of the system, from which the seed
 // of the program comes (support/random, Seed_Strength): 1 weak (the cycle
 // counter only), 2 processor (rdrand), 3 entropy (rdseed). The starter
 // writes it with the seed.
+//
+// The seed itself cannot say how it was made: the generator of the program
+// keeps this value. The handshake of `support/quic` refuses a seed weaker
+// than its least strength, and the program `randomness` shows it.
 CONTEXT_VALUE_SEED_STRENGTH :: 16
 // The value 17: the program `settings` runs its boot pass (1): it reads the
 // settings kept in its store, writes the settings page, and stops, with no
 // window (contract:settings).
+//
+// The root service writes 1 when it starts `settings` at boot; each other
+// start of `settings` has 0 and opens its window. No other program reads
+// this value.
 CONTEXT_VALUE_SETTINGS_BOOT_PASS :: 17
 // The values 18 and 19: the address and the size of the second pointer
 // theme file that the root service gives the compositor (the theme of the
 // system, beside the theme of the owner at the values 6 and 7 of the
 // compositor). The setting "pointer_theme" chooses between the two.
+//
+// The value 18 is the address where the root service mapped the file,
+// read-only, in the compositor; 0 when it mapped none.
 CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS :: 18
+// The value 19: the size in bytes of the second pointer theme file at the
+// address of the value 18. The compositor reads no byte past it.
 CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE :: 19
 // The value 20: a set of bits, bit n for the member n of the fixed ranges
 // (contract:fixed_addresses, Fixed_Range): the ranges that the starter
@@ -2000,7 +2051,17 @@ CONTEXT_VALUE_FIXED_RANGES_MAPPED :: 20
 // The value 21: the size in bytes of the debug image, which the starter
 // mapped at the fixed range Debug_Image (contract:fixed_addresses) when its
 // bit of the value 20 is set. The values 22 and 23 have no role.
+//
+// A program that prints a stop report (the console) reads the names of the
+// procedures there; with no debug image, a report names offsets only.
 CONTEXT_VALUE_DEBUG_IMAGE_SIZE :: 21
+// The handle 15: the budget that pays for the program, with the rights
+// **Give**, **Read** and **Spend**. Each page and each object that the
+// program makes is paid from it; `Memory_Create` and `Program_Create` name
+// it. The loader of the starter gives it, and a starter cannot put another
+// handle at this place: the program receives its new budget here. The root
+// service receives the root budget with **Commit** too. When the program
+// stops, what the budget still holds returns to the budget of its starter.
 CONTEXT_BUDGET :: 15 // The budget of the program.
 // The values 13 and 15 have no role: the settings page and the date page
 // are fixed ranges, mapped when their bit of the value 20 is set. A new
@@ -2008,14 +2069,43 @@ CONTEXT_BUDGET :: 15 // The budget of the program.
 // old reader cannot take a new value for a page.
 
 // The roles of the first program (the root service).
+//
+// The handle 0: the machine, with every right of the machine. The kernel
+// gives it at boot to the root service only. The root service gives a
+// part of its rights to a program that has a grant for it (Inspect, Stop,
+// Schedule, Physical): a machine handle reaches each program, so no other
+// program receives it whole.
 ROOT_MACHINE :: 0
+// The handle 1: the memory of the framebuffer that the firmware set up,
+// with **Give**, **Read** and **Write**; 0 when the firmware gave no
+// framebuffer. The root service draws the boot display there, then gives
+// it to the compositor, which owns the screen.
 ROOT_FRAMEBUFFER :: 1
+// The handle 2: the memory of the boot image, with **Give** and **Read**:
+// every module and resource that the boot program checked. The root
+// service starts each program from it, and gives it read-only to a
+// program that has the grant image.
 ROOT_BOOT_IMAGE :: 2
+// The handle 3: the memory of the records of the log of the kernel, with
+// **Give** and **Read**. The root service gives it, read-only, to a program
+// that has the grant log_records, as the program that shows the log.
 ROOT_LOG_RECORDS :: 3 // Memory, with Read: the records of the log.
+// The handle 4: the memory of the debug image that the boot program read,
+// with **Give** and **Read**: the names of the procedures for the stop
+// reports. The kernel reads none of its pages.
 ROOT_DEBUG_IMAGE :: 4 // Memory, with Read: the debug image that the boot program read. 0: none.
+// The value 0: the width of the framebuffer in pixels; 0 with no
+// framebuffer. The values 0 to 3 describe the handle 1.
 ROOT_VALUE_WIDTH :: 0
+// The value 1: the height of the framebuffer in pixels.
 ROOT_VALUE_HEIGHT :: 1
+// The value 2: the pixels from the start of one line of the framebuffer to
+// the start of the next, which can be more than the width.
 ROOT_VALUE_PIXELS_PER_LINE :: 2
+// The value 3: the order of the bytes of a pixel, a `Pixel_Format` of the
+// boot information (red first or blue first).
 ROOT_VALUE_FORMAT :: 3
+// The value 4: the size in bytes of the boot image of the handle 2.
 ROOT_VALUE_BOOT_IMAGE_SIZE :: 4
+// The value 5: the size in bytes of the debug image of the handle 4.
 ROOT_VALUE_DEBUG_IMAGE_SIZE :: 5 // 0: no debug image.

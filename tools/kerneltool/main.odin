@@ -105,29 +105,263 @@ Command :: struct {
 	run:         proc(args: []string) -> int,
 }
 
+// The commands of the tool. The name is the first argument; the help after
+// it is what `kerneltool help` prints, one line for each command. The comment
+// above each command is its documentation on the site.
+//
+// `kerneltool` is the one program of the automation of the project: the
+// build, the machine tests, the pictures, the measures, the changelog, the
+// news and the site. The project has no script: each step of the work, by
+// hand or in a workflow, is a command here, so each call of a third-party
+// program (the compiler, the linker, QEMU) is written in one place.
+//
+// Run a command from the root of the repository, in the development shell
+// of the flake, which gives the tool its compilers, QEMU and the firmware:
+//
+// ```
+// nix develop -c kerneltool <command> <arguments>
+// ```
+//
+// The tool writes into `build/`, which is not committed, and into the
+// files of the repository that a command names (the pictures, the measure
+// record, the changelog). A command ends with the status 0 when it
+// succeeds, 1 when a step fails, and 2 when its arguments are wrong.
 COMMANDS :: [?]Command {
+	// Builds the whole system: each module, the boot image, and the boot
+	// program that holds the kernel and the boot image.
+	//
+	// - `processes` (optional): the count of module builds at once; the count
+	//   of the processors when it is absent.
+	//
+	// Each module is built in its own process (the command `module`). The
+	// command then builds the main boot volume, and the volumes that the tests
+	// need: a start that must fail, a shortage of frames, the volumes that the
+	// trusted boot must refuse (a changed module, a wrong signature, no
+	// system description), the volumes of Secure Boot, and one volume for each
+	// test of the kernel on itself. `run`, `test` and `measure` run it first:
+	// run it alone to check that the system compiles.
+	//
+	// ```
+	// nix develop -c kerneltool build 8
+	// ```
 	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one process for each module, as many at once as the processors, or `build <processes>`", run = run_build},
+	// Builds one module of the table of modules in this process, with the
+	// options of one build.
+	//
+	// - `name`: a module of the table (`module_builds`).
+	// - `with_checks` or `without_checks`: the checks of the kernel (the order
+	//   of the locks, the frames).
+	// - `measure_run` or `usual_run`: the build of the measures, or the usual
+	//   one.
+	// - `with_debug_information` or `without_debug_information`: the debug
+	//   object beside the module.
+	//
+	// The parallel build of `build` runs this command once for each module.
+	// Run it by hand to see the errors of one module alone.
 	{name = "module", about = "module <name> with_checks|without_checks measure_run|usual_run with_debug_information|without_debug_information: build one module of the table, and its debug object with the debug information (the parallel build runs this command)", run = run_module},
+	// Runs the machine tests: it builds, starts each test machine under QEMU,
+	// plays its scenario, and checks its log.
+	//
+	// A scenario is a list of steps: press keys, move the pointer, wait for a
+	// line of the log, save a picture of the screen. A step that waits ends at
+	// the hang bound, never at a fixed delay: the test checks an order of
+	// events, not a speed. Each machine writes its log in a file
+	// `build/test_output*.txt` and its pictures in `build/screenshots`. The
+	// whole run starts with a new data disk, then runs every machine in
+	// order (a start that fails, the trusted boot, the shortage of frames,
+	// the self tests of the kernel, the main machine, the network, TCP, QUIC,
+	// the randomness, the extended state, the return to a program, the fault
+	// ring, the kernel events, the cryptography, the persistence, the
+	// principals, the hierarchy, the ranges, the loss of power), then the
+	// tests of the loader on the host. It ends with "kerneltool: all tests
+	// passed".
+	//
+	// - `part` (optional): one part only, for the work on it: `main`,
+	//   `network`, `power`, `principals`, `tcp`, `quic`, `quic-real`, `random`,
+	//   `extended_state`, `return_fault`, `trusted_boot`, also `hierarchy`,
+	//   `ranges`, `crypto`, `shortage`, `fault_ring`, `kernel_events`.
+	//   `trusted_boot tpm` adds the two machines with a software TPM.
+	//
+	// ```
+	// nix develop -c kerneltool test network
+	// ```
 	{name = "test", about = "build, start the machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test principals`, `test tcp`, `test quic`, `test quic-real`, `test random`, `test extended_state`, `test return_fault`, `test trusted_boot`: one part only; `test trusted_boot tpm`: with the two machines that have a software TPM", run = run_test},
+	// Builds, then starts the machine under QEMU in a window, with the log of
+	// the kernel on this terminal: the way to use the system by hand.
+	//
+	// - `without_checks` (optional): the build of the measures, with no check
+	//   in the kernel.
+	//
+	// The data disk `build/data_disk.img` stays from run to run, so the
+	// stores of the storage service keep their objects. The command also
+	// starts the peer of the host that takes the calls of `kerneltool call`,
+	// on a socket that only this user reaches. Close the window, or run
+	// `shutdown()` in the console, to end it.
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
+	// Runs the full machine test and the second build, then publishes their
+	// results into the repository.
+	//
+	// It writes the measure record (`docs/measures/measures.txt`): the numbers
+	// of the logs of this run, with the commit, the host and the count of
+	// checks. It copies each picture of the test to `docs/screenshots` and to
+	// a new dated folder of the development log beside the repository. It is,
+	// with `nix flake check`, the full check before a release.
+	//
+	// - `compress`: no machine; it compresses each PNG file of
+	//   `docs/screenshots` and `resources` whose data is stored with no
+	//   compression, and prints the bytes before and after.
 	{name = "screenshots", about = "test and the second build, then write the measure record " + MEASURE_RECORD_FILE + " and copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER + "; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
+	// Runs a machine that measures, with no other load: the numbers that it
+	// prints are measures, never conditions of the test.
+	//
+	// - no argument: the program `locks` on a machine where only the desktop
+	//   runs: the kernel entries in one second with 1, 2 and 4 lockers, in
+	//   `build/test_output_measure.txt`.
+	// - `scheduler N`: N machines that run the program `scheduler` alone, in
+	//   `build/test_output_scheduler_<n>.txt`.
+	// - `windows`: each window of the interface package, alone, and a table of
+	//   the time of its pictures.
+	// - `address_space`, `shortage`: the machine of one measure.
+	// - `without_checks ...`: the same, on the build with no check in the
+	//   kernel.
+	//
+	// The tool checks no speed: a program checks its counts, and the numbers
+	// are printed for a reader (docs/TOOLS.md, "The bounds of the tests").
 	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
+	// Builds, starts a machine that types in the terminal, and films it: the
+	// pictures of the screen become a film with ffmpeg, which must be on the
+	// path. The film is for the development log, not a test.
 	{name = "film", about = "build, start the machine, film the terminal, and write " + FILM_OUTPUT + " and a copy in " + DEVELOPMENT_LOG_FOLDER + " (needs ffmpeg)", run = run_film},
+	// Converts the BDF file of the font of the terminal (Spleen 8x16, from
+	// `FONT_SOURCE`) to Odin data in `support/graphics/font.odin`. The result
+	// is in the repository, so a build does not need the BDF file: run it only
+	// to change the font.
 	{name = "font", about = "convert the BDF file of the font to " + FONT_OUTPUT, run = run_font},
+	// Converts the pointer manifests of `resources/pointers` to the pointer
+	// theme files of the boot image, in `build/pointers`.
+	//
+	// - `folder` (optional): the Xcursor theme to read; else the folder of
+	//   `POINTER_THEME_SOURCE`.
+	//
+	// It prints a table of each theme: each pointer, its size and its hot
+	// spot (docs/POINTERS.md).
 	{name = "pointers", about = "convert the pointer manifests of resources/pointers to pointer theme files in " + POINTER_BUILD_FOLDER + ", with the Xcursor folder of " + POINTER_THEME_SOURCE_VARIABLE + " or of the path after the command; print a table of each theme", run = run_pointers},
+	// Takes the subset of each vector font candidate of `VECTOR_FONT_SOURCES`
+	// that the system draws, writes it to `resources/fonts`, and draws one
+	// picture that compares the candidates. Run it to change a font; a build
+	// reads the files of the repository (docs/FONTS.md).
 	{name = "vector_fonts", about = "subset the vector font candidates of " + VECTOR_FONT_SOURCES_VARIABLE + " to " + VECTOR_FONT_FOLDER + " and draw " + CANDIDATES_PICTURE, run = run_vector_fonts},
+	// Draws the files of the mark of the system from its geometry in
+	// `support/mark`: the icons in `resources/logo`, the picture of the
+	// project, and one picture of every frame of the animations of the mark.
+	//
+	// - `check`: draws them again and compares them with the files of the
+	//   repository; `kerneltool check` runs it, so a mark that changed in
+	//   the code and not in the files fails.
 	{name = "logo", about = "draw the files of the mark of the system from support/mark: " + LOGO_FOLDER + " and " + PROJECT_IMAGE + "; `check` verifies them; and " + MARK_ANIMATIONS_PICTURE + ", every frame of the animations of the mark", run = run_logo},
+	// Converts the JPEG portrait of the program `temple` to the pixels that the
+	// program holds, `programs/temple/portrait.pixels`. The result is in the
+	// repository, so a build decodes no JPEG.
 	{name = "portrait", about = "convert " + PORTRAIT_SOURCE + " to " + PORTRAIT_OUTPUT, run = run_portrait},
+	// Calls an export of a service of the machine that `kerneltool run`
+	// started, from the host, and prints the typed result.
+	//
+	// - `key`: the public key of the program `remote`, as its window shows it.
+	//   The QUIC client of the tool pins it: a machine with another key is
+	//   refused.
+	// - `call`: one call in the language of the console, in quotes.
+	//
+	// The call goes to the peer of `run` through a socket that only this user
+	// reaches, then over QUIC to `remote`, which calls the service for the
+	// principal. A table prints as rows, with its count.
+	//
+	// ```
+	// nix develop -c kerneltool call <key> "monitor.counts_named([(\"programs\"), (\"processors\")])"
+	// ```
 	{name = "call", about = "call <key> \"service.export(arguments)\": call an export of a service of the machine that `run` started, through the program remote over QUIC (key: the public key of remote, from its window), and print the typed result; the peer of `run` takes the call on a socket that only this user reaches", run = run_call},
+	// Builds one module again and again, with no machine, and counts the
+	// distinct results: one distinct module, LLVM IR file and object each is a
+	// build that gives the same bytes every time.
+	//
+	// - `module`, `count`: the module and the count of builds.
+	// - `all count [processes]`: every module and the boot program, one row
+	//   each.
 	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and count the distinct modules, LLVM IR files and objects; `repeat all <count> [processes]`: every module and the boot program, one row each", run = run_repeat},
+	// Copies a file of `core:crypto` of the Odin compiler into the repository
+	// with the listed changes of its imports, and prints its line of the
+	// manifest of the origin.
+	//
+	// - `origin`: the file, under the root of Odin.
+	// - `file`: its path in the repository.
 	{name = "cryptography-take", about = "cryptography-take <file under the root of Odin> <file of the repository>: copy a file of core:crypto with the listed import changes, and print its line of the manifest", run = run_cryptography_take},
+	// Prints the line of the list of the system files for each `.odin` file of
+	// `support/cryptography` that the manifest of the origin does not name:
+	// the files that the project wrote, which a reviewer checks before the
+	// lines go into the list.
 	{name = "cryptography-system-hashes", about = "print the line of " + CRYPTOGRAPHY_SYSTEM_FILES + " for each .odin file of support/cryptography that is not taken from Odin", run = run_cryptography_system_hashes},
+	// Checks that each file that the manifest of the origin names is its file
+	// in Odin with the listed changes only. `kerneltool check` runs it.
 	{name = "cryptography-origin", about = "check that each file of " + CRYPTOGRAPHY_MANIFEST + " is its origin in Odin with the listed changes only", run = run_cryptography_origin},
+	// Works on the changelog: the fragments of `changelog.d/`, and the releases
+	// of `CHANGELOG.md`.
+	//
+	// - `new <type> <subject> "<text>"`: writes one fragment; the type is
+	//   Added, Changed, Deprecated, Removed, Fixed or Security. With `-` as the
+	//   text, the text comes from the standard input.
+	// - `check`: checks the form of each fragment and of the changelog.
+	// - `assemble`: prints the next release from the fragments, with no
+	//   change.
+	// - `release <release number>`: moves the fragments into a new release of
+	//   the changelog, with its date, and deletes them.
+	// - `notes <release number>`: prints the changes of one release.
+	//
+	// No one edits `CHANGELOG.md` by hand: this command writes it.
 	{name = "changelog", about = "new <type> <subject> \"<text>\" (or - and the text on the standard input) | check | assemble | release <release number> | notes <release number>: the fragments of `" + FRAGMENT_FOLDER + "` and the releases of `" + CHANGELOG_FILE + "`", run = run_changelog},
+	// Works on the news entries of `news/`, the dated reports of what a
+	// reader can now see or use.
+	//
+	// - `new <subject>`: writes an entry with the date of today and no title
+	//   and no text: the check fails until they are written.
+	// - `check`: checks the head, the date, the picture, the release, the
+	//   guide and the length of each entry. `kerneltool check` runs it.
 	{name = "news", about = "new <subject> | check: the news entries of " + NEWS_FOLDER + ", dated reports in prose of what a person can now see or use, for the page of the news of the site", run = run_news},
+	// Writes the site in `build/site/`: the home, the guides, the reference
+	// tables read from the code, the status, the news, the releases, the
+	// index of the search and its script.
+	//
+	// - `--address https://<host>/<path>` (optional): the address of the
+	//   published site, for the canonical addresses, the sitemap and the
+	//   feeds.
+	//
+	// Before it writes a page, it checks every page: one title, each link to
+	// a page or a file that it writes, each picture with its text. A failure
+	// stops the command with the page and the reason, and writes nothing. The
+	// design: (docs/SITE.md, "The command").
 	{name = "site", about = "write the site of the system in " + SITE_FOLDER + ": the pages from the documents, the code, the news, the pictures and the logs of the last machine tests, an index and one small script for the search, and the feed of the news; no request to another server", run = run_site},
+	// Prints the number of the newest release of `CHANGELOG.md`, as `0.91.0`:
+	// the number that a workflow gives to a release.
 	{name = "release_number", about = "print the release number of the system: the newest release of `" + CHANGELOG_FILE + "`", run = run_release_number},
+	// Runs every check of the work tree, and writes no file of the
+	// repository. The full check of a batch is `screenshots` with
+	// `nix flake check`.
+	//
+	// In order: `odin check -vet` of the tool, each package of the contract
+	// alone, the host tests of each library, the origin of the cryptography,
+	// the mark, the pictures of the README, the fixed addresses, the bounds
+	// of the tests, the rule on comments, the form of the glossary, the
+	// changelog and the news. Then the whole machine test (`test`) and a
+	// second build that must give the same bytes.
 	{name = "check", about = "odin check -vet and odin test of the host code, the checks of the sources (among them the rule on comments and the form of the glossary), changelog check, news check, then test", run = run_check},
+	// Makes or shows the key that signs the system description.
+	//
+	// - `new <folder>`: writes a new private key, readable by its owner only,
+	//   and its public key, in a folder outside the repository, with the
+	//   firmware signing key of Secure Boot beside them.
+	// - `show`: prints the public key that the build uses: the key of
+	//   `SYSTEM_SIGNING_KEY`, or the test signing key of the repository.
+	//
+	// A system signed with the test key is for a test machine only: its
+	// private key is published.
 	{name = "key", about = "key new <folder outside the repository>: write a new signing key of the system description (the private key, readable by its owner only, and the public key); `key show`: print the public key that the build uses (" + SIGNING_KEY_VARIABLE + ", or the test signing key)", run = run_key},
 }
 
