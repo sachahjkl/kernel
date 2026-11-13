@@ -18,15 +18,15 @@ This file is the record of the decisions of the project: who decided what, when,
 ## Groups
 
 1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191, D-205, D-214 to D-217, D-223
-2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213, D-218, D-219
+2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213, D-218, D-219, D-224
 3. [The kernel](#3-the-kernel): D-071 to D-083, D-220
 4. [Memory](#4-memory): D-084 to D-088
-5. [The scheduler](#5-the-scheduler): D-089 to D-091
+5. [The scheduler](#5-the-scheduler): D-089 to D-091, D-226
 6. [Storage](#6-storage): D-092 to D-095, D-221
 7. [The network and QUIC](#7-the-network-and-quic): D-096 to D-100
 8. [Cryptography and randomness](#8-cryptography-and-randomness): D-101 to D-105
 9. [The interface, the fonts, the mark and the design](#9-the-interface-the-fonts-the-mark-and-the-design): D-106 to D-141, D-192, D-193
-10. [The console and the tools](#10-the-console-and-the-tools): D-142 to D-148, D-206
+10. [The console and the tools](#10-the-console-and-the-tools): D-142 to D-148, D-206, D-225
 11. [The build and the compiler](#11-the-build-and-the-compiler): D-149 to D-162
 12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194 to D-201, D-207 to D-210, D-222
 13. [The name and the repository](#13-the-name-and-the-repository): D-186 to D-189
@@ -640,6 +640,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: in force.
 - Where: `AGENTS.md`, "Work".
 
+### D-224 Development pauses; the documentation is enriched
+- 2026-11-13. Decided by: the owner.
+- Decision: no new development for a time, so that the computer rests. The work is the documentation of the site: rich, detailed, explanatory, for each thing, written from the code. No full check runs for it: the tool tests, the build of the site and at most one build.
+- Words: "Plutôt que de commencer des développements et de faire encore plein de trucs, on va se mettre sur pause pour l'instant en termes de développement pour pas charger la mule, pour pas charger l'ordinateur. [...] je voudrais que tu remplisses ces détails un maximum la doc [...] pas besoin de refaire tout le micmac de contrôle de 47 minutes"; on a second pass of the documentation: "Et oui go faire"
+- State: in force.
+- Where: `AGENTS.md`; `FIRST_MILESTONE.md`, "Next steps".
+
 ## 3. The kernel
 
 ### D-071 The kernel ring is the only kernel entry
@@ -799,6 +806,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: none.
 - State: in force. A share for each budget is not done yet.
 - Where: `SCHEDULING.md`.
+
+### D-226 The scheduler stays in the kernel; its strategies are a closed set
+- 2026-11-13. Decided by: the owner, on an explanation of the coordinator.
+- Decision: the scheduler is not a module and no module replaces it. It runs at each tick, each wake and each wait, under the run lock; a module is another address space, the thread that serves it must itself be scheduled, and a scheduler that fails stops the machine. The strategy still changes while the machine runs, among the strategies that the kernel contains (D-089, D-091). Because the set is closed, the table of functions of D-223 is to be replaced by a `switch` with direct calls, and the exception of property 13 then leaves.
+- Words: "vu que le [scheduler] c'est littéralement la pièce chaude du [kernel] ça vaut pas la peine de le mettre dans un module et de le rendre du coup surchargeable pour toi faudrait que ce soit [built in] on est d'accord" [dictated; the words in brackets are the coordinator's reading]; then: "il faut que ce soit proche dans le code et qui est pas du dispatch virtuel etc c'est ça dans ce cas là je pense que [...] un switch ce serait bien"
+- State: decided. The `switch` is not written: it waits for the end of the pause.
+- Where: `SCHEDULING.md`; `FIRST_MILESTONE.md`, "Next steps".
 
 ## 6. Storage
 
@@ -1236,6 +1250,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "dans les suggestions de complétion, le \"code\" affiché pourrait il etre colorisé ? et dans la ligne de commande aussi ?"; on the contrast of a chosen row: "bah ajuste le contraste c'est important"
 - State: done.
 - Where: `CONSOLE.md`; `DESIGN.md`, the colors.
+
+### D-225 A command of the console gives a result; the console draws it by its kind
+- 2026-11-13. Decided by: the owner; the reading is the coordinator's, confirmed by the owner.
+- Decision: a command gives a result and never prints. The console draws a result by its kind, with one drawer for each kind. The log records of what a line runs show under the line while it runs, by channel, with their value runs. The built-in commands become exports of services; the console keeps the language and the drawing. It is the first work when development resumes.
+- Words: "nos modules de commande de la console ne retournent pas de résultats [...] la console [...] elle prend pas profit du fait qu'on ait des canaux sur les modules et que aussi ça retourne des résultats [...] ces modules, ils devraient retourner des résultats, justement, c'est ces résultats qui devraient être affichés. Du coup, on doit avoir des capacités de rendu générique en fonction des types de résultats dans la console [...] Et avoir une capacité d'afficher, du coup, les canaux des modules quand ils s'exécutent. [...] Mieux intégrer la console et faire en sorte d'utiliser notre architecture pour qu'elle soit très composable."; on the reading: "tout à fait ça !"
+- State: decided, not built.
+- Where: `CONSOLE.md`; `FIRST_MILESTONE.md`, "Next steps".
 
 ## 11. The build and the compiler
 
