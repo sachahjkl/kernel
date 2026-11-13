@@ -1,5 +1,6 @@
 package kerneltool
 
+import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
 import "core:testing"
@@ -409,4 +410,44 @@ site_pages_hold_no_inline_code :: proc(t: ^testing.T) {
 	testing.expect_value(t, site_inline_code_problem(html), "")
 	testing.expect(t, strings.contains(html, "<script src=\"../../../search.js\" data-index=\"search.json\" defer></script>"))
 	testing.expect(t, strings.contains(html, "<div class=\"search\" role=\"search\" hidden>"))
+}
+
+// The line of an older build: version.json is JSON with the commit and the
+// time of the build; the script asks for it past every cache, carries the
+// cases of its rule for its self test, and reloads a page only on a press.
+@(test)
+site_older_build_notice :: proc(t: ^testing.T) {
+	text := site_version_json("1111111111111111111111111111111111111111", "2026-11-13 10:00 UTC")
+	value, parse_error := json.parse_string(text, .JSON, false, context.temp_allocator)
+	testing.expectf(t, parse_error == nil, "version.json does not parse: %v", parse_error)
+	object, is_object := value.(json.Object)
+	testing.expect(t, is_object)
+	if is_object {
+		commit, has_commit := object["commit"].(json.String)
+		built, has_built := object["built"].(json.String)
+		testing.expect(t, has_commit && commit == "1111111111111111111111111111111111111111")
+		testing.expect(t, has_built && built == "2026-11-13 10:00 UTC")
+	}
+	// A commit that the tool cannot read is an empty commit: never older.
+	testing.expect(t, strings.has_prefix(site_version_json("", "2026-11-13 10:00 UTC"), "{\"commit\": \"\""))
+	// The cases hold both answers, and the form that the tool writes is one
+	// of them.
+	older, same := 0, 0
+	for build_case in site_build_notice_cases {
+		if build_case.older {
+			older += 1
+		} else {
+			same += 1
+		}
+	}
+	testing.expect(t, older > 0 && same > 0)
+	script := site_search_script()
+	testing.expect(t, strings.contains(script, "\"builds\":[["), "the table of the self test holds the cases of the older build")
+	testing.expect(t, strings.contains(script, "CASES.builds.length"), "the self test counts the cases of the older build")
+	testing.expect(t, strings.contains(script, "new URL(\"" + SITE_VERSION_FILE + "\""))
+	testing.expect(t, strings.contains(script, "{ cache: \"no-store\" }"))
+	testing.expect(t, strings.contains(script, "searchParams.set(\"at\""), "an address that no cache holds")
+	testing.expect_value(t, strings.count(script, "location.reload()"), 1)
+	testing.expect(t, strings.contains(script, "addEventListener(\"click\", () => location.reload())"), "the page reloads only at a press of the button")
+	testing.expect(t, strings.contains(script, "This page is from an older build: "))
 }

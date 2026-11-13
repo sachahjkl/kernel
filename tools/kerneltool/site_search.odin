@@ -596,8 +596,52 @@ site_search_cases_json :: proc() -> string {
 		site_json_string(&b, segment_case.segments)
 		strings.write_byte(&b, ']')
 	}
+	strings.write_string(&b, "],\"builds\":[")
+	for build_case, index in site_build_notice_cases {
+		strings.write_string(&b, index > 0 ? ",[" : "[")
+		site_json_string(&b, build_case.page_commit)
+		strings.write_byte(&b, ',')
+		site_json_string(&b, build_case.served)
+		strings.write_string(&b, build_case.older ? ",true]" : ",false]")
+	}
 	strings.write_string(&b, "]}")
 	return strings.to_string(b)
+}
+
+// The file that names the commit and the time of the last build: the
+// script asks for it to tell a page of an older build (docs/SITE.md, "A page
+// of an older build").
+SITE_VERSION_FILE :: "version.json"
+
+// site_version_json gives version.json: the commit of the build ("" when
+// the tool cannot read it) and its time.
+site_version_json :: proc(commit, build_time: string) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "{\"commit\": ")
+	site_json_string(&b, commit)
+	strings.write_string(&b, ", \"built\": ")
+	site_json_string(&b, build_time)
+	strings.write_string(&b, "}\n")
+	return strings.to_string(b)
+}
+
+// One case of the line of an older build: the commit that a page names, the
+// text of version.json ("" for a fetch that failed), and whether the page is
+// of an older build. The self test of the script runs each one.
+Site_Build_Notice_Case :: struct {
+	page_commit: string,
+	served:      string,
+	older:       bool,
+}
+
+site_build_notice_cases := [?]Site_Build_Notice_Case {
+	{"1111111111111111111111111111111111111111", `{"commit": "1111111111111111111111111111111111111111", "built": "2026-11-13 10:00 UTC"}`, false},
+	{"1111111111111111111111111111111111111111", `{"commit": "2222222222222222222222222222222222222222", "built": "2026-11-13 10:10 UTC"}`, true},
+	{"1111111111111111111111111111111111111111", "", false},
+	{"1111111111111111111111111111111111111111", "<html>not found</html>", false},
+	{"1111111111111111111111111111111111111111", `{"commit": "", "built": "2026-11-13 10:10 UTC"}`, false},
+	{"1111111111111111111111111111111111111111", `{"built": "2026-11-13 10:10 UTC"}`, false},
+	{"", `{"commit": "2222222222222222222222222222222222222222", "built": "2026-11-13 10:10 UTC"}`, false},
 }
 
 // site_search_script gives search.js: the source below with the rule and
@@ -802,6 +846,20 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
   // A share in thousandths as the tool writes it: "74.6%".
   function percent(perMille) { return Math.floor(perMille / 10) + "." + (perMille % 10) + "%"; }
 
+  // The text of version.json as an object, or null for a fetch that failed
+  // (an empty text) or a text that is not JSON.
+  function servedBuild(text) {
+    if (text === "") return null;
+    try { return JSON.parse(text); } catch (error) { return null; }
+  }
+  // A page is of an older build only when the page and version.json both
+  // name a commit, and the two differ. A page with no commit, a fetch that
+  // fails or a file with no commit is never older.
+  function olderBuild(pageCommit, served) {
+    return typeof pageCommit === "string" && pageCommit !== "" && served !== null && typeof served === "object" &&
+      typeof served.commit === "string" && served.commit !== "" && served.commit !== pageCommit;
+  }
+
   function selfTest() {
     const groups = {};
     for (const [group, name, tie] of CASES.names) {
@@ -837,7 +895,13 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
       if (got === expected) passed++;
       else if (!first) first = "the segments of \"" + countsLine + "\": " + got + "; expected " + expected;
     }
-    const count = cases.size + CASES.kinds.length + CASES.segments.length;
+    // The rule of the line of an older build.
+    for (const [pageCommit, servedText, older] of CASES.builds) {
+      const got = olderBuild(pageCommit, servedBuild(servedText));
+      if (got === older) passed++;
+      else if (!first) first = "the build of a page \"" + pageCommit + "\" and version.json \"" + servedText + "\": " + got + "; expected " + older;
+    }
+    const count = cases.size + CASES.kinds.length + CASES.segments.length + CASES.builds.length;
     return first === "" ? "search self test: " + passed + " of " + count + " cases pass" :
       "search self test: FAIL, " + passed + " of " + count + " cases pass; the first that fails: " + first;
   }
@@ -850,6 +914,34 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
   if (selfTestLine) {
     console.log(selfTestLine);
     document.documentElement.setAttribute("data-search-self-test", selfTestLine);
+  }
+
+  // A page of an older build (docs/SITE.md, "A page of an older build"): a
+  // browser or the edge of the host can keep a page for minutes. Once in
+  // each view of a page, the script asks for version.json, past every cache
+  // (no-store, and an address that no cache holds), and compares its commit
+  // with the commit of the page. When they differ, one quiet line under the
+  // bar offers a reload; the page never reloads by itself.
+  const pageBuild = document.querySelector("meta[name='build-commit']");
+  if (pageBuild && script && typeof fetch === "function") {
+    const versionAddress = new URL("` + SITE_VERSION_FILE + `", new URL(".", script.src));
+    versionAddress.searchParams.set("at", String(Date.now()));
+    fetch(versionAddress, { cache: "no-store" })
+      .then(answer => answer.ok ? answer.text() : "")
+      .catch(() => "")
+      .then(text => {
+        if (!olderBuild(pageBuild.content, servedBuild(text))) return;
+        const notice = document.createElement("p");
+        notice.className = "build-notice";
+        notice.setAttribute("role", "status");
+        const reload = document.createElement("button");
+        reload.type = "button";
+        reload.textContent = "reload";
+        reload.addEventListener("click", () => location.reload());
+        notice.append("This page is from an older build: ", reload);
+        const bar = document.querySelector("header.bar");
+        if (bar) bar.after(notice); else document.body.prepend(notice);
+      });
   }
 
   // The site menu: open on a wide screen, where it is the bar of the

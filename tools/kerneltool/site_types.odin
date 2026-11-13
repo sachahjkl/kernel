@@ -1104,22 +1104,21 @@ site_type_symbol_write :: proc(site: ^Site, b: ^strings.Builder, type: Site_Type
 		}
 	}
 	if type.kind == .Wire_Form {
-		append(&facts, Site_Symbol_Fact{label = "In a call", html = site_text_html(fmt.tprintf("one integer register of a parameter: an export has at most %d (PARAMETER_CAPACITY of contract/module)", module.PARAMETER_CAPACITY))})
+		append(&facts, Site_Symbol_Fact{label = "In a call", html = strings.concatenate({site_text_html(fmt.tprintf("one integer register of a parameter: an export has at most %d (", module.PARAMETER_CAPACITY)), "<code>module.PARAMETER_CAPACITY</code>)"}, context.temp_allocator)})
 		if len(type.names) > 0 {
-			names := strings.builder_make(context.temp_allocator)
-			for key, index in type.names {
-				if index > 0 {
-					strings.write_string(&names, ", ")
-				}
-				site_type_reference(site, &names, key, key[len("module."):], true)
+			names := make([dynamic]string, context.temp_allocator)
+			for key in type.names {
+				append(&names, site_type_reference_html(site, key, key[len("module."):], true))
 			}
-			append(&facts, Site_Symbol_Fact{label = "Types that its text names", kind = .Type, html = strings.to_string(names)})
+			append(&facts, Site_Symbol_Fact{label = "Types that its text names", kind = .Type, html = site_value_list_html(names[:])})
 		}
 		if type.name == "Handle" {
 			append(&facts, Site_Symbol_Fact{label = "In a record", kind = .Type, html = strings.concatenate({site_type_reference_html(site, "operation.Handle", "Handle", true), site_text_html(fmt.tprintf(": %d bytes", size_of(op.Handle)))}, context.temp_allocator)})
 		}
-		if document, found := site.documents[SITE_MODULE_CONTRACT_DOCUMENT]; found {
-			append(&facts, Site_Symbol_Fact{label = "The contract", html = strings.concatenate({"<a href=\"", site_page_link(site, page, document), "\">The module contract</a>, section 4"}, context.temp_allocator)})
+		// A reference to the heading of the call form, with its title: "section
+		// 4" alone means nothing on a page.
+		if _, found := site.documents[SITE_MODULE_CONTRACT_DOCUMENT]; found {
+			append(&facts, Site_Symbol_Fact{label = "The contract", html = site_source_comment_html(site, page, SITE_MODULE_CONTRACT_DOCUMENT + ", section 4", .Line)})
 		}
 	} else {
 		append(&facts, Site_Symbol_Fact{label = "Size", kind = .Size, html = site_value_html(.Size, site_type_size_text(type.size))})
@@ -1144,24 +1143,27 @@ site_type_symbol_write :: proc(site: ^Site, b: ^strings.Builder, type: Site_Type
 		append(&facts, Site_Symbol_Fact{label = "Element", kind = .Type, html = site_type_reference_html(site, type.element_key, type.element_text, true)})
 	}
 	if len(type.variants) > 0 {
-		append(&facts, Site_Symbol_Fact{label = "Variants", kind = .Type, html = site_value_html(.Type, strings.join(type.variants, ", ", context.temp_allocator))})
+		variants := make([dynamic]string, context.temp_allocator)
+		for variant in type.variants {
+			append(&variants, site_value_html(.Type, variant))
+		}
+		append(&facts, Site_Symbol_Fact{label = "Variants", kind = .Type, html = site_value_list_html(variants[:])})
 	}
 	if type.depends_on_target != "" {
 		append(&facts, Site_Symbol_Fact{label = "On the target", html = strings.concatenate({"<code>", site_text_html(type.depends_on_target), "</code>", site_text_html(fmt.tprintf(" has the size of an address of the target: the sizes here are those of %s %s, where the page was made", ODIN_OS_STRING, ODIN_ARCH_STRING))}, context.temp_allocator)})
 	}
 	if len(type.uses) > 0 {
-		uses := strings.builder_make(context.temp_allocator)
-		for use, index in type.uses {
-			if index > 0 {
-				strings.write_string(&uses, ", ")
-			}
-			strings.write_string(&uses, "<a href=\"")
-			site_escape(&uses, site_page_link(site, page, use.page))
-			strings.write_string(&uses, "\"><code>")
-			site_escape(&uses, use.text)
-			strings.write_string(&uses, "</code></a>")
+		uses := make([dynamic]string, context.temp_allocator)
+		for use in type.uses {
+			use_link := strings.builder_make(context.temp_allocator)
+			strings.write_string(&use_link, "<a href=\"")
+			site_escape(&use_link, site_page_link(site, page, use.page))
+			strings.write_string(&use_link, "\"><code>")
+			site_escape(&use_link, use.text)
+			strings.write_string(&use_link, "</code></a>")
+			append(&uses, strings.to_string(use_link))
 		}
-		append(&facts, Site_Symbol_Fact{label = "Named by", html = strings.to_string(uses)})
+		append(&facts, Site_Symbol_Fact{label = "Named by", html = site_value_list_html(uses[:])})
 	}
 
 	after := strings.builder_make(context.temp_allocator)

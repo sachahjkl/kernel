@@ -1273,3 +1273,115 @@ site_document_pointer_problems :: proc(site: ^Site) -> []string {
 	}
 	return problems[:]
 }
+
+// The documents at the root of the repository that a text can name.
+SITE_ROOT_DOCUMENTS :: [?]string{"README.md", "CHANGELOG.md", "AGENTS.md"}
+
+// site_document_names gives the name of each document of the repository: each
+// guide, each working record, and the documents of the root.
+site_document_names :: proc(site: ^Site) -> map[string]bool {
+	names := make(map[string]bool, context.temp_allocator)
+	for path in site.documents {
+		names[site_file_name(path)] = true
+	}
+	records := SITE_WORKING_RECORDS
+	for record in records {
+		names[record] = true
+	}
+	roots := SITE_ROOT_DOCUMENTS
+	for root in roots {
+		names[root] = true
+	}
+	return names
+}
+
+// site_document_name_in_text gives the first name of a document in a text,
+// with the place where it starts, or "" and -1. A name is "<NAME>.md" (a
+// capital, then capitals, digits and "_") that is a whole word: a "/" may
+// come before it, a letter, a digit or a period may not. "docs/<NAME>.md" is
+// a document by its form, also when no such file exists.
+site_document_name_in_text :: proc(text: string, names: map[string]bool) -> (name: string, start: int) {
+	is_name_byte :: proc(character: u8) -> bool {
+		return (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '_'
+	}
+	search := 0
+	for search < len(text) {
+		found := strings.index(text[search:], ".md")
+		if found < 0 {
+			break
+		}
+		dot := search + found
+		after := dot + len(".md")
+		search = after
+		if after < len(text) && site_is_word_byte(text[after]) {
+			continue
+		}
+		first := dot
+		for first > 0 && is_name_byte(text[first - 1]) {
+			first -= 1
+		}
+		if first == dot || text[first] < 'A' || text[first] > 'Z' {
+			continue
+		}
+		if first > 0 && (site_is_word_byte(text[first - 1]) || text[first - 1] == '.') {
+			continue
+		}
+		candidate := text[first:after]
+		if first >= len("docs/") && text[first - len("docs/"):first] == "docs/" {
+			return text[first - len("docs/"):after], first - len("docs/")
+		}
+		if candidate in names {
+			return candidate, first
+		}
+	}
+	return "", -1
+}
+
+// site_document_name_problem gives the first name of a document that a page
+// shows as bare text, or "": outside a link, code, a script and a style. A
+// reader of the site cannot open a path; a document that a page names is a
+// reference or a link (docs/SITE.md, "The references to documents"). No
+// text is an exception: the name of a file in prose is always one of the
+// two, or code.
+site_document_name_problem :: proc(html: string, names: map[string]bool) -> string {
+	// The depth inside the elements whose text is not prose.
+	quiet := 0
+	index := 0
+	for index < len(html) {
+		if html[index] == '<' {
+			end := strings.index_byte(html[index:], '>')
+			if end < 0 {
+				break
+			}
+			tag := html[index + 1:index + end]
+			closing := strings.has_prefix(tag, "/")
+			tag_name := strings.trim_prefix(tag, "/")
+			name_end := 0
+			for name_end < len(tag_name) && ((tag_name[name_end] >= 'a' && tag_name[name_end] <= 'z') || (tag_name[name_end] >= '0' && tag_name[name_end] <= '9')) {
+				name_end += 1
+			}
+			switch tag_name[:name_end] {
+			case "a", "code", "pre", "script", "style":
+				if closing {
+					quiet = max(quiet - 1, 0)
+				} else if !strings.has_suffix(tag, "/") {
+					quiet += 1
+				}
+			}
+			index += end + 1
+			continue
+		}
+		next := strings.index_byte(html[index:], '<')
+		run_end := next < 0 ? len(html) : index + next
+		if quiet == 0 {
+			run := html[index:run_end]
+			if name, start := site_document_name_in_text(run, names); name != "" {
+				context_start := max(start - 40, 0)
+				context_end := min(start + len(name) + 40, len(run))
+				return fmt.tprintf("the text \"%s\" names the document %s outside a link and outside code: write a reference or a link", strings.trim_space(run[context_start:context_end]), name)
+			}
+		}
+		index = run_end
+	}
+	return ""
+}

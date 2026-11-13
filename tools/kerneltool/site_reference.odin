@@ -153,6 +153,10 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	note(&problems, problem)
 	reference.program_budgets, reference.budget_otherwise, problem = site_name_switch_read(root_text, SITE_ROOT_FILE, "things_of")
 	note(&problems, problem)
+	// A page shows each member of a set as a link to its row, and each field
+	// of a budget as a value: a set that holds another thing stops the command.
+	note(&problems, site_name_cases_problem(reference.program_grants, reference.grants_otherwise, SITE_ROOT_FILE, "grants_of", reference.start_grants, true))
+	note(&problems, site_name_cases_problem(reference.program_budgets, reference.budget_otherwise, SITE_ROOT_FILE, "things_of", nil, false))
 	reference.fixed_ranges, problem = site_enumeration_read(fixed_text, SITE_FIXED_ADDRESSES_FILE, "Fixed_Range")
 	note(&problems, problem)
 	commands := make([dynamic]Site_Console_Command, context.temp_allocator)
@@ -204,6 +208,54 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	site_types_read(site) or_return
 	site_code_links_make(site)
 	return true
+}
+
+// site_name_cases_problem gives the first case of a procedure of the root
+// service whose literal is not of the form that its page shows, or "": with
+// sets, each literal is a set of members of the enumeration; else each one
+// is a record of fields.
+site_name_cases_problem :: proc(cases: []Site_Name_Case, otherwise: Site_Name_Case, file, procedure: string, enumeration: []Site_Enumeration_Member, sets: bool) -> string {
+	all := make([dynamic]Site_Name_Case, context.temp_allocator)
+	append(&all, ..cases)
+	append(&all, otherwise)
+	for item in all {
+		if (sets && len(item.fields) > 0) || (!sets && len(item.members) > 0) {
+			return fmt.tprintf("%s, line %d: %s returns %s, where it returns a %s", file, item.line, procedure, item.value, sets ? "set of grants" : "record of fields")
+		}
+		for member in item.members {
+			known := false
+			for candidate in enumeration {
+				known ||= candidate.name == member
+			}
+			if !known {
+				return fmt.tprintf("%s, line %d: %s returns .%s, which no member of its enumeration has", file, item.line, procedure, member)
+			}
+		}
+	}
+	return ""
+}
+
+// site_grant_set_items gives each grant of a set of the root service as one
+// value: a link to its row in the table "What a program receives at its
+// start", with its name and no period.
+site_grant_set_items :: proc(site: ^Site, from_page: string, members: []string, with_icon: bool) -> []string {
+	grants_page := site_page_file(SITE_GRANTS_FOLDER)
+	page_link: string = from_page == grants_page ? "" : site_page_link(site, from_page, grants_page)
+	items := make([dynamic]string, context.temp_allocator)
+	for member in members {
+		append(&items, site_value_link_html(.Grant, strings.concatenate({page_link, "#start-grant-", site_slug(member)}, context.temp_allocator), member, with_icon))
+	}
+	return items[:]
+}
+
+// site_grant_set_write writes a set of grants as a list of values, or
+// "none" for the empty set.
+site_grant_set_write :: proc(site: ^Site, b: ^strings.Builder, from_page: string, members: []string, with_icon: bool) {
+	if len(members) == 0 {
+		strings.write_string(b, "none")
+		return
+	}
+	site_value_list(b, site_grant_set_items(site, from_page, members, with_icon))
 }
 
 // site_code_link_add records the target of a code span, or marks the name
@@ -546,14 +598,11 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 			facts := make([dynamic]Site_Symbol_Fact, context.temp_allocator)
 			append(&facts, Site_Symbol_Fact{label = "Number", kind = .Number, html = site_value_html(.Number, fmt.tprintf("%d", operation.member.number))})
 			if named := site_names_in_text(operation.member.comment, status_names[:]); len(named) > 0 {
-				refused := strings.builder_make(context.temp_allocator)
-				for status, index in named {
-					if index > 0 {
-						strings.write_string(&refused, ", ")
-					}
-					site_value_link(&refused, .Status, strings.concatenate({"#status-", site_slug(status)}, context.temp_allocator), status, false)
+				refused := make([dynamic]string, context.temp_allocator)
+				for status in named {
+					append(&refused, site_value_link_html(.Status, strings.concatenate({"#status-", site_slug(status)}, context.temp_allocator), status, false))
 				}
-				append(&facts, Site_Symbol_Fact{label = "Statuses that its text names", kind = .Status, html = strings.to_string(refused)})
+				append(&facts, Site_Symbol_Fact{label = "Statuses that its text names", kind = .Status, html = site_value_list_html(refused[:])})
 			}
 			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"operation-", site_slug(name)}, context.temp_allocator), name = name, signature = signature, signature_html = site_operation_signature_html(site, operation), description = operation.text, page = site_page_file(SITE_OPERATIONS_FOLDER), facts = facts[:], source = SITE_OPERATION_FILE, line = operation.member.line})
 		}
@@ -646,8 +695,10 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		}
 		site_table_end(&b, grants_table)
 		site_source_line(site, &b, SITE_SYSTEM_GRANTS_FILE)
-		strings.write_string(&b, "<h2 id=\"programs\">The grants of each program</h2>\n")
-		programs_table := site_table_start(&b, "Grants of each program", {{"Programs", .Short}, {"Grants", .Short}, {"Why, as the root service says", .Prose}}, {.Module, .Grant, .None})
+		strings.write_string(&b, "<h2 id=\"programs\">The grants of each program</h2>\n<p>Each grant leads to its row in the first table of this page.</p>\n")
+		// The programs and the grants are lists of names: they break
+		// between the names, so the column of the reasons keeps its room.
+		programs_table := site_table_start(&b, "Grants of each program", {{"Programs", .List}, {"Grants", .List}, {"Why, as the root service says", .Prose}}, {.Module, .Grant, .None})
 		for item in reference.program_grants {
 			// Each row is a link target, named by its first program.
 			if len(item.names) > 0 {
@@ -658,12 +709,15 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 				strings.write_string(&b, "<tr>")
 			}
 			site_program_names_cell(site, &b, item.names)
-			site_name_cell(site, &b, item.value, SITE_ROOT_FILE, item.line)
+			strings.write_string(&b, "<td>")
+			site_grant_set_write(site, &b, site_page_file(SITE_GRANTS_FOLDER), item.members, false)
+			strings.write_string(&b, "</td>")
 			site_comment_cell(site, &b, site_page_file(SITE_GRANTS_FOLDER), item.comment)
 			strings.write_string(&b, "</tr>\n")
 		}
-		strings.write_string(&b, "<tr><td>Each other program</td>")
-		site_name_cell(site, &b, reference.grants_otherwise.value, SITE_ROOT_FILE, reference.grants_otherwise.line)
+		strings.write_string(&b, "<tr><td>Each other program</td><td>")
+		site_grant_set_write(site, &b, site_page_file(SITE_GRANTS_FOLDER), reference.grants_otherwise.members, false)
+		strings.write_string(&b, "</td>")
 		site_comment_cell(site, &b, site_page_file(SITE_GRANTS_FOLDER), reference.grants_otherwise.comment)
 		strings.write_string(&b, "</tr>\n")
 		site_table_end(&b, programs_table)
@@ -709,17 +763,13 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		strings.write_string(&b, "<h2 id=\"each-command\">Each command</h2>\n")
 		for command in reference.console_commands {
 			facts := make([dynamic]Site_Symbol_Fact, context.temp_allocator)
-			parameters := strings.builder_make(context.temp_allocator)
-			for parameter, index in command.parameters {
-				if index > 0 {
-					strings.write_string(&parameters, ", ")
-				}
-				site_type_reference(site, &parameters, strings.concatenate({"wire.", parameter}, context.temp_allocator), parameter, true)
+			// The parameters in their order, as a list of values.
+			parameters := make([dynamic]string, context.temp_allocator)
+			for parameter in command.parameters {
+				append(&parameters, site_type_reference_html(site, strings.concatenate({"wire.", parameter}, context.temp_allocator), parameter, true))
 			}
-			if len(command.parameters) == 0 {
-				site_value(&parameters, .Type, "none", false)
-			}
-			append(&facts, Site_Symbol_Fact{label = "Parameters", kind = .Type, html = strings.to_string(parameters)})
+			parameters_html := len(parameters) == 0 ? site_value_html(.Type, "none") : site_value_list_html(parameters[:])
+			append(&facts, Site_Symbol_Fact{label = "Parameters", kind = .Type, html = parameters_html})
 			append(&facts, Site_Symbol_Fact{label = "Result", kind = .Type, html = site_type_reference_html(site, strings.concatenate({"wire.", command.result}, context.temp_allocator), command.result, true)})
 			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"command-", site_slug(command.name)}, context.temp_allocator), name = command.name, signature = site_console_signature(command), signature_html = site_console_signature_html(site, command), description = command.about, page = site_page_file(SITE_CONSOLE_FOLDER), facts = facts[:], source = command.file, line = command.line})
 		}

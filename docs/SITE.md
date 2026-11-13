@@ -20,7 +20,8 @@ No page holds a text that a person must remember to update: each page is generat
   - each page has exactly one search field (`GLOSSARY.md`): in the bar, but on the docs home, where it is in the page and the bar has none (`site_search_field_problem`);
   - each `srcset` candidate names a file that the command wrote;
   - a page of the documentation layout has one documentation tree and one list "On this page", and each link of the list names an id of the page; a page of the presentation layout has neither (see "The two layouts");
-  - no page holds code or style of its own: each `<script>` has a `src` and nothing inside, but the one `<script type="application/ld+json">` of the page graph, whose text has no `<`; no `<style>` element and no `style` attribute exists.
+  - no page holds code or style of its own: each `<script>` has a `src` and nothing inside, but the one `<script type="application/ld+json">` of the page graph, whose text has no `<`; no `<style>` element and no `style` attribute exists;
+  - no page names a document of the repository as bare text (see "The count and the check").
 - Then the command checks what other programs read (see "What other sites read"); a failure stops it in the same way.
 - After the checks of the pages, the command makes the index of the search and checks it against the pages (see "The search"); a failure stops it in the same way.
 - At its end the command prints: the pages and their bytes, the count of the redirect pages and the count of each generation of old addresses, the other files, the bytes of the style sheet and the count of the icons inside it, the entries and the bytes of the index of the search and the bytes of the script, the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, the count of the document references and the first three whose labels found no heading (see "The references to documents"), the count of the declarations of the sources and of the files that the parser refused, and the count of the code spans that link to a declaration, that are ambiguous and that name no declaration, with the first five of the last two (see "The declarations of the sources"), the counts of the module graph and its modules with no entry that no module imports (see "The module graph"), each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the count of the pictures of the repository that it compressed, with their bytes before and after.
@@ -44,6 +45,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `releases/` | All of `CHANGELOG.md`, newest first; each release has the anchor `release-<number>`, and a line with a link to each news entry that names it |
 | `news/`, `news.xml` | The files of `news/`; see "The news" |
 | `search.json`, `search.js` | The index of the search and its script; see "The search" |
+| `version.json` | The commit and the time of the build; see "A page of an older build" |
 | `releases.xml` | The feed of the releases, from `CHANGELOG.md`; see "What other sites read" |
 | `site.webmanifest`, `llms.txt` | The name, the colors and the icons of the site; the pages with their descriptions in Markdown |
 | `sitemap.xml`, `robots.txt` | Only with a site address; see "What other sites read" |
@@ -459,7 +461,10 @@ The writer of each generated table states the kind of each column (`Site_Column_
 | Line | A quoted line of a log or of code | 30 em, about 57 characters of the monospace font at 14 pixels | At spaces; a long word breaks only when it is wider than the cell |
 | Date | A date and a time, `2026-11-12 02:09 UTC`, in a `<time datetime="2026-11-12T02:09Z">` element | Its text | Never |
 | Number | A number | Its text | Never; aligned right, with figures of one width |
+| List | Several names: modules, grants, statuses, labels | 8 em, and at least its longest name | Between its names, never inside one |
 | Any | A column of a table of a document of `docs/` | 6 em, about 12 characters | At spaces; a cell that holds only a number or a date gets that kind |
+
+A list of names is not a name. On 2026-11-13 the table of the grants of each program showed each set of grants as its Odin literal, on one line that pushed the column of the reasons out of its box, and a row of several programs started lines with a comma. A cell or a fact that holds several names is a list of values (`site_value_list`): a `<ul class="value-list">` with one value in each item, each item on one line, the list wrapping between its items, with no brace, no period before a member and no comma. A screen reader reads the count of the items. Its least width is its longest name, so a column of lists never pushes the column of prose out of the box. The writers that use it: the programs and the grants of the page of the grants (each grant a link to its row in the table "What a program receives at its start", with its name and no period), the grants and the budget of a program on its module page, the imports of the index of the modules, the imports, the importers and the build settings of a module page, the table of the edges of the module graph, the statuses that the text of an operation names, the parameters of a command of the console and of an export, the types that a wire form names, the variants of a union and the places that name a type, and the evidence items and the gaps of each property on the status page. A value of a source is never shown as its literal: a set of grants of the root service is read as its members (see "The reference tables").
 
 The measured numbers are What (Prose), The line of the log (Line), Log, line, machine (Prose) and Written (Date): 13 + 30 + 13 em and the date, under the 1120 pixels of the column of the page, so the table does not scroll on a wide screen, and a line of a log takes two or three lines.
 
@@ -546,7 +551,7 @@ Who states the kind: the writer of each table gives the kind of each column (`si
 
 Where it shows:
 
-- the reference tables: the statuses and the error kinds (status), the grants (grant), the operations (operation), the commands of the console and of the tool (command), the context roles (number; handle or value in each cell), the fixed ranges (number), the programs and their grants (module, grant), the licenses (file, version), the index of the guides and of the reference (file), the measured numbers (the date: time; a quoted line of a log stays as the log has it);
+- the reference tables: the statuses and the error kinds (status), the grants (grant), the operations (operation), the commands of the console and of the tool (command), the context roles (number; handle or value in each cell), the fixed ranges (number), the programs and their grants (module, grant; each a list of values, see "The tables"), the licenses (file, version), the index of the guides and of the reference (file), the measured numbers (the date: time; a quoted line of a log stays as the log has it);
 - the module pages: the index (module, number, yes or no in each cell, the imports), the facts of a module (file, yes or no, size), the facts of each export (type);
 - the facts of each symbol: its number, its statuses, its parameters and its result, its source line (file);
 - the status page: the status of each property (status), the gaps and the next steps (number);
@@ -570,6 +575,26 @@ The legend: the reference index ends with the section "The kinds of values", a t
 ### The versions of the files
 
 The site is behind a proxy that keeps a file for hours. Each link to a file whose bytes change between builds carries its file version (`GLOSSARY.md`): `style.css?v=<16 hexadecimal digits>`, the first 8 bytes of the BLAKE3 hash of its bytes (`contract/blake3`). The files: `style.css`, `search.js`, `mark_animation.js`, `module_graph.js` and `search.json` (`SITE_VERSIONED_FILES`). The same bytes give the same address. The index of the search is written before the pages, so that each page names its version: `search.js` reads it from the attribute `data-index` of its own `script` element, relative to its folder, with no inline script. The check of the links ignores the query. The icons and the pictures carry no version: their bytes come from the mark and the repository and change rarely.
+
+### A page of an older build
+
+A version in the address works for a file that a page names; it cannot work for the page itself, whose address is the one that a reader types or follows. The host serves each page with `max-age=600`, and the site cannot set the headers of its host. So a browser can show a page of an older build for 10 minutes after a publication, and the edge of the host for as long as it keeps it. On 2026-11-13 the owner saw a page whose code was not colored and a bare name of a document; the site served with an empty cache had neither: his browser or the edge had kept the older page.
+
+What the site does:
+
+- Each page names the commit of its build in its head: `<meta name="build-commit" content="<commit>">`. With no commit (the tool cannot read it), the page has no such line.
+- `version.json`, at the root of the site, names the commit and the time of the build: `{"commit": "<commit>", "built": "2026-11-13 10:00 UTC"}`. The commit is empty when the tool cannot read it.
+- `search.js`, which each page loads, asks for `version.json` once in each view of a page, with `cache: "no-store"` (past the cache of the browser) and a query `?at=<time in milliseconds>` (an address that no cache of the edge holds). It never asks again in the same view.
+- When the page and the file both name a commit and the two differ, the script puts one line under the bar: "This page is from an older build: reload", where "reload" is a button that calls `location.reload()`. The line has `role="status"`, the dim color, and no style attribute (`.build-notice` in the style sheet). The page never reloads by itself.
+- Nothing is shown when the commits are equal, when the page or the file names no commit, when the fetch fails or answers with an error, or when its text is not JSON: a page opened from a file shows nothing.
+- The rule is one function of the script (`olderBuild`). The self test of the script (`?selftest=1`) runs it over the table `site_build_notice_cases` of `tools/kerneltool/site_search.odin`; the host test `site_older_build_notice` checks the file, the table and the parts of the script.
+
+What it cannot do:
+
+- It cannot make the browser fetch the new page: it tells the reader, who reloads. A reload asks the browser to check the page with the host, but an edge that still holds the older page serves it again until it lets it go; a second reload later then shows the new page.
+- A page of a build from before this line has no `<meta name="build-commit">` and no such script: it never says that it is older.
+- Two builds of one commit (a build of a tree with changes that are not committed) have one commit: the line does not tell them apart.
+- With no script, nothing is shown.
 
 ## The mark on the site
 
@@ -630,7 +655,7 @@ Each table is read from the text of the file that defines the thing (`tools/kern
 | Kernel operations | `Operation` and `Status` in `contract/operation/operation.odin` | An enumeration: a line `<Name> :: enum <type> {`, one member a line (`<Name> = <decimal>,` or `<Name>,`, with a comment `// ...` or not), a line `}`. A line that is only a comment continues the comment of the member above it. The comment of an operation is `(<parameters>) -> <result>. <text>` or `(<parameters>): <text>`: the parameters and the result exist only as these words, and the table shows them |
 | The context of a program | The constants `CONTEXT_...` and `ROOT_...` of `contract/operation/operation.odin` from the line `CONTEXT_HANDLES ::`, and `GRANT_...` of `support/system/grants.odin` | `<NAME> :: <decimal>`, with the comment lines just above it and the comment of its line. `CONTEXT_HANDLES` and `CONTEXT_VALUES` are the sizes, and a name that ends in `_COUNT` is a count: not roles. A name with `_VALUE_` is a value, another a handle |
 | Error kinds and units | `Kind`, `Unit` and `UNIT_NAMES` in `contract/errors/errors.odin` | Enumerations; a table `UNIT_NAMES := [Unit]string {` of lines `.<Name> = "<text>",` |
-| Grants of the root service | `Grant` and the procedure `grants_of` in `programs/root/main.odin`; `Root_Grant` and `root_grant_names` in `support/system/grants.odin` | Enumerations and a table of names; in `grants_of`, lines `case "<name>", ...:`, comment lines or not, then `return <value>`; the last `return` of the procedure is the value of each other program |
+| Grants of the root service | `Grant` and the procedures `grants_of` and `things_of` in `programs/root/main.odin`; `Root_Grant` and `root_grant_names` in `support/system/grants.odin` | Enumerations and a table of names. `grants_of` and `things_of` are read by the parser of Odin (`site_name_switch_read`): the body is a switch on the name, then one `return`, the value of each other program; each case names programs by strings, and its body is one `return` of a literal with no type: a set of members (`{.Inspect, .Image}`) or a record of integer fields (`{pages = 2048, ...}`). The comment of a case is the comment of each of its lines. Any other form (a constant, a typed literal, an expression, a default case, a case with no return) stops the command with its line, and so does a member of a set that `Grant` does not have |
 | Fixed ranges | `Fixed_Range` in `contract/fixed_addresses/fixed_addresses.odin` | An enumeration. The address is `fixed_addresses.range_of` of the compiled contract |
 | Commands of the console | `programs/console/commands.odin`, `programs/console/tables.odin` | Lines `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`; the signature as `help()` prints it, `Value` for the kind None of a parameter |
 
@@ -661,7 +686,7 @@ What the tables cannot show:
 - its source folder, its size in the boot image of the last build (or that the image is not built), its build settings (the `defines` of its row, or "none"), its imports and the modules that import it;
 - its kind (its group);
 - its exports, a table then each one as a documented symbol (see "The reference tables"), each with its signature as the console prints it (`write(name: Text, data: Text) -> Integer`, `Handle(Read, Write)`, `Table(Rectangle, Change)`) and its line of help. They come from the same reader as the build: no module needs to be built;
-- for a program, its grants and its budget (pages, programs, threads) from `grants_of` and `things_of` of the root service, with the comments of those lines;
+- for a program, its grants and its budget (pages, programs, threads) from `grants_of` and `things_of` of the root service, with the comments of those lines: each grant a link to its row on the page of the grants, each field of the budget its name and its value, both lists of values;
 - its identity card (`GLOSSARY.md`), after its documentation: the same markup as on the page of the module graph (see "The module graph");
 - its neighbours, after its facts: a figure of the module, the modules that it imports at its left and the modules that import it at its right, drawn by the layout of the module graph on that part of the graph. The module itself is not a link. A module with no edge has one sentence, with a link to its row on the page of the graph.
 
@@ -769,6 +794,8 @@ A code span of a guide, of the glossary or of a news entry that names a document
 The command prints "N document references, M with no heading found: <the first three>": N is the count of the different pointers of the pages and of the code spans of the guides that name a document, M those whose labels found no place.
 
 Before it writes a page, the command checks every pointer, also those of a comment that no page shows: each comment of each source file of `kernel`, `programs`, `modules`, `support`, `contract`, `runtime` and `boot` (the lines of comment that follow each other are one text), and each code span that names a document in the guides, the glossary, the news and `FIRST_MILESTONE.md`. A pointer whose labels do not all find their place stops the command, with its file and its line: a stale pointer or a label that names no heading (a free text) cannot come back. The tool is not read: its tests hold stale pointers on purpose. The target of a link `[text](docs/X.md#id)` is not a pointer; the same pass checks each link of the comments (see "The links of a comment"). A guide names no working record and no decision; a working record names a decision by its identifier (`DECISIONS.md`, D-163), which is a label.
+
+The owner asked for the check of the pages on 2026-11-13: "il reste des références là, par exemple docs/TOOLS.md. Alors, soit on met une référence vers quelque chose de réel, soit on met un lien, soit on l'enlève, mais on peut pas laisser ça comme ça." Before it writes a page, the command reads the text of each page, outside a link, a code element, a block of code, a script and a style, and stops on a name of a document there (`site_document_name_problem`), with the page and the words around the name. A name of a document is `docs/<NAME>.md` (by its form, also when no such file exists), or `<NAME>.md` for a guide, a working record, `README.md`, `CHANGELOG.md` or `AGENTS.md` (`site_document_names`), as a whole word: a `/` can come before it (`news/README.md`), a letter, a digit or a period cannot. An attribute is not text. No text is an exception: a document that a page names is a reference, a link or code. The form of each source: in a guide, a code span (`` `DESIGN.md`, section 5 ``), also in a cell of a table, which the renderer writes as prose; in a source comment, the pointer `(docs/DESIGN.md, section 5)`; in the text of a command of the tool, a code span, which the page of the commands writes as code in its table and as a link to the file under it. The host test `site_document_names_are_never_bare` holds the cases.
 
 ## The Markdown of a source comment
 

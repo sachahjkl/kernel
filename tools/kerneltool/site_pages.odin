@@ -34,6 +34,7 @@ Site_Column_Kind :: enum {
 	Line, // A quoted line of a log or of code: at least about 60 characters of the monospace font.
 	Date, // A date and a time: never broken.
 	Number, // A number: never broken, aligned right.
+	List, // Several names, one value each (site_value_list): broken between the names, never inside one.
 	Any, // A column of a table of a document, whose kind the tool does not know.
 }
 
@@ -44,6 +45,7 @@ site_column_classes := [Site_Column_Kind]string {
 	.Line   = "column-line",
 	.Date   = "column-date",
 	.Number = "column-number",
+	.List   = "column-list",
 	.Any    = "column-any",
 }
 

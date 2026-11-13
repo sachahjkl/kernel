@@ -43,7 +43,7 @@ A draw record is 40 bytes. The fields are little-endian, in this order:
 | Offset | Field | Type | Meaning |
 |---|---|---|---|
 | 0 | `kind` | u8 | `None` 0, `Rectangle` 1, `Vertical_Gradient` 2, `Horizontal_Gradient` 3, `Text` 4, `Clip` 5, `Point_Grid` 6, `Folded_Gap` 7 (version 2), `Picture` 8 (version 2), `Text_Grid` 9 (version 3), `Line` 10 (version 4), `Interface_Text` 11 (version 7) |
-| 1 | `text_scale` | u8 | Text, Interface_Text: 1, 2 or 3 (DESIGN.md, section 5) |
+| 1 | `text_scale` | u8 | Text, Interface_Text: 1, 2 or 3 (`DESIGN.md`, section 5) |
 | 2 | `text_origin_thirds` | u8 | Interface_Text: the origin of the text after `x` + the ink margin, in thirds of a pixel: 0, 1 or 2 (version 7; it was `text_subpixel_x`, which no reader used). 0 for the other kinds |
 | 3 | `kind_detail` | u8 | Line: the thickness in pixels, 1 to 32 (version 4; it was `reserved`). Text, Interface_Text: the weight, 0 regular, 1 bold (version 6: the titles of the cards; bold draws at scale 1 only). 0 for the other kinds |
 | 4 | `x`, `y`, `width`, `height` | 4 x i32 | The rectangle of the record, in pixels of the surface. For text, the rectangle that the run covers. For an Interface_Text, the box of its measure grown by its ink margin on each side: every pixel of its ink is in it. For a line, the first end, and the second end minus the first: `width` and `height` can be negative |
@@ -111,7 +111,7 @@ A `Line` record draws a straight line between two points, with a thickness, in o
   - A record written by hand with a thickness of 0, a thickness past 32, or an end past the bound covers nothing: no pixel, no damage.
   - A line of length 0 is one square of its thickness. A line fully outside the area is cut away like each record.
 - **The cost bound**: one execution walks at most 65 537 points and fills at most 32 x 32 pixels for each point inside the area.
-- **Limits**: no rounded ends, no antialiasing, no dashes. Lines at an angle are allowed, sparingly (DESIGN.md, section 2).
+- **Limits**: no rounded ends, no antialiasing, no dashes. Lines at an angle are allowed, sparingly (`DESIGN.md`, section 2).
 - `draw_outline` appends the border of a rectangle as four rectangles, the same pixels as `graphics.outline`.
 
 ### 2.6 Window places
@@ -123,10 +123,10 @@ The compositor puts each window on the grid of 8 pixels (`support/bar/window_pla
 
 ## 3. Layout
 
-- The unit is the grid of 8 pixels (DESIGN.md, section 6). An `Area` is a rectangle of the surface.
+- The unit is the grid of 8 pixels (`DESIGN.md`, section 6). An `Area` is a rectangle of the surface.
 - **A column** gives areas from the top of its area to the bottom: `column_take(&column, height)`. The height of a line of text is 16, a line of a table 24.
 - **A row** splits an area into columns in one pass: the caller gives the sizes of all the columns before it draws in them, so the row knows each width at once. A size is `Pixels` (a fixed width), `Characters` (a count of characters of the font: the width that the text measure gives) or `Share` (a part of what the fixed sizes leave, in proportion to its value). A gap is between two columns.
-- **Alignment**: text is at the left, or at the right of its area (numbers, DESIGN.md section 5), and in the middle of the height of a line.
+- **Alignment**: text is at the left, or at the right of its area (numbers: `DESIGN.md`, section 5), and in the middle of the height of a line.
 - **One pass.** There is no tree and no constraint solver: what is not known before the row (the width of a text that the program has not made yet) is measured by the caller with `text_width` first. `gui_toolkit` solves sizes in five passes over a tree of boxes (standalone, upward, downward, violations, positions): the windows of this system have fixed sizes, and one pass with sizes declared before content covers each window of section 1.
 
 ## 4. Input and focus

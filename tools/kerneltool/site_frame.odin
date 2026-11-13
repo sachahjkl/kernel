@@ -766,6 +766,9 @@ site_build :: proc(address: string) -> bool {
 	site_write_file(&site, SITE_STYLE_SHEET, transmute([]u8)style_sheet) or_return
 	site_write_file(&site, SITE_SEARCH_SCRIPT, transmute([]u8)site_search_script()) or_return
 	site_write_file(&site, SITE_MODULE_GRAPH_SCRIPT, transmute([]u8)site_module_graph_script()) or_return
+	// The commit and the time of this build: a page that a cache kept from
+	// an older build finds that it is older.
+	site_write_file(&site, SITE_VERSION_FILE, transmute([]u8)site_version_json(site.commit, site.build_time)) or_return
 	site_mark_animation_write(&site) or_return
 	// The index of the search, from the same data as the pages. It is
 	// written before the pages, because each page names the version of its
@@ -791,6 +794,14 @@ site_build :: proc(address: string) -> bool {
 	// the home of the docs.
 	for page in site.pages {
 		if problem := site_search_field_problem(page, written[page.path]); problem != "" {
+			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
+		}
+	}
+	// The name of a document is a reference or a link on a page, never a
+	// bare path that the reader cannot open.
+	document_names := site_document_names(&site)
+	for page in site.pages {
+		if problem := site_document_name_problem(written[page.path], document_names); problem != "" {
 			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
 		}
 	}
@@ -973,6 +984,11 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	// bytes, so that a proxy that keeps a file for hours never serves an
 	// old one with a new page.
 	fmt.sbprintf(&b, "<link rel=\"stylesheet\" href=\"%s\">\n", site_file_link(site, page.path, SITE_STYLE_SHEET))
+	// The commit of this build, which the script compares with the commit
+	// of version.json: a page that a cache kept from an older build says so.
+	if site.commit != "" {
+		fmt.sbprintf(&b, "<meta name=\"build-commit\" content=\"%s\">\n", site.commit)
+	}
 	// The script of the site: the search, the menu and "On this page". Each
 	// page is whole with no script. The animations of the mark play on the
 	// large heron of the home only. The script reads the address of the

@@ -185,3 +185,24 @@ site_value_kinds_of_the_context_roles :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(body, "<th scope=\"col\" class=\"column-number value-head value-icon value-number\">Place</th>"))
 	testing.expect(t, strings.contains(body, "<td class=\"column-number value value-number\">"))
 }
+
+// A cell of several names is a list of values: the column has the kind
+// List, each name is one item, and the style sheet keeps a name whole and
+// breaks the list between its items. No comma joins the names.
+@(test)
+site_value_list_in_a_table :: proc(t: ^testing.T) {
+	b := strings.builder_make(context.temp_allocator)
+	table := site_table_start(&b, "Lists", {{"Program", .Name}, {"Grants", .List}, {"Why", .Prose}}, {.None, .Grant, .None})
+	strings.write_string(&b, "<tr><td>one</td><td>")
+	site_value_list(&b, {site_value_html(.Grant, "Inspect"), site_value_html(.Grant, "Debug_Image")})
+	strings.write_string(&b, "</td><td>a reason</td></tr>\n")
+	site_table_end(&b, table)
+	html := strings.to_string(b)
+	testing.expect(t, strings.contains(html, "<th scope=\"col\" class=\"column-list value-head value-icon value-grant\">Grants</th>"), html)
+	testing.expect(t, strings.contains(html, "<td class=\"column-list value value-grant\"><ul class=\"value-list\"><li><code class=\"value value-grant\">Inspect</code></li><li><code class=\"value value-grant\">Debug_Image</code></li></ul></td>"), html)
+	testing.expect(t, !strings.contains(html, "</code>, "), "no comma joins two names")
+	style := site_style_sheet("")
+	testing.expect(t, strings.contains(style, ".value-list { display: flex; flex-wrap: wrap;"))
+	testing.expect(t, strings.contains(style, ".value-list li { margin: 0; white-space: nowrap;"))
+	testing.expect(t, strings.contains(style, "th.column-list { min-width: 8em; }"))
+}

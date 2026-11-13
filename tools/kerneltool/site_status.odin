@@ -177,7 +177,7 @@ site_status_add :: proc(site: ^Site) -> bool {
 
 	// The properties.
 	strings.write_string(&b, "<h2 id=\"properties\">Properties</h2>\n")
-	properties_table := site_table_start(&b, "Properties", {{"Property", .Prose}, {"Status", .Short}, {"Evidence items", .Prose}, {"Gaps", .Prose}}, {.None, .Status, .None, .None})
+	properties_table := site_table_start(&b, "Properties", {{"Property", .Prose}, {"Status", .Short}, {"Evidence items", .List}, {"Gaps", .List}}, {.None, .Status, .None, .None})
 	for property in properties {
 		heading_id := ""
 		prefix := fmt.tprintf("%d. ", property.number)
@@ -206,23 +206,34 @@ site_status_add :: proc(site: ^Site) -> bool {
 				append(&naming, item)
 			}
 		}
+		// The items and the gaps are lists of labels: they break between
+		// the labels, never with a comma at the start of a line.
 		if len(naming) == 0 {
 			strings.write_string(&b, "<td class=\"missing\">none names it</td>")
 		} else {
+			labels := make([dynamic]string, context.temp_allocator)
+			for item in naming {
+				label := strings.builder_make(context.temp_allocator)
+				site_item_links(site, &label, path, SITE_MILESTONE_FILE, []Site_List_Item{item})
+				append(&labels, strings.to_string(label))
+			}
 			strings.write_string(&b, "<td class=\"code\">")
-			site_item_links(site, &b, path, SITE_MILESTONE_FILE, naming[:])
+			site_value_list(&b, labels[:])
 			strings.write_string(&b, "</td>")
 		}
-		named_gaps := 0
+		gap_labels := make([dynamic]string, context.temp_allocator)
 		for gap in gaps {
-			if !slice.contains(site_property_numbers(gap.text, len(properties)), property.number) {
-				continue
+			if slice.contains(site_property_numbers(gap.text, len(properties)), property.number) {
+				append(&gap_labels, fmt.tprintf("<a href=\"#gap-%d\">%d</a>", gap.number, gap.number))
 			}
-			strings.write_string(&b, named_gaps == 0 ? "<td class=\"code\">" : ", ")
-			fmt.sbprintf(&b, "<a href=\"#gap-%d\">%d</a>", gap.number, gap.number)
-			named_gaps += 1
 		}
-		strings.write_string(&b, named_gaps == 0 ? "<td class=\"missing\">none names it</td>" : "</td>")
+		if len(gap_labels) == 0 {
+			strings.write_string(&b, "<td class=\"missing\">none names it</td>")
+		} else {
+			strings.write_string(&b, "<td class=\"code\">")
+			site_value_list(&b, gap_labels[:])
+			strings.write_string(&b, "</td>")
+		}
 		strings.write_string(&b, "</tr>\n")
 	}
 	site_table_end(&b, properties_table)

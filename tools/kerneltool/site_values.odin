@@ -203,6 +203,14 @@ site_value_html :: proc(kind: Site_Value_Kind, text: string) -> string {
 	return strings.to_string(b)
 }
 
+// site_value_html_with_icon gives the markup of a value with its icon, for
+// a cell of values of several kinds.
+site_value_html_with_icon :: proc(kind: Site_Value_Kind, text: string) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	site_value(&b, kind, text, true)
+	return strings.to_string(b)
+}
+
 // site_value_link writes a value that is a link: the link holds the value.
 site_value_link :: proc(b: ^strings.Builder, kind: Site_Value_Kind, address, text: string, with_icon: bool) {
 	strings.write_string(b, "<a href=\"")
@@ -210,6 +218,35 @@ site_value_link :: proc(b: ^strings.Builder, kind: Site_Value_Kind, address, tex
 	strings.write_string(b, "\">")
 	site_value(b, kind, text, with_icon)
 	strings.write_string(b, "</a>")
+}
+
+// site_value_list writes several values as one list, each item the markup
+// of one value. A name never breaks inside; the list breaks between its
+// names, so a cell of many names takes several lines and no comma starts a
+// line (docs/SITE.md, "The tables"). A screen reader reads the count.
+site_value_list :: proc(b: ^strings.Builder, items: []string) {
+	strings.write_string(b, "<ul class=\"value-list\">")
+	for item in items {
+		strings.write_string(b, "<li>")
+		strings.write_string(b, item)
+		strings.write_string(b, "</li>")
+	}
+	strings.write_string(b, "</ul>")
+}
+
+// site_value_list_html gives the markup of site_value_list, for a fact of a
+// symbol.
+site_value_list_html :: proc(items: []string) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	site_value_list(&b, items)
+	return strings.to_string(b)
+}
+
+// site_value_link_html gives the markup of site_value_link.
+site_value_link_html :: proc(kind: Site_Value_Kind, address, text: string, with_icon: bool) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	site_value_link(&b, kind, address, text, with_icon)
+	return strings.to_string(b)
 }
 
 // site_value_icon_svg gives the icon of a kind as an SVG picture: one rect

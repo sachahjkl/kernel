@@ -374,3 +374,44 @@ site_document_pointers_of_the_repository :: proc(t: ^testing.T) {
 	problems := site_document_pointer_problems(&site)
 	testing.expectf(t, len(problems) == 0, "%d stale pointers: %v", len(problems), problems)
 }
+
+// A page that shows the name of a document as bare text fails the check:
+// in a paragraph, in a cell of a table, at the root or under docs/. The same
+// name in a link, in code or in a reference passes.
+@(test)
+site_document_names_are_never_bare :: proc(t: ^testing.T) {
+	site := reference_test_site()
+	names := site_document_names(&site)
+	testing.expect(t, "ARCHITECTURE.md" in names && "CHANGELOG.md" in names && "FIRST_MILESTONE.md" in names)
+	// The test site has no guide of the design rules; the repository has.
+	names["DESIGN.md"] = true
+	bare := [?]string {
+		"<p>The rules of ARCHITECTURE.md hold.</p>",
+		"<table><tr><td>1, 2 or 3 (DESIGN.md, section 5)</td></tr></table>",
+		"<p>the fragments of changelog.d and the releases of CHANGELOG.md</p>",
+		"<p>See docs/UNKNOWN.md.</p>",
+		"<li>news/README.md gives the form</li>",
+		"<p><code>x</code> after the code, AGENTS.md</p>",
+	}
+	for html, index in bare {
+		problem := site_document_name_problem(html, names)
+		testing.expectf(t, strings.contains(problem, "names the document"), "case %d: no problem found in %q", index, html)
+	}
+	clean := [?]string {
+		"<p>The rules of <a class=\"document-reference value-guide value-icon\" href=\"x\">Architecture</a> hold.</p>",
+		"<p>the releases of <code>CHANGELOG.md</code></p>",
+		"<p>the file <a href=\"x\"><code>README.md</code></a></p>",
+		"<pre><code>docs/ARCHITECTURE.md</code></pre>",
+		"<script type=\"application/ld+json\">{\"url\": \"CHANGELOG.md\"}</script>",
+		"<p title=\"ARCHITECTURE.md\">an attribute is not text</p>",
+		"<p>a word as MYREADME.md or v1.README.md is no name, nor readme.md, nor ARCHITECTURE.mdx</p>",
+		"<p>NOT_A_DOCUMENT.md is not a file of the repository</p>",
+	}
+	for html, index in clean {
+		problem := site_document_name_problem(html, names)
+		testing.expectf(t, problem == "", "case %d: %s", index, problem)
+	}
+	name, start := site_document_name_in_text("see docs/ARCHITECTURE.md, section 5", names)
+	testing.expect_value(t, name, "docs/ARCHITECTURE.md")
+	testing.expect_value(t, start, 4)
+}

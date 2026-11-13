@@ -590,29 +590,26 @@ site_module_card_write :: proc(site: ^Site, b: ^strings.Builder, page: string, c
 // module, what it imports and what imports it. A reader with no picture
 // and a screen reader get the whole graph from it.
 site_graph_table :: proc(site: ^Site, b: ^strings.Builder, page: string, inputs: []Site_Graph_Input, layout: Site_Graph_Layout) {
-	table := site_table_start(b, "The edges of the module graph", {{"Module", .Name}, {"Kind", .Short}, {"Imports", .Prose}, {"Imported by", .Prose}}, {.Module, .None, .Module, .Module})
+	// What a module imports and what imports it are lists of names.
+	table := site_table_start(b, "The edges of the module graph", {{"Module", .Name}, {"Kind", .Short}, {"Imports", .List}, {"Imported by", .List}}, {.Module, .None, .Module, .Module})
 	for input, index in inputs {
 		fmt.sbprintf(b, "<tr id=\"graph-%s\"><td class=\"code name\">", site_slug(input.name))
 		site_module_link(site, b, page, input.name)
 		fmt.sbprintf(b, "</td><td>%s</td><td>", site_graph_kind_names[input.kind])
-		written := 0
+		imported := make([dynamic]string, context.temp_allocator)
+		importers := make([dynamic]string, context.temp_allocator)
 		for edge in layout.edges {
 			if edge.from == index {
-				strings.write_string(b, written > 0 ? ", " : "")
-				site_module_link(site, b, page, inputs[edge.to].name)
-				written += 1
+				append(&imported, inputs[edge.to].name)
 			}
-		}
-		strings.write_string(b, written == 0 ? "none</td><td>" : "</td><td>")
-		written = 0
-		for edge in layout.edges {
 			if edge.to == index {
-				strings.write_string(b, written > 0 ? ", " : "")
-				site_module_link(site, b, page, inputs[edge.from].name)
-				written += 1
+				append(&importers, inputs[edge.from].name)
 			}
 		}
-		strings.write_string(b, written == 0 ? "none</td></tr>\n" : "</td></tr>\n")
+		site_module_list(site, b, page, imported[:])
+		strings.write_string(b, "</td><td>")
+		site_module_list(site, b, page, importers[:])
+		strings.write_string(b, "</td></tr>\n")
 	}
 	site_table_end(b, table)
 }

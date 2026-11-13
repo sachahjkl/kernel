@@ -418,6 +418,17 @@ th { color: var(--dim); font-weight: 400; text-align: left; padding: 4px 8px; bo
 td { padding: 4px 8px; vertical-align: top; overflow-wrap: break-word; }
 tbody tr:nth-child(odd) { background: var(--card-top); }
 td.name, td.name code { white-space: nowrap; overflow-wrap: normal; }
+/* A list of values (docs/SITE.md, "The tables"): several names in one cell
+   or one fact. Each name stays whole on its line; the list breaks between
+   its names, with no comma and no brace. Its least width is its longest
+   name, so a column of lists never pushes the column of prose out. */
+.value-list { display: flex; flex-wrap: wrap; gap: 2px 12px; margin: 0; padding: 0; list-style: none; }
+.value-list li { margin: 0; white-space: nowrap; overflow-wrap: normal; }
+th.column-list { min-width: 8em; }
+/* The line that says that the page is from an older build than the site
+   serves now: written by the script only, under the bar, quiet. */
+.build-notice { margin: 0; padding: 4px 16px; border-bottom: 1px solid var(--line); background: var(--card-top); color: var(--dim); font-size: 14px; line-height: 24px; }
+.build-notice button { font: inherit; color: var(--text); background: var(--track); border: 1px solid var(--line); margin-left: 4px; padding: 0 8px; cursor: pointer; }
 a.reference { text-decoration-style: dashed; }
 
 /* The kinds of values (docs/SITE.md, "The kinds of values"): a value is in
@@ -592,7 +603,7 @@ figcaption { padding-top: 8px; font-size: 14px; }
 }
 @media print {
   /* Print shows the middle column only. */
-  .bar, .crumbs, .tree, .outline, .neighbours, .skip { display: none; }
+  .bar, .crumbs, .tree, .outline, .neighbours, .skip, .build-notice { display: none; }
   .layout-documentation { padding-left: 0; }
   .documentation { display: block; padding: 0; }
   html, body { background: #fff; color: #000; }

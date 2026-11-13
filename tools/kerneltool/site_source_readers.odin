@@ -6,9 +6,15 @@
 //
 // The readers read the text of the files, not the compiled program: the
 // comments of a contract are its documentation, and the compiler drops them.
+// The reader of the cases of the root service reads the tree of the parser
+// of Odin, and the comments from the lines that the tree names: its values
+// are literals that a reader of lines cannot tell apart from other code.
 package kerneltool
 
 import "core:fmt"
+import "core:mem/virtual"
+import "core:odin/ast"
+import "core:odin/parser"
 import "core:strings"
 
 // One member of an Odin enumeration, as its file writes it.
@@ -27,12 +33,22 @@ Site_Constant :: struct {
 	line:    int,
 }
 
+// One field of a record literal: `pages = 4096`.
+Site_Name_Field :: struct {
+	name:  string,
+	value: string, // The integer as the source writes it.
+}
+
 // One case of a procedure that chooses by the name of a program:
-// `case "a", "b":` then `return <value>`.
+// `case "a", "b":` then `return <literal>`. The literal is a set of members
+// (`{.Inspect, .Image}`) or a record of named fields (`{pages = 2048}`): a
+// page shows each member or field as one value, never the literal itself.
 Site_Name_Case :: struct {
 	names:   []string,
-	value:   string,
-	comment: string, // The comment lines between the case and its return, then the comment of the return.
+	value:   string, // The literal on one line, for a test and a log: "{.Inspect, .Image}".
+	members: []string, // The members of a set, with no period: "Inspect".
+	fields:  []Site_Name_Field, // The fields of a record, in the order of the source.
+	comment: string, // The comment of the case line, the comment lines of its body, then the comment of the return.
 	line:    int, // The line of the return.
 }
 
@@ -347,75 +363,189 @@ site_comment_above :: proc(content, prefix: string) -> string {
 	return ""
 }
 
-// site_quoted_list gives each text in quotes of a part of a line.
-site_quoted_list :: proc(text: string) -> []string {
-	list := make([dynamic]string, context.temp_allocator)
-	position := 0
-	for {
-		quoted, end, found := site_quoted(text, position)
-		if !found {
-			break
-		}
-		append(&list, quoted)
-		position = end
-	}
-	return list[:]
-}
-
 // site_name_switch_read reads a procedure that chooses by the name of a
-// program. The form:
-//   a line "<procedure> :: proc" at the start of a line, up to a line "}";
-//   in it, lines "case \"<name>\", \"<name>\":", each followed by comment
-//   lines or not, then a line "return <value>", with a comment or not;
-//   after the switch, a line "\treturn <value>": the value for each other name.
+// program, with the parser of Odin: a reader of lines that met another form
+// of the same code would read it wrong and say nothing. The form:
+//   a procedure "<procedure> :: proc" at the top of the file;
+//   its body is a switch on the name, then one "return <literal>": the
+//   value for each other name;
+//   each case names programs by strings, and its body is one
+//   "return <literal>", after comment lines or not;
+//   a literal has no type: a set of members "{.A, .B}", a record of named
+//   integer fields "{a = 1, b = 2}", or "{}".
+// Any other form stops the command with the file and the line.
 site_name_switch_read :: proc(content, file, procedure: string) -> (cases: []Site_Name_Case, otherwise: Site_Name_Case, problem: string) {
 	lines := site_lines(content)
-	start := strings.concatenate({procedure, " :: proc"}, context.temp_allocator)
 	list := make([dynamic]Site_Name_Case, context.temp_allocator)
-	first := -1
-	for line, index in lines {
-		if strings.has_prefix(line, start) {
-			first = index + 1
-			break
+	// The tree of the parser lives in an arena of its own: every text that
+	// the result keeps is a string of the temporary allocator.
+	arena: virtual.Arena
+	if virtual.arena_init_growing(&arena) != nil {
+		return nil, {}, fmt.tprintf("%s: no memory for the parser", file)
+	}
+	defer virtual.arena_destroy(&arena)
+	context.allocator = virtual.arena_allocator(&arena)
+	tree := ast.new_from_positions(ast.File, {}, {})
+	tree.src = content
+	tree.fullpath = file
+	reader := parser.default_parser()
+	reader.err = site_code_quiet_error
+	reader.warn = site_code_quiet_error
+	if !parser.parse_file(&reader, tree) || tree.syntax_error_count > 0 {
+		return nil, {}, fmt.tprintf("%s: the parser of Odin refuses the file", file)
+	}
+	body: ^ast.Block_Stmt
+	for statement in tree.decls {
+		declaration, is_declaration := statement.derived.(^ast.Value_Decl)
+		if !is_declaration || len(declaration.names) != 1 || len(declaration.values) != 1 {
+			continue
+		}
+		identifier, has_name := declaration.names[0].derived.(^ast.Ident)
+		if !has_name || identifier.name != procedure {
+			continue
+		}
+		if literal, is_procedure := declaration.values[0].derived.(^ast.Proc_Lit); is_procedure && literal.body != nil {
+			body, _ = literal.body.derived.(^ast.Block_Stmt)
+		}
+		break
+	}
+	if body == nil {
+		return nil, {}, fmt.tprintf("%s: no procedure \"%s :: proc\" with a body", file, procedure)
+	}
+	wrong_body := fmt.tprintf("%s, line %d: the body of %s is a switch on the name, then \"return <literal>\"", file, body.pos.line, procedure)
+	if len(body.stmts) != 2 {
+		return nil, {}, wrong_body
+	}
+	switch_statement, is_switch := body.stmts[0].derived.(^ast.Switch_Stmt)
+	last_return, is_return := body.stmts[1].derived.(^ast.Return_Stmt)
+	if !is_switch || !is_return || switch_statement.body == nil {
+		return nil, {}, wrong_body
+	}
+	clauses, has_clauses := switch_statement.body.derived.(^ast.Block_Stmt)
+	if !has_clauses {
+		return nil, {}, wrong_body
+	}
+	for clause_statement in clauses.stmts {
+		clause, is_clause := clause_statement.derived.(^ast.Case_Clause)
+		if !is_clause {
+			return nil, {}, wrong_body
+		}
+		wrong_case := fmt.tprintf("%s, line %d: a case of %s names programs by strings, and its body is one \"return <literal>\"", file, clause.case_pos.line, procedure)
+		// A case with no name is the default case: the value for each
+		// other name is the return after the switch.
+		if len(clause.list) == 0 || len(clause.body) != 1 {
+			return nil, {}, wrong_case
+		}
+		names := make([dynamic]string, context.temp_allocator)
+		for expression in clause.list {
+			name_literal, is_literal := expression.derived.(^ast.Basic_Lit)
+			if !is_literal || name_literal.tok.kind != .String {
+				return nil, {}, wrong_case
+			}
+			name, _, found := site_string_at(name_literal.tok.text, 0)
+			if !found {
+				return nil, {}, wrong_case
+			}
+			append(&names, name)
+		}
+		returned, returns := clause.body[0].derived.(^ast.Return_Stmt)
+		if !returns {
+			return nil, {}, wrong_case
+		}
+		item, literal_problem := site_name_case_literal(returned, file, procedure)
+		if literal_problem != "" {
+			return nil, {}, literal_problem
+		}
+		item.names = names[:]
+		item.line = returned.pos.line
+		item.comment = site_name_case_comment(lines, clause.case_pos.line, returned.end.line)
+		append(&list, item)
+	}
+	if len(list) == 0 {
+		return nil, {}, fmt.tprintf("%s, line %d: %s has no case", file, switch_statement.pos.line, procedure)
+	}
+	literal_problem: string
+	otherwise, literal_problem = site_name_case_literal(last_return, file, procedure)
+	if literal_problem != "" {
+		return nil, {}, literal_problem
+	}
+	otherwise.line = last_return.pos.line
+	otherwise.comment = site_name_case_comment(lines, last_return.pos.line, last_return.end.line)
+	return list[:], otherwise, ""
+}
+
+// site_name_case_literal reads the literal of one return: its members or its
+// fields, each text a copy in the temporary allocator.
+site_name_case_literal :: proc(returned: ^ast.Return_Stmt, file, procedure: string) -> (item: Site_Name_Case, problem: string) {
+	wrong := fmt.tprintf("%s, line %d: a return of %s gives a set \"{{.A, .B}}\" or a record \"{{a = 1}}\", with no type", file, returned.pos.line, procedure)
+	if len(returned.results) != 1 {
+		return {}, wrong
+	}
+	literal, is_literal := returned.results[0].derived.(^ast.Comp_Lit)
+	if !is_literal || literal.type != nil {
+		return {}, wrong
+	}
+	members := make([dynamic]string, context.temp_allocator)
+	fields := make([dynamic]Site_Name_Field, context.temp_allocator)
+	for element in literal.elems {
+		#partial switch part in element.derived {
+		case ^ast.Implicit_Selector_Expr:
+			if part.field == nil {
+				return {}, wrong
+			}
+			append(&members, strings.clone(part.field.name, context.temp_allocator))
+		case ^ast.Field_Value:
+			field_name, has_name := part.field.derived.(^ast.Ident)
+			field_value, has_value := part.value.derived.(^ast.Basic_Lit)
+			if !has_name || !has_value || field_value.tok.kind != .Integer {
+				return {}, wrong
+			}
+			append(&fields, Site_Name_Field{name = strings.clone(field_name.name, context.temp_allocator), value = strings.clone(field_value.tok.text, context.temp_allocator)})
+		case:
+			return {}, wrong
 		}
 	}
-	if first < 0 {
-		return nil, {}, fmt.tprintf("%s: no line \"%s\"", file, start)
+	if len(members) > 0 && len(fields) > 0 {
+		return {}, wrong
 	}
-	pending: Site_Name_Case
-	has_pending := false
-	for index in first ..< len(lines) {
-		line := lines[index]
-		if line == "}" {
-			if len(list) == 0 || otherwise.value == "" {
-				return nil, {}, fmt.tprintf("%s, line %d: %s has no \"case \\\"<name>\\\":\" with its return, or no last \"return <value>\"", file, index + 1, procedure)
-			}
-			return list[:], otherwise, ""
-		}
-		code, comment, is_comment := markdown_comment_line(line)
-		switch {
-		case strings.has_prefix(code, "case \""):
-			if has_pending {
-				return nil, {}, fmt.tprintf("%s, line %d: a case of %s has no line \"return <value>\"", file, index + 1, procedure)
-			}
-			pending = Site_Name_Case{names = site_quoted_list(code), comment = strings.trim_space(comment)}
-			has_pending = true
-		case code == "" && is_comment && has_pending:
-			pending.comment = markdown_comment_add(pending.comment, comment)
-		case strings.has_prefix(code, "return "):
-			value := strings.trim_space(code[len("return "):])
-			if has_pending {
-				pending.value = value
-				pending.comment = markdown_comment_end(markdown_comment_add(pending.comment, strings.trim_space(comment)))
-				pending.line = index + 1
-				append(&list, pending)
-				has_pending = false
-			} else if strings.has_prefix(line, "\treturn ") {
-				otherwise = Site_Name_Case{value = value, comment = strings.trim_space(comment), line = index + 1}
-			}
-		}
+	text := strings.builder_make(context.temp_allocator)
+	strings.write_byte(&text, '{')
+	for member, index in members {
+		strings.write_string(&text, index > 0 ? ", ." : ".")
+		strings.write_string(&text, member)
 	}
-	return nil, {}, fmt.tprintf("%s: %s has no line \"}\" at its end", file, procedure)
+	for field, index in fields {
+		if index > 0 {
+			strings.write_string(&text, ", ")
+		}
+		strings.write_string(&text, field.name)
+		strings.write_string(&text, " = ")
+		strings.write_string(&text, field.value)
+	}
+	strings.write_byte(&text, '}')
+	return Site_Name_Case{value = strings.to_string(text), members = members[:], fields = fields[:]}, ""
+}
+
+// site_name_case_comment gives the comment of a case, as Markdown: the
+// comment of each line from its first line to its last, numbered from 1. A
+// comment after code is one line; a line that is only a comment keeps its
+// indentation.
+site_name_case_comment :: proc(lines: []string, first_line, last_line: int) -> string {
+	comment := ""
+	for number in first_line ..= last_line {
+		if number < 1 || number > len(lines) {
+			continue
+		}
+		code, text, is_comment := markdown_comment_line(lines[number - 1])
+		if !is_comment {
+			continue
+		}
+		if code != "" {
+			text = strings.trim_space(text)
+		}
+		comment = markdown_comment_add(comment, text)
+	}
+	return markdown_comment_end(comment)
 }
 
 // site_unquote gives the text of an Odin string with its escapes \" and \\.

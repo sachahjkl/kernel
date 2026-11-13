@@ -33,16 +33,27 @@ site_module_link :: proc(site: ^Site, b: ^strings.Builder, from_page, name: stri
 	strings.write_string(b, "</code>")
 }
 
+// site_module_list writes names of modules as a list of values, each a link
+// to the page of its module; "none" for no name.
+site_module_list :: proc(site: ^Site, b: ^strings.Builder, from_page: string, names: []string) {
+	if len(names) == 0 {
+		strings.write_string(b, "none")
+		return
+	}
+	items := make([dynamic]string, context.temp_allocator)
+	for name in names {
+		item := strings.builder_make(context.temp_allocator)
+		site_module_link(site, &item, from_page, name)
+		append(&items, strings.to_string(item))
+	}
+	site_value_list(b, items[:])
+}
+
 // site_program_names_cell writes the names of a case of the root service,
 // each a link to the page of its module.
 site_program_names_cell :: proc(site: ^Site, b: ^strings.Builder, names: []string) {
-	strings.write_string(b, "<td class=\"code\">")
-	for name, index in names {
-		if index > 0 {
-			strings.write_string(b, ", ")
-		}
-		site_module_link(site, b, site_page_file(SITE_GRANTS_FOLDER), name)
-	}
+	strings.write_string(b, "<td>")
+	site_module_list(site, b, site_page_file(SITE_GRANTS_FOLDER), names)
 	strings.write_string(b, "</td>")
 }
 
@@ -97,7 +108,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 				continue
 			}
 			fmt.sbprintf(&b, "<h2 id=\"%s\">%s</h2>\n", site_module_group_ids[group], site_module_group_titles[group])
-			modules_table := site_table_start(&b, site_module_group_titles[group], {{"Module", .Name}, {"Boot image", .Short}, {"Exports", .Number}, {"Imports", .Prose}, {"Purpose", .Prose}}, {.Module, .None, .None, .Module, .None})
+			modules_table := site_table_start(&b, site_module_group_titles[group], {{"Module", .Name}, {"Boot image", .Short}, {"Exports", .Number}, {"Imports", .List}, {"Purpose", .Prose}}, {.Module, .None, .None, .Module, .None})
 			for item in reference.modules {
 				if site_module_group(item) != group {
 					continue
@@ -108,11 +119,10 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 				strings.write_string(&b, "</td><td>")
 				site_value(&b, item.build.image ? Site_Value_Kind.Yes : Site_Value_Kind.No, item.build.image ? "yes" : "no", true)
 				fmt.sbprintf(&b, "</td><td>%d</td><td>", len(item.description.exports))
-				for name, index in item.build.imports {
-					if index > 0 {
-						strings.write_string(&b, ", ")
-					}
-					site_module_link(site, &b, modules_page, name)
+				// A module with no import has an empty cell: "none" in most
+				// rows would hide the few that import.
+				if len(item.build.imports) > 0 {
+					site_module_list(site, &b, modules_page, item.build.imports)
 				}
 				strings.write_string(&b, "</td>")
 				// A summary: the page of the module shows the whole text with its references.
@@ -184,45 +194,29 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		}
 		// The settings of the compiler for this module only: two modules of
 		// one source differ by them.
-		strings.write_string(&b, "<tr><td>Build settings</td><td class=\"code\">")
+		strings.write_string(&b, "<tr><td>Build settings</td><td>")
 		if len(build.defines) == 0 {
 			strings.write_string(&b, "none: the defaults of the source")
-		}
-		for define, index in build.defines {
-			if index > 0 {
-				strings.write_string(&b, ", ")
+		} else {
+			settings := make([dynamic]string, context.temp_allocator)
+			for define in build.defines {
+				append(&settings, strings.concatenate({"<code>", site_text_html(define), "</code>"}, context.temp_allocator))
 			}
-			strings.write_string(&b, "<code>")
-			site_escape(&b, define)
-			strings.write_string(&b, "</code>")
+			site_value_list(&b, settings[:])
 		}
 		strings.write_string(&b, "</td></tr>\n")
-		strings.write_string(&b, "<tr><td>Imports</td><td class=\"code\">")
-		if len(build.imports) == 0 {
-			strings.write_string(&b, "none")
-		}
-		for name, index in build.imports {
-			if index > 0 {
-				strings.write_string(&b, ", ")
-			}
-			site_module_link(site, &b, item.page, name)
-		}
-		strings.write_string(&b, "</td></tr>\n<tr><td>Imported by</td><td class=\"code\">")
-		importers := 0
+		strings.write_string(&b, "<tr><td>Imports</td><td>")
+		site_module_list(site, &b, item.page, build.imports)
+		strings.write_string(&b, "</td></tr>\n<tr><td>Imported by</td><td>")
+		importers := make([dynamic]string, context.temp_allocator)
 		for other in reference.modules {
 			for name in other.build.imports {
 				if name == build.name {
-					if importers > 0 {
-						strings.write_string(&b, ", ")
-					}
-					site_module_link(site, &b, item.page, other.build.name)
-					importers += 1
+					append(&importers, other.build.name)
 				}
 			}
 		}
-		if importers == 0 {
-			strings.write_string(&b, "none")
-		}
+		site_module_list(site, &b, item.page, importers[:])
 		strings.write_string(&b, "</td></tr>\n")
 		site_table_end(&b, facts_table)
 
@@ -257,13 +251,23 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			grants, named_in_grants := site_case_of(reference.program_grants, reference.grants_otherwise, build.name)
 			budget, named_in_budget := site_case_of(reference.program_budgets, reference.budget_otherwise, build.name)
 			strings.write_string(&b, "<h2 id=\"root\">What the root service gives it</h2>\n")
-			budget_table := site_table_start(&b, "Grants and budget", {{"What", .Short}, {"Value", .Short}, {"As the root service says", .Prose}})
-			fmt.sbprintf(&b, "<tr><td><a href=\"%s#programs\">Grants</a></td>", site_page_link(site, item.page, site_page_file(SITE_GRANTS_FOLDER)))
-			site_name_cell(site, &b, grants.value, SITE_ROOT_FILE, grants.line)
-			site_comment_cell(site, &b, item.page, named_in_grants ? grants.comment : "Not named in grants_of: the grants of each other program.")
-			strings.write_string(&b, "</tr>\n<tr><td>Budget: pages, programs, threads</td>")
-			site_name_cell(site, &b, budget.value, SITE_ROOT_FILE, budget.line)
-			site_comment_cell(site, &b, item.page, named_in_budget ? budget.comment : "Not named in things_of: the budget of each other program.")
+			// The grants and the fields of the budget are lists of values: a
+			// grant leads to its row on the page of the grants.
+			budget_table := site_table_start(&b, "Grants and budget", {{"What", .Short}, {"Value", .List}, {"As the root service says", .Prose}})
+			fmt.sbprintf(&b, "<tr><td><a href=\"%s#programs\">Grants</a></td><td>", site_page_link(site, item.page, site_page_file(SITE_GRANTS_FOLDER)))
+			site_grant_set_write(site, &b, item.page, grants.members, true)
+			strings.write_string(&b, "</td>")
+			site_comment_cell(site, &b, item.page, named_in_grants ? grants.comment : "Not named in `grants_of`: the grants of each other program.")
+			strings.write_string(&b, "</tr>\n<tr><td>Budget</td><td>")
+			amounts := make([dynamic]string, context.temp_allocator)
+			for field in budget.fields {
+				// The pages are a size; the programs and the threads are counts.
+				kind := field.name == "pages" ? Site_Value_Kind.Size : Site_Value_Kind.Number
+				append(&amounts, strings.concatenate({site_text_html(field.name), " ", site_value_html_with_icon(kind, field.value)}, context.temp_allocator))
+			}
+			site_value_list(&b, amounts[:])
+			strings.write_string(&b, "</td>")
+			site_comment_cell(site, &b, item.page, named_in_budget ? budget.comment : "Not named in `things_of`: the budget of each other program.")
 			strings.write_string(&b, "</tr>\n")
 			site_table_end(&b, budget_table)
 			fmt.sbprintf(&b, "<p class=\"source\">Read from <code>grants_of</code> and <code>things_of</code> in <a href=\"%s\"><code>%s</code></a>; <code>budget_of</code> in the same file adds the limits of processor time and of log records.</p>\n", site_repository_file(site, SITE_ROOT_FILE), SITE_ROOT_FILE)
@@ -326,24 +330,22 @@ site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, page, module_
 		append(&facts, Site_Symbol_Fact{label = "Form", html = site_text_html("The entry of the module: one parameter, an address, fixed by the contract.")})
 	} else {
 		// Each type opens its card: the wire form and the record.
-		parameters := strings.builder_make(context.temp_allocator)
+		// The parameters in their order, as a list of values.
+		parameters := make([dynamic]string, context.temp_allocator)
 		for type, index in export.parameters {
-			if index > 0 {
-				strings.write_string(&parameters, ", ")
-			}
 			name := index < len(export.names) ? export.names[index] : ""
 			detail: u32 = index < len(export.details) ? export.details[index] : 0
 			direction: module.Direction = index < len(export.directions) ? export.directions[index] : .Read
-			strings.write_string(&parameters, "<code class=\"value value-type\">")
-			site_escape(&parameters, name)
-			strings.write_string(&parameters, ": ")
-			strings.write_string(&parameters, site_type_html(site, module_name, description, type, detail, direction, true))
-			strings.write_string(&parameters, "</code>")
+			parameter := strings.builder_make(context.temp_allocator)
+			strings.write_string(&parameter, "<code class=\"value value-type\">")
+			site_escape(&parameter, name)
+			strings.write_string(&parameter, ": ")
+			strings.write_string(&parameter, site_type_html(site, module_name, description, type, detail, direction, true))
+			strings.write_string(&parameter, "</code>")
+			append(&parameters, strings.to_string(parameter))
 		}
-		if len(export.parameters) == 0 {
-			strings.write_string(&parameters, "none")
-		}
-		append(&facts, Site_Symbol_Fact{label = "Parameters", kind = .Type, html = strings.to_string(parameters)})
+		parameters_html := len(parameters) == 0 ? "none" : site_value_list_html(parameters[:])
+		append(&facts, Site_Symbol_Fact{label = "Parameters", kind = .Type, html = parameters_html})
 		result: string = export.result == .None ? site_value_html(.Type, "none") : strings.concatenate({"<code class=\"value value-type\">", site_type_html(site, module_name, description, export.result, export.result_detail, .Read, false), "</code>"}, context.temp_allocator)
 		append(&facts, Site_Symbol_Fact{label = "Result", kind = .Type, html = result})
 		if export.error_record != 0 {
