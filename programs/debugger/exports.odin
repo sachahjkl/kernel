@@ -200,7 +200,8 @@ thread_rows :: proc "contextless" (result: ^[]Thread_Row, only: i64 = -1, pendin
 // - `Full`, `Debugged_Programs` (-3): the service debugs a program
 //   already; `detach()` first.
 // - (-4) the record of the root service: `No_Grant`, `Debug_Access` when a
-//   grant of the program refuses, with 1 + the grant in `found`; `Absent`,
+//   start grant of the program refuses, with 1 + its number in `found`
+//   (the sentence names it: "the grant Store of the program refuses it"); `Absent`,
 //   `Programs` when no program has the name; `No_Answer` when the root
 //   service did not answer; `Refused` with the status of the kernel.
 // - `Absent`, `Programs` (-13): the program stopped during the attach.

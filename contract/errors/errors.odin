@@ -227,7 +227,7 @@ Unit :: enum i64 {
 	Held_Threads = 44, // Absent: the threads that the debugger holds; the thread of the argument runs, or the program has no thread with this number.
 	Debugged_Programs = 45, // The programs that the debugger service debugs. Absent: the caller attached to none. Full: the service debugs a program for another caller; limit the programs that it debugs at one time.
 	Readable_Variables = 46, // Absent: the variables that are visible and readable at the instruction of a frame; the name of the argument is none of them, or its location is not readable there.
-	Debug_Access = 47, // No_Grant: the debug access to a program. found: 0, or 1 + the number of the grant of the program that refuses it (the root service names it in its log).
+	Debug_Access = 47, // No_Grant: the debug access to a program. found: 0, or 1 + the number of the start grant of the program that refuses it (start_grant.Grant); a sentence writes the name of that grant.
 	Stack_Frames = 48, // Absent: the frames of the stack of a held thread; the number of the argument is past the last frame.
 	Source_Places = 49, // Absent: the procedures and the source lines of the debug objects; the place of the argument names none.
 }

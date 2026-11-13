@@ -1621,7 +1621,7 @@ The root service gives it by one rule over grants, with no name of a program: th
 
 It is not the right Debug of the creator of a program, which the kernel gives on the handle of the creation.
 
-Example: `debug("storage")` in the console is refused with `No_Grant`, `Debug_Access`: the grant Serve of the program refuses it.
+Example: `debug("storage")` in the console is refused with `No_Grant`, `Debug_Access`, and the console prints the name of the start grant that refuses: "the grant Serve of the program refuses it".
 
 The design: `docs/TOOLS.md`, "Who can debug which program".
 
@@ -1754,6 +1754,34 @@ A grant is not a permission in a list that a check reads: once given, the handle
 The rules: `docs/PROPERTIES.md`, "No ambient access: the other holes to close".
 
 Do not use: permission, authorization, consent.
+
+### Start grant
+
+A start grant is one thing of the list of what the root service gives a program by its name: a service, a private store, a right of the machine.
+
+The root service decides the start grants of a program from its name (`grants_of`), and keeps them in the state of the program that runs. The rule of the debug access reads them. The list and the name of each start grant are a contract (`contract/start_grant`): the root service puts the number of a start grant in an error record, and the reader of the record writes its name. The number of a start grant does not change; a new one takes the next number.
+
+The name of a start grant is the name of its member, with its capital letters: `Store`, `Serve`, `System_Part`. The log of the root service, the sentence of an error record, the site and the guides write it so.
+
+A start grant is not a recorded grant, which is a handle that the root service gave and can end. A recorded grant has a name in lower case (`store`, `machine`), which `grants()` shows and `revoke` takes. Several start grants are one recorded grant: `Inspect`, `Stop`, `Schedule` and `Events` are rights of the one handle `machine`. A start grant such as `Serve` has no recorded grant, and the recorded grants `log` and `debug` have no start grant.
+
+Example: `debug("notes")` in the console prints "debugger.attach: the caller has no grant for this: the debug access to this program: the grant Store of the program refuses it".
+
+The design: `docs/TOOLS.md`, "Who can debug which program".
+
+Do not use: capability set, permission, privilege.
+
+### Recorded grant
+
+A recorded grant is a handle, or a connection, that the root service gave a program and can end while the program runs.
+
+The root service records it by the program and by one of ten names in lower case (`Root_Grant` and `root_grant_names` in `support/system/grants.odin`): `log`, `machine`, `image`, `store`, `debug`. `grants("notes")` in the console shows the recorded grants of a program, and `revoke("notes", "store")` ends one: the kernel ends each handle and each mapping that came from it.
+
+A recorded grant is not a start grant, which says what the root service gives a program by its name, and whose name has capital letters (`Store`).
+
+The design: `docs/ARCHITECTURE.md`, "U2. Root service".
+
+Do not use: permission, access right, token.
 
 ### Guest
 

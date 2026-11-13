@@ -8,6 +8,7 @@ import "contract:errors"
 import "contract:fixed_addresses"
 import module "contract:module"
 import op "contract:operation"
+import "contract:start_grant"
 
 @(private = "file")
 read_text :: proc(t: ^testing.T, path: string) -> string {
@@ -102,9 +103,17 @@ site_grants_of_the_repository :: proc(t: ^testing.T) {
 		testing.expectf(t, names[grant.name] != "", "the grant %s has no name in root_grant_names", grant.name)
 	}
 	root_text := read_text(t, SITE_ROOT_FILE)
-	at_start, start_problem := site_enumeration_read(root_text, SITE_ROOT_FILE, "Grant")
+	start_grant_text := read_text(t, SITE_START_GRANT_FILE)
+	at_start, start_problem := site_enumeration_read(start_grant_text, SITE_START_GRANT_FILE, "Grant")
 	testing.expect_value(t, start_problem, "")
 	testing.expect(t, len(at_start) > 0 && at_start[0].name == "Root_Ring")
+	// The number of a start grant is in an error record: the site shows the
+	// number that the contract writes, and the name that a sentence writes.
+	for grant in at_start {
+		name, known := start_grant.grant_name(i64(grant.number))
+		testing.expectf(t, known && name == grant.name, "the start grant %s has the number %d, which grant_name names %q", grant.name, grant.number, name)
+	}
+	testing.expect_value(t, len(at_start), len(start_grant.Grant))
 	cases, otherwise, cases_problem := site_name_switch_read(root_text, SITE_ROOT_FILE, "grants_of")
 	testing.expect_value(t, cases_problem, "")
 	testing.expect_value(t, otherwise.value, "{}")
