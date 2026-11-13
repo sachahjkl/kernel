@@ -12,6 +12,58 @@ import "support:system"
 import "base:intrinsics"
 
 // A command: a function with typed parameters and a typed result.
+//
+// The console is a program that reads one line at a time and runs it as an
+// expression of a small language: `name = expression`, or an expression
+// alone. A call is `name(argument, ...)`. Each argument is a number, a text
+// in quotes, a variable, or the result of another call. The console checks
+// the kind of each argument against the parameter before the call, and
+// prints the typed result after it. No program parses text: the text of the
+// line stops at the console.
+//
+// A command comes from one of three places:
+//
+// - **The console itself**: the built-in commands that this page lists.
+//   They exist before any module is loaded.
+// - **A module of the boot image** that `load("sample")` or
+//   `isolate("sample")` adds: each export of the module becomes a command
+//   with the name of the export, and each record of its description becomes
+//   a command that makes a record from its fields.
+// - **A service that runs**, which `connect("monitor")` reaches: each export
+//   becomes a command named `service.export`, as `monitor.programs()`.
+//
+// The name, the kinds and the help of a command of a module come from the
+// description of its export: the console types nothing for it. When two
+// commands have one name, the command added last is the one that runs: the
+// module `probe` exports `count`, so the console names its own count of rows
+// `rows`.
+//
+// **The kinds of a value.** A result is an `Integer`, a `Text`, a `Record`,
+// a `Handle` or a `Table`. A command whose result is `None` prints its
+// answer as lines and gives nothing to the next call. A parameter of the
+// kind `Value` takes any kind, and the command checks it.
+//
+// **Tables compose.** A `Table` is the records of one description, one
+// after the other. The console holds a table as one value and passes it to
+// the next call with no parsing: `where`, `sort`, `join`, `columns`,
+// `first`, `rows` and `row` read only the description of the records, so
+// they work on each table of each service. Example:
+//
+// ```
+// > columns(where(manual.running(), "module", "calendar_fixed"), "program slot module replaces")
+// ```
+//
+// **A variable keeps a value** for the lines after it: `t = readings(4)`,
+// then `sum_values(where(t, "sensor", 2))`. The console keeps 16 variables.
+// `variables()` lists them.
+//
+// **Errors.** A command that fails prints one line that starts with
+// `error: ` and gives no value: the rest of the line does not run. A wrong
+// argument is refused before the call, with the argument and the two kinds:
+// "error: sum_values: argument 1 is Table(Reading, Read), not
+// Table(Reading)".
+//
+// The keys of the line, the completion list and the line history: (docs/CONSOLE.md, "1. The keys").
 Command :: struct {
 	name:            string,
 	parameters:      [ARGUMENT_CAPACITY]Kind,
@@ -146,35 +198,342 @@ commands_start :: proc "contextless" () {
 	}
 	space.next = op.MODULE_BASE
 
+	// The comment above each command is its documentation on the site: the
+	// help after the name is the one line that help() prints.
+
+	// Prints one line for each command that the console can call now: its
+	// signature, then its help.
+	//
+	// The list grows with each `load`, `isolate` and `connect`, and shrinks
+	// with each `unload`: it is the command table of this moment, not a
+	// fixed list. A parameter shows its name when the description of the
+	// export gives one, and `Value` when it takes any kind. The result
+	// follows `->`; a command with no `->` prints its answer and gives
+	// nothing.
+	//
+	// ```
+	// > help()
+	// help()                                               list the commands
+	// repeat(Text, Integer) -> Text                        a text, several times
+	// ```
 	command("help", {}, .None, "list the commands", help)
+	// Prints one line for each program that runs, from the kernel.
+	//
+	// The columns: the slot of the program, its name, its state (created,
+	// ready, waiting, stopped), its threads, its mapped pages and the pages
+	// that have a page frame, its handles, its processor time in
+	// milliseconds, the pages of its budget, and its entries into the kernel.
+	// A program that holds more than its own module (a module loaded by
+	// name, or a module that a replacement put in place of another) has one
+	// more line for each module, with the start of its hash.
+	//
+	// It needs the grant **machine**: the console asks the kernel with
+	// `Inspect` on the machine handle. Without it: "error: the console has
+	// no grant to inspect the machine".
 	command("programs", {}, .None, "list the programs that run", list_programs)
+	// Prints the memory of the machine and the counters of the kernel.
+	//
+	// The lines: the memory and the free memory in MiB, the used pages, the
+	// pages that a budget paid for and that have no page frame yet, the
+	// pages of the budgets (and whether they hold every free page), the
+	// count of memory objects, of kernel entries, of interrupts and of
+	// processors, then for each kind of lock of the kernel the count of its
+	// waits and of its takes.
+	//
+	// It needs the grant **machine**, as `programs()`.
 	command("memory", {}, .None, "memory and kernel counters", show_memory)
+	// Prints the modules of the boot image: the name, the bytes and the
+	// first 12 bytes of the BLAKE3 hash of each one.
+	//
+	// These are the names that `load`, `isolate`, `start` and `replace`
+	// take. The boot image is the one source of code of the console: it is
+	// what the root service granted, with the grant **image**.
 	command("modules", {}, .None, "list the modules of the boot image", list_modules)
+	// Loads a module of the boot image into the memory of the console, and
+	// makes each of its exports a command: a call is a direct call, with no
+	// other program.
+	//
+	// - `name`: the name of a module of the boot image, as `modules()`
+	//   prints it.
+	//
+	// The loader checks the hash of the file against the boot image, loads
+	// its imports, and applies the replacement table of this time. It prints
+	// the count of commands, the start of the hash, and each import with the
+	// module that the loader gave in its place. The module runs with the
+	// memory and every handle of the console: load only a module that the
+	// console trusts, and `isolate` the others.
+	//
+	// ```
+	// > load("sample")
+	// sample: 11 commands, hash <the first 8 bytes of its hash>...
+	// ```
+	//
+	// Errors: no module has the name; the module is loaded already; it
+	// exports no command (`start` runs a program); no room for its commands
+	// (128 commands, 8 modules); the hash differs from the boot image; the
+	// loader refuses the file, with the stage and the reason.
 	command("load", {.Text}, .None, "load a module here: direct calls", load_module)
+	// Loads a module of the boot image into a new sandboxed program, a call
+	// host, and makes each of its exports a command: a call is an isolated
+	// call through a call ring.
+	//
+	// - `name`: the name of a module of the boot image.
+	//
+	// The call host receives its call ring, its call region, the log, and
+	// the files of the module and of its imports, read-only: no other
+	// handle. A fault of the module stops the call host, not the console:
+	// the console prints the stop report, with the instruction and the
+	// frames. Escape during a call stops the call host. The arguments and
+	// the results go through the call region, so a table result is limited
+	// by its size.
+	//
+	// ```
+	// > isolate("sample")
+	// sample: 11 commands in a sandboxed program, hash <the first 8 bytes of its hash>...
+	// ```
+	//
+	// Errors: as `load`; also "no room for a sandboxed program" when 8
+	// sandboxes run, and "cannot start a sandboxed program" when the budget
+	// of the console cannot pay for it.
 	command("isolate", {.Text}, .None, "load a module in a sandboxed program", isolate_module)
+	// Removes a module that `load` or `isolate` added: its commands leave
+	// the command table.
+	//
+	// - `name`: the name of the module, as `load` or `isolate` took it.
+	//
+	// After `isolate`, the call host stops: the console closes its handles,
+	// and the kernel stops a program that no handle names. After `load`, the
+	// module leaves the memory of the console, unless another loaded module
+	// imports it: one copy serves both, and the console says that it stays.
+	//
+	// ```
+	// > unload("sample")
+	// sample: 11 commands removed, the module left the memory of the console
+	// ```
+	//
+	// Error: "load and isolate added no module with the name ...".
 	command("unload", {.Text}, .None, "remove a module that load or isolate added", unload_module)
+	// Asks the root service for a connection to a service that runs, and
+	// makes each export of the service a command named `service.export`.
+	//
+	// - `name`: the name of the service, as `programs()` prints it.
+	//
+	// The root service decides: it refuses a service that the console may
+	// not call, with its reason. It gives a call ring, a call region and the
+	// hash of the file of the program; the console reads the descriptions of
+	// the exports from that file in the boot image. A call then runs in the
+	// service, with the rights of the service, and the service checks its
+	// caller. When the service stops, the console ends the connection.
+	//
+	// ```
+	// > connect("settings")
+	// settings: 3 commands of a service that runs, hash <the first 8 bytes of its hash>...
+	// ```
+	//
+	// Errors: the console has the commands of the service already; the root
+	// service refused, with its sentence; the service exports no command;
+	// no room for its commands.
 	command("connect", {.Text}, .None, "call the exports of a service that runs", connect_service)
+	// Asks the root service to start a program from a module of the boot
+	// image.
+	//
+	// - `name`: the name of the module, which becomes the name of the
+	//   program.
+	//
+	// The root service gives the program the grants of its name, and only
+	// those (the reference page of the grants lists them). It prints nothing
+	// when the program starts; `programs()` then shows it.
+	//
+	// Errors: the sentence of the root service when it refuses (no module
+	// has the name, the program runs already, no slot is free), and "the
+	// root service did not answer" after 3 seconds.
 	command("start", {.Text}, .None, "start a program, by module name", start_program)
+	// Asks the root service to stop a program that runs.
+	//
+	// - `name`: the name of the program, as `programs()` prints it.
+	//
+	// `stop("console")` stops this console: it saves its line history
+	// first, because the save after the line never comes.
+	//
+	// Errors: the sentence of the root service when it refuses, and "the
+	// root service did not answer".
 	command("stop", {.Text}, .None, "stop a program, by name", stop_program)
+	// Prints the grants that a program has from the root service, the grants
+	// that it lost, and the principal that it runs for.
+	//
+	// - `name`: the name of a program that runs.
+	//
+	// The grants are those that the root service records and can revoke:
+	// log, machine, image, log_records, store, network, acts_for_principal,
+	// history.
+	//
+	// ```
+	// > grants("notes")
+	// notes has: log, store
+	// notes runs for principal 0 "machine"
+	// ```
+	//
+	// Error: the sentence of the root service when no program has the name.
 	command("grants", {.Text}, .None, "what a program has from the root service", grants)
+	// Asks the root service to end one grant of a program that runs.
+	//
+	// - `name`: the name of the program.
+	// - `grant`: the name of the grant, as `grants()` prints it.
+	//
+	// The root service closes each handle that came from the grant and
+	// records the loss: `grants()` then lists it after "lost:". The program
+	// continues, and an operation on a closed handle fails with an error
+	// record that says "was revoked". It prints the count of holdings ended.
+	//
+	// ```
+	// > revoke("monitor", "machine")
+	// monitor lost the grant machine, holdings ended: 1
+	// ```
+	//
+	// Errors: "no grant has the name ...", with the list of the names; the
+	// sentence of the root service when it refuses.
 	command("revoke", {.Text, .Text}, .None, "end a grant of a program that runs", revoke)
+	// Asks the root service to create a named principal: a principal whose
+	// session opens with a passphrase.
+	//
+	// - `name`: the name of the principal.
+	//
+	// The passphrase is never a text of the console, because the console
+	// keeps each line in its history: the window of unlock asks for it.
+	// `principals()` then lists the principal.
+	//
+	// ```
+	// > principal_create("alice")
+	// the principal alice is created in the window of unlock: type its passphrase there
+	// ```
 	command("principal_create", {.Text}, .None, "create a named principal: its passphrase is typed in the window of unlock", principal_create)
+	// Asks the root service to lock the session of the named principal that
+	// is unlocked: each program of the session stops.
+	//
+	// ```
+	// > lock()
+	// locked: 1 programs of the session stopped
+	// ```
+	//
+	// The window of unlock then asks for the passphrase again.
 	command("lock", {}, .None, "end the session of the named principal: its programs stop", lock_session)
+	// Prints one line for each principal of the machine: its number, its
+	// name, its state, the start of its public key, and for principal 0
+	// whether the system was measured.
+	//
+	// Principal 0 is the machine: it has no unlock. The states: absent, the
+	// machine, locked, unlocked (its session runs), and created in the
+	// window of unlock.
+	//
+	// ```
+	// > principals()
+	// principal 0 "machine": the machine, no unlock, the system not measured
+	// ```
 	command("principals", {}, .None, "list the principals of the machine", list_principals)
+	// Asks the root service to give one module where a module imports
+	// another, in each load that follows.
+	//
+	// - `name`: the module that an import names.
+	// - `by`: the module to give in its place; the text `""` removes the
+	//   replacement of `name`.
+	//
+	// The replacement table belongs to the machine: the root service writes
+	// it, and each loader reads it at each load. A program that runs keeps
+	// the modules that it loaded. `replacements()` lists the table.
+	//
+	// ```
+	// > replace("calendar", "calendar_fixed")
+	// calendar_fixed replaces calendar in the loads that follow
+	// ```
+	//
+	// Errors: no module has the name; the console has no grant to change
+	// the table; a chain of replacements is refused; the table is full; a
+	// module does not replace itself.
 	command("replace", {.Text, .Text}, .None, "give the second module where a module imports the first", replace)
+	// Prints the replacement table of the machine: one line for each module
+	// that a load replaces, and the module that it gets in its place, or
+	// "no replacement".
 	command("replacements", {}, .None, "list the replacement table of the machine", list_replacements)
+	// Gives the milliseconds since the machine started, as an `Integer`.
 	command("time", {}, .Integer, "milliseconds since boot", time)
+	// Gives the BLAKE3 hash of the bytes of a text, as 64 hexadecimal
+	// digits.
+	//
+	// The same hash names a module in the boot image and an object in a
+	// store: `hash("")` gives `af1349b9...`.
 	command("hash", {.Text}, .Text, "the BLAKE3 hash of a text", hash)
+	// Gives the count of bytes of a text, as an `Integer`.
+	//
+	// `length("kept across a stop")` gives 18.
 	command("length", {.Text}, .Integer, "the number of bytes of a text", length)
+	// Gives the decimal text of an integer: `text(42) + " pages"` gives
+	// `42 pages`.
 	command("text", {.Integer}, .Text, "the decimal text of an integer", text)
+	// Gives a text repeated a count of times: `repeat("ab", 3)` gives
+	// `ababab`.
+	//
+	// The texts of one line share 4096 bytes: past them, "error: the text
+	// is too long".
 	command("repeat", {.Text, .Integer}, .Text, "a text, several times", repeat)
+	// Makes a new memory object of a count of pages, paid by the budget of
+	// the console, and gives its handle.
+	//
+	// The console holds the handle until `release`. The console prints a
+	// handle with its kind and its rights: "Handle 65541: Memory (Give,
+	// Read, Write)". `byte` reads it.
+	//
+	// Error: "the budget of the console cannot pay for N pages".
 	command("buffer", {.Integer}, .Handle, "a new memory object, in pages", buffer_create)
+	// Gives one byte of a memory object, from 0: the console maps the object
+	// for the time of the command.
+	//
+	// A new object holds zero bytes: `byte(buffer(1), 0)` gives 0. Errors: the
+	// handle names no memory object, or the object has no byte at that
+	// place.
 	command("byte", {.Handle, .Integer}, .Integer, "one byte of a memory object", buffer_byte)
+	// Closes a memory object that `buffer` made: the console gives its
+	// handle back, and the kernel frees the pages when no handle names the
+	// object.
+	//
+	// Error: "release closes a memory object that buffer made", for each
+	// other handle.
 	command("release", {.Handle}, .None, "close a handle", release)
+	// Prints each variable with its kind and its value: `t: Reading = ...`.
+	//
+	// A line `name = expression` makes or changes a variable. The console
+	// keeps 16 variables; a table keeps at most 32 KiB of rows.
 	command("variables", {}, .None, "list the variables", list_variables)
+	// Clears the text of the terminal: the edit line becomes the first row
+	// of the view. The line history stays.
 	command("clear", {}, .None, "clear the console", clear)
+	// Stops the machine: the console saves its line history, then asks the
+	// kernel to stop the machine.
+	//
+	// It needs the grant **machine**. Without it: "error: the console has
+	// no grant to stop the machine".
 	command("shutdown", {}, .None, "stop the machine", shutdown)
+	// Forgets the line history: in the memory of the console, and its
+	// object with each of its versions in its store. The line
+	// `history_clear()` goes too.
+	//
+	// ```
+	// > history_clear()
+	// the line history is cleared: <the count of lines> lines, and its store
+	// ```
+	//
+	// If the store refuses the removal, the history is still cleared in
+	// memory, and the error gives the reason of the store. The design of the
+	// history: (docs/CONSOLE.md, "6. The line history across a stop").
 	command("history_clear", {}, .None, "forget the line history, in memory and in its store", history_clear)
+	// Measures the work of one key with the completion list open, for the
+	// query `mcnt`, and writes two lines on the log.
+	//
+	// It times four parts: the collect of the names, their rank, the text
+	// of the rows, and the colors of the code. Each number is the least of
+	// 20 batches of 10 keys, in microseconds. The first line is for the
+	// names of this console; the second for the worst case, 512 names of
+	// 128 bytes. It runs in the second thread, so the list on the screen
+	// stays. The bounds that it measures: (docs/CONSOLE.md, "4. The bounds, and the cost of one key").
 	command("measure_completion", {}, .None, "measure one key of the completion list", measure_completion)
 	tables_start()
 }

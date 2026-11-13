@@ -5,15 +5,48 @@ import module "contract:module"
 
 // The roles of the context of a program that the root service starts.
 // A handle that the program was not granted is 0.
+
+// The handle 0: the display ring to the compositor, a memory object with
+// **Read** and **Write**. A program with a window sends its commands there,
+// and receives its input as completion records (`support/display`).
 GRANT_DISPLAY :: 0 // Memory: the ring to the compositor.
+// The handle 1: the root ring, a memory object with **Read** and **Write**,
+// for a program with the grant Root_Ring, as the console.
+// It sends `Root_Command` records on it: start, stop, connect, grants,
+// revoke, replace, and the commands of the principals. The root service
+// checks each command against the grants of the sender.
 GRANT_ROOT :: 1 // Memory: the ring to the root service, to start and stop programs.
+// The handle 2: the machine, with only the rights of the grants of the
+// program: **Inspect** to read the reports of the programs and of the
+// kernel, **Stop** to stop the machine, **Schedule** to change the
+// scheduling strategy.
 GRANT_MACHINE :: 2 // The machine, with the rights of the role: Inspect, or Inspect and Stop.
+// The handle 3: the memory of the boot image, with **Read**, for a program
+// with the grant Image: it lists the modules, loads them, and reads the
+// descriptions of their exports. Its size is the value 0.
 GRANT_IMAGE :: 3 // Memory: the boot image, to list the modules.
+// The handle 4: the memory of the records of the log of the kernel, with
+// **Read** only, for a program with the grant Log_Records: it reads the
+// lines of every program, and writes none.
 GRANT_LOG_RECORDS :: 4 // Memory, with Read: the records of the log.
+// The handle 5: the service ring of a service, a memory object with
+// **Read** and **Write**. The root service names each new connection of a
+// caller on it, with the call ring and the call region of that caller
+// (`support/system/service.odin`). The file of the service is at the
+// value 1.
 GRANT_SERVICE :: 5 // Memory: the service ring. The root service names each connection of a caller on it.
+// The handle 10: the replacement table of the machine, with **Read**
+// only, for a program that loads modules by itself: its loader reads the
+// table before each load, so a replacement reaches the loads that follow.
 GRANT_REPLACEMENTS :: 10 // Memory, with Read: the replacement table of the machine (Replacement_Table). 6 to 9 are the terminal and the store (packages terminal, storage).
+// The value 0: the size in bytes of the boot image of the handle 3.
 GRANT_VALUE_IMAGE_SIZE :: 0
+// The value 1, for a service: the address where the root service mapped
+// the file of the program, read-only. The service reads the descriptions
+// of its exports there, to check each call; the value 2 is its size.
 GRANT_VALUE_FILE_ADDRESS :: 1 // A service: where the file of the program is, read-only (the descriptions of its exports).
+// The value 2, for a service: the size in bytes of its file at the address
+// of the value 1.
 GRANT_VALUE_FILE_SIZE :: 2
 
 // The ring to the root service. The name of the program is in values[0..4].

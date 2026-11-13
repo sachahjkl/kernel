@@ -58,9 +58,12 @@ Site_Console_Command :: struct {
 	name:       string,
 	parameters: []string,
 	result:     string,
-	about:      string,
-	file:       string,
-	line:       int,
+	about:      string, // The help: the one line that help() prints.
+	// The comment lines just above the line of the command, as Markdown, or
+	// "": the whole documentation, which the help cannot hold.
+	documentation: string,
+	file:          string,
+	line:          int,
 }
 
 // site_is_identifier says if a text is an Odin identifier.
@@ -581,9 +584,12 @@ site_string_at :: proc(text: string, start: int) -> (value: string, end: int, fo
 // The form: each line whose code starts with "command(\"" is
 // `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`.
 // The kind None of a parameter is any value: the console prints "Value".
+// The comment lines just above a command, up to a line that is not a
+// comment, are its documentation.
 site_console_commands_read :: proc(content, file: string) -> (commands: []Site_Console_Command, problem: string) {
 	list := make([dynamic]Site_Console_Command, context.temp_allocator)
-	for line, index in site_lines(content) {
+	lines := site_lines(content)
+	for line, index in lines {
 		code, _ := site_code_and_comment(line)
 		if !strings.has_prefix(code, "command(\"") {
 			continue
@@ -623,7 +629,16 @@ site_console_commands_read :: proc(content, file: string) -> (commands: []Site_C
 		if !has_about || !strings.has_prefix(rest[after_about:], ", ") || !strings.has_suffix(rest, ")") {
 			return nil, wrong
 		}
-		append(&list, Site_Console_Command{name = name, parameters = parameters[:], result = result, about = about, file = file, line = index + 1})
+		above := index
+		for above > 0 && strings.has_prefix(strings.trim_space(lines[above - 1]), "//") {
+			above -= 1
+		}
+		documentation := ""
+		for comment_line in lines[above:index] {
+			_, text, _ := markdown_comment_line(comment_line)
+			documentation = markdown_comment_add(documentation, text)
+		}
+		append(&list, Site_Console_Command{name = name, parameters = parameters[:], result = result, about = about, documentation = markdown_comment_end(documentation), file = file, line = index + 1})
 	}
 	if len(list) == 0 {
 		return nil, fmt.tprintf("%s: no line `command(\"<name>\", ...)`", file)

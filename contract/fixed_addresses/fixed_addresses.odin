@@ -43,19 +43,67 @@ RANGE_SPAN :: SLOT
 // The table of the fixed ranges: a new range is a new member, and its
 // address is its slot. A constant written by hand in the band, with no
 // member, is not a fixed range, and the check of the tool refuses it.
+//
+// A starter maps a range in its child before the child runs. For the
+// settings page, the glyph caches, the date page and the debug image, it
+// also sets the bit of the range in the value 20 of the context of the
+// child (`range_mapped_add`). The child reads nothing at a range whose bit
+// is clear (`ranges_mapped`): an address that is not mapped faults at the
+// first read, and the bit tells the child before it reads. The other
+// ranges come with their size in a value of the context.
 Fixed_Range :: enum u8 {
 	Module_Files, // The files of a module and of its imports, in the program that runs the module (contract:isolated).
+	// A call host finds there, read-only, the module that it runs, its
+	// imports and the replacement records, as one list in the form of the
+	// boot image. The console or the root service maps them before the
+	// call host starts, and states their size in the values of its
+	// context: a call host has no handle to the boot image, so it cannot
+	// look for them.
 	Pointer_Themes, // The pointer themes of the compositor, one after the other (programs/root).
+	// The root service maps the theme files of the boot image there,
+	// read-only, in the compositor, and gives the address and the size of
+	// each one in the values of its context.
 	Settings_Page, // The settings page (contract:settings).
+	// One page, read-only, that the program `settings` writes and every
+	// program with a surface or a terminal reads: the value of each setting
+	// of the machine. The root service maps it. A program reads a change at
+	// its next read of the page, with no message.
 	Glyph_Cache, // The glyph caches of the text of the system (contract:settings).
+	// The glyphs of the default font of the text, fitted to the grid of
+	// the pixels, drawn once at build time. The root service maps it,
+	// read-only, beside the settings page; each program draws text from it
+	// and draws no glyph itself.
 	Glyph_Cache_Without_Grid_Fit,
+	// The glyphs of the default font with no fit to the grid of the
+	// pixels, for the setting that chooses them. Mapped as the cache
+	// above.
 	Glyph_Cache_Bold,
+	// The glyphs of the emphasis weight of the default font. Mapped as the
+	// cache above.
 	Date_Page, // The date page (contract:date).
+	// One page, read-only, that the program `date` writes from the
+	// real-time clock: each program reads the date of the day there with
+	// no call. The root service maps it.
 	Storage_File, // The file of the storage service (support/storage).
+	// The file of the program of the storage service, read-only, in a
+	// program that the root service connects to the storage service at its
+	// start: the program reads the descriptions of the exports there. The
+	// root service maps it, and gives its size at the value 3 of the
+	// context.
 	Module_Tables, // The tables of the parameters of one export, in the program that receives the call (contract:isolated).
+	// A receiver maps the memory object of each table parameter there for
+	// the time of one call: the parameter n at `TABLE_ADDRESS` plus n
+	// times 16 GiB. The same addresses at each call cost no new page
+	// tables, where an address that the kernel chooses would.
 	Interface_Glyph_Cache, // The glyph cache of the interface font, regular weight (contract:settings).
+	// The glyphs of the proportional font of the windows. Mapped as the
+	// glyph caches above.
 	Interface_Glyph_Cache_Bold, // The glyph cache of the interface font, bold weight.
+	// Mapped as the glyph caches above.
 	Debug_Image, // The debug image, read-only: the debug objects of the modules, by the hash of each module (contract:debug_object).
+	// The root service maps it in a program that prints stop reports, as
+	// the console, and gives its size at the value 21 of the context. The
+	// report then names the procedure and the line of each frame.
 }
 #assert(int(max(Fixed_Range)) < SLOT_COUNT)
 

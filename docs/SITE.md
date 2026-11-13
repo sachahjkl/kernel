@@ -39,7 +39,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `docs/guides/<name>/` | Each document of `docs/` but the working records `HANDOFF.md`, `REVIEWS.md`, `SITE.md` and `FIRST_MILESTONE.md` (`SITE_WORKING_RECORDS`), which stay out of the site: only the guides that explain the system are published. A link of a page to a working record names the file in the repository. The glossary is a page of the reference |
 | `docs/reference/` | The list of the reference tables below |
 | `docs/reference/glossary/` | `docs/GLOSSARY.md`: each term is an entry with the anchor `term-<name>` (see "The glossary") |
-| `docs/reference/commands/` | `COMMANDS` in `tools/kerneltool/main.odin`: the name and the text of each command |
+| `docs/reference/commands/` | `COMMANDS` in `tools/kerneltool/main.odin`: the comment above `COMMANDS ::` (what the tool is and how to run a command) at the top; for each command its name, the comment lines just above its entry as its documentation (the first sentence is the cell "What it does"), and its help, the line that `kerneltool help` prints |
 | `docs/reference/numbers/` | The list `site_measures`, the measure record `docs/measures/measures.txt` and the logs of `build/` that are newer than it |
 | `docs/reference/licenses/` | See "The licenses" |
 | `releases/` | All of `CHANGELOG.md`, newest first; each release has the anchor `release-<number>`, and a line with a link to each news entry that names it |
@@ -352,6 +352,8 @@ The first paragraph of the page states the run of the measure record: its time, 
 
 `kerneltool check` and `kerneltool screenshots` write `build/reproducible_build.txt` after their comparison of two builds.
 
+Under the table, the section "How to read each number" says that a number is one run on the host of the record, that no test asserts it, and then, for each number, the text `reading` of its entry in `site_measures`: what the program does to measure it, and what the number does not say.
+
 A required number is a line that a scenario of `kerneltool test` waits for (a step `Wait`), or the line of the second build: a run that passed holds it. A host test checks that each required number is such a line. A full frame of the compositor is not required: the compositor prints it when a frame redraws the whole screen, and no step waits for it. The lock measure of `kerneltool measure` (`test_output_measure.txt`) comes first when it is newer, but the full check does not run it: the full check takes the same line from `test_output.txt`.
 
 ## The measure record
@@ -634,7 +636,7 @@ The checks, after the checks of the pages: `favicon.ico` is at the root, its dir
 
 ## The status page
 
-`status/` gives the state of the system with no sentence of its own. It stays a section of its own, outside the docs (see "The sections"): each cell is a part of `PROPERTIES.md` or of `FIRST_MILESTONE.md`.
+`status/` gives the state of the system with no sentence of its own but the paragraph that says how to read it. It stays a section of its own, outside the docs (see "The sections"): each cell is a part of `PROPERTIES.md`, of `DEMONSTRATIONS.md` or of `FIRST_MILESTONE.md`.
 
 | Table | Read from, and the form the reader relies on |
 |---|---|
@@ -643,8 +645,9 @@ The checks, after the checks of the pages: `favicon.ico` is at the root, its dir
 | Its gaps | The items `- <text>` under `## Gaps`, and the lines that continue them (they start with a space), by the same rule. A line of text between the items (`Performance:`) is the group of the items after it |
 | Gaps | Each gap, with its number (`gap-<n>` on the page, from 1 in the order of the file, with a link to its line), its group and its text |
 | Next steps | The numbered items under `## Next steps`, each with a link to its line in the repository |
+| What each property promises, and what runs today | For each property, a section `state-<n>`: its promise, the first sentence of its first rule in `PROPERTIES.md`; then the row of the property in the table `## The table` of `DEMONSTRATIONS.md` (`| <n> | <property> | <state> | <what the test shows> | <pictures> | <what no test shows> |`, the pictures as code spans separated by commas): its state and what the test shows, each picture as a link to `docs/screenshots/<name>.png` in the repository, and what no test shows ("—": nothing); then each numbered item of the section `## What removes ...` that names the property, by the rule of the evidence items. A row with another count of cells stops the command with its line |
 
-The page renders `PROPERTIES.md` again to read the ids of its headings: the renderer gives the same ids to the same text, so the links reach the guide. It renders `FIRST_MILESTONE.md` for its numbered items and their lines only, and drops the HTML. The status page has the documentation layout; its property rows and its gap rows are symbols of "On this page".
+Under the heading, a paragraph says what a property, its status and its state are. The page renders `PROPERTIES.md` again to read the ids of its headings: the renderer gives the same ids to the same text, so the links reach the guide. It renders `FIRST_MILESTONE.md` for its numbered items and their lines only, and drops the HTML. The status page has the documentation layout; its property rows and its gap rows are symbols of "On this page".
 
 ## The reference tables
 
@@ -653,11 +656,11 @@ Each table is read from the text of the file that defines the thing (`tools/kern
 | Page | Read from | The form |
 |---|---|---|
 | Kernel operations | `Operation` and `Status` in `contract/operation/operation.odin` | An enumeration: a line `<Name> :: enum <type> {`, one member a line (`<Name> = <decimal>,` or `<Name>,`, with a comment `// ...` or not), a line `}`. A line that is only a comment continues the comment of the member above it. The comment of an operation is `(<parameters>) -> <result>. <text>` or `(<parameters>): <text>`: the parameters and the result exist only as these words, and the table shows them |
-| The context of a program | The constants `CONTEXT_...` and `ROOT_...` of `contract/operation/operation.odin` from the line `CONTEXT_HANDLES ::`, and `GRANT_...` of `support/system/grants.odin` | `<NAME> :: <decimal>`, with the comment lines just above it and the comment of its line. `CONTEXT_HANDLES` and `CONTEXT_VALUES` are the sizes, and a name that ends in `_COUNT` is a count: not roles. A name with `_VALUE_` is a value, another a handle |
+| The context of a program | The constants `CONTEXT_...` and `ROOT_...` of `contract/operation/operation.odin` from the line `CONTEXT_HANDLES ::`, and `GRANT_...` of `support/system/grants.odin` | `<NAME> :: <decimal>`, with the comment lines just above it and the comment of its line. `CONTEXT_HANDLES` and `CONTEXT_VALUES` are the sizes, and a name that ends in `_COUNT` is a count: not roles. A name with `_VALUE_` is a value, another a handle. Three tables: the roles that the system fixes for each program, the roles of the first program (`ROOT_...`), and the roles of a program that the root service starts. The page starts with the comment above `CONTEXT_HANDLES` (what the context is, and why a program finds each thing at a fixed place); the comment above `CONTEXT_VALUES` (how the values are numbered) heads the first table |
 | Error kinds and units | `Kind`, `Unit` and `UNIT_NAMES` in `contract/errors/errors.odin` | Enumerations; a table `UNIT_NAMES := [Unit]string {` of lines `.<Name> = "<text>",` |
 | Grants of the root service | `Grant` and the procedures `grants_of` and `things_of` in `programs/root/main.odin`; `Root_Grant` and `root_grant_names` in `support/system/grants.odin` | Enumerations and a table of names. `grants_of` and `things_of` are read by the parser of Odin (`site_name_switch_read`): the body is a switch on the name, then one `return`, the value of each other program; each case names programs by strings, and its body is one `return` of a literal with no type: a set of members (`{.Inspect, .Image}`) or a record of integer fields (`{pages = 2048, ...}`). The comment of a case is the comment of each of its lines. Any other form (a constant, a typed literal, an expression, a default case, a case with no return) stops the command with its line, and so does a member of a set that `Grant` does not have |
-| Fixed ranges | `Fixed_Range` in `contract/fixed_addresses/fixed_addresses.odin` | An enumeration. The address is `fixed_addresses.range_of` of the compiled contract |
-| Commands of the console | `programs/console/commands.odin`, `programs/console/tables.odin` | Lines `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`; the signature as `help()` prints it, `Value` for the kind None of a parameter |
+| Fixed ranges | `Fixed_Range` in `contract/fixed_addresses/fixed_addresses.odin` | An enumeration. The address is `fixed_addresses.range_of` of the compiled contract. The page starts with the comment of the package (why an address is fixed, and the band), then the start of the band and the size of a slot from the compiled contract |
+| Commands of the console | `programs/console/commands.odin`, `programs/console/tables.odin` | Lines `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`; the signature as `help()` prints it, `Value` for the kind None of a parameter. The comment lines just above a line `command(` are the documentation of the command: the text of its symbol, and the first sentence of it is the cell "What it does"; the help is a fact of the symbol, "What help() prints". The page starts with the comment above `Command :: struct` (what a command is, and how commands compose), and the section "The commands of tables" with the comment above `tables_start` |
 
 Each page starts with what the thing is: the comment above its declaration in the source (`site_comment_above`), when the source has one, as a quote that names its file, with its document references (see "The references to documents"). Then the table. A cell that holds a comment of the source (a member of an enumeration, a role, a grant, a range, the comment of a case of the root service) has its document references too.
 

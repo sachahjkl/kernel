@@ -209,6 +209,11 @@ site_console_commands_of_the_repository :: proc(t: ^testing.T) {
 	testing.expect_value(t, signatures["help"], "help()")
 	testing.expect_value(t, signatures["repeat"], "repeat(Text, Integer) -> Text")
 	testing.expect_value(t, signatures["where"], "where(Table, Text, Value) -> Table")
+	// Each built-in command has its documentation above its line: the help
+	// alone is one line, too short for a reader of the site.
+	for command in all {
+		testing.expectf(t, command.documentation != "", "the command %s has no comment above its line", command.name)
+	}
 }
 
 @(test)
@@ -243,11 +248,14 @@ site_readers_of_small_files :: proc(t: ^testing.T) {
 	constants, constants_problem := site_constants_read("// Above,\n// two lines.\nROLE_A :: 3 // Its own.\nOTHER :: 0x10\n", "file.odin", "", {"ROLE_"})
 	testing.expect_value(t, constants_problem, "")
 	testing.expect(t, len(constants) == 1 && constants[0].comment == "Above,\ntwo lines.\nIts own." && constants[0].value == 3)
-	commands, commands_problem := site_console_commands_read("\tcommand(\"say\", {.Text, .None}, .Text, \"a \\\"quoted\\\" help\", say)\n", "file.odin")
+	commands, commands_problem := site_console_commands_read("\tcommand(\"say\", {.Text, .None}, .Text, \"a \\\"quoted\\\" help\", say)\n\n\t// Its first line.\n\t//\n\t// - `item`: a list.\n\tcommand(\"hear\", {}, .None, \"help\", hear)\n", "file.odin")
 	testing.expect_value(t, commands_problem, "")
-	if len(commands) == 1 {
+	testing.expect_value(t, len(commands), 2)
+	if len(commands) == 2 {
 		testing.expect_value(t, commands[0].about, "a \"quoted\" help")
 		testing.expect_value(t, site_console_signature(commands[0]), "say(Text, Value) -> Text")
+		testing.expect_value(t, commands[0].documentation, "")
+		testing.expect_value(t, commands[1].documentation, "Its first line.\n\n- `item`: a list.")
 	}
 	operation := site_operation_parts(Site_Enumeration_Member{name = "Do", comment = "(a, b (or 0)) -> the count. More text."})
 	testing.expect_value(t, operation.parameters, "a, b (or 0)")
@@ -315,4 +323,34 @@ site_reference_of_the_repository :: proc(t: ^testing.T) {
 	math_page, math_found := site_code_link(&site, "math")
 	testing.expect(t, math_found && math_page == site_module_page("math"), math_page)
 	testing.expect_value(t, site_module_page("math"), "docs/reference/modules/math/index.html")
+}
+
+@(test)
+site_demonstrations_of_the_repository :: proc(t: ^testing.T) {
+	rows, removals, problem := site_demonstrations_read(read_text(t, SITE_DEMONSTRATIONS_FILE))
+	testing.expect_value(t, problem, "")
+	// One row for each property, in order, each with a state and a text.
+	testing.expect_value(t, len(rows), 21)
+	for row, index in rows {
+		testing.expect_value(t, row.number, index + 1)
+		testing.expectf(t, row.state != "" && row.shown != "" && row.missing != "", "the row of the property %d has an empty cell", row.number)
+	}
+	testing.expect(t, len(removals) > 0)
+}
+
+@(test)
+site_demonstrations_of_a_small_file :: proc(t: ^testing.T) {
+	text := "## The table\n\n| # | Property | State | Shows | Picture | Not shown |\n|---|---|---|---|---|---|\n| 1 | Small | Shown | It runs | `rights`, `errors` | — |\n\n## What removes each part\n\n1. Property 1: a check.\n"
+	rows, removals, problem := site_demonstrations_read(text)
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, len(rows), 1)
+	if len(rows) == 1 {
+		testing.expect_value(t, rows[0].state, "Shown")
+		testing.expect_value(t, len(rows[0].pictures), 2)
+		testing.expect_value(t, rows[0].pictures[1], "errors")
+		testing.expect_value(t, rows[0].line, 5)
+	}
+	testing.expect_value(t, len(removals), 1)
+	_, _, short := site_demonstrations_read("## The table\n\n| 1 | Small | Shown |\n")
+	testing.expect(t, strings.has_prefix(short, SITE_DEMONSTRATIONS_FILE + ", line 3:"), short)
 }
