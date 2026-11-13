@@ -3,8 +3,10 @@ package kerneltool
 import "core:fmt"
 import "core:os"
 import "core:strconv"
+import "core:strings"
 import "core:sync"
 import "core:thread"
+import "core:time"
 
 // The parallel build of the modules. Each module is built by its own
 // process of this tool (the command `module`), which runs one compiler.
@@ -13,6 +15,9 @@ import "core:thread"
 // most `module_build_processes` processes at once, keeps the output of
 // each one, prints it whole in the order of the module table, and
 // assembles the boot image in that order.
+//
+// A module whose inputs are the same as at its last build starts no
+// process: the tool keeps its outputs (incremental_build.odin).
 //
 // A module needs the files of its imports only at its conversion (their
 // hashes go into its import table). So the modules are built in levels: a
@@ -74,12 +79,26 @@ module_levels :: proc() -> (levels: []int, ok: bool) {
 	return levels, true
 }
 
+// The names of the built modules that the line of the kept modules prints.
+BUILT_MODULE_NAMES_MOST :: 12
+
 // build_modules_in_parallel builds every module of the table, level after
 // level. It prints the output of each process in the order of the table.
 // After a failure, no new process starts; the processes that run end, and
 // the tool names each module that failed or did not start.
+//
+// A module whose build record has the build key of its inputs, and whose
+// outputs have their recorded hashes, is kept: it starts no process. The
+// tool decides for a level after the level before it ended, because the
+// file of an import is an input.
 build_modules_in_parallel :: proc() -> bool {
 	levels := module_levels() or_return
+	modules_started := time.tick_now()
+	// Before the first compiler starts: the hash of each source.
+	build_inputs_prepare()
+	kept_count := 0
+	built_names := strings.builder_make(context.temp_allocator)
+	built_count := 0
 	processes := module_build_processes
 	if processes <= 0 {
 		processes = os.get_processor_core_count()
@@ -113,6 +132,23 @@ build_modules_in_parallel :: proc() -> bool {
 				append(&indexes, index)
 			}
 		}
+		// The modules of the level that are built: the others are kept.
+		checks_started := time.tick_now()
+		level_indexes := indexes[:]
+		indexes = make([dynamic]int, context.temp_allocator)
+		for index in level_indexes {
+			kept, reason := module_is_kept(module_builds[index])
+			if kept {
+				kept_count += 1
+				continue
+			}
+			append(&indexes, index)
+			built_count += 1
+			if built_count <= BUILT_MODULE_NAMES_MOST {
+				fmt.sbprintf(&built_names, "%s%s (%s)", built_count > 1 ? ", " : "", module_builds[index].name, reason)
+			}
+		}
+		build_measure.record_checks += time.tick_since(checks_started)
 		level := Module_Build_Level{module_indexes = indexes[:], outcomes = outcomes, tool_path = tool_path}
 		workers := make([]^thread.Thread, min(processes, len(indexes)), context.temp_allocator)
 		for &worker in workers {
@@ -138,9 +174,27 @@ build_modules_in_parallel :: proc() -> bool {
 			for outcome in outcomes {
 				not_started += outcome.started ? 0 : 1
 			}
-			fmt.eprintfln("kerneltool: %d of %d modules did not start, because a module failed", not_started, len(module_builds))
+			fmt.eprintfln("kerneltool: %d of %d modules did not start, because a module failed", not_started - kept_count, len(module_builds))
 			return false
 		}
+		// The build record of each module that was built: its key, and the
+		// hash of each output.
+		writes_started := time.tick_now()
+		for index in indexes {
+			if !module_record_write(module_builds[index]) && build_inputs.usable {
+				fmt.printfln("kerneltool: no build record for %s: the compiler gave no list of its files, or an input changed during the build; the next build builds it again", module_builds[index].name)
+			}
+		}
+		build_measure.record_writes += time.tick_since(writes_started)
+	}
+	build_measure.modules_built += built_count
+	build_measure.modules_kept += kept_count
+	build_measure.modules += time.tick_since(modules_started)
+	if built_count == 0 {
+		fmt.printfln("kerneltool: %d of %d modules kept: the inputs of each one are the same, and its outputs have their recorded hashes", kept_count, len(module_builds))
+	} else if kept_count > 0 || !build_whole {
+		more := built_count > BUILT_MODULE_NAMES_MOST ? fmt.tprintf(", and %d more", built_count - BUILT_MODULE_NAMES_MOST) : ""
+		fmt.printfln("kerneltool: %d of %d modules kept, %d built: %s%s", kept_count, len(module_builds), built_count, strings.to_string(built_names), more)
 	}
 	return true
 }

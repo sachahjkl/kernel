@@ -9,13 +9,14 @@ A module of this system is named by the hash of its bytes, so one source must gi
 - The flake pins the release `dev-2026-11a` of Odin, with no patch (`flake.nix`, `odinRelease`).
 - The compiler runs on all its threads: no build passes `-thread-count` (section 7).
 - Each full check builds everything two times and compares every output, then builds every module a third time with no debug information (sections 6 and 8).
+- A usual build keeps a module whose inputs are the same as at its last build ("The incremental build and the same bytes"). Each build of a check is a whole build.
 - Sections 1 to 5 are the record of a fault of the older release `dev-2026-05`, its correction by a patch, and the measures. That patch is no longer applied, and its file is no longer in the repository.
 
 **The commands.**
 
 | Command | What it does | When to use it |
 |---|---|---|
-| `kerneltool check` | Builds the modules and the boot program a second time and compares each output with the first build, byte for byte | At each full check (`kerneltool screenshots` runs the same second build): it catches a compiler that lost the rule |
+| `kerneltool check` | Builds the modules and the boot program a second time and compares each output with the first build, byte for byte. The two builds are whole builds | At each full check (`kerneltool screenshots` runs the same second build): it catches a compiler that lost the rule |
 | `kerneltool repeat <module> <count>` | Builds one module `count` times, with no machine, and counts the distinct results of each output | After a change of one module that looks nondeterministic |
 | `kerneltool repeat all <count> [processes]` | The same for every module and the boot program, one row each | After a change of the compiler, of its flags or of LLVM |
 
@@ -23,7 +24,7 @@ A module of this system is named by the hash of its bytes, so one source must gi
 
 **For whom.** A reader who changes the compiler, its flags or the tool that builds the modules.
 
-**The map of this document.** "The outputs that the tool compares" and "What the build does to give the same bytes": the mechanism of today. "1. The cause" to "5. The parallelism of the tool": the fault of the old release and its patch. "6. What is proved, and what is not". "6a. The release dev-2026-11a of the compiler" and "7. The compiler with no patch, on all its threads": the compiler of today. "8. The debug information": why `-debug` does not change the identity of a module.
+**The map of this document.** "The outputs that the tool compares" and "What the build does to give the same bytes": the mechanism of today. "The incremental build and the same bytes": why a build can keep an output. "1. The cause" to "5. The parallelism of the tool": the fault of the old release and its patch. "6. What is proved, and what is not". "6a. The release dev-2026-11a of the compiler" and "7. The compiler with no patch, on all its threads": the compiler of today. "8. The debug information": why `-debug` does not change the identity of a module.
 
 ## The outputs that the tool compares
 
@@ -58,6 +59,18 @@ A deterministic compiler is necessary and not sufficient: the build itself must 
 - **A fixed order.** The boot image holds the modules in the order of the module table (`module_builds`), not in the order in which the processes end.
 - **A pinned compiler.** The flake pins the release of Odin by its tag and its hash, and `llc` comes from the LLVM of that compiler (18). `flake.lock` pins the other tools.
 - **No path of the host in a debug object.** A source path in a debug object is from the root of the repository or of the Odin installation. The tool refuses to write a debug object that holds an absolute path or the folder of the build (section 8).
+
+## The incremental build and the same bytes
+
+The rule of this document is that the same inputs give the same bytes. The incremental build uses the rule in the other direction: when the inputs of a module are the same as at its last build, its output of that build is the output that a new build would give, so the tool keeps it and starts no compiler. `TOOLS.md`, "The incremental build", says what an input is and when a module is kept.
+
+Three facts keep the two rules apart:
+
+- **The proof never rests on a kept output.** A check that compares two builds must run the compiler two times. `check`, `screenshots` and `repeat` build whole, and the procedures of the second build (`outputs_same_after_second_build`, `modules_same_without_debug_information`) set the whole build themselves. A build that kept its outputs would compare a file with itself.
+- **A kept output is as sound as the list of the inputs.** The rule of the same bytes says nothing about an input that the build key does not hold. So the key holds each file that the compiler lists, every file of the folder of each package, the commands with each flag, the programs of the build and the sources of the tool, and the tool builds in every case of doubt.
+- **A compiler that loses the rule is still caught.** With a compiler that is not deterministic, a kept module is one of the distinct results of its inputs: a valid module, with a valid hash, and each module that imports it names that hash. The next full check builds whole two times and finds the difference.
+
+The LLVM IR and the object of a kept module stay from the build that made the module. No step of a usual build reads them; the checks that read them build whole first.
 
 ## 1. The cause
 
