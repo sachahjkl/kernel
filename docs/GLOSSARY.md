@@ -2902,11 +2902,11 @@ Do not use: symbol (for this), nearest symbol.
 
 A confirmed place is a place of the pointer that the kernel tool read from the compositor before a press, through the remote service.
 
-A loaded host can lose a move of the pointer that the tool sends through the monitor of QEMU, and a press then lands elsewhere. So, in a machine test, the tool calls `compositor.pointer()` before each press and moves the pointer again until the compositor has it at the place that the step wants, 6 tries at most (`POINTER_TRIES`). Before the remote service runs, the tool moves the pointer with no confirmation.
+A press must land where the step wants it, and the tool does not trust its own count of the moves that it sent to the virtual mouse of QEMU. So, in a machine test, the tool calls `compositor.pointer()` before each press: after the packets of a move, it reads the place until the pointer is there or until the compositor received each packet, and it moves the pointer again from the place that the compositor gives, 6 tries at most (`POINTER_TRIES`). Before the remote service runs, the tool moves the pointer with no confirmation, and waits until the system read each packet.
 
 A confirmed place is not a move of the pointer by the system: the compositor only reports where the pointer is.
 
-The design: `pointer_confirm` in `tools/kerneltool/machine.odin`.
+The design: `pointer_confirm` in `tools/kerneltool/machine_input.odin`; `docs/TOOLS.md`, "How the tool sends input and waits".
 
 Do not use: pointer sync, warp.
 

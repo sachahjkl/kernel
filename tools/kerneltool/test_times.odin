@@ -21,10 +21,10 @@ TEST_TIMES_SLOWEST_COUNT :: 25
 // The parts of the time of one picture of the screen (screen_save).
 Picture_Time :: struct {
 	settle:     time.Duration, // The fixed wait before the tool asks QEMU for the picture.
-	dump:       time.Duration, // From the command `screendump` until the read that found the whole file starts.
-	read:       time.Duration, // The read of the file that held the whole picture.
-	conversion: time.Duration, // The check of the header and the encoding of the PNG.
-	write:      time.Duration, // The write of the PNG file.
+	dump:       time.Duration, // From the command `screendump` to its reply: QEMU wrote the whole file.
+	read:       time.Duration, // The read of the file and the check of its header.
+	conversion: time.Duration, // The encoding of the PNG, on a worker thread: not a part of the time of the step.
+	write:      time.Duration, // The write of the PNG file, on the same worker thread.
 }
 
 // The time of one step of a scenario.
@@ -36,7 +36,7 @@ Step_Time :: struct {
 	duration: time.Duration,
 	waited:   time.Duration, // The part of the duration that the step waited for a line of the log.
 	keys:     int, // The keys that the step sent.
-	key_time: time.Duration, // The time in the sends of these keys, with the wait for each key.
+	key_time: time.Duration, // The time in the sends of these keys, with the wait after each send.
 	pictures: int,
 	picture:  Picture_Time,
 }
@@ -213,9 +213,10 @@ test_times_wait_note :: proc(machine: ^Machine, started: time.Tick) {
 	machine.times.current.waited += time.tick_since(started)
 }
 
-// test_times_key_note adds one key to the step that runs.
-test_times_key_note :: proc(machine: ^Machine, started: time.Tick) {
-	machine.times.current.keys += 1
+// test_times_keys_note adds the keys of one send to the step that runs:
+// their count, and the time of the send with its wait.
+test_times_keys_note :: proc(machine: ^Machine, count: int, started: time.Tick) {
+	machine.times.current.keys += count
 	machine.times.current.key_time += time.tick_since(started)
 }
 
@@ -228,6 +229,17 @@ test_times_picture_note :: proc(machine: ^Machine, picture: Picture_Time) {
 	current.picture.read += picture.read
 	current.picture.conversion += picture.conversion
 	current.picture.write += picture.write
+}
+
+// test_times_picture_worker_note adds the time of the conversion and of
+// the write of one picture, which a worker thread did while the scenario
+// went on, to the record of the step of the picture. A picture outside a
+// step has no record.
+test_times_picture_worker_note :: proc(step_place: int, conversion, write: time.Duration) {
+	if step_place < len(test_times.steps) {
+		test_times.steps[step_place].picture.conversion += conversion
+		test_times.steps[step_place].picture.write += write
+	}
 }
 
 // test_times_first_line_note notes when the log of a machine has its first
@@ -312,8 +324,8 @@ test_times_report :: proc(started: time.Tick) {
 			fmt.printfln("kerneltool: measure: the steps %-12s %5d steps, %8.1f s", fmt.tprintf("%v", kind), kind_time.count, seconds_of(kind_time.duration))
 		}
 	}
-	fmt.printfln("kerneltool: measure: %d keys sent, %.1f s in the sends of keys, with the wait for each key", summary.keys, seconds_of(summary.key_time))
-	fmt.printfln("kerneltool: measure: %d pictures, %.1f s: the fixed wait before each %.1f s, the screendump of QEMU %.1f s, the read of the file %.1f s, the conversion to PNG %.1f s, the write %.1f s", summary.pictures, seconds_of(summary.picture.settle + summary.picture.dump + summary.picture.read + summary.picture.conversion + summary.picture.write), seconds_of(summary.picture.settle), seconds_of(summary.picture.dump), seconds_of(summary.picture.read), seconds_of(summary.picture.conversion), seconds_of(summary.picture.write))
+	fmt.printfln("kerneltool: measure: %d keys sent, %.1f s in the sends of keys, with the wait after each send", summary.keys, seconds_of(summary.key_time))
+	fmt.printfln("kerneltool: measure: %d pictures, %.1f s in their steps: the fixed wait before each %.1f s, the screendump of QEMU %.1f s, the read of the file %.1f s; on worker threads, while the scenario goes on: the conversion to PNG %.1f s, the write %.1f s", summary.pictures, seconds_of(summary.picture.settle + summary.picture.dump + summary.picture.read), seconds_of(summary.picture.settle), seconds_of(summary.picture.dump), seconds_of(summary.picture.read), seconds_of(summary.picture.conversion), seconds_of(summary.picture.write))
 	fmt.printfln("kerneltool: measure: %.1f s waited for lines of the log, by the program of the line:", seconds_of(summary.waited))
 	for program in summary.programs {
 		fmt.printfln("kerneltool: measure:     %8.1f s, %4d lines: %s", seconds_of(program.waited), program.count, program.program)
