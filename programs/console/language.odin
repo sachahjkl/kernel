@@ -198,6 +198,7 @@ run_line :: proc "contextless" (text: string) {
 	if !failed && assigned {
 		assign(name, value)
 	}
+	line_value = assigned ? Value{} : value
 	if failed {
 		failure_draw()
 		return

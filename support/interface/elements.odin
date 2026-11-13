@@ -340,8 +340,12 @@ List_Row :: struct {
 	name:           string, // The name, in the interface font.
 	matched_places: u128, // Bit n: the byte n of the name matched the search. A line of 2 pixels is under each such character.
 	mark_shown:     bool, // A square of 8 pixels is before the name.
+	mark_outlined:  bool, // The mark is the outline of the square, 2 pixels wide: a second form, for a reader who does not tell two colors apart.
 	mark_color:     graphics.Color, // The color of that square: one fact of the entry.
 	right_text:     string, // A dim text at the right of the row: what the entry is, in words.
+	name_in_cells:  bool, // The name is code: it is in the font of the cells.
+	name_color:     graphics.Color, // The color of the name on a row that is not chosen. 0: the text color.
+	detail:         string, // A quiet text right after the name, in the font of the cells: the parameters and the result of a command. It is cut to its room.
 }
 
 // List_Rows_Options: what a list of rows shows beside its rows.
@@ -359,10 +363,12 @@ LIST_ROW_NAME_X :: LIST_ROW_MARK_X + LIST_ROW_MARK_SIZE + 8 // From the left of 
 LIST_ROW_RIGHT_MARGIN :: 16 // From the text at the right to the right of a row.
 LIST_ROW_SCROLL_WIDTH :: 2 // The bar at the right of a list that does not show each row.
 
-// list_of_rows draws rows of 24 pixels: for each one a mark, a name with a
-// line of 2 pixels under each matched character, and a dim text at the
-// right; the chosen row filled, with its text in white and its hint at the
-// right. It takes no input: the caller owns the choice and gives only the
+// list_of_rows draws rows of 24 pixels: for each one a mark (a full square
+// or the outline of one), a name with a line of 2 pixels under each matched
+// character, a quiet detail after a name that is code, and a dim text at
+// the right; the chosen row filled, with its text in white, and at its
+// right its hint when the caller gives one, else the same text as the
+// other rows. It takes no input: the caller owns the choice and gives only the
 // rows that the area shows, so the work is the rows on the screen, not the
 // rows of the list. It gives the count of the rows that it drew.
 list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row, options: List_Rows_Options) -> int {
@@ -399,7 +405,12 @@ list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row,
 			if chosen && (mark_color == chosen_color || mark_color == graphics.COLOR_TITLE) {
 				mark_color = graphics.COLOR_WHITE
 			}
-			draw_rectangle(table, area.x + LIST_ROW_MARK_X, y + (TABLE_LINE - LIST_ROW_MARK_SIZE) / 2, LIST_ROW_MARK_SIZE, LIST_ROW_MARK_SIZE, mark_color)
+			mark_y := y + (TABLE_LINE - LIST_ROW_MARK_SIZE) / 2
+			if row.mark_outlined {
+				draw_outline(table, area.x + LIST_ROW_MARK_X, mark_y, LIST_ROW_MARK_SIZE, LIST_ROW_MARK_SIZE, 2, mark_color)
+			} else {
+				draw_rectangle(table, area.x + LIST_ROW_MARK_X, mark_y, LIST_ROW_MARK_SIZE, LIST_ROW_MARK_SIZE, mark_color)
+			}
 		}
 		// The text at the right takes its room first; the name takes the rest.
 		right_text := chosen && options.chosen_hint != "" ? options.chosen_hint : row.right_text
@@ -412,11 +423,18 @@ list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row,
 			}
 		}
 		name := row.name
-		if widths[index] > name_room {
-			name = text_fit(table, FONT_INTERFACE, name, name_room)
+		name_font := row.name_in_cells ? Font{} : FONT_INTERFACE
+		name_width := row.name_in_cells ? text_width(name_font, name) : widths[index]
+		if name_width > name_room {
+			name = text_fit(table, name_font, name, name_room)
+			name_width = text_measured_width(table, name_font, name)
 		}
 		name_x := area.x + LIST_ROW_NAME_X
-		draw_text(table, name_x, y + 4, name, chosen ? graphics.COLOR_WHITE : graphics.COLOR_TEXT, FONT_INTERFACE)
+		name_color := row.name_color != 0 ? row.name_color : graphics.Color(graphics.COLOR_TEXT)
+		draw_text(table, name_x, y + 4, name, chosen ? graphics.COLOR_WHITE : name_color, name_font)
+		if row.detail != "" {
+			draw_text(table, name_x + name_width, y + 4, text_fit(table, {}, row.detail, name_room - name_width), chosen ? graphics.COLOR_WHITE : graphics.COLOR_DIM)
+		}
 		// One line under each run of matched characters, measured in the
 		// font of the name: at most one measure for each end of a run.
 		places := row.matched_places
@@ -431,8 +449,8 @@ list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row,
 				places &~= u128(1) << uint(at)
 				at += 1
 			}
-			start_x := text_measured_width(table, FONT_INTERFACE, name[:run_start])
-			end_x := text_measured_width(table, FONT_INTERFACE, name[:at])
+			start_x := text_measured_width(table, name_font, name[:run_start])
+			end_x := text_measured_width(table, name_font, name[:at])
 			draw_rectangle(table, name_x + start_x, y + 20, end_x - start_x, 2, chosen ? graphics.COLOR_WHITE : graphics.COLOR_KERNEL)
 		}
 	}

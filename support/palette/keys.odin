@@ -1,5 +1,6 @@
 package palette
 
+import "contract:palette_table"
 import "support:line_editor"
 
 // What each key does in each state of the panel. Two pure procedures hold
@@ -52,6 +53,10 @@ Action :: enum u8 {
 // - Confirm: Enter runs the entry; the key super closes the panel; each
 //   other key goes back to the search and does nothing else, so a key
 //   typed too early never destroys and never edits.
+// - Running: the key super and Escape close the panel, and the line goes
+//   on in the provider; each other key waits for nothing and does nothing.
+// - Result: the key super and Escape close the panel; each other key goes
+//   back to the search, with the typed part kept.
 key_action :: proc "contextless" (state: State, key: Key) -> Action {
 	switch state {
 	case .Closed:
@@ -84,6 +89,10 @@ key_action :: proc "contextless" (state: State, key: Key) -> Action {
 		case .Escape, .Up, .Down, .Page_Up, .Page_Down, .Left, .Right, .Home, .End, .Backspace, .Delete, .Character, .Tab, .Other:
 			return .Back
 		}
+	case .Running:
+		return key == .Super || key == .Escape ? Action.Close : Action.None
+	case .Result:
+		return key == .Super || key == .Escape ? Action.Close : Action.Back
 	}
 	return .None
 }
@@ -93,6 +102,8 @@ Chosen :: enum u8 {
 	Nothing  = 0, // The list has no entry.
 	Runs     = 1, // An entry that runs at the first Enter.
 	Destroys = 2, // An entry that destroys something: it asks for a second Enter.
+	Sends    = 3, // An entry of a provider with no parameter: the panel sends it and waits for what it gives.
+	Destroys_Then_Sends = 4, // An entry of a provider that destroys something: a second Enter, then the panel sends it.
 }
 
 // chosen_of says what the chosen entry of a panel is.
@@ -101,14 +112,21 @@ chosen_of :: proc "contextless" (panel: ^Panel) -> Chosen {
 	if entry == nil {
 		return .Nothing
 	}
+	// An entry with parameters opens in the window of its provider: the
+	// panel closes at once, as for an entry that runs.
+	if entry_of_provider(entry) && .Needs_Arguments not_in entry.flags {
+		return entry_destroys(entry) ? Chosen.Destroys_Then_Sends : Chosen.Sends
+	}
 	return entry_destroys(entry) ? Chosen.Destroys : Chosen.Runs
 }
 
 // state_after gives the state that follows an action in a state.
 //
 // An entry that runs closes the panel at once: what it started shows on
-// the desktop. An entry that destroys goes to Confirm. Enter on an empty
-// list keeps the search.
+// the desktop. An entry that destroys goes to Confirm. An entry that the
+// panel sends to its provider goes to Running; the answer of the provider,
+// which is no key, then gives Result or closes the panel (result_set).
+// Enter on an empty list keeps the search.
 state_after :: proc "contextless" (state: State, action: Action, chosen: Chosen) -> State {
 	switch action {
 	case .Open:
@@ -124,13 +142,18 @@ state_after :: proc "contextless" (state: State, action: Action, chosen: Chosen)
 			return .Search
 		case .Runs:
 			return .Closed
-		case .Destroys:
+		case .Destroys, .Destroys_Then_Sends:
 			return .Confirm
+		case .Sends:
+			return .Running
 		}
 	case .Confirm:
-		return state == .Confirm ? State.Closed : state
+		if state != .Confirm {
+			return state
+		}
+		return chosen == .Destroys_Then_Sends ? State.Running : State.Closed
 	case .Back:
-		return state == .Confirm ? State.Search : state
+		return state == .Confirm || state == .Result ? State.Search : state
 	case .None, .Edit, .Choose_Previous, .Choose_Next, .Choose_Page_Before, .Choose_Page_After:
 		return state
 	}
@@ -139,9 +162,9 @@ state_after :: proc "contextless" (state: State, action: Action, chosen: Chosen)
 
 // typed_edit gives one key of the action Edit to the typed part. drawn:
 // the panel shows something new (the text or the place of the caret).
-// text_changed: the typed part changed, and the list is made again for
-// it. A character past TYPED_CAPACITY is refused: a longer part matches no
-// name.
+// text_changed: the typed part changed, and the owner makes the list
+// again for it (list_build, or a list of its own thread). A character past
+// TYPED_CAPACITY is refused: a longer part matches no name.
 typed_edit :: proc "contextless" (panel: ^Panel, key: Key, character: u8) -> (drawn: bool, text_changed: bool) {
 	edit_key := line_editor.Edit_Key.None
 	#partial switch key {
@@ -167,25 +190,78 @@ typed_edit :: proc "contextless" (panel: ^Panel, key: Key, character: u8) -> (dr
 		return false, false
 	}
 	text_changed = edit_key == .Backspace || edit_key == .Delete || edit_key == .Character
-	if text_changed {
-		list_build(panel)
-	}
 	return true, text_changed
 }
 
 // panel_open opens a closed panel: an empty typed part, and the list that
-// entries_collect made for it. It does no work on the entries: the open
-// draws in the next frame.
+// its owner made for it. It does no work on the entries: the open draws in
+// the next frame.
 panel_open :: proc "contextless" (panel: ^Panel) {
 	panel.state = .Search
 	panel.pressed_row = NO_ROW
 }
 
-// panel_close closes the panel and makes it ready for its next open: no
-// typed part, and the list of an empty typed part.
+// panel_close closes the panel and empties its typed part. The owner then
+// makes the list of an empty typed part, for the next open.
 panel_close :: proc "contextless" (panel: ^Panel) {
 	panel.state = .Closed
+	panel.pressed_row = NO_ROW
 	line_editor.line_clear(&panel.line)
-	// The choice and the rows shown go back to the top of the list.
-	list_build(panel)
+}
+
+// sent_set keeps the name of the entry that the panel sent to its
+// provider: the panel shows it while it waits and over the result.
+sent_set :: proc "contextless" (panel: ^Panel, entry: ^Entry) {
+	panel.sent_length = copy(panel.sent_name[:], entry_name(entry))
+}
+
+// sent_text gives the name of the entry that the panel sent.
+sent_text :: proc "contextless" (panel: ^Panel) -> string {
+	return string(panel.sent_name[:clamp(panel.sent_length, 0, NAME_CAPACITY)])
+}
+
+// result_set gives a panel in the state Running what the provider
+// answered, and the state that follows: Result when the panel has
+// something to show; Closed when the window of the provider has the
+// result, and the owner brings it to the front. memory is the mapping of
+// the table of the provider and length the count that the provider gave:
+// the panel copies the result area and checks the copy, and a result that
+// fails is shown as a refusal with a sentence of the panel itself. A panel
+// that is not in the state Running changes nothing: it waits for no
+// answer.
+result_set :: proc "contextless" (panel: ^Panel, outcome: u64, kind: u64, memory: []u8, length: u64) {
+	if panel.state != .Running {
+		return
+	}
+	result := &panel.result
+	result.count = 0
+	result.kind = kind <= u64(max(palette_table.Value_Kind)) ? palette_table.Value_Kind(kind) : .None
+	switch palette_table.Outcome(outcome) {
+	case .Shown_In_Console, .Edit_Opened:
+		panel.state = .Closed
+		return
+	case .Shown_In_Panel, .Failed, .Refused:
+		result.outcome = palette_table.Outcome(outcome)
+		count, ok := palette_table.result_copy(memory, length, &result.runs)
+		if ok && count > 0 {
+			result.count = count
+			panel.state = .Result
+			return
+		}
+	case .None:
+	}
+	result_sentence(panel, "the provider gave an answer that the panel refuses")
+}
+
+// result_sentence makes a panel show one sentence of its own as a refusal:
+// the provider left, or its answer failed a check.
+result_sentence :: proc "contextless" (panel: ^Panel, sentence: string) {
+	result := &panel.result
+	result.outcome = .Refused
+	result.kind = .None
+	writer := palette_table.Result_Writer{buffer = result.runs[:], fits = true}
+	palette_table.result_run(&writer, .Failure, sentence)
+	palette_table.result_line_end(&writer)
+	result.count = writer.count
+	panel.state = .Result
 }

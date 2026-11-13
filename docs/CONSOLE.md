@@ -21,6 +21,7 @@ This guide describes the line that is typed at the console: the language that th
 | "1. The keys" | What each key does, with the list closed, the completion list open, or the history search open |
 | "2. What the console completes" | Which names come where the caret is, and from which table |
 | "3. The fuzzy match" | How a query matches a name, and the score that orders the list |
+| "8. The palette provider" | How the commands of the console show in the palette of the desktop, and how a chosen one runs |
 | "4. The bounds, and the cost of one key" | The limits that keep one key fast against a hostile description |
 | "5. Who draws the list, and the line under the edit line" | What the console sends and what the terminal lays out |
 | "6. The line history across a stop" | The store of the history, its load, its save and who can read it |
@@ -569,3 +570,47 @@ A part with no class has the color of the text around it: the tone of the line, 
 **The bound, and a hostile list.** A row has at most 64 runs: a line with more parts keeps its first 64 runs, and the text after them is whole, in the plain color. The text is never cut by the runs: only the color stops. The terminal checks the runs against the row that takes them: each run inside the row, after the run before it, with at least one byte and a kind that exists. One run that fails, or bytes that are not a whole count of runs, or a target that takes no runs: the row is plain, its text whole, and the terminal counts it and writes once on the log "terminal: console sent runs of code that do not fit their row: the row is drawn plain, its text whole".
 
 **The cost.** The runs of the edit line are made only when its text or its caret changes, on at most 202 bytes, with one look in the tables of names (256 commands, 16 variables, 12 services, the loaded modules) for each name. `measure_completion()` gives the time of the runs of one key in its fourth part (section 4). When Tab opens the list, the log line says the count of the runs of the first row ("...; its first row has 13 runs of code"), so that a test checks the colors with no pixel.
+
+## 8. The palette provider
+
+The console is the palette provider of the desktop: each of its commands is an entry of the palette (`DESIGN.md`, "Palette"), and the console runs the entry that the input chose there. The panel is in the compositor and holds no right; a command runs in the console, with the grants of the console.
+
+**The grant.** The console has the grant `Palette`. At its start it sends `Palette_Provide` to the root service, which makes two memory objects and gives them to the console and to the compositor: the entry table, which the console writes and the compositor maps read-only, and one ring. `grants("console")` shows the grant as `palette`. `revoke("console", "palette")` ends the table and the ring in the console, and the compositor unmaps its side: the palette then lists the programs and the windows only, and its footer says "the console gives no commands". The console stops its use of the two objects before it asks for the revocation. No kernel operation is new.
+
+**The entry table** (`contract/palette_table`). A header (a magic number, a version, the change count, the count of entries), a result area of 2048 bytes, then at most 256 entries of 336 bytes. One entry is one command of the command table of now: a built-in command, a short name bound to an export, or an export of a module or of a service. A command that makes a record from its fields is not listed, and of two commands with one name the table has the one that a call runs.
+
+| Field of an entry | Content |
+|---|---|
+| `kind` | `Command` (a command of the console itself) or `Export` |
+| `flags` | `Destroys` for `shutdown`, `stop`, `revoke`, `lock`, `history_clear`, `unload` and `replace` |
+| `parameter_count`, `parameters` | The count of the parameters, and the kind of each one |
+| `result` | The kind of the result |
+| `name` | At most 64 bytes |
+| `signature` | The name, the parameters and the result, as `describe` gives them: `revoke(Text, Text) -> Integer`. One that passes 128 bytes shows `(...)` |
+| `about` | The help sentence, its first 128 bytes |
+
+The console writes the table again after each line, when the command table changed (`load`, `isolate`, `unload`, `connect`). It adds 1 to the change count before the change and 1 after it: an odd count says that the table changes now. The change count is the generation of the table.
+
+**A choice.** The compositor sends `Choose` on the ring: the generation of the table that the panel showed, the index of the entry, the hash of its name (FNV-1a, 64 bits), and a mode. The console checks them against its own copy of the entries: an index past the table, and a hash that is not the hash of the entry at that index, are refused with "the commands changed: choose again". So the console never runs an entry that the panel did not show. It then finds the command by its name in its command table, and builds the line itself: no text of a line comes from the compositor.
+
+- **An entry with no parameter** runs as a line that the input typed: the line is echoed, it goes in the line history, the log records show under it, and the drawers draw its result in the window of the console. A choice that comes while a line runs waits for the end of that line, as a key does.
+- **An entry with parameters** does not run: the console writes `name()` in its edit line, with the caret between the parentheses, and answers `Edit_Opened`. The compositor brings the window of the console to the front, and the input types the arguments there.
+
+**The answer** is one record: an outcome, the kind of the value, and the count of the bytes of the result area in use.
+
+| Outcome | When | What the panel does |
+|---|---|---|
+| `Shown_In_Panel` | An Integer; a Text of one line; a Record; no value ("done"); each one in at most 12 lines of at most 76 cells | Shows the result |
+| `Shown_In_Console` | A Table, a Handle, Bytes, a Text of several lines, a result that does not fit | Closes; the window of the console comes to the front |
+| `Failed` | The line failed | Shows the error, in the color of a failure |
+| `Refused` | The choice names no entry that the console can run | Shows the sentence |
+| `Edit_Opened` | An entry with parameters | The window of the console comes to the front |
+
+The result area holds what the drawer of the kind of the result wrote (`support/console_results`), as runs: a byte that says what the run is (a label, a number, the name of a record, a failure), a byte of length, then the bytes. The panel draws each run in the color of what it is, the colors of the same parts in the console. It parses no text.
+
+**What the compositor checks.** The console is another program for the compositor: its table and its answers are hostile input. The compositor copies the table, then checks the copy, and reads only the copy after that: the magic number and the version; a count of entries of at most 256; a change count that is even and the same before and after the copy, in at most 4 tries; for each entry, each kind and each flag in its range, each reserved byte 0, each length inside its field, a name of 1 byte at least, each byte of a text from 32 to 126, a signature that starts with the name. A table that fails gives a palette with the programs and the windows only, one line of the log with the problem and its entry, and "the commands of the console were refused" in the footer. An answer is checked the same way: the count of bytes inside the result area, each run inside the count, each part in its range, each byte from 32 to 126, at most 12 lines.
+
+**The log.** The console writes "console: the palette table has N entries, generation G" at each change of the table, "console: the palette runs memory()" or "console: the palette opens stop() in the edit line" for a choice, then "console: the palette gets Record, N lines" or "console: the result of the palette choice is in the console: Table".
+
+**Not done.** The arguments of a command are not typed in the panel. The entries do not carry the age of their last use in the line history: the recent choices are those of the panel only. An export of a service that the console is not connected to is not listed.
+

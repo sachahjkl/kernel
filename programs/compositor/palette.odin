@@ -1,11 +1,13 @@
 package compositor
 
+import "contract:palette_table"
 import "contract:ring"
 import "support:bar"
 import "support:display"
 import "support:interface"
 import "support:palette"
 import "support:system"
+import "base:intrinsics"
 
 // The palette of the desktop (docs/DESIGN.md, "Palette"): the panel that
 // the key super opens. This file is its part in the compositor: the keys
@@ -18,11 +20,11 @@ import "support:system"
 // the menu of the programs starts it; a window comes to the front as a
 // press brings it; a close stops a program as the close button does.
 
-palette_panel: palette.Panel // The state of the panel, its entries and its list.
+palette_panel: palette.Panel // The state of the panel. Its list is one of palette_lists.
 kept_key: u32 // A key that the palette took when it was pressed: its release goes to no program.
 // The measures of one open of the panel: the frames drawn while it is
-// open and their time, and the longest ranking, in nanoseconds.
-palette_frames, palette_time, palette_longest_ranking: u64
+// open and their time, in nanoseconds.
+palette_frames, palette_time: u64
 // The panel as draw records: the table of now, the table that the screen
 // shows, the interface state.
 palette_records_now, palette_records_before: [256]interface.Draw_Record
@@ -30,14 +32,129 @@ palette_text_now, palette_text_before: [4096]u8
 palette_now, palette_before: interface.Draw_Table
 palette_interface_state: interface.Interface_State
 
-// palette_start gives the draw tables their memory and their font, and
-// makes the first entries. The compositor calls it once, after the
-// interface font is loaded.
+// The ranking thread. The loop of the compositor never makes a list: it
+// writes a request (the typed part, the windows, the remembered choices)
+// and wakes the second thread, which collects the entries, copies and
+// checks the table of the palette provider, ranks, and publishes the
+// list. The loop then adopts it: one address changes.
+//
+// The two lists take turns. The thread writes only the list that the loop
+// does not read: it starts a list only after the loop adopted the one
+// before, so the loop never reads a list that changes.
+palette_lists: [2]palette.List
+
+Ranking_Window :: struct {
+	title:  system.Name,
+	number: u32,
+	focus:  bool,
+}
+
+Ranking :: struct {
+	lock:           system.Lock, // Over the request, for one copy in memory.
+	query:          [palette.TYPED_CAPACITY]u8, // The typed part of the request.
+	query_length:   int,
+	windows:        [CLIENT_CAPACITY]Ranking_Window, // The windows, the front one first.
+	window_count:   int,
+	recents:        [palette.RECENT_CAPACITY]palette.Recent, // The remembered choices.
+	recent_count:   int,
+	requested:      u32, // The number of the newest request. The thread waits on this word.
+	published:      u32, // The lists that the thread published. The loop waits on this word.
+	published_list: u32, // The index of the newest whole list.
+	adopted:        u32, // The value of `published` that the loop adopted. The thread waits on this word.
+	longest:        u64, // The longest making of a list since the last close of the panel, in nanoseconds.
+	// The mapping of the table of the provider, or nil. The lock is held
+	// by the thread for one copy of the table, and by the loop to end the
+	// mapping: the thread never reads a table that is gone.
+	table_lock:     system.Lock,
+	table:          []u8,
+}
+
+palette_ranking: Ranking
+palette_published_seen: u32 // The value of `published` that the loop saw last.
+palette_enter_waits: bool // Enter came while the list of the typed part was not made yet: it runs when the list comes.
+
+// The palette provider, as the root service gave it: its ring and its
+// entry table, read-only (contract:palette_table). The table is hostile
+// input: the ranking thread copies it and checks the copy.
+palette_provider_ring: ring.Ring
+palette_provider_ring_handle, palette_provider_table_handle: system.Handle
+palette_generation_seen: u32 // The change count of the table that the loop saw last.
+palette_tags: u32 // The tag of the last choice sent.
+palette_answer_awaited: u32 // Not 0: the tag of the choice whose answer the desktop still acts on.
+
+// palette_start gives the draw tables their memory and their font, starts
+// the ranking thread and asks for the first list. The compositor calls it
+// once, after the interface font is loaded.
 palette_start :: proc "contextless" () {
 	palette_now = {records = palette_records_now[:], text = palette_text_now[:], interface_font = display.interface_font_of()}
 	palette_before = {records = palette_records_before[:], text = palette_text_before[:], interface_font = palette_now.interface_font}
 	palette_panel.pressed_row = palette.NO_ROW
+	palette_panel.list = &palette_lists[0]
+	if _, status := system.thread_start(palette_ranking_thread, nil); status != .Ok {
+		system.log("compositor: cannot start the ranking thread: the palette lists nothing")
+	}
 	palette_entries_refresh()
+}
+
+// palette_ranking_thread is the entry of the second thread: it makes one
+// list for each request, the newest one when several came.
+palette_ranking_thread :: proc "c" (parameter: rawptr) -> ! {
+	ranking := &palette_ranking
+	done: u32
+	refused_before: palette_table.Problem
+	for {
+		system.word_wait(&ranking.requested, done)
+		if intrinsics.atomic_load_explicit(&ranking.requested, .Relaxed) == done {
+			continue
+		}
+		// The loop reads the list that it adopted: the other one is free
+		// only when the loop adopted the newest published list.
+		for {
+			adopted := intrinsics.atomic_load_explicit(&ranking.adopted, .Relaxed)
+			if adopted == intrinsics.atomic_load_explicit(&ranking.published, .Relaxed) {
+				break
+			}
+			system.word_wait(&ranking.adopted, adopted)
+		}
+		// The request, copied under its lock: the list answers this one.
+		query: [palette.TYPED_CAPACITY]u8
+		titles: [CLIENT_CAPACITY]system.Name
+		windows: [CLIENT_CAPACITY]palette.Window
+		recents: [palette.RECENT_CAPACITY]palette.Recent
+		system.lock(&ranking.lock)
+		sequence := intrinsics.atomic_load_explicit(&ranking.requested, .Relaxed)
+		query_length := copy(query[:], ranking.query[:clamp(ranking.query_length, 0, len(ranking.query))])
+		window_count := clamp(ranking.window_count, 0, CLIENT_CAPACITY)
+		for index in 0 ..< window_count {
+			titles[index] = ranking.windows[index].title
+			windows[index] = {title = system.name_of(titles[index][:]), number = ranking.windows[index].number, focus = ranking.windows[index].focus}
+		}
+		recent_count := copy(recents[:], ranking.recents[:clamp(ranking.recent_count, 0, len(ranking.recents))])
+		system.unlock(&ranking.lock)
+
+		target := 1 - intrinsics.atomic_load_explicit(&ranking.published_list, .Relaxed)
+		list := &palette_lists[target]
+		start := system.nanoseconds()
+		system.lock(&ranking.table_lock)
+		problem, problem_index := palette.list_collect(list, recents[:recent_count], bar.names[:], windows[:window_count], ranking.table)
+		system.unlock(&ranking.table_lock)
+		palette.list_rank(list, string(query[:query_length]))
+		list.sequence = sequence
+		spent := system.nanoseconds() - start
+		if problem != refused_before {
+			refused_before = problem
+			if problem != .None {
+				system.log_in("surfaces", .Warning, "compositor: the table of the palette provider is refused: ", palette_table.problem_names[problem], ", entry ", u64(problem_index), "; the palette lists the programs and the windows only")
+			}
+		}
+		system.lock(&ranking.lock)
+		ranking.longest = max(ranking.longest, spent)
+		system.unlock(&ranking.lock)
+		intrinsics.atomic_store(&ranking.published_list, target)
+		intrinsics.atomic_add(&ranking.published, 1)
+		system.word_wake(&ranking.published)
+		done = sequence
+	}
 }
 
 // palette_is_open says if the panel is on the screen and takes the keys.
@@ -54,30 +171,222 @@ damage_palette :: proc "contextless" () {
 	damage_add(x, y, palette.PANEL_WIDTH, palette.PANEL_HEIGHT)
 }
 
-// palette_entries_refresh makes the entries of the panel again from the
-// table of the programs and from the client table, the front window first.
-// The compositor calls it when a window appears, leaves or comes to the
-// front, and after a choice: at a change of the data, not at a key, so
-// the open of the panel only draws. An open panel shows the new list.
+// palette_entries_refresh asks the ranking thread for a new list: the
+// typed part of now, the windows of the client table with the front one
+// first, the choices that the panel remembers. The compositor calls it
+// when a window appears, leaves or comes to the front, after a choice, at
+// each change of the typed part, and when the table of the provider
+// changes: at a change of the data. The work here is one copy of at most
+// 32 titles and 16 names.
 palette_entries_refresh :: proc "contextless" () {
-	window_facts: [CLIENT_CAPACITY]palette.Window
-	window_count := 0
+	ranking := &palette_ranking
+	system.lock(&ranking.lock)
+	ranking.query_length = copy(ranking.query[:], palette.typed_text(&palette_panel))
+	ranking.window_count = 0
 	for position := order_count - 1; position >= 0; position -= 1 {
-		client := &clients[order[position]]
-		window_facts[window_count] = {title = system.name_of(client.title[:]), number = u32(order[position]), focus = position == order_count - 1}
-		window_count += 1
+		ranking.windows[ranking.window_count] = {title = clients[order[position]].title, number = u32(order[position]), focus = position == order_count - 1}
+		ranking.window_count += 1
 	}
+	ranking.recent_count = copy(ranking.recents[:], palette_panel.recents[:clamp(palette_panel.recent_count, 0, palette.RECENT_CAPACITY)])
+	intrinsics.atomic_add(&ranking.requested, 1)
+	system.unlock(&ranking.lock)
+	system.word_wake(&ranking.requested)
+}
+
+// palette_list_is_current says if the list of the panel answers the newest
+// request: the typed part and the windows of now.
+palette_list_is_current :: proc "contextless" () -> bool {
+	return palette_panel.list.sequence == intrinsics.atomic_load_explicit(&palette_ranking.requested, .Relaxed)
+}
+
+// palette_wait adds the words of the palette to the wait of the loop: a
+// list that the ranking thread published, an answer of the provider, a
+// change of its table.
+palette_wait :: proc "contextless" (wait: ^system.Wait) {
+	system.wait_word(wait, &palette_ranking.published, palette_published_seen)
+	if palette_provider_ring.head != nil {
+		system.wait_records(wait, &palette_provider_ring.completions)
+		header := (^palette_table.Header)(raw_data(palette_ranking.table))
+		system.wait_word(wait, &header.change_count, palette_generation_seen)
+	}
+}
+
+// palette_turn is the part of the palette in each turn of the loop, after
+// the wait: a table of the provider that changed asks for a new list; a
+// published list is adopted; an answer of the provider is shown.
+palette_turn :: proc "contextless" () {
+	if palette_provider_ring.head != nil {
+		header := (^palette_table.Header)(raw_data(palette_ranking.table))
+		if generation := intrinsics.volatile_load(&header.change_count); generation != palette_generation_seen {
+			palette_generation_seen = generation
+			palette_entries_refresh()
+		}
+		for record in system.receive(&palette_provider_ring.completions) {
+			palette_answer(record)
+		}
+	}
+	published := intrinsics.atomic_load_explicit(&palette_ranking.published, .Relaxed)
+	if published == palette_published_seen {
+		return
+	}
+	palette_published_seen = published
 	asked := palette_panel.state == .Confirm
-	start := system.nanoseconds()
-	palette.entries_collect(&palette_panel, bar.names[:], window_facts[:window_count])
-	palette_longest_ranking = max(palette_longest_ranking, system.nanoseconds() - start)
+	palette.panel_adopt(&palette_panel, &palette_lists[intrinsics.atomic_load_explicit(&palette_ranking.published_list, .Relaxed) & 1])
+	// The thread can now write the other list.
+	intrinsics.atomic_store(&palette_ranking.adopted, published)
+	system.word_wake(&palette_ranking.adopted)
 	if !palette_is_open() {
 		return
 	}
 	if asked {
-		system.log_in("surfaces", .Info, "compositor: the palette goes back to the search: the windows changed")
+		system.log_in("surfaces", .Info, "compositor: the palette goes back to the search: the entries changed")
 	}
-	palette_list_log()
+	if palette_list_is_current() {
+		palette_list_log()
+		if palette_enter_waits {
+			palette_enter_waits = false
+			if palette_panel.state == .Search {
+				palette_act(.Run, .Enter, 0, "")
+			}
+		}
+	}
+	palette_refresh()
+}
+
+// palette_provider_add takes the ring and the entry table of the palette
+// provider from the root service. The table is mapped read-only.
+palette_provider_add :: proc "contextless" (ring_handle, table_handle: system.Handle) {
+	if palette_provider_ring.head != nil {
+		palette_provider_remove()
+	}
+	opened, status := system.ring_open(ring_handle)
+	address: rawptr
+	if status == .Ok && system.memory_size(table_handle) < palette_table.TABLE_PAGES {
+		status = .Bad_Handle
+	}
+	if status == .Ok {
+		address, status = system.memory_map(table_handle, {})
+	}
+	if status != .Ok {
+		if opened.head != nil {
+			system.ring_close(&opened)
+		}
+		system.close(ring_handle)
+		system.close(table_handle)
+		system.log_in("surfaces", .Warning, "compositor: the palette provider is refused: its ring or its table cannot be mapped")
+		return
+	}
+	palette_provider_ring = opened
+	palette_provider_ring_handle, palette_provider_table_handle = ring_handle, table_handle
+	system.lock(&palette_ranking.table_lock)
+	palette_ranking.table = ([^]u8)(address)[:palette_table.TABLE_BYTES]
+	system.unlock(&palette_ranking.table_lock)
+	palette_generation_seen = intrinsics.volatile_load(&(^palette_table.Header)(address).change_count)
+	system.log_in("surfaces", .Info, "compositor: the palette has a provider")
+	palette_entries_refresh()
+}
+
+// palette_provider_remove ends the palette provider: the program stopped,
+// or its grant ended. The palette keeps the programs and the windows. A
+// panel that waits for an answer shows that none comes.
+palette_provider_remove :: proc "contextless" () {
+	if palette_provider_ring.head == nil {
+		return
+	}
+	system.lock(&palette_ranking.table_lock)
+	address := raw_data(palette_ranking.table)
+	palette_ranking.table = nil
+	system.unlock(&palette_ranking.table_lock)
+	system.memory_unmap(address)
+	system.ring_close(&palette_provider_ring)
+	palette_provider_ring = {}
+	system.close(palette_provider_ring_handle)
+	system.close(palette_provider_table_handle)
+	palette_answer_awaited = 0
+	system.log_in("surfaces", .Info, "compositor: the palette has no provider")
+	if palette_panel.state == .Running {
+		palette.result_sentence(&palette_panel, "the console stopped, or it is no more the palette provider")
+		palette_refresh()
+	}
+	palette_entries_refresh()
+}
+
+// palette_choose sends the chosen entry of the provider on its ring: the
+// generation of the table that the list shows, the index of the entry and
+// the hash of its name. It gives false with no provider or a full ring.
+palette_choose :: proc "contextless" (picked: ^palette.Entry, mode: palette_table.Choose_Mode) -> bool {
+	if palette_provider_ring.head == nil {
+		return false
+	}
+	palette_tags += 1
+	if palette_tags == 0 {
+		palette_tags = 1
+	}
+	palette_answer_awaited = palette_tags
+	return system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Choose), tag = palette_tags, values = {0 = u64(palette_panel.list.snapshot.generation), 1 = u64(picked.number), 2 = palette_table.name_hash(palette.entry_name(picked)), 3 = u64(mode)}})
+}
+
+// palette_console_to_front brings the window of the provider to the front:
+// the line and its result are there.
+palette_console_to_front :: proc "contextless" () {
+	for position := order_count - 1; position >= 0; position -= 1 {
+		if system.name_of(clients[order[position]].title[:]) == "console" {
+			raise(position)
+			system.log_in("surfaces", .Info, "compositor: window console in front")
+			return
+		}
+	}
+}
+
+@(rodata)
+palette_kind_words := [palette_table.Value_Kind]string {
+	.None    = "no value",
+	.Integer = "an Integer",
+	.Text    = "a Text",
+	.Record  = "a Record",
+	.Handle  = "a Handle",
+	.Table   = "a Table",
+	.Bytes   = "Bytes",
+}
+
+// palette_answer takes one answer of the provider. Each value is the
+// value of another program: the outcome and the kind are checked, and the
+// result is copied and checked before the panel shows it
+// (palette.result_set). An answer to a choice that the desktop no longer
+// waits for is dropped.
+palette_answer :: proc "contextless" (record: ring.Record) {
+	if record.tag == 0 || record.tag != palette_answer_awaited {
+		return
+	}
+	palette_answer_awaited = 0
+	outcome := record.values[0]
+	in_console := outcome == u64(palette_table.Outcome.Shown_In_Console) || outcome == u64(palette_table.Outcome.Edit_Opened)
+	if in_console {
+		where_text: string = "compositor: the result of the palette is in the console"
+		if outcome == u64(palette_table.Outcome.Edit_Opened) {
+			where_text = "compositor: the palette opened the entry in the console"
+		}
+		system.log_in("surfaces", .Info, where_text)
+		palette_console_to_front()
+	}
+	if palette_panel.state != .Running {
+		return
+	}
+	palette.result_set(&palette_panel, outcome, record.values[1], palette_ranking.table, record.values[2])
+	if palette_panel.state == .Closed {
+		palette_panel.state = .Running // palette_close closes an open panel.
+		palette_close("")
+		return
+	}
+	result := &palette_panel.result
+	#partial switch result.outcome {
+	case .Shown_In_Panel:
+		system.log_in("surfaces", .Info, "compositor: the palette shows ", palette_kind_words[result.kind])
+	case .Failed:
+		system.log_in("surfaces", .Info, "compositor: the palette shows an error")
+	case:
+		system.log_in("surfaces", .Info, "compositor: the palette shows a refusal")
+	}
 	palette_refresh()
 }
 
@@ -163,11 +472,12 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 	case .Close:
 		palette_close(cause)
 	case .Edit:
-		start := system.nanoseconds()
+		// The typed part shows at once; its list comes from the ranking
+		// thread, and the panel shows the list before until then.
 		drawn, text_changed := palette.typed_edit(panel, key, character)
 		if text_changed {
-			palette_longest_ranking = max(palette_longest_ranking, system.nanoseconds() - start)
-			palette_list_log()
+			palette_enter_waits = false
+			palette_entries_refresh()
 		}
 		if drawn {
 			palette_refresh()
@@ -187,6 +497,12 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 			palette_refresh()
 		}
 	case .Run:
+		if !palette_list_is_current() {
+			// The list of the typed part is not made yet: Enter waits for
+			// it, and never runs an entry of the list before.
+			palette_enter_waits = true
+			break
+		}
 		picked := palette.chosen_entry(panel)
 		if picked == nil {
 			system.log_in("surfaces", .Info, "compositor: the palette has no entry to run")
@@ -198,18 +514,44 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 			palette_refresh()
 			break
 		}
+		if state_next == .Running {
+			palette_entry_send(picked)
+			break
+		}
 		palette_entry_run(picked)
 	case .Confirm:
-		if confirmed := palette.chosen_entry(panel); confirmed != nil {
-			palette_entry_run(confirmed)
-		} else {
+		confirmed := palette.chosen_entry(panel)
+		switch {
+		case confirmed == nil:
 			palette_close("")
+		case state_next == .Running:
+			palette_entry_send(confirmed)
+		case:
+			palette_entry_run(confirmed)
 		}
 	case .Back:
 		panel.state = state_next
 		system.log_in("surfaces", .Info, "compositor: the palette goes back to the search")
 		palette_refresh()
 	}
+}
+
+// palette_entry_send sends a chosen entry with no parameter to the
+// provider, and makes the panel wait for what it gives. The panel stays
+// open and takes its keys: Escape closes it, and the line goes on in the
+// window of the provider.
+palette_entry_send :: proc "contextless" (picked: ^palette.Entry) {
+	panel := &palette_panel
+	palette.recent_note(panel, picked)
+	palette.sent_set(panel, picked)
+	panel.state = .Running
+	if palette_choose(picked, .Run) {
+		system.log_in("surfaces", .Info, "compositor: the palette sends ", palette.sent_text(panel), " to the console")
+	} else {
+		palette.result_sentence(panel, "the console takes no choice now")
+		system.log_in("surfaces", .Info, "compositor: the palette shows a refusal")
+	}
+	palette_refresh()
 }
 
 // palette_entry_run does what a chosen entry is, then closes the panel:
@@ -247,6 +589,13 @@ palette_entry_run :: proc "contextless" (picked: ^palette.Entry) {
 			system.send(&control.completions, ring.Record{kind = u32(display.Control.Stop), values = {0 = u64(clients[number].ring_memory)}})
 			system.log_in("surfaces", .Info, "compositor: the palette closes the window ", system.name_of(clients[number].title[:]))
 		}
+	case .Command, .Export:
+		// An entry with parameters: the provider writes it in its edit
+		// line, and its window comes to the front when it answers.
+		if palette_choose(picked, .Edit) {
+			system.log_in("surfaces", .Info, "compositor: the palette opens ", name_text, " in the console")
+		}
+		palette_entries_refresh()
 	}
 }
 
@@ -321,7 +670,8 @@ palette_list_log :: proc "contextless" () {
 		buffer = buffer[:],
 	}
 	named := 0
-	for row in panel.rows[:panel.row_count] {
+	list := panel.list
+	for row in list.rows[:list.row_count] {
 		if row.kind != .Entry {
 			continue
 		}
@@ -329,7 +679,7 @@ palette_list_log :: proc "contextless" () {
 			system.write_part(&writer, ", ...")
 			break
 		}
-		listed := &panel.entries[row.entry]
+		listed := &list.entries[row.entry]
 		system.write_part(&writer, named > 0 ? ", " : "")
 		system.write_part(&writer, palette.entry_name(listed))
 		system.write_part(&writer, " (")
@@ -337,7 +687,7 @@ palette_list_log :: proc "contextless" () {
 		system.write_part(&writer, ")")
 		named += 1
 	}
-	system.log_in("surfaces", .Info, "compositor: the palette lists ", u64(panel.matched_count), " of ", u64(panel.entry_count), " for \"", palette.typed_text(panel), "\": ", system.written(&writer))
+	system.log_in("surfaces", .Info, "compositor: the palette lists ", u64(list.matched_count), " of ", u64(list.entry_count), " for \"", palette.typed_text(panel), "\": ", system.written(&writer))
 }
 
 // palette_choice_log writes the chosen entry on the log: "compositor: the
@@ -355,12 +705,24 @@ palette_close :: proc "contextless" (cause: string) {
 	if !palette_is_open() {
 		return
 	}
+	if palette_panel.state == .Running {
+		// The line goes on in the console; the desktop does nothing with
+		// its answer.
+		palette_answer_awaited = 0
+	}
 	palette.panel_close(&palette_panel)
+	palette_enter_waits = false
 	damage_palette()
 	interface.draw_table_clear(&palette_before)
 	per_frame := palette_time / max(palette_frames, 1)
-	system.log_in("surfaces", .Info, "compositor: the palette was open for ", palette_frames, " frames, ", per_frame / 1000, ".", per_frame / 100 % 10, " us per frame; the longest ranking ", palette_longest_ranking / 1000, ".", palette_longest_ranking / 100 % 10, " us")
-	palette_frames, palette_time, palette_longest_ranking = 0, 0, 0
+	system.lock(&palette_ranking.lock)
+	longest := palette_ranking.longest
+	palette_ranking.longest = 0
+	system.unlock(&palette_ranking.lock)
+	system.log_in("surfaces", .Info, "compositor: the palette was open for ", palette_frames, " frames, ", per_frame / 1000, ".", per_frame / 100 % 10, " us per frame; the longest list of the ranking thread ", longest / 1000, ".", longest / 100 % 10, " us")
+	palette_frames, palette_time = 0, 0
+	// The list of an empty typed part, ready for the next open.
+	palette_entries_refresh()
 	if cause != "" {
 		system.log_in("surfaces", .Info, "compositor: the palette is closed by ", cause)
 	}

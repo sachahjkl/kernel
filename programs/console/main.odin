@@ -96,6 +96,9 @@
 //   [replacement table](term:replacement-table).
 // - **History_Store**: the store of its line history, apart from its
 //   private store (docs/CONSOLE.md, "6. The line history across a stop").
+// - **Palette**: the console is the [palette provider](term:palette-provider):
+//   its commands show in the palette of the desktop
+//   (docs/CONSOLE.md, "8. The palette provider").
 //
 // Its budget has room for 5 programs and 6 threads: the console, its 4
 // [sandboxes](term:sandbox) of isolated calls, and their threads.
@@ -214,6 +217,7 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	commands_start()
+	palette_provider_start() // palette_provider.odin
 	if _, status := system.thread_start(run_lines, nil); status != .Ok {
 		system.log("console: cannot start a thread")
 		system.stop(1)
@@ -261,9 +265,15 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 			copy(pending[:], pending[taken:pending_count])
 			pending_count -= taken
 		}
+		// A choice of the palette, when no line runs: after the keys that
+		// waited, as one more key.
+		palette_turn()
 		edit_show()
 		wait: system.Wait
 		system.wait_records(&wait, &output.ring.completions)
+		if palette_active() && !running {
+			system.wait_records(&wait, &palette_ring.commands)
+		}
 		system.wait_word(&wait, &changes, seen)
 		system.wait_end(&wait, running ? system.time() + STATUS_INTERVAL : system.WAIT_FOREVER)
 	}
@@ -281,6 +291,10 @@ run_lines :: proc "c" (parameter: rawptr) -> ! {
 		done += 1
 		services_check()
 		run_line(string(work.text[:work.count]))
+		// The palette: the answer to its choice, then the table of the
+		// commands of now (palette_provider.odin).
+		palette_line_ended()
+		palette_table_write()
 		// The line ends when its result is drawn: the keys that waited
 		// act now. The save of the line history comes after, and holds no
 		// key: it is a commit of the storage service, which takes

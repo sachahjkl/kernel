@@ -1,13 +1,35 @@
 #+build !freestanding
 package palette
 
+import "core:strings"
 import "core:testing"
+import "contract:palette_table"
 import "support:graphics"
 import "support:interface"
 import "support:line_editor"
 
 @(private = "file")
 PROGRAMS := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "temple", "clock"}
+
+// A panel and its list, in one allocation: the panel is its first field.
+@(private = "file")
+Panel_Memory :: struct {
+	panel: Panel,
+	list:  List,
+}
+
+@(private = "file")
+panel_make :: proc() -> ^Panel {
+	memory := new(Panel_Memory)
+	memory.panel.list = &memory.list
+	memory.panel.pressed_row = NO_ROW
+	return &memory.panel
+}
+
+@(private = "file")
+panel_free :: proc(panel: ^Panel) {
+	free((^Panel_Memory)(panel))
+}
 
 // A panel with the programs above and the windows console (in front) and
 // plasma.
@@ -20,14 +42,16 @@ panel_of_test :: proc(panel: ^Panel) {
 @(private = "file")
 type_text :: proc(panel: ^Panel, text: string) {
 	for index in 0 ..< len(text) {
-		typed_edit(panel, .Character, text[index])
+		if _, text_changed := typed_edit(panel, .Character, text[index]); text_changed {
+			list_build(panel)
+		}
 	}
 }
 
 // The row of the list as "name (kind)", or the heading in brackets.
 @(private = "file")
 row_text :: proc(panel: ^Panel, row: int) -> string {
-	item := panel.rows[row]
+	item := panel.list.rows[row]
 	switch item.kind {
 	case .Heading_Recent:
 		return "[recent]"
@@ -36,7 +60,7 @@ row_text :: proc(panel: ^Panel, row: int) -> string {
 	case .Heading_Programs:
 		return "[programs]"
 	case .Entry:
-		entry := &panel.entries[item.entry]
+		entry := &panel.list.entries[item.entry]
 		parts := [?]string{entry_name(entry), " (", kind_words(entry.kind), ")"}
 		buffer := make([]u8, 128, context.temp_allocator)
 		count := 0
@@ -116,23 +140,23 @@ the_state_after_each_action :: proc(t: ^testing.T) {
 // the mark of each one says one fact.
 @(test)
 entries_of_the_two_sources :: proc(t: ^testing.T) {
-	panel := new(Panel)
-	defer free(panel)
+	panel := panel_make()
+	defer panel_free(panel)
 	panel_of_test(panel)
-	testing.expect_value(t, panel.entry_count, 2 + len(PROGRAMS) + 2)
-	testing.expect_value(t, entry_name(&panel.entries[0]), "console")
-	testing.expect_value(t, panel.entries[0].kind, Entry_Kind.Window)
-	testing.expect_value(t, panel.entries[0].mark, Entry_Mark.Has_Focus)
-	testing.expect_value(t, panel.entries[0].number, 3)
-	testing.expect_value(t, panel.entries[1].mark, Entry_Mark.None)
-	for &entry in panel.entries[:panel.entry_count] {
+	testing.expect_value(t, panel.list.entry_count, 2 + len(PROGRAMS) + 2)
+	testing.expect_value(t, entry_name(&panel.list.entries[0]), "console")
+	testing.expect_value(t, panel.list.entries[0].kind, Entry_Kind.Window)
+	testing.expect_value(t, panel.list.entries[0].mark, Entry_Mark.Has_Focus)
+	testing.expect_value(t, panel.list.entries[0].number, 3)
+	testing.expect_value(t, panel.list.entries[1].mark, Entry_Mark.Window)
+	for &entry in panel.list.entries[:panel.list.entry_count] {
 		if entry.kind != .Program {
 			continue
 		}
 		has_window := entry_name(&entry) == "console" || entry_name(&entry) == "plasma"
 		testing.expect_value(t, entry.mark, has_window ? Entry_Mark.Has_Window : Entry_Mark.No_Window)
 	}
-	last := &panel.entries[panel.entry_count - 1]
+	last := &panel.list.entries[panel.list.entry_count - 1]
 	testing.expect_value(t, entry_name(last), "close plasma")
 	testing.expect_value(t, last.kind, Entry_Kind.Close_Window)
 	testing.expect_value(t, last.mark, Entry_Mark.Destroys)
@@ -145,46 +169,46 @@ entries_of_the_two_sources :: proc(t: ^testing.T) {
 // and an empty one is not listed.
 @(test)
 a_name_too_long_is_not_listed :: proc(t: ^testing.T) {
-	panel := new(Panel)
-	defer free(panel)
+	panel := panel_make()
+	defer panel_free(panel)
 	long: [NAME_CAPACITY + 1]u8
 	for &character in long {
 		character = 'a'
 	}
 	names := [?]string{"clock", string(long[:]), "", string(long[:NAME_CAPACITY])}
 	entries_collect(panel, names[:], nil)
-	testing.expect_value(t, panel.entry_count, 2)
-	testing.expect_value(t, entry_name(&panel.entries[1]), string(long[:NAME_CAPACITY]))
-	testing.expect_value(t, panel.entries[1].number, 3)
+	testing.expect_value(t, panel.list.entry_count, 2)
+	testing.expect_value(t, entry_name(&panel.list.entries[1]), string(long[:NAME_CAPACITY]))
+	testing.expect_value(t, panel.list.entries[1].number, 3)
 }
 
 // One ranked list over the two kinds: with equal scores a window comes
 // before the program of the same name, and the close comes last.
 @(test)
 one_ranked_list_over_the_kinds :: proc(t: ^testing.T) {
-	panel := new(Panel)
-	defer free(panel)
+	panel := panel_make()
+	defer panel_free(panel)
 	panel_of_test(panel)
 	type_text(panel, "pla")
-	testing.expect_value(t, panel.row_count, 3)
-	testing.expect_value(t, panel.matched_count, 3)
+	testing.expect_value(t, panel.list.row_count, 3)
+	testing.expect_value(t, panel.list.matched_count, 3)
 	testing.expect_value(t, row_text(panel, 0), "plasma (window)")
 	testing.expect_value(t, row_text(panel, 1), "plasma (program)")
 	testing.expect_value(t, row_text(panel, 2), "close plasma (close a window)")
 	testing.expect_value(t, panel.choice, 0)
 	// The matched characters of each name: the places that the row marks.
-	testing.expect_value(t, panel.rows[0].places, line_editor.Match_Places{0, 1, 2})
-	testing.expect_value(t, panel.rows[2].places, line_editor.Match_Places{6, 7, 8})
+	testing.expect_value(t, panel.list.rows[0].places, line_editor.Match_Places{0, 1, 2})
+	testing.expect_value(t, panel.list.rows[2].places, line_editor.Match_Places{6, 7, 8})
 	// The match is fuzzy: the characters in their order, not side by side.
 	line_editor.line_clear(&panel.line)
 	type_text(panel, "closepla")
-	testing.expect_value(t, panel.row_count, 1)
+	testing.expect_value(t, panel.list.row_count, 1)
 	testing.expect_value(t, row_text(panel, 0), "close plasma (close a window)")
 	testing.expect_value(t, chosen_of(panel), Chosen.Destroys)
 	// No entry has the part: no row, no choice.
 	line_editor.line_clear(&panel.line)
 	type_text(panel, "xyz")
-	testing.expect_value(t, panel.row_count, 0)
+	testing.expect_value(t, panel.list.row_count, 0)
 	testing.expect_value(t, panel.choice, NO_ROW)
 	testing.expect_value(t, chosen_of(panel), Chosen.Nothing)
 	testing.expect(t, chosen_entry(panel) == nil)
@@ -194,10 +218,10 @@ one_ranked_list_over_the_kinds :: proc(t: ^testing.T) {
 // always comes before it.
 @(test)
 a_recent_choice_wins_a_tie_only :: proc(t: ^testing.T) {
-	panel := new(Panel)
-	defer free(panel)
+	panel := panel_make()
+	defer panel_free(panel)
 	panel_of_test(panel)
-	for &entry in panel.entries[:panel.entry_count] {
+	for &entry in panel.list.entries[:panel.list.entry_count] {
 		if entry.kind == .Program && (entry_name(&entry) == "paint" || entry_name(&entry) == "temple") {
 			recent_note(panel, &entry)
 		}
@@ -223,23 +247,23 @@ a_recent_choice_wins_a_tie_only :: proc(t: ^testing.T) {
 // choice: no group "recent". The closes show only for a typed part.
 @(test)
 the_first_open_shows_groups :: proc(t: ^testing.T) {
-	panel := new(Panel)
-	defer free(panel)
+	panel := panel_make()
+	defer panel_free(panel)
 	panel_of_test(panel)
-	testing.expect_value(t, panel.row_count, 1 + 2 + 1 + len(PROGRAMS))
+	testing.expect_value(t, panel.list.row_count, 1 + 2 + 1 + len(PROGRAMS))
 	testing.expect_value(t, row_text(panel, 0), "[windows]")
 	testing.expect_value(t, row_text(panel, 1), "console (window)")
 	testing.expect_value(t, row_text(panel, 2), "plasma (window)")
 	testing.expect_value(t, row_text(panel, 3), "[programs]")
 	testing.expect_value(t, row_text(panel, 4), "boot (program)")
 	testing.expect_value(t, panel.choice, 1)
-	testing.expect_value(t, panel.matched_count, 2 + len(PROGRAMS))
-	for row in panel.rows[:panel.row_count] {
-		testing.expect(t, row.kind != .Entry || panel.entries[row.entry].kind != .Close_Window)
+	testing.expect_value(t, panel.list.matched_count, 2 + len(PROGRAMS))
+	for row in panel.list.rows[:panel.list.row_count] {
+		testing.expect(t, row.kind != .Entry || panel.list.entries[row.entry].kind != .Close_Window)
 	}
 	// After a choice: the group "recent" is first, the newest choice first.
-	recent_note(panel, &panel.entries[2 + 5]) // plasma, the program.
-	recent_note(panel, &panel.entries[1]) // plasma, the window.
+	recent_note(panel, &panel.list.entries[2 + 5]) // plasma, the program.
+	recent_note(panel, &panel.list.entries[1]) // plasma, the window.
 	panel_of_test(panel)
 	testing.expect_value(t, row_text(panel, 0), "[recent]")
 	testing.expect_value(t, row_text(panel, 1), "plasma (window)")
@@ -251,13 +275,13 @@ the_first_open_shows_groups :: proc(t: ^testing.T) {
 // With no window, the list starts with the programs.
 @(test)
 no_window_no_group :: proc(t: ^testing.T) {
-	panel := new(Panel)
-	defer free(panel)
+	panel := panel_make()
+	defer panel_free(panel)
 	entries_collect(panel, PROGRAMS[:], nil)
 	testing.expect_value(t, row_text(panel, 0), "[programs]")
 	testing.expect_value(t, panel.choice, 1)
 	entries_collect(panel, nil, nil)
-	testing.expect_value(t, panel.row_count, 0)
+	testing.expect_value(t, panel.list.row_count, 0)
 	testing.expect_value(t, panel.choice, NO_ROW)
 	testing.expect(t, !choice_move(panel, .Next))
 }
@@ -266,10 +290,10 @@ no_window_no_group :: proc(t: ^testing.T) {
 // stops on a heading. The rows shown always hold it.
 @(test)
 the_choice_wraps_and_skips_headings :: proc(t: ^testing.T) {
-	panel := new(Panel)
-	defer free(panel)
+	panel := panel_make()
+	defer panel_free(panel)
 	panel_of_test(panel)
-	last := panel.row_count - 1
+	last := panel.list.row_count - 1
 	testing.expect_value(t, panel.choice, 1)
 	testing.expect(t, choice_move(panel, .Previous))
 	testing.expect_value(t, panel.choice, last)
@@ -286,7 +310,7 @@ the_choice_wraps_and_skips_headings :: proc(t: ^testing.T) {
 	testing.expect(t, choice_move(panel, .Previous))
 	testing.expect_value(t, panel.choice, 2)
 	// Each row of a whole turn is an entry, and the view holds it.
-	for _ in 0 ..< panel.row_count {
+	for _ in 0 ..< panel.list.row_count {
 		choice_move(panel, .Next)
 		testing.expect(t, row_is_entry(panel, panel.choice))
 		testing.expect(t, panel.choice >= panel.first_row && panel.choice < panel.first_row + LIST_ROWS)
@@ -296,10 +320,10 @@ the_choice_wraps_and_skips_headings :: proc(t: ^testing.T) {
 // A page moves the choice by 11 rows and does not wrap.
 @(test)
 a_page_does_not_wrap :: proc(t: ^testing.T) {
-	panel := new(Panel)
-	defer free(panel)
+	panel := panel_make()
+	defer panel_free(panel)
 	panel_of_test(panel)
-	last := panel.row_count - 1 // 13: the list has 14 rows.
+	last := panel.list.row_count - 1 // 13: the list has 14 rows.
 	testing.expect(t, choice_move(panel, .Page_After))
 	testing.expect_value(t, panel.choice, 1 + PAGE_ROWS)
 	testing.expect(t, choice_move(panel, .Page_After))
@@ -317,7 +341,7 @@ a_page_does_not_wrap :: proc(t: ^testing.T) {
 	// A page that lands on a heading takes the entry after it.
 	panel.choice = 1
 	entries_collect(panel, PROGRAMS[:], {{title = "a"}, {title = "b"}, {title = "c"}, {title = "d"}, {title = "e"}, {title = "f"}, {title = "g"}, {title = "h"}, {title = "i"}, {title = "j"}, {title = "k"}})
-	testing.expect_value(t, panel.rows[1 + PAGE_ROWS].kind, Row_Kind.Heading_Programs)
+	testing.expect_value(t, panel.list.rows[1 + PAGE_ROWS].kind, Row_Kind.Heading_Programs)
 	testing.expect(t, choice_move(panel, .Page_After))
 	testing.expect_value(t, panel.choice, 2 + PAGE_ROWS)
 }
@@ -326,8 +350,8 @@ a_page_does_not_wrap :: proc(t: ^testing.T) {
 // character past its room is refused.
 @(test)
 the_typed_part :: proc(t: ^testing.T) {
-	panel := new(Panel)
-	defer free(panel)
+	panel := panel_make()
+	defer panel_free(panel)
 	panel_of_test(panel)
 	drawn, text_changed := typed_edit(panel, .Character, 'p')
 	testing.expect(t, drawn && text_changed)
@@ -353,6 +377,7 @@ the_typed_part :: proc(t: ^testing.T) {
 	// The close empties the typed part and makes the list of the next open.
 	panel.state = .Search
 	panel_close(panel)
+	list_build(panel)
 	testing.expect_value(t, panel.state, State.Closed)
 	testing.expect_value(t, typed_text(panel), "")
 	testing.expect_value(t, row_text(panel, 0), "[windows]")
@@ -363,8 +388,8 @@ the_typed_part :: proc(t: ^testing.T) {
 // not remembered.
 @(test)
 the_remembered_choices :: proc(t: ^testing.T) {
-	panel := new(Panel)
-	defer free(panel)
+	panel := panel_make()
+	defer panel_free(panel)
 	names: [RECENT_CAPACITY + 4]string
 	letters := "abcdefghijklmnopqrstuvwxyz"
 	for &name, index in names {
@@ -372,20 +397,20 @@ the_remembered_choices :: proc(t: ^testing.T) {
 	}
 	entries_collect(panel, names[:], {{title = "w"}})
 	for index in 0 ..< len(names) {
-		recent_note(panel, &panel.entries[1 + index])
+		recent_note(panel, &panel.list.entries[1 + index])
 	}
 	testing.expect_value(t, panel.recent_count, RECENT_CAPACITY)
 	testing.expect_value(t, recent_age(panel, .Program, names[len(names) - 1]), 1)
 	testing.expect_value(t, recent_age(panel, .Program, names[0]), 0)
 	testing.expect_value(t, recent_age(panel, .Program, names[4]), RECENT_CAPACITY)
 	// The oldest one, chosen again, is the newest; each other is one older.
-	recent_note(panel, &panel.entries[1 + 4])
+	recent_note(panel, &panel.list.entries[1 + 4])
 	testing.expect_value(t, recent_age(panel, .Program, names[4]), 1)
 	testing.expect_value(t, recent_age(panel, .Program, names[len(names) - 1]), 2)
 	testing.expect_value(t, panel.recent_count, RECENT_CAPACITY)
 	// A kind is a part of the choice: the window w is not the program w.
 	testing.expect_value(t, recent_age(panel, .Window, names[4]), 0)
-	recent_note(panel, &panel.entries[panel.entry_count - 1]) // close w
+	recent_note(panel, &panel.list.entries[panel.list.entry_count - 1]) // close w
 	testing.expect_value(t, recent_age(panel, .Close_Window, "close w"), 0)
 	testing.expect_value(t, recent_age(panel, .Program, names[4]), 1)
 }
@@ -394,8 +419,8 @@ the_remembered_choices :: proc(t: ^testing.T) {
 // entries change: the entry that it showed can be gone.
 @(test)
 new_entries_end_the_question :: proc(t: ^testing.T) {
-	panel := new(Panel)
-	defer free(panel)
+	panel := panel_make()
+	defer panel_free(panel)
 	panel_of_test(panel)
 	panel.state = .Confirm
 	entries_collect(panel, PROGRAMS[:], nil)
@@ -408,8 +433,8 @@ new_entries_end_the_question :: proc(t: ^testing.T) {
 // The parts of the panel under the pointer, and the row at a point.
 @(test)
 the_parts_under_the_pointer :: proc(t: ^testing.T) {
-	panel := new(Panel)
-	defer free(panel)
+	panel := panel_make()
+	defer panel_free(panel)
 	panel_of_test(panel)
 	x, y := panel_place(1024)
 	testing.expect_value(t, x, 192)
@@ -496,8 +521,8 @@ pixel :: proc(screen: ^Screen, x, y: int) -> graphics.Color {
 // at its top. No pixel is drawn outside the panel.
 @(test)
 the_input_band_is_flush_with_three_edges :: proc(t: ^testing.T) {
-	panel := new(Panel)
-	defer free(panel)
+	panel := panel_make()
+	defer panel_free(panel)
 	panel_of_test(panel)
 	panel_open(panel)
 	for typed in ([]string{"", "pla"}) {
@@ -542,10 +567,14 @@ the_input_band_is_flush_with_three_edges :: proc(t: ^testing.T) {
 		body_top := y + INPUT_BAND_HEIGHT
 		bottom := y + PANEL_HEIGHT - 1
 		// With no typed part the first row is a heading, on the surface of
-		// the card; with a typed part it is the chosen row.
+		// the card; with a typed part it is the chosen row. A list with
+		// more rows than the panel shows has its bar of 2 pixels between
+		// the rows and the right border: the row ends before the bar.
 		inside_color := graphics.Color(typed == "" ? graphics.COLOR_CARD_TOP : graphics.COLOR_CHOSEN)
+		bar_width := panel.list.row_count > LIST_ROWS ? interface.LIST_ROW_SCROLL_WIDTH : 0
+		testing.expect_value(t, bar_width, typed == "" ? interface.LIST_ROW_SCROLL_WIDTH : 0)
 		testing.expect_value(t, pixel(screen, x + BORDER, body_top), inside_color)
-		testing.expect_value(t, pixel(screen, right - BORDER, body_top), inside_color)
+		testing.expect_value(t, pixel(screen, right - BORDER - bar_width, body_top), inside_color)
 		for row in body_top ..= bottom {
 			left_pixel, right_pixel := pixel(screen, x, row), pixel(screen, right, row)
 			border := interface_border_color(row - body_top, PANEL_HEIGHT - INPUT_BAND_HEIGHT)
@@ -592,8 +621,8 @@ interface_border_color :: proc(row, height: int) -> graphics.Color {
 // empty, and one cell of 16 pixels farther for each character.
 @(test)
 the_caret_follows_the_typed_part :: proc(t: ^testing.T) {
-	panel := new(Panel)
-	defer free(panel)
+	panel := panel_make()
+	defer panel_free(panel)
 	panel_of_test(panel)
 	panel_open(panel)
 	x, y := panel_place(SCREEN_WIDTH)
@@ -622,8 +651,8 @@ the_caret_follows_the_typed_part :: proc(t: ^testing.T) {
 // color of "stop a program" and says the act in full.
 @(test)
 the_chosen_row_and_the_question :: proc(t: ^testing.T) {
-	panel := new(Panel)
-	defer free(panel)
+	panel := panel_make()
+	defer panel_free(panel)
 	panel_of_test(panel)
 	panel_open(panel)
 	type_text(panel, "closepla")
@@ -632,7 +661,7 @@ the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 	x, y := panel_place(SCREEN_WIDTH)
 	has_text :: proc(table: ^interface.Draw_Table, text: string) -> bool {
 		for record in table.records[:table.record_count] {
-			if interface.is_text_kind(record.kind) && string(table.text[record.text_start:][:record.text_count]) == text {
+			if interface.is_text_kind(record.kind) && strings.contains(string(table.text[record.text_start:][:record.text_count]), text) {
 				return true
 			}
 		}
@@ -651,10 +680,14 @@ the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 	testing.expect(t, found)
 	testing.expect_value(t, color, graphics.Color(graphics.COLOR_CHOSEN))
 	testing.expect(t, has_text(&screen.table, "close plasma"))
-	testing.expect(t, has_text(&screen.table, "enter: close"))
-	testing.expect(t, has_text(&screen.table, "the client table"))
+	// The chosen row keeps its kind; the footer says what Enter does, and
+	// counts the entries in a plain word.
+	testing.expect(t, has_text(&screen.table, "close a window"))
+	testing.expect(t, has_text(&screen.table, "up down: choose   enter: close   esc: close"))
 	testing.expect(t, has_text(&screen.table, "1 of 14"))
-	testing.expect(t, has_text(&screen.table, KEYS_OF_SEARCH))
+	testing.expect(t, has_text(&screen.table, "entries"))
+	testing.expect(t, has_text(&screen.table, NOTE_NO_PROVIDER))
+	testing.expect(t, has_text(&screen.table, "Stops the program plasma: its window closes. Asks for a second Enter."))
 	panel.state = state_after(panel.state, key_action(panel.state, .Enter), chosen_of(panel))
 	testing.expect_value(t, panel.state, State.Confirm)
 	panel_build(screen, panel)
@@ -662,7 +695,6 @@ the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 	testing.expect(t, found)
 	testing.expect_value(t, color, graphics.Color(graphics.COLOR_STOP_PROGRAM))
 	testing.expect(t, has_text(&screen.table, "stop plasma: its window closes"))
-	testing.expect(t, has_text(&screen.table, HINT_OF_CONFIRM))
 	testing.expect(t, has_text(&screen.table, KEYS_OF_CONFIRM))
 	testing.expect(t, !has_text(&screen.table, "close plasma"))
 	// No entry: one line says which part no name has.
@@ -680,6 +712,7 @@ the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 	testing.expect(t, has_text(&screen.table, HEADING_WINDOWS))
 	testing.expect(t, has_text(&screen.table, HEADING_PROGRAMS))
 	testing.expect(t, has_text(&screen.table, "enter: to the front"))
+	testing.expect(t, has_text(&screen.table, "The window of the program console. It has the focus."))
 }
 
 // A panel drawn in the damage of its difference with the panel before is
@@ -687,8 +720,8 @@ the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 // and nothing is left of the frame before.
 @(test)
 the_damage_of_a_key_is_never_too_small :: proc(t: ^testing.T) {
-	panel := new(Panel)
-	defer free(panel)
+	panel := panel_make()
+	defer panel_free(panel)
 	panel_of_test(panel)
 	panel_open(panel)
 	before, now := screen_make(), screen_make()
@@ -708,6 +741,7 @@ the_damage_of_a_key_is_never_too_small :: proc(t: ^testing.T) {
 		#partial switch key_action(panel.state, step.key) {
 		case .Edit:
 			typed_edit(panel, step.key, step.character)
+			list_build(panel)
 		case .Choose_Next:
 			choice_move(panel, .Next)
 		case .Choose_Previous:
@@ -726,4 +760,269 @@ the_damage_of_a_key_is_never_too_small :: proc(t: ^testing.T) {
 		testing.expectf(t, string(transmute([]u8)before.pixels) == string(transmute([]u8)whole), "step %d (%v): the panel in its damage differs from the whole panel", number, step.key)
 		testing.expect(t, interface.draw_table_copy(&before.table, &now.table))
 	}
+}
+
+// A table of a provider, as the console writes it: the memory of the test.
+@(private = "file")
+Given :: struct {
+	name:       string,
+	signature:  string,
+	about:      string,
+	parameters: u8,
+	result:     palette_table.Value_Kind,
+	destroys:   bool,
+}
+
+@(private = "file")
+GIVEN := [?]Given {
+	{name = "memory", signature = "memory() -> Record", about = "memory and kernel counters", result = .Record},
+	{name = "programs", signature = "programs() -> Table", about = "the programs that run", result = .Table},
+	{name = "stop", signature = "stop(Text)", about = "stop a program, by name", parameters = 1, destroys = true},
+	{name = "shutdown", signature = "shutdown()", about = "stop the machine", destroys = true},
+}
+
+@(private = "file")
+table_make :: proc(given: []Given) -> []u8 {
+	memory := make([]u8, palette_table.TABLE_BYTES)
+	header := (^palette_table.Header)(raw_data(memory))
+	header^ = {magic = palette_table.MAGIC, version = palette_table.VERSION, change_count = 6, entry_count = u32(len(given))}
+	for item, index in given {
+		entry := (^palette_table.Entry)(&memory[palette_table.ENTRIES_OFFSET + index * size_of(palette_table.Entry)])
+		entry.kind = .Command
+		if item.destroys {
+			entry.flags = {.Destroys}
+		}
+		entry.parameter_count = item.parameters
+		entry.result = item.result
+		entry.name_length = u8(copy(entry.name[:], item.name))
+		entry.signature_length = u8(copy(entry.signature[:], item.signature))
+		entry.about_length = u8(copy(entry.about[:], item.about))
+	}
+	return memory
+}
+
+@(private = "file")
+collect_with_table :: proc(panel: ^Panel, table: []u8) -> palette_table.Problem {
+	problem, _ := list_collect(panel.list, nil, PROGRAMS[:], {{title = "console", number = 3, focus = true}}, table)
+	list_build(panel)
+	return problem
+}
+
+// The entries of a provider join the one ranked list: a command is found
+// by its letters, says its kind, and what Enter does on it follows from
+// its parameters and from what it destroys.
+@(test)
+the_entries_of_a_provider :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	table := table_make(GIVEN[:])
+	defer delete(table)
+	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.None)
+	testing.expect_value(t, panel.list.provider, Provider_State.Ready)
+	testing.expect_value(t, panel.list.snapshot.generation, 6)
+	testing.expect_value(t, panel.list.entry_count, 1 + len(PROGRAMS) + 1 + len(GIVEN))
+	// With no typed part the commands do not show.
+	for row in panel.list.rows[:panel.list.row_count] {
+		testing.expect(t, row.kind != .Entry || !entry_of_provider(&panel.list.entries[row.entry]))
+	}
+	type_text(panel, "mem")
+	testing.expect_value(t, row_text(panel, 0), "memory (command)")
+	testing.expect_value(t, chosen_of(panel), Chosen.Sends)
+	testing.expect_value(t, state_after(.Search, .Run, chosen_of(panel)), State.Running)
+	line_editor.line_clear(&panel.line)
+	type_text(panel, "stop")
+	testing.expect_value(t, row_text(panel, 0), "stop (command)")
+	testing.expect_value(t, entry_words(chosen_entry(panel)), "command, needs arguments")
+	// A command with parameters opens in the console: the panel closes at
+	// once, and asks nothing, also when the command destroys.
+	testing.expect_value(t, chosen_of(panel), Chosen.Runs)
+	line_editor.line_clear(&panel.line)
+	type_text(panel, "shut")
+	testing.expect_value(t, chosen_of(panel), Chosen.Destroys_Then_Sends)
+	testing.expect_value(t, state_after(.Search, .Run, chosen_of(panel)), State.Confirm)
+	testing.expect_value(t, state_after(.Confirm, .Confirm, chosen_of(panel)), State.Running)
+	testing.expect_value(t, state_after(.Confirm, .Back, chosen_of(panel)), State.Search)
+	// The rows as the panel draws them: the signature after the name, the
+	// help sentence in the detail line, the act in full on the row that asks.
+	screen := screen_make()
+	defer screen_free(screen)
+	has :: proc(table: ^interface.Draw_Table, text: string) -> bool {
+		for record in table.records[:table.record_count] {
+			if interface.is_text_kind(record.kind) && strings.contains(string(table.text[record.text_start:][:record.text_count]), text) {
+				return true
+			}
+		}
+		return false
+	}
+	panel.state = .Search
+	panel_build(screen, panel)
+	testing.expect(t, has(&screen.table, "shutdown") && has(&screen.table, "()") && has(&screen.table, "stop the machine"))
+	testing.expect(t, has(&screen.table, "enter: run") && !has(&screen.table, NOTE_NO_PROVIDER))
+	panel.state = .Confirm
+	panel_build(screen, panel)
+	testing.expect(t, has(&screen.table, "shutdown(): stop the machine"))
+	panel.state = .Running
+	sent_set(panel, chosen_entry(panel))
+	panel_build(screen, panel)
+	testing.expect(t, has(&screen.table, WORDS_OF_RUNNING) && has(&screen.table, KEYS_OF_RUNNING))
+}
+
+// A table that fails a check gives a list with the programs and the
+// windows only, and its problem: each malformed table is refused.
+@(test)
+a_hostile_table_gives_no_entry :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	Damage :: struct {
+		problem: palette_table.Problem,
+		change:  proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header),
+	}
+	damages := [?]Damage {
+		{.Bad_Magic, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {header.magic = 1}},
+		{.Bad_Version, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {header.version = 99}},
+		{.Too_Many_Entries, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {header.entry_count = 4096}},
+		{.Never_Stable, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {header.change_count = 7}},
+		{.Bad_Length, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.name_length = 0}},
+		{.Bad_Length, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.name_length = 200}},
+		{.Bad_Length, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.parameter_count = 200}},
+		{.Bad_Length, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.about_length = 255}},
+		{.Bad_Byte, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.name[1] = 7}},
+		{.Bad_Byte, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.about[0] = 200}},
+		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.kind = palette_table.Entry_Kind(9)}},
+		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.result = palette_table.Value_Kind(40)}},
+		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.parameters[5] = palette_table.Value_Kind(7)}},
+		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.flags = transmute(palette_table.Entry_Flags)u8(0x80)}},
+		{.Bad_Signature, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.signature[0] = 'x'}},
+	}
+	for damage, number in damages {
+		table := table_make(GIVEN[:])
+		defer delete(table)
+		// The second entry: the check reads each entry, not the first only.
+		damage.change(table, (^palette_table.Entry)(&table[palette_table.ENTRIES_OFFSET + size_of(palette_table.Entry)]), (^palette_table.Header)(raw_data(table)))
+		problem := collect_with_table(panel, table)
+		testing.expectf(t, problem == damage.problem, "damage %d: %v, not %v", number, problem, damage.problem)
+		testing.expect_value(t, panel.list.provider, Provider_State.Refused)
+		testing.expect_value(t, panel.list.entry_count, 1 + len(PROGRAMS) + 1)
+		testing.expect_value(t, panel.list.snapshot.entry_count, 0)
+	}
+	// A memory smaller than a table is no table.
+	small := make([]u8, 4096)
+	defer delete(small)
+	testing.expect_value(t, collect_with_table(panel, small), palette_table.Problem.Too_Small)
+	// The footer says what the list lacks.
+	screen := screen_make()
+	defer screen_free(screen)
+	panel_open(panel)
+	panel_build(screen, panel)
+	found := false
+	for record in screen.table.records[:screen.table.record_count] {
+		if interface.is_text_kind(record.kind) && string(screen.table.text[record.text_start:][:record.text_count]) == NOTE_REFUSED_PROVIDER {
+			found = true
+		}
+	}
+	testing.expect(t, found)
+}
+
+// The keys of the states Running and Result, and what an answer of the
+// provider does to a panel.
+@(test)
+running_and_result :: proc(t: ^testing.T) {
+	for key in Key {
+		closes := key == .Super || key == .Escape
+		testing.expect_value(t, key_action(.Running, key), closes ? Action.Close : Action.None)
+		testing.expect_value(t, key_action(.Result, key), closes ? Action.Close : Action.Back)
+	}
+	testing.expect_value(t, state_after(.Result, .Back, .Nothing), State.Search)
+	testing.expect_value(t, state_after(.Running, .Close, .Sends), State.Closed)
+	panel := panel_make()
+	defer panel_free(panel)
+	table := table_make(GIVEN[:])
+	defer delete(table)
+	collect_with_table(panel, table)
+	type_text(panel, "mem")
+	sent_set(panel, chosen_entry(panel))
+	result_area := table[palette_table.RESULT_OFFSET:][:palette_table.RESULT_CAPACITY]
+	write :: proc(area: []u8, lines: [][2]string) -> u64 {
+		writer := palette_table.Result_Writer{buffer = area, fits = true}
+		for line in lines {
+			palette_table.result_run(&writer, .Label, line[0])
+			palette_table.result_run(&writer, .Number, line[1])
+			palette_table.result_line_end(&writer)
+		}
+		return u64(writer.count)
+	}
+	// A panel that waits for no answer takes none.
+	panel.state = .Search
+	result_set(panel, u64(palette_table.Outcome.Shown_In_Panel), 3, table, 0)
+	testing.expect_value(t, panel.state, State.Search)
+	// A Record: its lines in the panel.
+	length := write(result_area, {{"memory_megabytes  ", "256"}, {"free_megabytes  ", "198"}})
+	panel.state = .Running
+	result_set(panel, u64(palette_table.Outcome.Shown_In_Panel), u64(palette_table.Value_Kind.Record), table, length)
+	testing.expect_value(t, panel.state, State.Result)
+	testing.expect_value(t, panel.result.kind, palette_table.Value_Kind.Record)
+	screen := screen_make()
+	defer screen_free(screen)
+	panel_build(screen, panel)
+	texts := [?]string{"memory()", "memory_megabytes  ", "256", "free_megabytes  ", "198", KEYS_OF_RESULT}
+	for text in texts {
+		found := false
+		for record in screen.table.records[:screen.table.record_count] {
+			if interface.is_text_kind(record.kind) && string(screen.table.text[record.text_start:][:record.text_count]) == text {
+				found = true
+			}
+		}
+		testing.expectf(t, found, "the panel shows %q", text)
+	}
+	// An Integer: its one number at three times the size of the font.
+	length = write(result_area, {{"", "42"}})
+	panel.state = .Running
+	result_set(panel, u64(palette_table.Outcome.Shown_In_Panel), u64(palette_table.Value_Kind.Integer), table, length)
+	panel_build(screen, panel)
+	large := false
+	for record in screen.table.records[:screen.table.record_count] {
+		if interface.is_text_kind(record.kind) && record.text_scale == 3 && string(screen.table.text[record.text_start:][:record.text_count]) == "42" {
+			large = true
+		}
+	}
+	testing.expect(t, large)
+	// The window of the provider has the result: the panel closes.
+	panel.state = .Running
+	result_set(panel, u64(palette_table.Outcome.Shown_In_Console), u64(palette_table.Value_Kind.Table), table, 0)
+	testing.expect_value(t, panel.state, State.Closed)
+	// A hostile answer: a length past the area, a run past the length, a
+	// byte that the font does not draw, a part out of its range, too many
+	// lines, an outcome that is none. Each one shows the sentence of the
+	// panel itself, and nothing of the area.
+	Hostile :: struct {
+		outcome: u64,
+		length:  u64,
+		bytes:   []u8,
+	}
+	many: [2 * (palette_table.RESULT_LINE_CAPACITY + 1)]u8
+	for index in 0 ..< palette_table.RESULT_LINE_CAPACITY + 1 {
+		many[2 * index] = u8(palette_table.Run_Part.End_Line)
+	}
+	hostile := [?]Hostile {
+		{1, palette_table.RESULT_CAPACITY + 1, {}},
+		{1, 4, {0, 200, 'a', 'b'}},
+		{1, 3, {0, 1, 7}},
+		{1, 3, {99, 1, 'a'}},
+		{1, 1, {0}},
+		{1, 2, {255, 3}},
+		{1, len(many), many[:]},
+		{77, 3, {0, 1, 'a'}},
+		{1, 0, {}},
+	}
+	for item, number in hostile {
+		copy(result_area, item.bytes)
+		panel.state = .Running
+		result_set(panel, item.outcome, 1, table, item.length)
+		testing.expectf(t, panel.state == .Result && panel.result.outcome == .Refused, "hostile answer %d is refused", number)
+		testing.expect(t, palette_table.result_valid(panel.result.runs[:panel.result.count]))
+	}
+	// The provider left while the panel waited.
+	panel.state = .Running
+	result_sentence(panel, "the console stopped")
+	testing.expect_value(t, panel.state, State.Result)
 }

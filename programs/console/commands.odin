@@ -2070,6 +2070,9 @@ revoke :: proc "contextless" (arguments: []Value) -> Value {
 		if system.root_grant_names[grant] != arguments[1].text {
 			continue
 		}
+		if grant == .Palette && name == "console" {
+			palette_stop_before_revoke() // The table and the ring end with the grant.
+		}
 		completion, answered := request_record(.Revoke, name, u64(grant))
 		if !answered {
 			return fail_no_answer()
@@ -2079,7 +2082,7 @@ revoke :: proc "contextless" (arguments: []Value) -> Value {
 		}
 		return fail_root("", completion)
 	}
-	return fail("no grant has the name ", arguments[1].text, ": the grants are log, machine, image, log_records, store, network, acts_for_principal, history")
+	return fail("no grant has the name ", arguments[1].text, ": the grants are log, machine, image, log_records, store, network, acts_for_principal, history, debug, palette")
 }
 
 // replace asks the root service to give a module where a module imports

@@ -68,6 +68,11 @@ Control :: enum u32 {
 	Client_Remove = 2, // root to compositor. values: the same handle
 	Start         = 3, // compositor to root. values: name (4 values)
 	Stop          = 4, // compositor to root. values: the handle of the client
+	// root to compositor: a program is the palette provider. values: the
+	// handle of its ring, then the handle of its entry table, read-only
+	// (contract:palette_table), both in the compositor.
+	Palette_Provider_Add    = 5,
+	Palette_Provider_Remove = 6, // root to compositor: the palette provider ended. values: the same two handles.
 }
 
 // The ring from the input service to the compositor.

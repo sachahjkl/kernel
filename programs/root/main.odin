@@ -30,6 +30,8 @@
 //
 // - `Start`, `Stop`: a program by name, in the session of the caller.
 // - `Connect`, `Disconnect`, `Connect_History`: a connection to a service.
+// - `Palette_Provide`: the entry table and the ring of the palette
+//   provider, for the program with the grant **Palette**.
 // - `Grants`, `Revoke`: read the grants of a program, end one of them.
 //   The kernel ends each handle that came from the grant, also in the
 //   programs that received it from that program.
@@ -79,6 +81,7 @@ import "support:pci"
 import "support:principals"
 import "support:storage"
 import "contract:settings"
+import "contract:palette_table"
 
 ROOT_MARK :: "root: ok"
 
@@ -109,6 +112,7 @@ Grant :: enum {
 	Principals, // A ring to this service for Principal_Record and Principal_Unlock only: the program that keeps the records of the named principals (docs/PRINCIPALS.md).
 	Debug_Image, // The debug image, read-only: the names of the procedures and the source lines of a stop report (debug_image.odin).
 	Debugger, // A ring to this service for Debug only: the service that debugs a program on behalf of a caller of its connections (Root_Command.Debug).
+	Palette, // The palette provider of the desktop: the entry table with Write and the ring to the compositor (Root_Command.Palette_Provide).
 	System_Part, // A part of the system that this service starts by itself, with handles that no other grant names: the screen and the input ring (the compositor), a device (a device service), the text of another program (a terminal). No program asks for it and no caller holds it.
 }
 
@@ -139,6 +143,7 @@ grant_names := [Grant]string {
 	.Principals         = "Principals",
 	.Debug_Image        = "Debug_Image",
 	.Debugger           = "Debugger",
+	.Palette            = "Palette",
 	.System_Part        = "System_Part",
 }
 
@@ -163,7 +168,9 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// - **History_Store**: the line history, apart from that store.
 		// - **Acts_For_Principal**: a service that it connects to shows what
 		//   it holds for all callers.
-		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Acts_For_Principal, .Replacements, .Replace, .History_Store, .Debug_Image}
+		// - **Palette**: its commands show in the palette of the desktop,
+		//   and the palette names the one that the input chose.
+		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Acts_For_Principal, .Replacements, .Replace, .History_Store, .Debug_Image, .Palette}
 	case "flood":
 		// It writes its lines to a terminal and reads the key Space from
 		// it: it has no surface and needs nothing else.
@@ -390,7 +397,7 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "input":
 		return {pages = 256, programs = 1, threads = 1}
 	case "compositor":
-		return {pages = 4096, programs = 1, threads = 1}
+		return {pages = 4096, programs = 1, threads = 2} // Its loop, and the thread that makes the lists of the palette.
 	case "console":
 		return {pages = 8192, programs = 5, threads = 6} // 4 sandboxes.
 	case "rings":
@@ -928,6 +935,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					if .History_Store in grants_of(system.name_of(item.name[:])) && .History not_in item.revoked && system.name_of(name[:]) == "storage" {
 						result = connect(&item, "storage", &completion.values, history = true)
 					}
+				case .Palette_Provide:
+					result = palette_provide(&item, &completion.values)
 				case .Disconnect:
 					// The connection of the history is not ended by the name
 					// of its service: the program keeps its history when it
@@ -1423,6 +1432,9 @@ grants_held :: proc "contextless" (item: ^Started) -> bit_set[Grant] {
 	if .History in item.revoked {
 		held -= {.History_Store}
 	}
+	if .Palette in item.revoked {
+		held -= {.Palette}
+	}
 	return held
 }
 
@@ -1739,6 +1751,15 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		values[0] = count
 		system.log_in("programs", .Info, "root: revoked the grant debug of ", system.Module_Name{name}, ", holdings ended: ", count)
 		return .Ok
+	case .Palette:
+		// The table and the ring end in the program, and the compositor
+		// unmaps its side: the palette keeps the programs and the windows.
+		count := palette_provider_end(item, true)
+		item.granted -= {which}
+		item.revoked += {which}
+		values[0] = count
+		system.log_in("programs", .Info, "root: revoked the grant palette of ", system.Module_Name{name}, ", holdings ended: ", count)
+		return .Ok
 	case .Log:
 		handle = system.context_record().handles[op.CONTEXT_LOG]
 	case .Machine:
@@ -1795,6 +1816,84 @@ replace :: proc "contextless" (asker: ^Started, name: string, by: u64) -> system
 		system.log_in("programs", .Info, "root: ", system.Module_Name{system.name_of(entries[by - 1].name[:])}, " replaces ", system.Module_Name{from_name}, " in each load that follows")
 	}
 	return .Ok
+}
+
+// The palette provider (docs/CONSOLE.md, "8. The palette provider"): the one
+// program that gives the palette of the desktop entries of its own. This
+// service keeps a handle of the entry table and of the ring, so that a
+// revocation ends what the provider holds of them.
+palette_provider: ^Started // nil: no provider.
+palette_table_memory, palette_ring_memory: system.Handle
+palette_table_in_compositor, palette_ring_in_compositor: system.Handle
+
+// palette_provide makes a program with the grant Palette the palette
+// provider: a new entry table and a new ring, which the program and the
+// compositor receive. The program gets the table with Write; the
+// compositor gets it with Read only, and learns of both on its control
+// ring. values is the completion of Root_Command.Palette_Provide.
+palette_provide :: proc "contextless" (caller: ^Started, values: ^[7]u64) -> system.Status {
+	if .Palette not_in caller.role || .Palette in caller.revoked {
+		return .No_Right
+	}
+	if palette_provider != nil {
+		return .Bad_State
+	}
+	status: system.Status
+	palette_table_memory, status = system.memory_create(palette_table.TABLE_PAGES)
+	if status != .Ok {
+		return status
+	}
+	palette_ring_memory, status = system.memory_create(ring.PAGE_COUNT)
+	given_table, given_ring: system.Handle
+	if status == .Ok {
+		palette_table_in_compositor, status = system.give(compositor, palette_table_memory, {.Read})
+	}
+	if status == .Ok {
+		palette_ring_in_compositor, status = system.give(compositor, palette_ring_memory, {.Read, .Write})
+	}
+	if status == .Ok {
+		given_table, status = system.give(caller.requests_memory, palette_table_memory, {.Read, .Write})
+	}
+	if status == .Ok {
+		given_ring, status = system.give(caller.requests_memory, palette_ring_memory, {.Read, .Write})
+	}
+	if status != .Ok {
+		system.close(palette_table_memory)
+		if palette_ring_memory != 0 {
+			system.close(palette_ring_memory)
+		}
+		palette_table_memory, palette_ring_memory = 0, 0
+		return status
+	}
+	palette_provider = caller
+	caller.granted += {.Palette}
+	values^ = {0 = u64(given_table), 1 = u64(given_ring)}
+	system.send(&control.commands, ring.Record{kind = u32(display.Control.Palette_Provider_Add), values = {0 = u64(palette_ring_in_compositor), 1 = u64(palette_table_in_compositor)}})
+	system.log_in("programs", .Info, "root: ", system.Module_Name{system.name_of(caller.name[:])}, " is the palette provider")
+	return .Ok
+}
+
+// palette_provider_end ends the palette provider: the compositor unmaps
+// the table and the ring. With revoke, each handle and each mapping of
+// the two objects ends in the program, which runs on; without, the program
+// stopped. It gives the count of the holdings that ended.
+palette_provider_end :: proc "contextless" (item: ^Started, revoke: bool) -> (count: u64) {
+	if palette_provider != item {
+		return 0
+	}
+	if revoke {
+		for handle in ([2]system.Handle{palette_table_memory, palette_ring_memory}) {
+			ended, _ := system.handle_revoke(handle, item.program)
+			count += ended
+		}
+	}
+	system.send(&control.commands, ring.Record{kind = u32(display.Control.Palette_Provider_Remove), values = {0 = u64(palette_ring_in_compositor), 1 = u64(palette_table_in_compositor)}})
+	system.close(palette_table_memory)
+	system.close(palette_ring_memory)
+	palette_provider = nil
+	palette_table_memory, palette_ring_memory = 0, 0
+	system.log_in("programs", .Info, "root: no palette provider")
+	return count
 }
 
 // terminal_start starts the terminal of a program that runs. The terminal
@@ -2019,6 +2118,9 @@ release :: proc "contextless" (item: ^Started) {
 		driver_end(item)
 	}
 	endpoint_close(item)
+	if palette_provider == item {
+		palette_provider_end(item, false)
+	}
 	if item.network.head != nil {
 		network_end(item)
 	}

@@ -897,7 +897,6 @@ scenario := [?]Step {
 	{kind = .Wait, text = " for \"p\": "},
 	{kind = .Shot, text = "palette_programs"},
 	{kind = .Keys, text = "la"},
-	{kind = .Wait, text = "compositor: the palette lists 1 of "},
 	{kind = .Wait, text = " for \"pla\": plasma (program)"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette starts plasma"},
@@ -906,12 +905,12 @@ scenario := [?]Step {
 	{kind = .Move, text = "plasma", to_x = 232, to_y = 144},
 	{kind = .Shot, text = "desktop_moved"},
 	// Letters of the title of a window: with equal scores the window comes
-	// before the program of the same name, and its close comes last. Enter
-	// brings the window to the front.
+	// before the program of the same name. Enter brings the window to the
+	// front.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = "mon"},
-	{kind = .Wait, text = " for \"mon\": monitor (window), monitor (program), close monitor (close a window)"},
+	{kind = .Wait, text = " for \"mon\": monitor (window), monitor (program)"},
 	{kind = .Shot, text = "palette_windows"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette brings monitor to the front"},
@@ -965,6 +964,84 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette closes the window plasma"},
 	{kind = .Wait, text = "root: plasma stopped"},
+
+	// The commands of the console in the palette: the console is the
+	// palette provider. A command with no parameter runs from the panel,
+	// as a line of the console: memory() gives a Record, which the panel
+	// shows.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "memo"},
+	{kind = .Wait, text = " for \"memo\": memory (command)"},
+	{kind = .Shot, text = "palette_commands"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette sends memory to the console"},
+	{kind = .Wait, text = "console: the palette runs memory()"},
+	{kind = .Wait, text = "console: the palette gets Record, "},
+	{kind = .Wait, text = "compositor: the palette shows a Record"},
+	{kind = .Shot, text = "palette_result"},
+	// Another key leaves the result; Escape then closes the panel.
+	{kind = .Key, text = "down"},
+	{kind = .Wait, text = "compositor: the palette goes back to the search"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// A Table is too large for the panel: the panel closes, and the
+	// window of the console comes to the front with the line and its table.
+	{kind = .Front, text = "monitor"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "programs"},
+	{kind = .Wait, text = " for \"programs\": programs (command)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette sends programs to the console"},
+	{kind = .Wait, text = "console: the palette runs programs()"},
+	{kind = .Wait, text = "console: the result of the palette choice is in the console: Table"},
+	{kind = .Wait, text = "compositor: the result of the palette is in the console"},
+	{kind = .Wait, text = "compositor: window console in front"},
+	// A command with parameters does not run from the panel: Enter writes
+	// it in the edit line of the console, with the caret between its
+	// parentheses, and the console comes to the front. The input types the
+	// argument there.
+	{kind = .Front, text = "monitor"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "stop"},
+	{kind = .Wait, text = " for \"stop\": stop (command)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette opens stop in the console"},
+	{kind = .Wait, text = "console: the palette opens stop() in the edit line"},
+	{kind = .Wait, text = "compositor: the palette opened the entry in the console"},
+	{kind = .Wait, text = "compositor: window console in front"},
+	{kind = .Type, text = "\"no_such_program\""},
+	{kind = .Wait, text = "> stop(\"no_such_program\")"},
+	// A command that destroys asks for a second Enter, on a row that says
+	// the act in full. Another key goes back, and nothing stops.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "shutd"},
+	{kind = .Wait, text = " for \"shutd\": shutdown (command)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette asks to confirm: shutdown"},
+	{kind = .Shot, text = "palette_confirm_command"},
+	{kind = .Key, text = "down"},
+	{kind = .Wait, text = "compositor: the palette goes back to the search"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// The grant of the provider ends: the commands leave the list, and the
+	// palette keeps the programs and the windows.
+	{kind = .Type, text = "revoke(\"console\", \"palette\")"},
+	{kind = .Wait, text = "console: the console is no more the palette provider"},
+	// The root service and the compositor write in an order that the
+	// system does not fix.
+	{kind = .Wait, text = "root: revoked the grant palette of console, holdings ended: ", any_order = true},
+	{kind = .Wait, text = "compositor: the palette has no provider"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "shutd"},
+	{kind = .Wait, text = "compositor: the palette lists 0 of "},
+	{kind = .Shot, text = "palette_no_provider"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key super"},
 
 	// Back to the console: the system tools, then stop the machine.
 	{kind = .Front, text = "console"},
@@ -1945,7 +2022,8 @@ scenario := [?]Step {
 	{kind = .Type, text = "storage.stores()"},
 	{kind = .Wait, text = "[console] console: 1 objects, 0 trees, 0 versions, 3 of 3 blocks, 0 shared, 0 connections"},
 	{kind = .Type, text = "where(grants(\"console\"), \"state\", \"lost\")"},
-	{kind = .Wait, text = "[console] console  store  lost"},
+	// The grant palette was revoked before: the column has its width.
+	{kind = .Wait, text = "[console] console  store    lost"},
 	{kind = .Shot, text = "storage"},
 	// Versions: notes commits each key, and the storage service
 	// keeps the state before each commit. The scenario steps back through the

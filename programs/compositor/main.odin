@@ -38,6 +38,12 @@
 // each new surface, each move and each window brought to the front, the
 // time of a full frame, and the events of the palette.
 //
+// **Its two threads.** The first thread runs the loop below. The second
+// one makes the lists of the palette: it collects the entries, copies and
+// checks the table of the [palette provider](term:palette-provider), and
+// ranks them for the typed part, so the loop never does that work
+// (palette.odin).
+//
 // **How it starts.** The root service starts it at each boot, after the
 // input service and before the console. Its context is not the context of
 // the other programs: the handles 0 to 2 are the framebuffer, the ring of
@@ -399,7 +405,8 @@ canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
 //
 // 1. A change of the settings: the new font, the new pointer theme, and an
 //    event to each window, which draws again.
-// 2. The control ring: a window to add or to remove.
+// 2. The control ring: a window to add or to remove, the palette provider
+//    to add or to remove.
 // 3. The input ring: a key goes to the palette, or to the window in
 //    front; a move or a button of the pointer moves the pointer, drags a
 //    window, opens a menu or starts a program.
@@ -487,6 +494,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if display.settings_page != nil {
 			system.wait_word(&wait, &display.settings_page.change_count, settings_seen)
 		}
+		palette_wait(&wait) // palette.odin
 		now := system.wait_end(&wait, deadline)
 		if display.settings_page != nil {
 			if choice := settings.read(display.settings_page); choice.change_count != settings_seen {
@@ -504,6 +512,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				client_add(system.Handle(record.values[0]))
 			case .Client_Remove:
 				client_remove(system.Handle(record.values[0]))
+			case .Palette_Provider_Add:
+				palette_provider_add(system.Handle(record.values[0]), system.Handle(record.values[1])) // palette.odin
+			case .Palette_Provider_Remove:
+				palette_provider_remove()
 			}
 		}
 		for record in system.receive(&input.commands) {
@@ -552,6 +564,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 			}
 		}
+		palette_turn() // A list of the ranking thread, an answer of the palette provider.
 		// The calls read the place of the pointer after the input records,
 		// and the state of the screen after each Present that a program
 		// sent before the call: a caller that reads "nothing waits" then

@@ -1,5 +1,7 @@
 package palette
 
+import "contract:palette_table"
+import "contract:value_kinds"
 import "support:graphics"
 import "support:interface"
 
@@ -61,8 +63,11 @@ row_at :: proc "contextless" (panel: ^Panel, panel_x, panel_y, x, y: int) -> int
 	if part_at(panel_x, panel_y, x, y) != .List || x < panel_x + BORDER || x >= panel_x + PANEL_WIDTH - BORDER {
 		return NO_ROW
 	}
+	if panel.list == nil || panel.state == .Result || panel.state == .Running {
+		return NO_ROW
+	}
 	row := panel.first_row + (y - panel_y - LIST_TOP) / ROW_HEIGHT
-	return row < panel.row_count ? row : NO_ROW
+	return row < panel.list.row_count ? row : NO_ROW
 }
 
 // kind_words gives what a kind is, in words: the text at the right of a row.
@@ -74,74 +79,144 @@ kind_words :: proc "contextless" (kind: Entry_Kind) -> string {
 		return "program"
 	case .Close_Window:
 		return "close a window"
+	case .Command:
+		return "command"
+	case .Export:
+		return "export"
 	}
 	return ""
 }
 
-// kind_hint gives the key hint of the chosen row of a kind: what Enter does.
-kind_hint :: proc "contextless" (kind: Entry_Kind) -> string {
-	switch kind {
+// entry_words gives the text at the right of the row of an entry: its
+// kind, and that the panel cannot run it when it has parameters.
+entry_words :: proc "contextless" (entry: ^Entry) -> string {
+	if .Needs_Arguments in entry.flags {
+		return entry.kind == .Command ? "command, needs arguments" : "export, needs arguments"
+	}
+	return kind_words(entry.kind)
+}
+
+// entry_hint gives what Enter does on an entry: the footer says it.
+entry_hint :: proc "contextless" (entry: ^Entry) -> string {
+	switch entry.kind {
 	case .Window:
 		return "enter: to the front"
 	case .Program:
 		return "enter: start"
 	case .Close_Window:
 		return "enter: close"
+	case .Command, .Export:
+		return .Needs_Arguments in entry.flags ? "enter: arguments in the console" : "enter: run"
 	}
 	return ""
 }
 
-// kind_source gives the name of the table that the entries of a kind come
-// from: a reader can find the source of each row.
-kind_source :: proc "contextless" (kind: Entry_Kind) -> string {
-	switch kind {
-	case .Window, .Close_Window:
-		return "the client table"
-	case .Program:
-		return "bar.names"
+// given_of gives the record that the provider wrote for an entry, in the
+// checked copy of its table; nil for an entry of the compositor.
+given_of :: proc "contextless" (list: ^List, entry: ^Entry) -> ^palette_table.Entry {
+	if !entry_of_provider(entry) || int(entry.number) >= list.snapshot.entry_count {
+		return nil
 	}
-	return ""
+	return &list.snapshot.entries[entry.number]
 }
 
-// entry_about gives the sentence of the detail line: what the choice of
-// the entry does.
-entry_about :: proc "contextless" (entry: ^Entry) -> string {
+// entry_about writes the sentence of the detail line: what the choice of
+// the entry does, with the facts of now. An entry of a provider has the
+// help sentence that the provider gave.
+entry_about :: proc "contextless" (builder: ^interface.Text_Builder, list: ^List, entry: ^Entry) {
 	switch entry.kind {
 	case .Window:
-		return entry.mark == .Has_Focus ? "This window has the focus." : "Brings this window to the front and gives it the focus."
+		if entry.mark == .Has_Focus {
+			interface.text_put(builder, "The window of the program ")
+			interface.text_put(builder, entry_name(entry))
+			interface.text_put(builder, ". It has the focus.")
+		} else {
+			interface.text_put(builder, "Brings the window of the program ")
+			interface.text_put(builder, entry_name(entry))
+			interface.text_put(builder, " to the front and gives it the focus.")
+		}
 	case .Program:
-		return entry.mark == .Has_Window ? "Starts this program one more time: it has a window now." : "Starts this program."
+		interface.text_put(builder, "Starts the program ")
+		interface.text_put(builder, entry_name(entry))
+		if entry.windows == 0 {
+			interface.text_put(builder, ". It has no window now.")
+		} else {
+			interface.text_put(builder, " one more time. It has ")
+			interface.text_put_number(builder, u64(entry.windows))
+			interface.text_put(builder, entry.windows == 1 ? " window now." : " windows now.")
+		}
 	case .Close_Window:
-		return "Stops the program of this window. The panel asks for a second Enter."
+		interface.text_put(builder, "Stops the program ")
+		interface.text_put(builder, window_title_of(entry))
+		interface.text_put(builder, ": its window closes. Asks for a second Enter.")
+	case .Command, .Export:
+		if given := given_of(list, entry); given != nil {
+			interface.text_put(builder, string(given.about[:given.about_length]))
+		}
 	}
-	return ""
 }
 
-// mark_color gives the color of the mark of an entry: the color of the
-// concept that its fact names. shown is false for an entry with no mark.
-mark_color :: proc "contextless" (mark: Entry_Mark) -> (color: graphics.Color, shown: bool) {
+// mark_color gives the color of the mark of an entry, the color of the
+// concept that its fact names, and its form: a full square, or the outline
+// of a square for a window, so that a reader who does not tell the colors
+// apart still tells a window from a program. shown is false for an entry
+// with no mark.
+mark_color :: proc "contextless" (mark: Entry_Mark) -> (color: graphics.Color, outlined: bool, shown: bool) {
 	switch mark {
 	case .None:
-		return 0, false
+		return 0, false, false
 	case .Has_Window:
-		return graphics.COLOR_PROGRAM, true
+		return graphics.COLOR_PROGRAM, false, true
 	case .No_Window:
-		return graphics.COLOR_NOT_USABLE, true
+		return graphics.COLOR_NOT_USABLE, false, true
 	case .Has_Focus:
-		return graphics.COLOR_TITLE, true
+		return graphics.COLOR_TITLE, true, true
+	case .Window:
+		return graphics.COLOR_DIM, true, true
 	case .Destroys:
-		return graphics.COLOR_STOP_PROGRAM, true
+		return graphics.COLOR_STOP_PROGRAM, false, true
 	}
-	return 0, false
+	return 0, false, false
+}
+
+// part_color gives the color of a run of a result: a value has the color
+// of its value kind, as in the console, in the log and on the site.
+part_color :: proc "contextless" (part: palette_table.Run_Part) -> graphics.Color {
+	switch part {
+	case .Plain:
+		return graphics.COLOR_TEXT
+	case .Label, .Note, .End_Line:
+		return graphics.COLOR_DIM
+	case .Failure:
+		return graphics.COLOR_FAILED
+	case .Number:
+		return graphics.value_kind_color(value_kinds.Value_Kind.Number, false)
+	case .Handle:
+		return graphics.value_kind_color(value_kinds.Value_Kind.Handle, false)
+	case .Type:
+		return graphics.value_kind_color(value_kinds.Value_Kind.Type, false)
+	case .Status:
+		return graphics.value_kind_color(value_kinds.Value_Kind.Status, false)
+	case .Operation:
+		return graphics.value_kind_color(value_kinds.Value_Kind.Operation, false)
+	}
+	return graphics.COLOR_TEXT
 }
 
 HEADING_RECENT :: "recent"
 HEADING_WINDOWS :: "windows"
 HEADING_PROGRAMS :: "programs"
 PLACEHOLDER :: "type a part of a name"
-KEYS_OF_SEARCH :: "up down: choose   enter: run   esc: close"
+KEYS_START :: "up down: choose   "
+KEYS_END :: "   esc: close"
 KEYS_OF_CONFIRM :: "enter: confirm   another key: back"
-HINT_OF_CONFIRM :: "enter: confirm"
+KEYS_OF_RUNNING :: "esc: close; the line goes on in the console"
+KEYS_OF_RESULT :: "esc: close   another key: back"
+WORDS_OF_RUNNING :: "runs in the console"
+NOTE_NO_PROVIDER :: "the console gives no commands"
+NOTE_REFUSED_PROVIDER :: "the commands of the console were refused"
+RESULT_CALL_TOP :: 8 // From the top of the list area to the line of the call of a result.
+RESULT_LINES_TOP :: 40 // From the top of the list area to the first line of a result.
 
 // panel_draw appends the draw records of an open panel whose corner is at
 // (x, y). The work is the 12 rows that the panel shows and a fixed count
@@ -153,6 +228,7 @@ HINT_OF_CONFIRM :: "enter: confirm"
 // left, the right and the bottom.
 panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: int) {
 	table := frame.table
+	list := panel.list
 	interface.text_input_line(frame, {x, y, PANEL_WIDTH, INPUT_BAND_HEIGHT}, typed_text(panel), panel.line.caret, INPUT_SCALE, PLACEHOLDER)
 
 	// Under the band: the border, as the menus of the bar have it, then
@@ -162,83 +238,153 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 	body_height := PANEL_HEIGHT - INPUT_BAND_HEIGHT
 	interface.draw_vertical_gradient(table, x, body_top, PANEL_WIDTH, body_height, graphics.shade(graphics.COLOR_KERNEL, 28), graphics.shade(graphics.COLOR_KERNEL, 14))
 	interface.draw_vertical_gradient(table, x + BORDER, body_top, PANEL_WIDTH - 2 * BORDER, body_height - BORDER, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
-
-	// The rows that the panel shows.
-	list_area := interface.Area{x + BORDER, y + LIST_TOP, PANEL_WIDTH - 2 * BORDER, LIST_HEIGHT}
+	if list == nil {
+		return
+	}
+	text_room := PANEL_WIDTH - 2 * TEXT_MARGIN
 	chosen := chosen_entry(panel)
-	confirm_text: interface.Text_Builder
-	rows: [LIST_ROWS]interface.List_Row
-	first := clamp(panel.first_row, 0, max(panel.row_count - 1, 0))
-	shown_count := clamp(panel.row_count - first, 0, LIST_ROWS)
-	chosen_shown := NO_ROW
-	for index in 0 ..< shown_count {
-		row := panel.rows[first + index]
-		switch row.kind {
-		case .Heading_Recent:
-			rows[index] = {kind = .Heading, name = HEADING_RECENT}
-		case .Heading_Windows:
-			rows[index] = {kind = .Heading, name = HEADING_WINDOWS}
-		case .Heading_Programs:
-			rows[index] = {kind = .Heading, name = HEADING_PROGRAMS}
-		case .Entry:
-			entry := &panel.entries[min(int(row.entry), ENTRY_CAPACITY - 1)]
-			color, shown := mark_color(entry.mark)
-			rows[index] = {kind = .Entry, name = entry_name(entry), matched_places = transmute(u128)row.places, mark_shown = shown, mark_color = color, right_text = kind_words(entry.kind)}
-			if first + index == panel.choice {
-				chosen_shown = index
-				if panel.state == .Confirm {
-					// The row says the act in full, and no letter is marked:
-					// the text is no longer the name that the input searched.
-					interface.text_put(&confirm_text, confirm_sentence_start(entry.kind))
-					interface.text_put(&confirm_text, window_title_of(entry))
-					interface.text_put(&confirm_text, confirm_sentence_end(entry.kind))
-					rows[index].name = interface.text_of(&confirm_text)
-					rows[index].matched_places = 0
+
+	if panel.state == .Result || panel.state == .Running {
+		// The list makes room for the entry that the panel sent: a new
+		// list can come while the provider runs it.
+		result_draw(frame, panel, x, y)
+	} else {
+		// The rows that the panel shows.
+		list_area := interface.Area{x + BORDER, y + LIST_TOP, PANEL_WIDTH - 2 * BORDER, LIST_HEIGHT}
+		confirm_text: interface.Text_Builder
+		rows: [LIST_ROWS]interface.List_Row
+		first := clamp(panel.first_row, 0, max(list.row_count - 1, 0))
+		shown_count := clamp(list.row_count - first, 0, LIST_ROWS)
+		chosen_shown := NO_ROW
+		for index in 0 ..< shown_count {
+			row := list.rows[first + index]
+			switch row.kind {
+			case .Heading_Recent:
+				rows[index] = {kind = .Heading, name = HEADING_RECENT}
+			case .Heading_Windows:
+				rows[index] = {kind = .Heading, name = HEADING_WINDOWS}
+			case .Heading_Programs:
+				rows[index] = {kind = .Heading, name = HEADING_PROGRAMS}
+			case .Entry:
+				entry := &list.entries[min(int(row.entry), ENTRY_CAPACITY - 1)]
+				color, outlined, shown := mark_color(entry.mark)
+				rows[index] = {kind = .Entry, name = entry_name(entry), matched_places = transmute(u128)row.places, mark_shown = shown, mark_outlined = outlined, mark_color = color, right_text = entry_words(entry)}
+				if given := given_of(list, entry); given != nil {
+					// A command is code: its name in the font of the cells,
+					// then its parameters and its result, quiet. A command
+					// that the panel cannot run is dim.
+					rows[index].name_in_cells = true
+					rows[index].name_color = .Needs_Arguments in entry.flags ? graphics.Color(graphics.COLOR_DIM) : graphics.code_class_color(.Name, false)
+					rows[index].detail = string(given.signature[given.name_length:given.signature_length])
+				}
+				if first + index == panel.choice {
+					chosen_shown = index
+					if panel.state == .Confirm {
+						// The row says the act in full, and no letter is marked:
+						// the text is no longer the name that the input searched.
+						confirm_sentence(&confirm_text, list, entry)
+						rows[index] = {kind = .Entry, name = interface.text_of(&confirm_text), mark_shown = shown, mark_outlined = outlined, mark_color = color, right_text = rows[index].right_text}
+					}
 				}
 			}
 		}
-	}
-	options := interface.List_Rows_Options{chosen = chosen_shown, first = first, total = panel.row_count}
-	if chosen != nil {
-		options.chosen_hint = kind_hint(chosen.kind)
-	}
-	if panel.state == .Confirm {
-		options.chosen_color = graphics.COLOR_STOP_PROGRAM
-		options.chosen_hint = HINT_OF_CONFIRM
-	}
-	interface.list_of_rows(frame, list_area, rows[:shown_count], options)
-	if panel.row_count == 0 {
-		// No entry has the typed part: one dim line says so.
-		empty: interface.Text_Builder
-		interface.text_put(&empty, "nothing has \"")
-		interface.text_put(&empty, typed_text(panel))
-		interface.text_put(&empty, "\" in its name")
-		interface.draw_text(table, x + TEXT_MARGIN, y + LIST_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, interface.text_of(&empty), PANEL_WIDTH - 2 * TEXT_MARGIN), graphics.COLOR_DIM, interface.FONT_INTERFACE)
-	}
-
-	// The detail line: what the chosen entry does, whole.
-	text_room := PANEL_WIDTH - 2 * TEXT_MARGIN
-	if chosen != nil {
-		interface.draw_text(table, x + TEXT_MARGIN, y + DETAIL_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, entry_about(chosen), text_room), graphics.COLOR_DIM, interface.FONT_INTERFACE)
+		// The chosen row keeps its kind at its right, in white: two rows
+		// with one name stay two things. What Enter does is in the footer.
+		options := interface.List_Rows_Options{chosen = chosen_shown, first = first, total = list.row_count}
+		if panel.state == .Confirm {
+			options.chosen_color = graphics.COLOR_STOP_PROGRAM
+		}
+		interface.list_of_rows(frame, list_area, rows[:shown_count], options)
+		if list.row_count == 0 {
+			// No entry has the typed part: one dim line says so.
+			empty: interface.Text_Builder
+			interface.text_put(&empty, "nothing has \"")
+			interface.text_put(&empty, typed_text(panel))
+			interface.text_put(&empty, "\" in its name")
+			interface.draw_text(table, x + TEXT_MARGIN, y + LIST_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, interface.text_of(&empty), text_room), graphics.COLOR_DIM, interface.FONT_INTERFACE)
+		}
+		// The detail line: what the chosen entry does, whole.
+		if chosen != nil {
+			about: interface.Text_Builder
+			entry_about(&about, list, chosen)
+			interface.draw_text(table, x + TEXT_MARGIN, y + DETAIL_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, interface.text_of(&about), text_room), graphics.COLOR_DIM, interface.FONT_INTERFACE)
+		}
 	}
 
-	// The footer: at the right the keys of the state; at the left the
-	// source of the chosen entry, then the count of the entries that match
-	// of all the entries. The count is a value: the font of the cells.
-	keys := panel.state == .Confirm ? KEYS_OF_CONFIRM : KEYS_OF_SEARCH
-	keys_width := interface.text_measured_width(table, interface.FONT_INTERFACE, keys)
-	interface.draw_text_right(table, x + PANEL_WIDTH - TEXT_MARGIN, y + FOOTER_TOP + 4, keys, graphics.COLOR_DIM, interface.FONT_INTERFACE)
+	// The footer: at the right the keys of the state, with what Enter does
+	// on the chosen entry; at the left the count of the entries that match
+	// of all the entries, then what the list lacks when the console gives
+	// no commands. The count is a value: the font of the cells.
+	keys: interface.Text_Builder
+	switch panel.state {
+	case .Closed, .Search:
+		interface.text_put(&keys, KEYS_START)
+		interface.text_put(&keys, chosen != nil ? entry_hint(chosen) : "enter: run")
+		interface.text_put(&keys, KEYS_END)
+	case .Confirm:
+		interface.text_put(&keys, KEYS_OF_CONFIRM)
+	case .Running:
+		interface.text_put(&keys, KEYS_OF_RUNNING)
+	case .Result:
+		interface.text_put(&keys, KEYS_OF_RESULT)
+	}
+	keys_width := interface.text_measured_width(table, interface.FONT_INTERFACE, interface.text_of(&keys))
+	interface.draw_text_right(table, x + PANEL_WIDTH - TEXT_MARGIN, y + FOOTER_TOP + 4, interface.text_of(&keys), graphics.COLOR_DIM, interface.FONT_INTERFACE)
 	count: interface.Text_Builder
-	interface.text_put_number(&count, u64(panel.matched_count))
+	interface.text_put_number(&count, u64(list.matched_count))
 	interface.text_put(&count, " of ")
-	interface.text_put_number(&count, u64(panel.entry_count))
-	count_width := interface.text_measured_width(table, {}, interface.text_of(&count))
-	after := x + TEXT_MARGIN
-	if chosen != nil {
-		source_room := text_room - keys_width - 16 - count_width - 16
-		after = interface.draw_text(table, after, y + FOOTER_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, kind_source(chosen.kind), source_room), graphics.COLOR_DIM, interface.FONT_INTERFACE) + 16
+	interface.text_put_number(&count, u64(list.entry_count))
+	after := interface.draw_text(table, x + TEXT_MARGIN, y + FOOTER_TOP + 4, interface.text_of(&count), graphics.COLOR_TEXT)
+	after = interface.draw_text(table, after + 8, y + FOOTER_TOP + 4, "entries", graphics.COLOR_DIM, interface.FONT_INTERFACE)
+	if list.provider != .Ready {
+		note := list.provider == .Absent ? NOTE_NO_PROVIDER : NOTE_REFUSED_PROVIDER
+		note_room := x + PANEL_WIDTH - TEXT_MARGIN - keys_width - 16 - (after + 16)
+		interface.draw_text(table, after + 16, y + FOOTER_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, note, note_room), graphics.COLOR_DIM, interface.FONT_INTERFACE)
 	}
-	interface.draw_text(table, after, y + FOOTER_TOP + 4, interface.text_of(&count), graphics.COLOR_TEXT)
+}
+
+// result_draw draws, in the place of the list, the entry that the panel
+// sent and what the provider gave: the call, then, while the panel waits,
+// that it runs; after that the lines of the result, each run in the color of what it is.
+// The one number of an Integer result is at three times the size of the
+// font. The runs are a checked copy; the bounds are checked here once
+// more, so a fault of the check draws less and reads nothing else.
+@(private)
+result_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: int) {
+	table := frame.table
+	result := &panel.result
+	call: interface.Text_Builder
+	interface.text_put(&call, sent_text(panel))
+	interface.text_put(&call, "()")
+	after_call := interface.draw_text(table, x + TEXT_MARGIN, y + LIST_TOP + RESULT_CALL_TOP, interface.text_of(&call), graphics.code_class_color(.Name, false))
+	if panel.state == .Running {
+		interface.draw_text(table, after_call + 16, y + LIST_TOP + RESULT_CALL_TOP, WORDS_OF_RUNNING, graphics.COLOR_DIM, interface.FONT_INTERFACE)
+		return
+	}
+	runs := result.runs[:clamp(result.count, 0, len(result.runs))]
+	large := result.outcome == .Shown_In_Panel && result.kind == .Integer
+	place, line := 0, 0
+	run_x := x + TEXT_MARGIN
+	for place + 2 <= len(runs) && line < palette_table.RESULT_LINE_CAPACITY {
+		part, length := runs[place], int(runs[place + 1])
+		place += 2
+		if part == u8(palette_table.Run_Part.End_Line) {
+			line += 1
+			run_x = x + TEXT_MARGIN
+			continue
+		}
+		if part > u8(palette_table.Run_Part.Operation) || length > len(runs) - place {
+			return
+		}
+		text := string(runs[place:][:length])
+		place += length
+		line_y := y + LIST_TOP + RESULT_LINES_TOP + line * interface.LINE
+		if large && line == 0 {
+			run_x = interface.large_number(frame, run_x, line_y, text, part_color(palette_table.Run_Part(part)))
+			continue
+		}
+		run_x = interface.draw_text(table, run_x, line_y, text, part_color(palette_table.Run_Part(part)))
+	}
 }
 
 // window_title_of gives the title of the window of an entry: the name of a
@@ -251,15 +397,22 @@ window_title_of :: proc "contextless" (entry: ^Entry) -> string {
 	return name
 }
 
-// The sentence of the row that asks for a second Enter says the act in
-// full: "stop plasma: its window closes". Only an entry that destroys has
-// one.
+// confirm_sentence writes the text of the row that asks for a second
+// Enter. It says the act in full: "stop plasma: its window closes" for the
+// close of a window; the call and the help sentence of a command of a
+// provider, "shutdown(): stop the machine".
 @(private)
-confirm_sentence_start :: proc "contextless" (kind: Entry_Kind) -> string {
-	return kind == .Close_Window ? "stop " : ""
-}
-
-@(private)
-confirm_sentence_end :: proc "contextless" (kind: Entry_Kind) -> string {
-	return kind == .Close_Window ? ": its window closes" : ""
+confirm_sentence :: proc "contextless" (builder: ^interface.Text_Builder, list: ^List, entry: ^Entry) {
+	if entry.kind == .Close_Window {
+		interface.text_put(builder, "stop ")
+		interface.text_put(builder, window_title_of(entry))
+		interface.text_put(builder, ": its window closes")
+		return
+	}
+	interface.text_put(builder, entry_name(entry))
+	interface.text_put(builder, "()")
+	if given := given_of(list, entry); given != nil && given.about_length > 0 {
+		interface.text_put(builder, ": ")
+		interface.text_put(builder, string(given.about[:given.about_length]))
+	}
 }

@@ -30,7 +30,7 @@ Pointer :: struct {
 	moves:   i64, // The pointer records that the input service sent since the start.
 	keys:    i64, // The key records that the input service sent since the start: each press and each release is one.
 	menu:    [16]u8, // The menu of the bar that is open: "programs", "windows", or empty.
-	palette:  i64, // The state of the palette: 0 closed; 1 open, in the search; 2 open, it asks for a second Enter. Open, it takes the keys.
+	palette:  i64, // The state of the palette: 0 closed; 1 the search; 2 it asks for a second Enter; 3 it waits for its provider; 4 it shows a result. Not 0: it takes the keys.
 	shape:    [32]u8, // The name of the pointer shape on the screen: "arrow", "move", "text", ... (docs/POINTERS.md).
 }
 
@@ -97,7 +97,8 @@ acts_for_principal :: proc "contextless" () -> bool {
 //   input service sent since the start.
 // - `menu`: `programs`, `windows`, or empty.
 // - `palette`: the state of the palette: 0 while it is closed; 1 while it
-//   is open and the input searches; 2 while it asks for a second Enter.
+//   is open and the input searches; 2 while it asks for a second Enter; 3
+//   while it waits for what its provider gives; 4 while it shows a result.
 //   Open, it takes the keys.
 // - `shape`: the name of the pointer shape on the screen (`arrow`, `move`,
 //   `text`...; docs/POINTERS.md).
