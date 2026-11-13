@@ -130,8 +130,15 @@ COMMANDS :: [?]Command {
 	// Builds the whole system: each module, the boot image, and the boot
 	// program that holds the kernel and the boot image.
 	//
+	// - `whole` (optional): a whole build: the tool ignores every build
+	//   record and builds each module and each boot volume.
 	// - `processes` (optional): the count of module builds at once; the count
 	//   of the processors when it is absent.
+	//
+	// The build is incremental: a module whose inputs are the same as at
+	// its last build is kept, and so are the boot volumes. The command
+	// prints the count of the modules that it kept, and the measure of its
+	// time (docs/TOOLS.md, "The incremental build").
 	//
 	// Each module is built in its own process (the command `module`). The
 	// command then builds the main boot volume, and the volumes that the tests
@@ -144,7 +151,7 @@ COMMANDS :: [?]Command {
 	// ```
 	// nix develop -c kerneltool build 8
 	// ```
-	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one process for each module, as many at once as the processors, or `build <processes>`", run = run_build},
+	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one process for each module, as many at once as the processors, or `build <processes>`; a module whose inputs are the same is kept; `build whole`: ignore the build records and build all", run = run_build},
 	// Builds one module of the table of modules in this process, with the
 	// options of one build.
 	//
@@ -399,40 +406,78 @@ usage :: proc() {
 
 // run_build builds the modules, the boot images, and then the boot program,
 // which contains the kernel module and a boot image. It builds a second
-// boot program for the test of a start that fails.
+// boot program for the test of a start that fails. A module whose inputs
+// are the same is kept, and so are the boot volumes
+// (incremental_build.odin); `build whole` keeps nothing.
 run_build :: proc(args: []string) -> int {
-	// `build <processes>`: the count of module processes at once.
-	if len(args) > 1 || (len(args) == 1 && !parse_module_build_processes(args[0])) {
-		fmt.eprintln("kerneltool: build [processes]")
+	// `build [whole] [processes]`: a whole build, and the count of module
+	// processes at once.
+	rest := args
+	if len(rest) >= 1 && rest[0] == "whole" {
+		build_whole = true
+		rest = rest[1:]
+	}
+	if len(rest) > 1 || (len(rest) == 1 && !parse_module_build_processes(rest[0])) {
+		fmt.eprintln("kerneltool: build [whole] [processes]")
 		return EXIT_USAGE
 	}
-	if !build_modules() || !build_boot_program("boot_fails.image", BOOT_VOLUME_FAILS, 0) || !build_boot_program("boot_shortage.image", BOOT_VOLUME_SHORTAGE, 0) || !build_boot_program("boot.image", BOOT_VOLUME_WITHOUT_RETURN_CHECK, 0, "kernel_without_return_check") {
+	build_measure_start()
+	if !build_modules() {
 		return EXIT_FAILURE
+	}
+	volumes_started := time.tick_now()
+	if kept, reason := boot_volumes_are_kept(); kept {
+		build_measure.volumes_kept = true
+		fmt.println("kerneltool: the boot volumes are kept: their inputs are the same, and each file has its recorded hash")
+	} else {
+		if !build_whole {
+			fmt.printfln("kerneltool: the boot volumes are built: %s", reason)
+		}
+		boot_volume_outputs_forget()
+		if !build_boot_volumes() {
+			return EXIT_FAILURE
+		}
+		record_started := time.tick_now()
+		recorded := boot_volumes_record_write()
+		build_measure_step("the build record of the boot volumes, with the hash of each volume", record_started)
+		if !recorded && build_inputs.usable && os.get_env(SIGNING_KEY_VARIABLE, context.temp_allocator) == "" {
+			fmt.println("kerneltool: no build record for the boot volumes: the compiler gave no list of its files, or an input changed during the build; the next build builds them again")
+		}
+	}
+	build_measure_step("the boot volumes, in all", volumes_started)
+	build_measure_print()
+	return 0
+}
+
+// build_boot_volumes builds the boot program of each boot volume, and the
+// variable store of Secure Boot. BOOT_VOLUME is the last one: its boot
+// program stays in the folder of the boot objects.
+build_boot_volumes :: proc() -> bool {
+	if !build_boot_program("boot_fails.image", BOOT_VOLUME_FAILS, 0) || !build_boot_program("boot_shortage.image", BOOT_VOLUME_SHORTAGE, 0) || !build_boot_program("boot.image", BOOT_VOLUME_WITHOUT_RETURN_CHECK, 0, "kernel_without_return_check") {
+		return false
 	}
 	// The volumes of the trusted boot that the boot program must refuse, and
 	// another system that it must accept and measure.
 	if !build_boot_program("boot.image", BOOT_VOLUME_CHANGED_MODULE, 0, change = {module_changed_after_description = CHANGED_MODULE}) || !build_boot_program("boot.image", BOOT_VOLUME_WRONG_SIGNATURE, 0, change = {signature_changed = true}) || !build_boot_program("boot.image", BOOT_VOLUME_OTHER_SYSTEM, 0, change = {module_changed_before_description = OTHER_SYSTEM_MODULE}) {
-		return EXIT_FAILURE
+		return false
 	}
 	if !build_boot_program("boot.image", BOOT_VOLUME_CHANGED_KERNEL, 0, change = {kernel_changed_after_description = true}) || !build_boot_program("boot.image", BOOT_VOLUME_WITHOUT_DESCRIPTION, 0, change = {description_left_out = true}) || !build_boot_program("boot.image", BOOT_VOLUME_STATED_HASH, 0, change = {stated_hash_changed_module = CHANGED_MODULE}) {
-		return EXIT_FAILURE
+		return false
 	}
 	// Secure Boot: the boot program signed with the firmware signing key, the
 	// same with one byte changed, and the variable store that enrols the
 	// certificate.
 	if !build_boot_program("boot.image", BOOT_VOLUME_SECURE_BOOT, 0, firmware_signature = .Signed) || !build_boot_program("boot.image", BOOT_VOLUME_SECURE_BOOT_CHANGED, 0, firmware_signature = .Signed_Then_Changed) || !secure_boot_variables_write() {
-		return EXIT_FAILURE
+		return false
 	}
+	boot_volume_output_note(SECURE_BOOT_VARIABLES)
 	// One boot program for each test of the kernel on itself.
 	for test in self_tests {
 		if !build_boot_program("boot.image", self_test_file(BOOT_VOLUME_SELF_TEST, test.number), test.number) {
-			return EXIT_FAILURE
+			return false
 		}
 	}
-	if !build_boot_program("boot.image", BOOT_VOLUME, 0) {
-		return EXIT_FAILURE
-	}
-	return 0
+	return build_boot_program("boot.image", BOOT_VOLUME, 0)
 }
 
 // build_boot_program builds the boot program with a boot image and a kernel
@@ -441,8 +486,11 @@ run_build :: proc(args: []string) -> int {
 // the build with its system description and its description signature
 // (system_description.odin); change makes a volume for a test of a failure.
 build_boot_program :: proc(image: string, volume_path: string, self_test: int, kernel := "kernel", change: Image_Change = {}, firmware_signature: Firmware_Signature = .None) -> bool {
+	step_started := time.tick_now()
 	signed_image := signed_image_path(volume_path)
 	signed := boot_image_signed_write(strings.concatenate({BUILD_FOLDER, "/", image}, context.temp_allocator), kernel, signed_image, change) or_return
+	build_measure.volume_signed_images += time.tick_since(step_started)
+	step_started = time.tick_now()
 	reset_folder(BOOT_OBJECT_FOLDER) or_return
 	run(
 		{
@@ -457,6 +505,10 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int, k
 			"-o:speed",
 			"-vet",
 			"-source-code-locations:filename", // No path of the folder of the build in the program.
+			// The list of the files that the compiler read: the inputs of the
+			// build key of the boot volumes (incremental_build.odin).
+			"-export-dependencies:json",
+			"-export-dependencies-file:" + BOOT_DEPENDENCY_FILE,
 			CONTRACT_LIBRARY,
 			SUPPORT_LIBRARY,
 			strings.concatenate({"-define:BOOT_IMAGE=../", signed_image}, context.temp_allocator),
@@ -466,6 +518,8 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int, k
 			"-out:" + BOOT_OBJECT_FOLDER + "/boot.obj",
 		},
 	) or_return
+	build_measure.volume_compiles += time.tick_since(step_started)
+	step_started = time.tick_now()
 	run({"nasm", "-f", "win64", "-o", BOOT_OBJECT_FOLDER + "/jump.obj", "boot/jump.asm"}) or_return
 	run({"nasm", "-f", "win64", "-DWIN64", "-o", BOOT_OBJECT_FOLDER + "/memory.obj", RUNTIME_MEMORY}) or_return
 	objects := files_with_suffix(BOOT_OBJECT_FOLDER, ".obj") or_return
@@ -478,6 +532,8 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int, k
 		boot_program_sign(firmware_signature) or_return
 		program_path = BOOT_PROGRAM_SIGNED
 	}
+	build_measure.volume_links += time.tick_since(step_started)
+	step_started = time.tick_now()
 	program := read_file(program_path) or_return
 	// The debug image is a file of its own beside the boot program: the boot
 	// program and the boot image are the same bytes with and without it.
@@ -497,6 +553,14 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int, k
 	if write_err := os.write_entire_file(signed_by_file_path(volume_path), signed_by); write_err != nil {
 		fmt.eprintfln("kerneltool: cannot write %s: %v", signed_by_file_path(volume_path), write_err)
 		return false
+	}
+	build_measure.volume_writes += time.tick_since(step_started)
+	build_measure.volumes_built += 1
+	// What a machine test reads of this volume, and what the checks of two
+	// builds compare: the build record of the boot volumes holds the hash of
+	// each one.
+	for output in ([]string{volume_path, signed_image, signed_by_file_path(volume_path), signed.kernel_module_path, SYSTEM_PUBLIC_KEY_FILE, BOOT_PROGRAM, BOOT_OBJECT_FOLDER + "/boot.obj"}) {
+		boot_volume_output_note(output)
 	}
 	return true
 }
@@ -679,6 +743,8 @@ run_screenshots :: proc(args: []string) -> int {
 		fmt.eprintln("kerneltool: screenshots takes no argument, or `compress`")
 		return EXIT_USAGE
 	}
+	// The full check proves the build: it keeps no output of an earlier build.
+	build_whole = true
 	// The facts of the tree before the pass changes it: the pass writes the
 	// pictures and the record into the repository.
 	run_facts := measure_run_facts_read()
@@ -810,6 +876,8 @@ run_film :: proc(args: []string) -> int {
 }
 
 run_check :: proc(args: []string) -> int {
+	// The full check proves the build: it keeps no output of an earlier build.
+	build_whole = true
 	if !run({"odin", "check", "tools/kerneltool", "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY}) {
 		return EXIT_FAILURE
 	}

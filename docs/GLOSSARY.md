@@ -5581,6 +5581,52 @@ The design: `docs/TOOLS.md`, "What each tool reads".
 
 Do not use: CI run, test suite, full test.
 
+### Incremental build
+
+An incremental build is a build that keeps each output of an earlier build whose inputs are the same, and builds only the others.
+
+It rests on the rule of the reproducible build: the same inputs give the same bytes, so the output of an earlier build with the same inputs is the output of this build. `kerneltool build` keeps a module when its build record has the build key of its inputs as they are now and each output has its recorded hash; it keeps the boot volumes by the same rule. The tool builds in every case of doubt: no record, a damaged record, an input or an output that changed or is gone. It prints the count of the modules that it kept.
+
+It is not a cache of the compiler and holds no second copy of an output: the kept output is the file of the build folder itself.
+
+The design: `docs/TOOLS.md`, "The incremental build", and `docs/REPRODUCIBLE_BUILD.md`, "The incremental build and the same bytes".
+
+Do not use: build cache, cached build, partial build.
+
+### Build key
+
+A build key is one BLAKE3 hash over the inputs of the build of one thing (a module, or the boot volumes), in a fixed order.
+
+The inputs of a module: each source file that the compiler lists, with the files of `#load`; every other file of the folder of each of these packages; its assembly files; the module file of each import; the commands of the compiler and of `llc` with each flag; the programs of the build; and the sources of the tool. Two builds with the same key had the same inputs. A key is complete only when each input can be read; the tool never records and never compares a key that is not complete.
+
+It is not the hash of a module, which names the output, and it is not a signing key.
+
+The design: `docs/TOOLS.md`, "The incremental build".
+
+Do not use: cache key, fingerprint, input hash (for the whole key).
+
+### Build record
+
+A build record is the small text file that the tool writes after it built one thing: its build key, the hash of each output, and the list of the files that the compiler read.
+
+A module has `build/modules/<name>.build_record`; the boot volumes have `build/boot_volumes.build_record`. At the next build, the tool computes the build key again from the files of the recorded list as they are now, and keeps the outputs when the key is the same and each output has its recorded hash. A record that is absent or damaged is no record: the tool builds, with no error. The tool writes no record when it cannot prove that the hash and the compiler read the same bytes of each input.
+
+It is not the measure record and not the line of the reproducible build that the site quotes.
+
+The design: `docs/TOOLS.md`, "The incremental build".
+
+Do not use: cache entry, stamp, manifest (for this).
+
+### Whole build
+
+A whole build is a build that ignores every build record: it builds each module and each boot volume, and writes new records.
+
+`kerneltool build whole` asks for one. The commands that prove the build are always whole builds: `check`, `screenshots` and `repeat` compare the results of two runs of the compiler, and a kept output would be compared with itself. `nix flake check` builds in an empty folder, so its build has no record to read.
+
+The design: `docs/TOOLS.md`, "The incremental build".
+
+Do not use: clean build, fresh build, full build.
+
 ### Measure record
 
 The measure record is the file `docs/measures/measures.txt`: the measured numbers of the last full check, each as the whole line of its log, with the facts of its run.

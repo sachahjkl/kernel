@@ -177,6 +177,9 @@ run_repeat :: proc(args: []string) -> int {
 		fmt.eprintln("kerneltool: repeat <module> <count>, or repeat all <count> [processes], with a count of 2 or more")
 		return EXIT_USAGE
 	}
+	// Each build of this command is a whole build: it counts the results
+	// of the compiler, not the outputs that a build record keeps.
+	build_whole = true
 	if args[0] == "all" {
 		return repeat_all(count)
 	}
@@ -221,6 +224,7 @@ run_repeat :: proc(args: []string) -> int {
 // order of `build`, and prints one row for each: the distinct modules (or
 // boot programs), LLVM IR files, objects and debug objects.
 repeat_all :: proc(count: int) -> int {
+	build_whole = true
 	if !reset_folder(DIFFERENT_BUILDS_FOLDER) {
 		return EXIT_FAILURE
 	}
@@ -283,6 +287,10 @@ repeat_all :: proc(count: int) -> int {
 // resources of the boot image), the boot program and its object. The hash
 // of a module is the identity of its source, not of one build.
 outputs_same_after_second_build :: proc() -> bool {
+	// The second build is a whole build: a module that a build record keeps
+	// is the same bytes with no proof. The first build must be whole too:
+	// the commands that call this procedure set build_whole before it.
+	build_whole = true
 	reset_folder(DIFFERENT_BUILDS_FOLDER) or_return
 	all := make([dynamic]Distinct_Results)
 	defer {
@@ -337,6 +345,7 @@ outputs_same_after_second_build :: proc() -> bool {
 // option that writes the line program must change no byte of the module
 // (docs/MODULE_CONTRACT.md, "Debug information").
 modules_same_without_debug_information :: proc() -> bool {
+	build_whole = true
 	debug_information = false
 	module_build_folder = MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION
 	built := build_modules_in_parallel()

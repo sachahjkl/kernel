@@ -22,7 +22,7 @@ A developer tool (`GLOSSARY.md`) shows how the system runs. It reads reports of 
 | "Names and lines", "The debugger: the design" | How an address becomes a procedure and a source line, and the debugger that is designed |
 | "What `inspect` does not read: the bytes of another program", "The cost" | The limit of the grant, and the price of a sample |
 | "The comments of the sources", "The form of a documented comment" | The rules that the tool checks on every comment, and the form of a comment that the site and the console show |
-| "The commands of the tool" | The commands of `kerneltool`, the parts of the machine test that `kerneltool test` runs alone, the times of a test, and how the tool sends input and waits |
+| "The commands of the tool" | The commands of `kerneltool`, the parts of the machine test that `kerneltool test` runs alone, the times of a test, the incremental build, and how the tool sends input and waits |
 | "The bounds of the tests" | How a test waits, and why no test asserts a speed |
 
 ![The program inspect: the address space of the console as a band scaled by pages, its mappings, its modules and its threads](screenshots/inspect.png)
@@ -284,15 +284,15 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 
 | Command | What it does |
 |---|---|
-| `build [processes]` | Builds the modules, the boot images and the boot programs: the usual one, and one for each volume that a test needs (a start that fails, a shortage of frames, the volumes of the trusted boot that the boot program must refuse, the volumes of Secure Boot, one for each self test of the kernel) |
+| `build [whole] [processes]` | Builds the modules, the boot images and the boot programs: the usual one, and one for each volume that a test needs (a start that fails, a shortage of frames, the volumes of the trusted boot that the boot program must refuse, the volumes of Secure Boot, one for each self test of the kernel). It keeps each module and the boot volumes when their inputs are the same; `build whole` keeps nothing ("The incremental build") |
 | `module <name> ...` | Builds one module of the table, and its debug object. The parallel build runs it; run it by hand to see the errors of one module alone |
 | `run [without_checks]` | Builds, then starts the machine under QEMU in a window, with the log of the kernel on the terminal. The data disk stays from run to run. It starts the peer that takes the calls of `kerneltool call` |
 | `call <key> "<call>"` | Calls an export of a service of the machine that `run` started, through the program `remote` over QUIC, and prints the typed result |
 | `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "kerneltool: all tests passed", then the times of the test (below) |
 | `measure ...` | A machine that measures with no other load: the locks, `scheduler N`, `windows`, `address_space`, `shortage`. The numbers are measures, never conditions |
 | `screenshots` | The whole test and a second build, then the measure record and the copy of the pictures to `docs/screenshots` and to the development log. `screenshots compress` compresses the PNG files that are stored with no compression |
-| `check` | `odin check -vet` and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the changelog, the news), then `test` and a second build that must give the same bytes |
-| `repeat <module> <count>` | Builds one module again and again, with no machine, and counts the distinct results (`docs/REPRODUCIBLE_BUILD.md`) |
+| `check` | `odin check -vet` and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the changelog, the news), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
+| `repeat <module> <count>` | Builds one module again and again, with no machine, and counts the distinct results (`docs/REPRODUCIBLE_BUILD.md`). Each of its builds is a whole build |
 | `site` | Writes the site in `build/site/` |
 | `changelog ...`, `news ...`, `release_number` | The fragments of the changelog and its releases, the news entries, the number of the newest release |
 | `key new <folder>`, `key show` | The key that signs the system description |
@@ -367,6 +367,47 @@ One run of `kerneltool test main`, before the tool sent its input in batches, is
 | Pictures (`Shot`) | 66 | 41.2 s: the fixed wait 26.5 s, the `screendump` 6.6 s, the conversion to PNG 8.1 s |
 
 About 400 s of the 478 s were pauses of the tool, not work of the system.
+
+### The incremental build
+
+A build keeps the outputs of an earlier build when their inputs are the same. The rule that makes it sound is the rule of the reproducible build: the same inputs give the same bytes (`REPRODUCIBLE_BUILD.md`, "The incremental build and the same bytes"). A kept module that is not the module of its sources is a wrong system, so the tool keeps an output only when it can prove each input, and builds in every case of doubt.
+
+**The inputs of a module.** The tool does not guess them: the compiler writes the list of the files that it read (`-export-dependencies:json`, in `build/modules/<name>/dependencies.json`).
+
+| Input | How the tool knows it |
+|---|---|
+| The source files of the module and of each package that it imports, to any depth: the folder of the module, `contract:`, `support:`, and the libraries of the compiler (`base:`, `core:`) | The list of the compiler; the tool hashes each file |
+| The files of `#load` | The same list |
+| Every other file of the folder of each of these packages | The tool lists each folder. A file that the compiler did not read becomes a source with no change of a listed file in one way only: it is in such a folder (a new file, or a file whose build tag now admits the target) |
+| The assembly files that the module links: `runtime/memory.asm`, the `.asm` files of its folder, and those of `support/system` for a program | The tool lists them as the build does |
+| The module file of each import of the module table | Its hash at the time of the key: the hash of an import is in the import table of the module |
+| The command of the compiler and the command of `llc`, with each flag: the checks of the kernel, `-debug`, the settings of the module, the features of the target | The text of the two commands (`module_compile_command`, `module_object_command`) |
+| The programs `odin`, `llc`, `nasm` and `ld.lld` | The path of each file after each link, its size and its time. In the store of Nix the path holds the hash of the package |
+| The tool | One hash over every file of `tools/kerneltool` and of each package of the repository that it imports, to any depth. The code that builds a module is in the tool. The executable of the tool is not the identity: two builds of the tool do not give the same file |
+
+**The build key and the build record.** The build key of a module is one BLAKE3 hash over these inputs, each list sorted. After the tool built a module, it writes its build record, `build/modules/<name>.build_record`: a text file with the key, the hash of each output that a later step or a test reads (the module, its debug object, the linked file), and the list of the compiler. The build with no debug information has its own records in its own folder.
+
+**When a module is kept.** At the next build the tool hashes each file of the source folders of the repository one time, on several threads, before the first compiler starts. For each module it computes the key again, from the files of the recorded list as they are now. The module is kept, with no process, when the three conditions hold:
+
+1. the record is there and has its form;
+2. the key is the same;
+3. each output is there with its recorded hash.
+
+In every other case the module is built: no record, a damaged record, a changed or a missing input, a changed or a missing output. A damaged record is never an error. The tool decides for a module after its imports were built or kept. It prints one line with the count, for example "kerneltool: 81 of 84 modules kept, 3 built: console (an input changed), ...".
+
+**When no record is written.** The tool writes no record for a module when the compiler gave no list, or when it cannot prove that the hash and the compiler read the same bytes: an input file must be older than the start of the build by one second, and its size and its time must be the same after the build. A file that was saved during the build, or in the last second before it, costs one more build of its modules.
+
+**The boot volumes.** The 18 boot volumes and the variable store of Secure Boot have one build record, `build/boot_volumes.build_record`. Its key covers the three boot images, the debug image and the two kernels as they are now, the sources of the boot program (the list of its compiler, with the same rule of the folders), its assembly files, the test keys, the programs that build and sign, and the tool. Its outputs are each volume, its boot image, the boot program and its object, and the variable store. With the signing key of the publisher of the system (`SYSTEM_SIGNING_KEY`), the volumes are never kept, and the tool never hashes that key.
+
+**What runs at each build.** The debug image, the pointer themes, the glyph caches and the three boot images are built at each build: each one reads outputs of the modules or files of the repository, and its time is in the measure.
+
+**How to force a whole build.** `kerneltool build whole` ignores every record, builds each module and each boot volume, and writes new records. The commands that prove the build always build whole, with no option: `check`, `screenshots` and `repeat`, and the two procedures of the second build set it themselves, so no caller can compare two builds of which one kept its outputs. `nix flake check` builds in an empty folder, with no record.
+
+**What costs a whole build.** A change of a file of `tools/kerneltool`, or of a package that the tool imports, changes the identity of the tool, so every module is built again: a scenario of a machine test is such a file. A change of the compiler or of a program of the build does the same. A change of a file of a package builds again each module that imports the package, also when the file is a host test that a build tag leaves out.
+
+**The measure.** Each `build` prints its measure, lines that start with `kerneltool: measure: the build`: the whole time, the time of the hash of the input files with their count and their bytes, the time of the modules with the count of the modules built and kept (and in it the checks and the writes of the records), then one line for each later step: the debug image, the pointer themes, the glyph caches, the three boot images, the boot volumes, and inside the boot volumes the signed boot images, the compiler of the boot program, the link, and the volume files. Each number is a measure: nothing reads one.
+
+One whole build before the incremental build, on a host with 16 processors, read in the times of the files that it wrote: 83 s from the first LLVM IR file to the last module (84 modules, one compiler process for each processor), under 1 s for the debug image, the pointer themes and the three boot images, then 51 s for the 18 boot volumes, one after the other, 2.8 s each.
 
 ### How the tool sends input and waits
 
