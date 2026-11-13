@@ -181,6 +181,14 @@ Thread :: struct #align (64) {
 	// Written under the program lock, while the thread is held or to clear
 	// it (atomic: a switch and a debug exception read it).
 	has_breakpoints:  bool,
+	// The set `processors` below does not hold every processor of the
+	// machine: a processor that takes the thread from the queue of another
+	// one, the processor that the thread leaves, and a waker that looks
+	// for an idle processor then read that set. It is in this line so
+	// that a thread with no placement costs these paths one test of a
+	// byte that they have already, and no read of another line. Written
+	// with `processors`.
+	placement_restricted: bool,
 	frame:        Frame,
 	extended_state: Extended_State_Area, // Complete while the thread is on no processor: schedule saves it when a processor leaves the thread, and restores it when a processor takes it (docs/ARCHITECTURE.md, "The extended state of the processor").
 	program:      u32,
@@ -259,10 +267,25 @@ Thread :: struct #align (64) {
 	// Written under the run lock of home (atomic: a diagnosis reads it
 	// with no lock).
 	weight_limit: u32,
+	// The placement of the thread (docs/SCHEDULING.md, "The placement of a
+	// thread"). `processors`: bit n says that the processor n can run the
+	// thread; never 0, and only processors that the machine has. Read
+	// only when placement_restricted is true, so it is not in the hot
+	// line. `processors_limit`: the most that `processors` can be; only a
+	// write of the placement through the machine handle changes it, and a
+	// new thread gets the limit of the thread that creates it. Both are
+	// written at the creation, then under the run lock of home by a write
+	// of the placement (atomic: a waker and a creation read them with no
+	// lock).
+	processors:       u64,
+	processors_limit: u64,
 }
 
 #assert(offset_of(Thread, placed) < 64)
 #assert(offset_of(Thread, has_breakpoints) < 64)
+#assert(offset_of(Thread, placement_restricted) < 64)
+// One bit of a set of processors for each processor that runs threads.
+#assert(PROCESSOR_CAPACITY <= op.PLACEMENT_PROCESSOR_CAPACITY)
 #assert(offset_of(Thread, frame) == 64)
 
 // word_address gives the physical address of a 32-bit word of a program,
@@ -1354,8 +1377,11 @@ thread_free :: proc "contextless" (thread: ^Thread) {
 // 0 gives the weight limit and the default request (docs/SCHEDULING.md).
 // weight_limit is the limit of the thread that creates this one: a
 // program does not leave a limit by a new thread, or by the first thread
-// of a program that it starts. The caller holds the control lock.
-thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, stack, parameter: u64, weight: u64 = 0, request: u64 = 0, weight_limit: u32 = op.WEIGHT_FULL) -> (index: u32, status: op.Status) {
+// of a program that it starts. processors_limit is the limit of the
+// placement of that thread, for the same reason: the new thread gets it
+// as its set of processors and as its limit; 0 is every processor. The
+// caller holds the control lock.
+thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, stack, parameter: u64, weight: u64 = 0, request: u64 = 0, weight_limit: u32 = op.WEIGHT_FULL, processors_limit: u64 = 0) -> (index: u32, status: op.Status) {
 	// The first instruction and the stack are in the half of the addresses
 	// of a program. The processor refuses to return to an address that is
 	// not canonical, and it refuses in the kernel, after the kernel loaded
@@ -1429,6 +1455,17 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 	thread.weight_limit = weight_limit
 	thread.weight = weight == 0 ? weight_limit : u32(weight)
 	thread.request = request == 0 ? op.REQUEST_DEFAULT : u32(request)
+	// The limit of a thread that lives is never empty and holds only
+	// processors of the machine; 0 here is the first thread of the root
+	// service, or a caller with no limit to give.
+	every_processor := machine_processors()
+	placement_limit := processors_limit & every_processor
+	if placement_limit == 0 {
+		placement_limit = every_processor
+	}
+	thread.processors = placement_limit
+	thread.processors_limit = placement_limit
+	thread.placement_restricted = placement_limit != every_processor
 	thread.frame = {
 		rip    = entry,
 		cs     = SELECTOR_USER_CODE,

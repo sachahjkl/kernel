@@ -8,11 +8,11 @@ Status: built. The kernel runs three strategies (`kernel/strategy.odin`), and th
 
 **Read before.** `ARCHITECTURE.md`, "K3. Scheduler" and, for the locks, "Rules that keep each path correct". After this guide, the picture of the program `scheduler`.
 
-**The map of this note.** "1. What Linux does" describes CFS, EEVDF and `sched_ext`. "2. What this system takes" gives the six procedures of a strategy, and the weight and the request that a program sets for a thread. "3. Design details" gives the virtual time, the queue clock and the lag. "4. Measured" and "5. What this system refuses, and why" close.
+**The map of this note.** "1. What Linux does" describes CFS, EEVDF and `sched_ext`. "2. What this system takes" gives the six procedures of a strategy, the weight and the request that a program sets for a thread, and the placement of a thread on the processors. "3. Design details" gives the virtual time, the queue clock and the lag. "4. Measured" and "5. What this system refuses, and why" close.
 
 ![The scheduling strategies side by side, with the wakes, the delay of a wake, the shares of spinners with weights, and the strategy in use](screenshots/scheduler.png)
 
-This note says what the three Linux designs do, which ideas this system takes, which it refuses, and why. The terms are in `GLOSSARY.md`: strategy, weight, virtual time, lag, eligible, virtual deadline, request, thread schedule, machine number, wake preemption.
+This note says what the three Linux designs do, which ideas this system takes, which it refuses, and why. The terms are in `GLOSSARY.md`: strategy, weight, virtual time, lag, eligible, virtual deadline, request, thread schedule, thread placement, machine number, wake preemption.
 
 Sources. The EEVDF and `sched_ext` paragraphs were checked against the kernel documentation (`docs.kernel.org/scheduler/sched-eevdf.html` and `sched-ext.html`, read on 2026-11-11). The constants of CFS and the details of the Linux code (the names of fields, the clamp of the lag) are from memory of the Linux sources: they are not checked against a source.
 
@@ -167,7 +167,7 @@ Two limits of the weight limit, which a limit for each budget closes:
 - The limit is a value of each thread. A thread that a program created just before the write of the limit of its creator keeps the limit that the creator had then, and it gives that limit to the threads that it creates. So "a program under a limit stays under it" holds when each thread of the program has the limit. The holder of **Schedule** writes the limit of each thread of the program, reads the thread report again, and repeats until no thread has the old limit.
 - The limit follows the thread that starts a program. A program that starts programs on request, and that has a higher limit, gives that higher limit to the programs that it starts, also when a program under a lower limit asked for them.
 
-What the limit is not: a share for a program. A program under a limit that creates more threads has more threads of that weight, as a program with the full weight has. A share for each budget is the next layer (section 5).
+What the limit is not: a share for a program. A program under a limit that creates more threads has more threads of that weight, as a program with the full weight has. A share for each budget is a policy of the program `scheduler`, with these weights (section 5).
 
 **The machine number.** A thread number names a thread inside its program. The machine handle needs a name for any thread: the thread report of `Inspect` (`Inspect_Kind.Threads`) gives the machine number of each thread (`Thread_Report.machine_number`). Its low 32 bits are the place of the thread in the thread table of the kernel. Its high 32 bits are the serial of the thread in that place, which changes for each new thread there. The kernel compares the serial under the control lock, where no place gets a new thread. So the machine number of a thread that ended gives `Bad_State`, and never names a later thread.
 
@@ -183,7 +183,112 @@ The interleavings with a pick, a move, a wake, the end of a thread and a change 
 
 One test reads the place of a held thread. The thread report gives the kept lag of a held thread (`Thread_Report.lag`). In at least 100 rounds a spinner lowers to the weight 1, runs one tick (a count of the kernel), and a `Stop` holds it. In the hold its write of the full weight must be refused, its write of the request 1 us accepted, and the lag must be the same number after each; then the machine handle writes the full weight, and the lag must be 0. The rounds go on until one round had a lag below 0, so the test cannot pass with nothing to compare; if that state never comes, the test fails and says so. The conditions are numbers of the kernel, with no time in them. The test does not measure processor time, and no machine test asserts a share or a longest wait after writes: such a condition depends on the load of the host.
 
-**Not built.** The placement of a thread on the processors, and a share for each budget. Section 5 says what each one needs.
+**Not built in the kernel.** A share for each budget: section 5 says why. The placement of a thread on the processors is the next subsection.
+
+### The placement of a thread
+
+The placement of a thread is the set of the processors that can run it. It is the second layer of the policy that a program holds, after the thread schedule: a program chooses the set, at a slow rate, and the kernel applies it at each pick. A thread that never gets a placement can run on each processor, and is scheduled as before.
+
+The values of one thread are its thread placement (`op.Thread_Placement`: `processors`, `processors_limit`). A set of processors is a `u64`: bit `n` is the processor `n` of the processor report. `Thread_Control` has two commands for a thread that lives:
+
+| Command | What it does |
+|---|---|
+| `Read_Placement` | Writes the thread placement at the address of the caller. Each set holds only processors that the machine has, and is never 0 |
+| `Write_Placement` | Reads a thread placement at the address of the caller: only the processors of the set run the thread from now on |
+
+The thread is not held: its placement changes while it runs, while it is in a run queue, while it waits, and while a stop holds it.
+
+**The rule.** Who writes decides what a write can do, as for the schedule (`op.thread_placement_after_write`).
+
+| Who writes | The set | The limit | What happens |
+|---|---|---|---|
+| The program, for its own thread (`thread` 0), or the holder of a thread handle with **Control** | Only a part of the set that the thread has, or the same. 0: the same | Not read | If the home of the thread left the set, the thread moves |
+| The holder of the machine handle with **Schedule** and **Inspect** | Any set. 0: the limit. The part outside the new limit is dropped | Written. 0: every processor | The same |
+
+- The bits of processors that the machine does not have are dropped, so a writer can give all ones.
+- A write through the machine handle always gives the two sets, as its write of a schedule always gives the three values: 0 is a default, never "the value that the thread has". The set 0 is the whole limit, as the weight 0 is the weight limit. So a write of the holder with the set 0 undoes a narrowing that the program made, also one that the program made between the read and the write of the holder. A holder that changes the limit and keeps the set reads the placement first and writes the set that it read; a narrowing of the program between the two is then lost, and the program can narrow again. Only for a program is 0 "the set that the thread has", because a program cannot name a wider set.
+- A write of a program with a processor that the set of the thread does not have gives `Bad_Operation`, and nothing changes. The error record names the refused set and the set that the thread has (`Thread_Write_Refusal.Processors`).
+- A set with no processor of the machine, and a set with no processor inside its limit, give `Bad_Operation` for each writer. A thread with no processor never runs: that is `Stop`, which has its own right. The kernel does not change a set that it cannot take into another one: that hides a mistake of the writer.
+- A limit with no processor of the machine gives `Bad_Operation` (`Thread_Write_Refusal.Processors_Limit`).
+- A thread that ended, or that ends, gives `Bad_State`.
+- The three ways to name a thread and their rights are the ones of the schedule: its own thread by number; a thread handle, with **Inspect** to read and **Control** to write; the machine handle with **Schedule** and **Inspect** and the machine number of any thread. A holder that can end a thread can also give it fewer processors, which is less.
+
+**The limit.** Each thread has a limit: the most that its set can be. It works as the weight limit.
+
+- Only a write through the machine handle sets the limit. A write of a program does not read the limit of the record: it only narrows, so it never passes the limit.
+- A new thread gets the limit of the thread that creates it, as its set and as its limit. The first thread of a new program gets the limit of the thread that starts the program. The first thread of the root service has every processor.
+- `Thread_Create` has no argument for a set. A program that wants a narrow new thread writes its placement after the creation. The thread can run one turn on the wider set first; the set is the choice of the program, so nothing depends on that turn.
+- The set and the limit are two values because they are two things. A set that a thread chose for itself is a choice of speed; a limit is a policy. With one value, a service that keeps its own thread on one processor gives that one processor to each program that it starts.
+
+**Where a thread goes.** The home of a thread is in its set, or the thread is on the processor of its home. Each path keeps this:
+
+| The state of the thread at the write | What the write does |
+|---|---|
+| In the list of its home, and the home left the set | The thread moves at once to the list of a processor of the set, under the run locks of the two processors |
+| In a wait, or held by a stop | The thread is in no list. It gets a home in the set at once. The wake or the `Resume` puts it in that queue |
+| On a processor that left the set | The write stores the set. The thread moves when it leaves that processor: at the end of its turn at the latest, which is one time slice. If the writer is the thread itself, its turn ends at the end of that kernel entry |
+
+- The target is the processor of the set with the least load (the threads in its queue, plus 1 if it runs a thread), the lowest number among equals. The kernel reads the loads with no lock: the choice is a hint, on a path that is not hot.
+- A processor that takes a thread from the queue of another processor takes the best thread among those that it can run. A waker that looks for an idle processor passes over a processor that cannot run the woken thread.
+- A write that gives a processor to a thread that stays in the list of its home makes the processors look at that list: an idle processor that the set has now takes the thread. Without this the thread shares its old processor while the new one is idle, because the end of a turn wakes no processor. Only the holder of the machine widens a set, so no program commands these wakes. A thread that runs when its set gets a processor is not helped by that look: it stays on its processor.
+- The write sends no interrupt to a processor that runs a thread. An interrupt ends the turn of the thread that runs on its processor when it arrives, and that thread can be a thread of another program, which then pays for it. A holder that must know when the thread left its old processor reads the thread report (`Thread_Report.processor`, `home`).
+- The allowed processors can all be busy while others are idle. The thread then waits in the queue of its home. The processor of the home picks in its own queue when no other queue has a load above the count of its own queue, and the thread then gets its turn by the strategy of that queue, as each thread of that queue. The wait has no bound: while another queue has a higher load at each pick of that processor, the processor takes a thread from that queue and not from its own. A stream of threads that are created, run and end can keep it so, and the thread then never runs. This rule of the balance exists without the placement, and a thread with no placement has the same wait when no other processor takes it; a placement takes away the processors that can take the thread, so the thread that pays is the thread with the placement. The rule of the balance is not changed here. Who can cause the placement: the program for its own thread; the holder of a thread handle with **Control**, which can also end the thread; the holder of **Schedule**, which already orders every thread. No program with no handle causes it to a thread of another program.
+
+**Why no history is converted.** A place of a thread in its queue is a history, and the rule of the schedule exists because a program must not choose the moment and the direction of a change that the strategy converts. A placement converts nothing. No strategy code is new, and each procedure that runs for a thread that changes its queue keeps what the thread owes: the fair strategy keeps the distance of the thread to the queue clock, and EEVDF keeps its lag. A thread that leaves its processor is moved by `move`, the procedure that the balance runs for each thread at each pick from another queue. A thread that a write takes from a list leaves that list as a thread that a `Stop` takes out of it (`strategy_leaves_list`), and enters the new list as a woken thread, as after the `Resume`. The reason for the second form: `move` under EEVDF takes the average of the queue with the thread, and a thread of a list whose budget has no time in this period is not in that average. The balance never takes such a thread; a write can. The lag of that thread, taken by `move`, is its distance to the average of the other threads, which is too large by the factor `(W + w) / W` (`W` the weights of the others, `w` its own), and is the distance to the queue clock, not 0, when the queue has no other thread. `strategy_leaves_list` takes the lag from the average of the other threads times `W / (W + w)`, and 0 with no other thread: the exact value, with no read of the budget. For a thread whose budget has time the two forms give the same lag. A thread that waits, or that a stop holds, keeps the one relative value that it has already, which has its meaning in each queue of the same strategy. Between two queues of two strategies, during a change of strategy, the fields of the thread are cleared, as the balance clears them. So nothing that a thread owes is forgiven by a move: a thread that owes time owes it in its new queue.
+
+A program only narrows the set, so the direction of its writes is one. One thread commands fewer moves in its life than the machine has processors. Each of these moves is the move that the balance makes for each thread, many times a second, or the pair of a `Stop` and a `Resume`. A program cannot narrow, widen and narrow again to choose a queue at each moment: only the holder of the machine widens.
+
+**What an honest thread can lose.** An honest thread here is a thread with no placement. Its cost, path by path:
+
+| Path | What changes for a thread with no placement | Bound |
+|---|---|---|
+| The pick in its own queue | Nothing: the processor of a queue takes each thread of its list with no test of a set | |
+| A pick from another queue | One test of one byte of the hot line of each thread passed over. A thread with a placement passed over costs one more line | The thread table has 256 places |
+| The balance | A processor that finds no thread that it can take in the busiest other queue tries the next busiest one, while its load is above the own count | At most one pair of run locks for each other processor in one pick, where it was one pair. Each queue is tried one time in a pick, the queue of a hint too, and each thread is in one list: one pick passes over each list one time at most (a pick of EEVDF reads a list in three passes) |
+| A wake | A waker that looks for an idle processor tests one byte of the hot line of the woken thread | No lock, no other line |
+| The end of a turn | One test of one byte of the hot line, under the run lock that the path holds | No second lock |
+| The share in a queue | A thread with a placement takes a place in the queues of its set only, and gives up the other processors | Below |
+
+The balance tries more than one queue because of a fault that exists without any placement: a queue of threads whose budget has no processor time is the busiest queue for ever, and each other processor that tried only that queue took nothing, and went idle while threads waited in a third queue. The same happens with a queue of threads that the processor cannot run. The loop closes both.
+
+The share, case by case:
+
+- **Threads with a placement in the queue of an honest thread.** Another processor with less load takes from that queue the best thread that it can run. The threads that it cannot run are not candidates, so the honest thread is taken first.
+- **A thread with a placement alone on its processor.** It has no exclusive use of that processor: at each pick the processor compares the load of the other queues with its own count and takes a thread from another queue.
+- **A program that keeps all its threads in one queue.** A program does the same with no placement: each new thread starts in the queue of its creator. The honest thread of that queue is taken by the other processors as above.
+- **An honest thread that the holder of Schedule restricted.** It shares its processors with each thread that can run there. That is the policy of the holder, not a gain of a program.
+
+No sequence of writes gives processor time: a placement changes no weight, no budget, and no strategy field but through `move`. The balance is a rule of counts and not an optimum, so this is an argument on each path, not a proof of an optimal share.
+
+**Side channels.** Two programs that run on the same processor share its caches and its predictors, and one can learn from the timing what the other does. The holder of **Schedule** writes limits with no common processor to the threads of two programs. After the writes, and after one time slice for a thread that ran, no thread of one program runs on a processor of the other. A new thread and a started program get the limit of their creator, so each program stays inside its limit.
+
+Two limits of the balance, which the placement does not change:
+
+- A processor counts each thread of its own queue as its own load, also the threads that it cannot run now because their budget has no time in this period. A processor whose queue holds 5 such threads takes no thread from a queue with a load of 5 or less, and can be idle while threads wait there. The loop over the other queues does not close this.
+- The end of a turn wakes no processor. A thread that goes back to its list while another processor is idle waits there until a wake, a write that widens its set, or the pick of a processor that runs a thread.
+
+What the placement does not give:
+
+- **The processors of one core.** The kernel does not know which processors are siblings of one core: it reads the processor numbers from the tables of the machine, and no topology. `Processor_Report.apic_id` gives the number of each processor. The holder can find the siblings itself: it places its own thread on each processor in turn and reads the topology there with the instruction `cpuid`, which is not privileged. The topology stays in the policy, outside the kernel.
+- **The cache that all the cores share.** The last-level cache stays shared: a set of processors does not divide it.
+- **A thread created just before the write of a limit.** The limit is a value of each thread. A thread that a program created just before the write of the limit of its creator keeps the limit that the creator had then. The holder writes each thread of the program, reads the thread report again, and repeats until no thread has the old limit.
+- **A starter with a wider limit.** A service that starts programs gives its own limit to them. To start a program inside a limit, the service starts it from a thread that has that limit.
+- **One time slice.** A thread that runs when its set changes can run up to one time slice more on its old processor.
+- **The work of the kernel.** The interrupts and the tick run on each processor for all the programs.
+
+A program can keep its own thread on one processor where a thread of another program also runs. This is not a new capability: a program with one thread for each processor is on each processor already. The limit that the holder writes is the control.
+
+**What a write does in the kernel.** The operation holds the program lock of the thread, so two writes of one thread never run together. It computes the new set, reads the home of the thread, chooses the target, and takes the run locks of the home and of the target in the order of the processors (`thread_placement_write`). If another processor took the thread from its list in between, the home changed: the locks are freed and the choice starts again. Under the locks it writes the set, the limit and one byte of the hot line of the thread (`placement_restricted`: the set does not hold every processor), and moves a thread that is on no processor. After the locks are free, a thread that entered another list, or that stays in its list with a set that got a processor, makes the processors look at that list (`kick`). A thread on a processor is moved by its own processor (`schedule`), under the same two locks. The interleavings are in `ARCHITECTURE.md`, "Locks of the kernel", "The placement of a thread".
+
+**The tests.** The program `scheduler` checks, with values that the kernel gives and no time: a thread reads its placement, keeps one processor, and each report of it then has that processor as its home and as its processor; each refusal has its status and its error record, and a refused write changes nothing; under a limit, 1000 rounds of writes of the thread never give a set outside the limit, and a new thread has the limit as its set, as its limit and for its first queue; a set without the home of a thread that waits, that a stop holds, that is in a list and that runs: a report shows the thread inside the set, and no later report shows it outside; two groups of spinners whose limits share no processor: no report shows a spinner on a processor of the other group, and each processor ran a spinner of its group; a queue of spinners that only one processor can run, and then a queue of threads of a budget with no processor time, is the busiest queue, and a spinner that waits in another queue is still taken by another processor; a spinner in the list of a busy processor whose set gets one more processor is then reported on that processor; writes of placements during 100 changes of strategy lose no thread. The test build of the kernel stops the machine if a thread enters the list of a processor that is not in its set (`TEST_BUILD_CHECKS_PLACEMENT`: off in the source, and the kernel tool turns it on in the test build only). The host tests of `contract/operation` check the rights of the two commands and each rule of `thread_placement_after_write`. The machine of the test has 4 processors; a case that needs more processors than the machine has says so and checks nothing.
+
+What the machine tests do not cover:
+
+- The inheritance at `Program_Start` has no machine test: the program `scheduler` starts no program. The case of the two groups uses threads of one program, each group created under its limit. The code of the two inheritances is one argument of the same procedure.
+- A thread handle that another program holds has no machine test. The case of the refusals gives a copy of a thread handle with **Inspect** only to its own program; the path in the kernel is the same for a holder in another program, but for the control lock.
+- The refusal of the program handle with **Debug** (`Bad_Handle`) for the two commands has a host test of the rights only. A machine test of it belongs to the program `debugged`, which holds such a handle.
+- The case of the balance fails when the balance tries the busiest queue only, unless a thread of another program wakes with the processor 1 as its home while a processor of the case is idle: that wake names the queue of the processor 1 as a hint. In the case no processor of this program is idle: each processor from 2 runs a spinner of its own, whose end of turn is the pick that must pass the busiest queue.
+- The case of the widened set passes without the look that the write asks for when a thread of another program makes the processor 1 pick: the case cannot keep the other programs of the machine still.
 
 ### The change of strategy is a kernel operation with a right
 
@@ -253,6 +358,6 @@ Each item is an idea of Linux that the system does not take, or does not take ye
 - **A tree for the queue** (CFS, EEVDF): refused for now. A scan of a small queue in one table is fewer lines (property 13); a measure decides when a queue becomes large.
 - **The nice value**: refused. A weight is a number from 1 to 1024 that a program can only lower (property 20), not a level that a privileged program raises.
 - **A program of the principal as the strategy** (`sched_ext`): not built. The kernel must stay off the hot path (property 5) and must not run code that it did not verify; a program that answers each pick through a ring puts a round trip between programs on each switch. What it needs: (1) a form of strategy code that the kernel can check before it runs it: a small language of callbacks over the fixed fields (a verifier, as BPF), or a module that the kernel runs only after a proof of bounded time and of the fields that it reads and writes; (2) the six callbacks, which are already the whole interface; (3) a watchdog: a thread that is ready and does not run for a time ends the strategy, as the kernel of Linux does; (4) the fallback: `Strategy_Set` to round robin, which already works without a stop; (5) a right: the same right `Schedule` on the machine. What exists for it: the six callbacks, the state in fixed fields that a strategy owns and that a change resets to zero, the change at run time without a stop, and the counts that a watchdog reads.
-- **Groups** (the CFS groups, the cgroups of Linux): not built. A share for each budget needs a virtual time for each budget in each queue: a strategy can add it with the same six procedures. It is the next layer of the policy that a program holds, after the schedule of a live thread: a program with the right would write the weight of a budget as it writes the weight of a thread.
+- **Groups** (the CFS groups, the cgroups of Linux): not built in the kernel. A share for each budget is a policy of the program `scheduler`: it reads the thread report of each program and writes the weight of each thread through the machine handle (`Write_Schedule`), so that the weights of the threads of one program sum to the share of the program. The kernel needs no change for it. The form in the kernel that gives as much divides the weight of a group between the queues by the load of the group in each one: a sum that each processor writes at each entry of a thread in a queue, which property 13 forbids, and a weight that changes while the strategy keeps a history, which the rule of the schedule removed. The smaller form in the kernel, one fixed weight of a group in each queue, gives a program with one thread less than the policy of the program gives (by arithmetic on the rules of the code, 4 processors, one thread against a program of 32 threads: 0.50 of a processor against 0.80; not measured). The policy is not written yet.
 - **The deferred dequeue of Linux** (a sleeping thread stays in the queue so that its lag decays): refused. It keeps a thread that waits in a structure of threads that are ready; here the lag is clamped at the sleep and the change of strategy resets it.
-- **Per-thread affinity**: not built. A move keeps the virtual time or the lag; the balance stays the one of the lock split. The placement of a thread on the processors is a layer of the policy that a program holds, as the schedule of a live thread is: a set of processors for a thread, which the pick and the move of each queue would read. No command writes it yet.
+- **Per-thread affinity as a hint of speed that a program raises and lowers at will**: refused. The placement of a thread is built ("The placement of a thread"): a set of processors for each thread, which a program only narrows and which the holder of **Schedule** writes with a limit. A move between two queues keeps the virtual time or the lag, as the balance does.

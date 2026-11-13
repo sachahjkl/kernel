@@ -853,7 +853,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-13. Decided by: the owner, on a design with numbers.
 - Decision: a share of processor time for each budget is not built in the kernel. By the arithmetic of the design (4 processors, a program with 32 threads against a program with one; not measured), the smallest kernel form gives the single thread 0.50 of a processor, and a policy that sets the weight of each thread of the large program through `Write_Schedule` gives 0.80, with no change of the kernel; the kernel form that gives as much writes a sum shared by the processors, against property 13. So the policy is written in the program `scheduler`, then measured. The placement of a thread on processors is built in the kernel.
 - Words: the owner chose "Politique dans scheduler".
-- State: decided; the policy is not written.
+- State: decided. The placement of a thread on processors is built; the policy is not written.
 - Where: `SCHEDULING.md`; `FIRST_MILESTONE.md`, "Next steps".
 
 ## 6. Storage

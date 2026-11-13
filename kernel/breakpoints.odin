@@ -163,7 +163,7 @@ thread_stops_release :: proc "contextless" (thread: ^Thread, count: u32) {
 	}
 	run_unlock(home)
 	if queued {
-		kick(home)
+		kick(home, thread)
 	}
 }
 
