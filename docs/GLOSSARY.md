@@ -291,7 +291,14 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 
 | Term | Definition | Do not use |
 |---|---|---|
-| Object | Bytes that never change, named by their hash (BLAKE3). A new content is a new object. An entry of a tree names an object; a write gives the entry a new object (P9, `docs/STORAGE.md`) | file, blob, inode |
+| Object | Bytes that never change, named by their hash (the hash of an object). A new content is a new object. An entry of a tree names an object; a write gives the entry a new object. On the disk an object is a block tree (P9, `docs/STORAGE.md`) | file, blob, inode |
+| Block tree | The blocks of one state of an object: its blocks of data, the block n with its bytes from n × 4096, and the object nodes above them. A state of one block has its block of data as its root (`docs/STORAGE.md`, "Large objects") | extent tree, block map, list of blocks |
+| Object node | One block of a block tree above the blocks of data: 64 children, each an object node of the level below, a block of data, or a hole, with the check, the count of blocks and the value of each | indirect block, extent node, node (for this: a node is of a tree) |
+| Hole | A part of an object whose bytes are all zero: nothing names it, it costs no block, and it reads as zero bytes. The storage service never writes a block of zero bytes: a write that leaves one makes a hole | sparse region, gap, zero block (for this) |
+| Value | The BLAKE3 chaining value of a part of an object, as a subtree of the BLAKE3 tree of its bytes, with zero bytes past its size; zero for a hole. The value of a block of data is its check; an object node holds the value of each child (`docs/STORAGE.md`, "The hash of an object") | digest, checksum, fingerprint |
+| Hash of an object | The name of an object: the BLAKE3 hash of its bytes, but a hole before its last block counts with the value zero. It comes from the values on the path of the last block, so a commit never hashes the whole object | content id, checksum (for this) |
+| Range | A count of bytes from an offset of an object. `read_range` reads one; `write_range` changes one as a pending change | extent (for this), segment, slice (for this) |
+| Pending change | A range write or a change of size that the storage service keeps for one connection until its commit: not on the disk, not hashed. Another change of the object first drops it; a loss of power loses it, and nothing else (`docs/STORAGE.md`, "Ranges") | dirty page, write buffer, uncommitted write, transaction (for this) |
 | Tree | An object that names other objects and trees: each entry has a name. A tree holds trees, so it fixes everything under it. On the disk each tree is a B+ tree of nodes, its own one (`docs/STORAGE.md`) | directory, folder, list (for this), manifest, catalog (for this) |
 | Entry | One name of a tree and what it names: an object or a tree. A name has 1 to 64 bytes, no zero byte, no byte `/`, and is not `.` or `..`: it is one step down, never up | directory entry, link, file name, path |
 | Node | One block of the B+ tree of a tree: a leaf of up to 24 entries, or a branch of up to 50 children | page (for this), bucket, inode |
@@ -302,11 +309,11 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Version | The state of the object of one entry at one commit: its bytes, its size, the generation and the time of that commit. Each commit that changes an object keeps the state before it as a version, in the version index of the object. The storage service keeps versions (P9) | snapshot (when it means one object), backup, revision, undo step |
 | Current version | The state of an object that its last commit made: what a read gives. It is not in the version index | head, working copy, latest revision |
 | Version index | The blocks of one object that list its versions: an index block, which names leaf blocks, which hold the version entries, the oldest first | history file, journal, log |
-| Shared block | A block that two lists or two versions name: an unchanged block of an object, or the blocks of a clone. The storage service counts it one time in the blocks of the store | deduplicated block, extent reference |
-| Reference count | For each block in use, the count of what names it: list entries for a block of data, versions and objects for a list. The storage service frees a block when its count goes to 0 | link count, refcount (in text) |
+| Shared block | A block that two states of objects name: an unchanged block or object node of an object and its version, or the blocks of a clone. The storage service counts it one time in the blocks of the store | deduplicated block, extent reference |
+| Reference count | For each block in use, the count of what names it: the object nodes that name a block of data or an object node, and the entries and versions that name the root of a state. The storage service frees a block when its count goes to 0, and its children then lose one name each | link count, refcount (in text) |
 | Thinning | A commit that removes versions of an object: by the retention rule, or the oldest version of the store when a change does not fit in the limit of the store. Its blocks that no other version names become free | garbage collection, pruning, cleanup, compaction |
 | Retention rule | Which versions the storage service keeps: each version for 10 minutes, then one for each hour for one day, then one for each day | backup policy, history limit |
-| Clone | A new entry that names the object of another entry, with its list: the two share each block until one of them changes (P9) | copy (for this), hard link, reflink |
+| Clone | A new entry that names the object of another entry, with its block tree: the two share each block until one of them changes (P9) | copy (for this), hard link, reflink |
 | Restore | A commit that makes a version the current version again. The current version before it becomes a version: nothing is lost | revert, rollback, undo |
 | Time since the format | The milliseconds of the storage service since the format of the disk: the root block keeps it at each commit. It is the time of a version until the system has a date | uptime, timestamp |
 | Snapshot | The tree that a store named at one commit. Not kept apart today: the versions are kept for each object (`docs/STORAGE.md`, section 1.3) | checkpoint, backup |
@@ -322,7 +329,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | History store | The store of the line history of the console in the storage service, apart from its private store: named after the console with `.history`, a limit of 4 blocks, and no grant to act for the principal. The root service gives the connection to it (`Root_Command.Connect_History`), with the grant `history` | shell history file, profile directory |
 | Base of the generations | In a machine test, the generation of one commit that a step `Generation` reads from the log: the steps after it name the generations that they wait for as the base and a count (`{generation+4}`), because other commits (the line history) come before | offset, delta |
 | Damaged object | An object with a block that a valid root block names and that does not have its check. The storage service does not give its bytes; a write or a remove replaces it. A private store with a node or a store block of that kind is a damaged store | corrupt file, bad sector |
-| Check | The first 8 bytes of the BLAKE3 hash of a block, kept in the block that names it. A block that does not have its check is wrong, and the storage service does not use it | checksum, CRC, digest |
+| Check | The first 8 bytes of the BLAKE3 hash of a block, kept in the block that names it; for a block of data, the first 8 bytes of its value at its place. A block that does not have its check is wrong, and the storage service does not use it | checksum, CRC, digest |
 
 ## Desktop
 

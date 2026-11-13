@@ -46,7 +46,7 @@ FILE_ADDRESS :: fixed_addresses.STORAGE_FILE_ADDRESS // Where the root service m
 ERROR_NO_STORE :: -1 // The caller has no grant of a store.
 ERROR_NO_BUDGET :: -2 // The store would have more blocks than its limit.
 ERROR_NAME :: -3 // A name is empty, too long, has a zero byte or a byte '/', or is "." or "..".
-ERROR_TOO_LARGE :: -4 // The object would have more than 32 blocks.
+ERROR_TOO_LARGE :: -4 // The data of a write of a whole object has more bytes than the call region; or an object would pass 4 TiB.
 ERROR_FULL :: -5 // No place for one more object or store, or no free block on the disk.
 ERROR_DISK :: -6 // The block service reported an error.
 ERROR_ABSENT :: -7 // The tree has no object with this name, or the place names no tree any more.
@@ -55,6 +55,7 @@ ERROR_NO_VERSION :: -9 // The object has no version of this generation.
 ERROR_ACTS_FOR_PRINCIPAL :: -10 // The call names another store, and the caller does not act for the principal.
 ERROR_EXISTS :: -11 // The tree has an entry with this name already.
 ERROR_PLACE :: -12 // The place is not a place of this connection, or the connection reads only.
+ERROR_PENDING :: -13 // The object has no pending change on this connection, or another change of the object came first.
 
 Client :: struct {
 	ring_memory:   system.Handle,
@@ -247,6 +248,78 @@ read :: proc "contextless" (client: ^Client, place: Place, name: string, result:
 	}
 	count := copy(result, text)
 	return result[:count], true, .Ok
+}
+
+// size gives the count of bytes of the object `name` under a place, with
+// the pending changes of this connection.
+size :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (bytes: i64, status: Status) {
+	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
+	bytes, _, status = call(client, "size", arguments[:], error)
+	return bytes, status
+}
+
+// read_range copies the bytes of an object from `offset` into result, up
+// to its end, as this connection sees it: with its pending changes. A hole
+// reads as zero bytes. bytes is empty at the end.
+read_range :: proc "contextless" (client: ^Client, place: Place, name: string, offset: u64, result: []u8, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: Status) {
+	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = offset}}
+	count: i64
+	text: []u8
+	count, text, status = call(client, "read_range", arguments[:], error)
+	if status == .Failed && count == ERROR_DAMAGED {
+		return nil, .Damaged
+	}
+	if status != .Ok {
+		return nil, status
+	}
+	if i64(len(text)) != count {
+		return nil, .Damaged
+	}
+	copied := copy(result, text)
+	return result[:copied], .Ok
+}
+
+// write_range writes data at `offset` of an object as a pending change of
+// this connection: no commit, no hash. The result is the size of the object
+// with the pending changes. commit makes the pending changes one commit.
+write_range :: proc "contextless" (client: ^Client, place: Place, name: string, offset: u64, data: []u8, error: ^errors.Error_Record = nil) -> (size: i64, status: Status) {
+	arguments := [4]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = offset}, {text = data}}
+	size, _, status = call(client, "write_range", arguments[:], error)
+	return size, status
+}
+
+// set_size makes the size of an object `size` bytes, as a pending change of
+// this connection: a cut, or an extension with zero bytes.
+set_size :: proc "contextless" (client: ^Client, place: Place, name: string, size: u64, error: ^errors.Error_Record = nil) -> Status {
+	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = size}}
+	_, _, status := call(client, "set_size", arguments[:], error)
+	return status
+}
+
+// What one commit of pending changes did: the row of the export commit.
+Commit_Measure :: struct {
+	generation:     i64,
+	object_blocks:  i64, // The blocks of the object, holes included.
+	held_blocks:    i64, // The blocks that the object holds: its object nodes and its blocks of data.
+	changed:        i64, // The blocks of data that the commit changed.
+	hashed_blocks:  i64, // The blocks of data whose bytes the commit hashed.
+	hashed_nodes:   i64, // The object nodes whose value the commit computed.
+	object_written: i64, // The blocks of the block tree that the commit wrote.
+	written:        i64, // Each block that the commit wrote.
+	milliseconds:   i64,
+}
+
+// commit makes the pending changes of this connection on an object one
+// commit, on the disk at the return. The measure says what it hashed and
+// wrote.
+commit :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (measure: Commit_Measure, status: Status) {
+	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
+	bytes: []u8
+	_, bytes, status = call(client, "commit", arguments[:], error)
+	if status == .Ok && len(bytes) >= size_of(Commit_Measure) {
+		measure = (^Commit_Measure)(raw_data(bytes))^
+	}
+	return measure, status
 }
 
 // open_tree gives the place of the tree `name` under a place.
@@ -458,6 +531,30 @@ version :: proc "contextless" (client: ^Client, place: Place, name: string, gene
 	}
 	count := copy(result, text)
 	return result[:count], .Ok
+}
+
+// One range of bytes that differ between two states: the row of the export
+// compare.
+Byte_Range :: struct {
+	first: i64,
+	count: i64,
+}
+
+// compare copies into `into` the ranges of bytes that differ between two
+// states of an object (two generations). total is the count of all the
+// ranges: more than len(rows) when they did not fit.
+compare :: proc "contextless" (client: ^Client, place: Place, name: string, first: i64, second: i64, into: []Byte_Range, error: ^errors.Error_Record = nil) -> (rows: []Byte_Range, status: Status) {
+	arguments := [4]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = u64(first)}, {integer = u64(second)}}
+	bytes: []u8
+	_, bytes, status = call(client, "compare", arguments[:], error)
+	if status != .Ok {
+		return nil, status
+	}
+	count := min(len(bytes) / size_of(Byte_Range), len(into))
+	for index in 0 ..< count {
+		into[index] = (^Byte_Range)(raw_data(bytes[index * size_of(Byte_Range):]))^
+	}
+	return into[:count], .Ok
 }
 
 // restore makes a version of an object its current version again, in one

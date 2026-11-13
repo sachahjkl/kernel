@@ -458,7 +458,7 @@ case_byte :: proc "contextless" (writer: ^system.Writer) -> bool {
 }
 
 case_limit :: proc "contextless" (writer: ^system.Writer) -> bool {
-	return storage_case(writer, "write", .Over_Limit, "large", "one block of data, and its list")
+	return storage_case(writer, "write", .Over_Limit, "large", "one block of data, in a store of two blocks")
 }
 
 case_size :: proc "contextless" (writer: ^system.Writer) -> bool {

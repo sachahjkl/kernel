@@ -15,6 +15,7 @@ import "contract:ring"
 import format "contract:store"
 import answers "support:storage"
 import "base:intrinsics"
+import block_tree "support:storage_object"
 import tree "support:storage_tree"
 import "support:principals"
 import "support:system"
@@ -265,9 +266,9 @@ named_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_R
 // ---------------------------------------------------------------------
 // The exports of objects.
 
-// write makes the object `name` under a place the bytes of data, in one commit on the disk. A new name is a new object. The state before becomes a version. At the limit of the store, the oldest versions of the store are thinned in the same commit. The result is the generation of the commit, or a negative number with an error record.
+// write makes the object `name` under a place the bytes of data, in one commit on the disk: a cut or an extension to the size of data, and a change of each of its blocks, as a commit of ranges does; a block that keeps its bytes keeps its block. A new name is a new object. The state before becomes a version. At the limit of the store, the oldest versions of the store are thinned in the same commit. The result is the generation of the commit, or a negative number with an error record.
 //
-// The error kinds: No_Grant (-1, the caller has no store; -12, unit Changes, the connection reads only); Absent (-12, unit Places: the place is not a place of this connection; -7, unit Places: its tree was removed or renamed; -7, unit Objects: the name is a tree); Over_Limit (-2, the current objects with the change need more blocks than the limit, with no earlier version kept); Empty, Too_Long or Bad_Byte (-3, the name has 1 to 64 bytes, no zero byte, no byte '/', and is not "." or ".."); Too_Long (-4, the data has more than 32 blocks); Full (-5, no place for one more store, or no free block; with the unit Commit_Blocks, the commit changes more blocks than one commit can); Device (-6); Damaged (-8, unit Stores: a node of a tree of the store has a wrong check; unit Counts: the counts of the store are not trusted after a fault of the service).
+// The error kinds: No_Grant (-1, the caller has no store; -12, unit Changes, the connection reads only); Absent (-12, unit Places: the place is not a place of this connection; -7, unit Places: its tree was removed or renamed; -7, unit Objects: the name is a tree); Over_Limit (-2, the current objects with the change need more blocks than the limit, with no earlier version kept); Empty, Too_Long or Bad_Byte (-3, the name has 1 to 64 bytes, no zero byte, no byte '/', and is not "." or ".."); Too_Long (-4, the data has more bytes than the call region holds: write a larger object by ranges); Full (-5, no place for one more store, or no free block; with the unit Commit_Blocks, the commit changes more blocks than one commit can); Device (-6); Damaged (-8, unit Stores: a node of a tree of the store has a wrong check; unit Counts: the counts of the store are not trusted after a fault of the service).
 @(export, link_name = "write")
 write :: proc "c" (place: i64, name: ^string, data: ^string, error: ^errors.Error_Record) -> i64 {
 	named, refused := named_of(place, name^, error, 1, true)
@@ -277,39 +278,32 @@ write :: proc "c" (place: i64, name: ^string, data: ^string, error: ^errors.Erro
 	return object_change(named.caller.store, path_names(&named.path), named.name, .Write, transmute([]u8)data^, {}, error, 2)
 }
 
-// read gives the bytes of the object `name` under a place, or a negative number with an error record.
+// read gives the bytes of the object `name` under a place: the range from 0 to its end, as read_range gives it, with the pending changes of this connection. The result is the count of bytes; the size when they do not fit in the result; or a negative number with an error record.
 //
 // The error kinds: No_Grant (-1); Absent (-12, -7: the place; -7: the tree has no such object); Empty, Too_Long or Bad_Byte (-3, the name); Device (-6); Damaged (-8: a block of the object or a node of a tree of the store has a wrong check: the service does not give its bytes).
 @(export, link_name = "read")
 read_export :: proc "c" (place: i64, name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
-	named, refused := named_of(place, name^, error, 1, false)
+	ranged, refused := ranged_of(place, name^, error, false)
 	if refused < 0 {
 		return refused
 	}
-	_, value, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
-	if located < 0 {
-		return located
+	size := ranged_size(&ranged)
+	if size > u64(len(result)) {
+		return i64(size) // A text that does not fit: the caller sees it.
 	}
-	if value.size > u64(len(result)) {
-		return i64(value.size) // A text that does not fit: the caller sees it.
-	}
-	return state_bytes(current_state(&value), result^, error)
+	return ranged_read(&ranged, 0, result^[:size], error)
 }
 
-// size gives the count of bytes of the object `name` under a place, or a negative number with an error record.
+// size gives the count of bytes of the object `name` under a place, with the pending changes of this connection, or a negative number with an error record.
 //
 // The error kinds: those of read, but Device and Damaged for a block of the object: size reads the tree only.
 @(export, link_name = "size")
 size :: proc "c" (place: i64, name: ^string, error: ^errors.Error_Record) -> i64 {
-	named, refused := named_of(place, name^, error, 1, false)
+	ranged, refused := ranged_of(place, name^, error, false)
 	if refused < 0 {
 		return refused
 	}
-	_, value, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
-	if located < 0 {
-		return located
-	}
-	return i64(value.size)
+	return i64(ranged_size(&ranged))
 }
 
 // remove removes the entry `name` under a place, in one commit: an object with all its versions, or a tree with all that is under it. The name is gone at the commit; the blocks of a tree are freed after it, in steps of 64 entries, one commit each, while no call waits (usage gives the trees that wait). The result is the generation of the commit, or a negative number with an error record.
@@ -578,6 +572,7 @@ share_end :: proc "contextless" (item: ^Share) {
 			place.generation += 1
 		}
 	}
+	pending_drop_of(holder)
 	system.connection_end(&item.connection)
 	item^ = {}
 }
@@ -743,39 +738,11 @@ versions :: proc "c" (place: i64, name: ^string, result: ^[]Version, error: ^err
 		return count
 	}
 	rows := listed_count + 1
-	// The lists of the states, REGION_BLOCKS at a time: the blocks that only
-	// one state holds.
-	for first := 0; first < rows; first += REGION_BLOCKS {
-		last := min(first + REGION_BLOCKS, rows)
-		readable: [REGION_BLOCKS]Pointer
-		readable_count := 0
-		for row in first ..< last {
-			pointer := row < listed_count ? listed[row].list : object.pointer
-			if pointer.block != 0 {
-				readable[readable_count] = pointer
-				readable_count += 1
-			}
-		}
-		if readable_count != 0 {
-			if _, outcome := read_checked(readable[:readable_count], 0); outcome == .Device {
-				return errors.fail(error, ERROR_DISK, .Device)
-			}
-		}
-		place_of_list := 0
-		for row in first ..< last {
-			entry := row < listed_count ? listed[row] : Version_Entry{generation = object.generation, size = object.size, time = object.time, date = object.date, list = object.pointer}
-			own: u64
-			if entry.list.block != 0 {
-				state_list := (^List)(raw_data(slot(u64(place_of_list))))
-				if check_of(slot(u64(place_of_list))) == entry.list.check {
-					own = own_blocks(entry.list, entry.size, state_list)
-				}
-				place_of_list += 1
-			}
-			if row < len(result) {
-				result[row] = {generation = i64(entry.generation), time = i64(entry.time), date = i64(entry.date), bytes = i64(entry.size), own_blocks = i64(own), current = i64(row == listed_count)}
-			}
-		}
+	// The blocks that only one state holds: the walk of each state goes
+	// down the nodes that only it names.
+	for row in 0 ..< min(rows, len(result)) {
+		entry := row < listed_count ? listed[row] : Version_Entry{generation = object.generation, size = object.size, time = object.time, date = object.date, root = object.pointer}
+		result[row] = {generation = i64(entry.generation), time = i64(entry.time), date = i64(entry.date), bytes = i64(entry.size), own_blocks = i64(own_blocks(entry.root, entry.size)), current = i64(row == listed_count)}
 	}
 	return i64(rows)
 }
@@ -800,7 +767,7 @@ version :: proc "c" (place: i64, name: ^string, generation: i64, result: ^[]u8, 
 	if state.size > u64(len(result)) {
 		return i64(state.size) // The caller sees that it does not fit.
 	}
-	return state_bytes(state, result^, error)
+	return state_read(state, 0, result^[:state.size], error, 2)
 }
 
 // restore makes a version of the object `name` under a place its current version again, in one commit: the current version before it becomes a version, so nothing is lost. No block of data is written: the object names the blocks of the version. The place: as for versions. The result is the generation of the commit, or a negative number with an error record.
@@ -819,7 +786,7 @@ restore :: proc "c" (place: i64, name: ^string, generation: i64, error: ^errors.
 	if located < 0 {
 		return located
 	}
-	if generation == i64(object.generation) && state_damaged(object.pointer, object.size) {
+	if generation == i64(object.generation) && state_damaged(object.pointer) {
 		// The current version is damaged: a restore of it would keep the
 		// damage, and say that the object is whole.
 		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, 2)
@@ -847,7 +814,7 @@ clone :: proc "c" (place: i64, name: ^string, new_name: ^string, error: ^errors.
 	if located < 0 {
 		return located
 	}
-	if state_damaged(object.pointer, object.size) {
+	if state_damaged(object.pointer) {
 		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, 2)
 	}
 	target, target_ok := name_keep(new_name^, error, 3)
@@ -878,78 +845,101 @@ compare :: proc "c" (place: i64, name: ^string, first: i64, second: i64, result:
 		}
 		states[index] = state
 	}
-	lists: [2]List
 	for state, index in states {
-		if state.list.block == 0 {
-			continue
-		}
-		_, outcome := read_checked({state.list}, 0)
-		if outcome != .Good {
-			return errors.fail(error, outcome == .Device ? ERROR_DISK : ERROR_DAMAGED, outcome == .Device ? .Device : .Damaged, .Objects, 3 + i64(index))
-		}
-		intrinsics.mem_copy_non_overlapping(&lists[index], raw_data(slot(0)), BLOCK_SIZE)
-	}
-	ranges: i64
-	open_first: i64 = -1
-	close_range :: proc "contextless" (result: []Byte_Range, ranges: ^i64, open_first: ^i64, end: i64) {
-		if open_first^ < 0 {
-			return
-		}
-		if ranges^ < i64(len(result)) {
-			result[ranges^] = {first = open_first^, count = end - open_first^}
-		}
-		ranges^ += 1
-		open_first^ = -1
-	}
-	sizes := [2]i64{i64(states[0].size), i64(states[1].size)}
-	for state, index in states {
-		if blocks_of(state.size) > OBJECT_BLOCKS_LIMIT {
-			// A size that no object has: a disk that the engine did not write.
+		if state.size > format.OBJECT_SIZE_LIMIT || state_damaged(state.root) {
 			return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, 3 + i64(index))
 		}
 	}
-	block_count := max(blocks_of(states[0].size), blocks_of(states[1].size))
-	for index in 0 ..< block_count {
-		pointers: [2]Pointer
+	ranges: i64
+	open_first: i64 = -1
+	sizes := [2]i64{i64(states[0].size), i64(states[1].size)}
+	low, high := min(sizes[0], sizes[1]), max(sizes[0], sizes[1])
+	trees := [2]block_tree.State{tree_state(states[0]), tree_state(states[1])}
+	// The blocks that one of the two states holds, in their order: a hole in
+	// both, and a block that both name, are equal bytes and are not read.
+	end_blocks := max(blocks_of(states[0].size), blocks_of(states[1].size))
+	for at: u64 = 0; at < end_blocks; {
+		found_at: [2]u64
+		found_pointer: [2]Pointer
+		next := end_blocks
 		for side in 0 ..< 2 {
-			if index < blocks_of(states[side].size) {
-				pointers[side] = lists[side].data[index]
-			}
-		}
-		base := i64(index * BLOCK_SIZE)
-		if pointers[0] == pointers[1] && pointers[0].block != 0 {
-			close_range(result^, &ranges, &open_first, base)
-			continue
-		}
-		bytes: [2][]u8
-		zero: Block
-		for side in 0 ..< 2 {
-			bytes[side] = zero[:]
-			if pointers[side].block == 0 {
-				continue
-			}
-			_, outcome := read_checked({pointers[side]}, u64(side))
+			found_at[side] = end_blocks
+			index, pointer, found, outcome := block_tree.next_block(&object_source, trees[side], at, &object_nodes)
 			if outcome != .Good {
 				return errors.fail(error, outcome == .Device ? ERROR_DISK : ERROR_DAMAGED, outcome == .Device ? .Device : .Damaged, .Objects, 3 + i64(side))
 			}
-			bytes[side] = slot(u64(side))
-		}
-		for offset in 0 ..< i64(BLOCK_SIZE) {
-			at := base + offset
-			if at >= max(sizes[0], sizes[1]) {
-				break
-			}
-			inside := [2]bool{at < sizes[0], at < sizes[1]}
-			differs := inside[0] != inside[1] || bytes[0][offset] != bytes[1][offset]
-			if differs && open_first < 0 {
-				open_first = at
-			} else if !differs {
-				close_range(result^, &ranges, &open_first, at)
+			if found {
+				found_at[side], found_pointer[side] = index, pointer
+				next = min(next, index)
 			}
 		}
+		compare_span(result^, &ranges, &open_first, i64(at * BLOCK_SIZE), i64(next * BLOCK_SIZE), low, high)
+		if next >= end_blocks {
+			break
+		}
+		here: [2]Pointer
+		for side in 0 ..< 2 {
+			if found_at[side] == next {
+				here[side] = found_pointer[side]
+			}
+		}
+		base := i64(next * BLOCK_SIZE)
+		if here[0] == here[1] {
+			compare_span(result^, &ranges, &open_first, base, base + BLOCK_SIZE, low, high)
+		} else {
+			for side in 0 ..< 2 {
+				compare_blocks[side] = {}
+				if here[side].block == 0 {
+					continue
+				}
+				if _, outcome := block_tree.block_check(&object_source, here[side], next, &compare_blocks[side]); outcome != .Good {
+					return errors.fail(error, outcome == .Device ? ERROR_DISK : ERROR_DAMAGED, outcome == .Device ? .Device : .Damaged, .Objects, 3 + i64(side))
+				}
+			}
+			for offset in 0 ..< i64(BLOCK_SIZE) {
+				at_byte := base + offset
+				if at_byte >= high {
+					break
+				}
+				inside := [2]bool{at_byte < sizes[0], at_byte < sizes[1]}
+				differs := inside[0] != inside[1] || compare_blocks[0][offset] != compare_blocks[1][offset]
+				if differs && open_first < 0 {
+					open_first = at_byte
+				} else if !differs {
+					compare_close(result^, &ranges, &open_first, at_byte)
+				}
+			}
+		}
+		at = next + 1
 	}
-	close_range(result^, &ranges, &open_first, max(sizes[0], sizes[1]))
+	compare_close(result^, &ranges, &open_first, high)
 	return ranges
+}
+
+compare_blocks: [2]Block // The two blocks of data that compare reads.
+
+// compare_close ends the range that differs, at `end`.
+compare_close :: proc "contextless" (result: []Byte_Range, ranges: ^i64, open_first: ^i64, end: i64) {
+	if open_first^ < 0 {
+		return
+	}
+	if ranges^ < i64(len(result)) {
+		result[ranges^] = {first = open_first^, count = end - open_first^}
+	}
+	ranges^ += 1
+	open_first^ = -1
+}
+
+// compare_span takes the bytes [from, to) that are equal in the two states
+// where both have them: they differ only between the two sizes (low and
+// high).
+compare_span :: proc "contextless" (result: []Byte_Range, ranges: ^i64, open_first: ^i64, from: i64, to: i64, low: i64, high: i64) {
+	if from < min(to, low) {
+		compare_close(result, ranges, open_first, from)
+	}
+	if max(from, low) < min(to, high) && open_first^ < 0 {
+		open_first^ = max(from, low)
+	}
 }
 
 // ---------------------------------------------------------------------
