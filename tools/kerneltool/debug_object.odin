@@ -1,5 +1,6 @@
 package kerneltool
 
+import "base:runtime"
 import "contract:blake3"
 import debug_object "contract:debug_object"
 import "core:fmt"
@@ -754,7 +755,10 @@ odin_root :: proc() -> string {
 		command := [?]string{"odin", "root"}
 		state, standard_output, _, error := os.process_exec({command = command[:]}, context.temp_allocator)
 		if error == nil && state.exited && state.success {
-			odin_root_folder = strings.trim_right(strings.trim_space(string(standard_output)), "/")
+			// Kept for the life of the process, so on the heap: a caller
+			// frees the temporary memory between two builds, and the
+			// allocator of the context can be the temporary one here.
+			odin_root_folder = strings.clone(strings.trim_right(strings.trim_space(string(standard_output)), "/"), runtime.heap_allocator())
 		}
 	}
 	return odin_root_folder

@@ -419,6 +419,18 @@ module_compile :: proc(build: Module_Build) -> bool {
 		fmt.eprintfln("kerneltool: cannot move the LLVM IR of %s: %v", build.name, err)
 		return false
 	}
+	{
+		// The time of the compile leaves the IR: a build is the same bytes
+		// as the build before (compile_time.odin).
+		path := join(folder, "/", build.name, ".ll")
+		ir := read_file(path) or_return
+		if without, changed := llvm_ir_without_compile_time(string(ir), context.temp_allocator); changed > 0 {
+			if err := os.write_entire_file(path, without); err != nil {
+				fmt.eprintfln("kerneltool: cannot write the LLVM IR of %s: %v", build.name, err)
+				return false
+			}
+		}
+	}
 	if build.kernel {
 		// The features of llc for the kernel hold for all of the IR only
 		// while no function of it has target features of its own: a

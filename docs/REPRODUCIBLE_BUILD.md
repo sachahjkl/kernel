@@ -59,6 +59,7 @@ A deterministic compiler is necessary and not sufficient: the build itself must 
 - **A fixed order.** The boot image holds the modules in the order of the module table (`module_builds`), not in the order in which the processes end.
 - **A pinned compiler.** The flake pins the release of Odin by its tag and its hash, and `llc` comes from the LLVM of that compiler (18). `flake.lock` pins the other tools.
 - **No path of the host in a debug object.** A source path in a debug object is from the root of the repository or of the Odin installation. The tool refuses to write a debug object that holds an absolute path or the folder of the build (section 8).
+- **No time of the compile.** With `-debug` the compiler writes the time of the compile in the debug information of each package, as the value of the constant `ODIN_COMPILE_TIMESTAMP`. No source of the system reads it. The tool writes 0 for that value in the LLVM IR before `llc` makes the object (`llvm_ir_without_compile_time`, `tools/kerneltool/compile_time.odin`), so the LLVM IR, the object and the debug object of two builds are the same bytes.
 
 ## The incremental build and the same bytes
 
