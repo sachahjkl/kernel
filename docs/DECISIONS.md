@@ -934,8 +934,8 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-13. Decided by: the owner.
 - Decision: the exception of property 5 for TCP is to be removed, not kept as a note: the code is corrected so that the network service is not on the path of the data of a TCP connection, as far as one device with one pair of queues allows. The design comes first.
 - Words: "Q03 bah corrige [...] si tu sais"
-- State: decided; the design is in work.
-- Where: `PROPERTIES.md`, property 5; the guide of the network.
+- State: done for the first layers: the network service computes no checksum of a payload, the program checks it, and UDP and TCP share one path. The service makes one copy on receive and one on send. On a device with one pair of queues the copy on receive stays; no pass on send is a later layer.
+- Where: `PROPERTIES.md`, property 5; `NETWORK.md`, "Property 5 as it is built".
 
 ## 8. Cryptography and randomness
 
