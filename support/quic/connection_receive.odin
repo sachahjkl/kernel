@@ -163,6 +163,8 @@ connection_id_is_ours :: proc "contextless" (connection: ^Connection, header: ^P
 //   open (RFC 9000, section 12.3).
 // 6. The packet is opened. An authentic packet with reserved bits that are not
 //   0 closes the connection with PROTOCOL_VIOLATION (RFC 9000, section 17.2).
+//   The open itself says that case (`Opened_Packet.authentic_with_reserved_bits`):
+//   each other failure of the open drops the packet and closes nothing.
 //   The first Initial packet then gives the record to its client
 //   (`server_first_initial`).
 // 7. The frames are processed (`frames_process`).
@@ -260,9 +262,11 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 	}
 	opened: Opened_Packet
 	if !packet_payload_open(connection.cryptography, receive_keys, datagram, header, &unprotected, &opened, error) {
-		if error.kind == i64(errors.Kind.Bad_Value) && !first_initial {
+		if opened.authentic_with_reserved_bits && !first_initial {
 			// Reserved bits that are not 0 in an authentic packet (RFC
-			// 9000, section 17.2).
+			// 9000, section 17.2). The open says so itself: the error kind
+			// is also the kind of a failure before the open, which must
+			// close nothing.
 			connection_fail(connection, u64(Transport_Error.Protocol_Violation), 0, now)
 		}
 		return false
@@ -571,8 +575,12 @@ frames_process :: proc "contextless" (connection: ^Connection, level: Encryption
 //   handshake, with the sequence number 0. A larger number is PROTOCOL_VIOLATION
 //   (RFC 9000, section 19.16).
 // - **PATH_CHALLENGE**: its 8 bytes are kept, and a PATH_RESPONSE with them is
-//   queued. **PATH_RESPONSE**: read and dropped, because this side sends no
-//   challenge.
+//   queued. The record has one place: a second challenge before the answer went
+//   replaces the first, and only the newest is answered. The peer sees that as
+//   a lost PATH_RESPONSE, which never goes again anyway (RFC 9000, section
+//   13.3), and one answer validates the one path of this side
+//   (docs/QUIC.md, "The frames"). **PATH_RESPONSE**: read and dropped, because
+//   this side sends no challenge.
 // - **CONNECTION_CLOSE**, of the transport or of the application: the
 //   connection goes to the draining state, with the code and the first bytes of
 //   the reason phrase kept for the program.
@@ -749,6 +757,7 @@ frame_process :: proc "contextless" (connection: ^Connection, level: Encryption_
 		if reader.failed {
 			return encoding_error(connection, type, now)
 		}
+		// One place: the newest challenge is the one that is answered.
 		copy(connection.path_response[:], data)
 		connection.pending_controls += {.Path_Response}
 	case FRAME_PATH_RESPONSE:

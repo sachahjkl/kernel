@@ -299,13 +299,15 @@ Unprotected_Header :: struct {
 //
 // `packet_payload_open` and `packet_open` fill it. The frames are plain bytes in the private copy
 // of the datagram, from `payload_offset`, for `payload_length` bytes; the 16 bytes of the tag after
-// them are not part of the frames. A record of a failed open is zero.
+// them are not part of the frames. A record of a failed open is zero, but for
+// `authentic_with_reserved_bits`.
 Opened_Packet :: struct {
 	packet_number:  u64, // The whole packet number. The caller records it, so that it never processes a packet two times.
 	first_byte:     u8, // The first byte of the packet without header protection.
 	key_phase:      bool, // A short header: the Key Phase bit (RFC 9001, section 6).
 	payload_offset: int, // The offset of the frames, decrypted in place in the copy of the datagram.
 	payload_length: int, // The bytes of the frames: the sealed payload minus the tag.
+	authentic_with_reserved_bits: bool, // The open failed for one reason: the tag verified, and the reserved bits of the first byte are not 0. The peer sent the packet, so the caller closes the connection with PROTOCOL_VIOLATION. It is false after each other failure, and after a success: no packet that is not authentic sets it.
 }
 
 // header_protection_mask gives the 5 bytes of the mask of a sample, with the cipher of the suite of the keys.
@@ -435,7 +437,8 @@ header_protection_remove :: proc "contextless" (cryptography: ^Cryptography, key
 // - `datagram`: the private copy of the datagram.
 // - `header`: the header that `header_read` gave.
 // - `unprotected`: the record that `header_protection_remove` gave for this packet.
-// - `opened`: where the result goes. It is zero after a failure.
+// - `opened`: where the result goes. It is zero after a failure, but for
+//   `authentic_with_reserved_bits` in the last failure of the list below.
 // - `error`: the error record of a failure.
 //
 // **Result**: true for an authentic packet. False:
@@ -446,10 +449,13 @@ header_protection_remove :: proc "contextless" (cryptography: ^Cryptography, key
 //   frames, so the packet cannot be opened again from this copy, with these keys or with others;
 // - `Bad_Value` (argument 3, with the reserved bits in `found`): the tag verifies, and the reserved
 //   bits of the first byte are not 0. RFC 9000, section 17.2, makes that a PROTOCOL_VIOLATION.
+//   `opened.authentic_with_reserved_bits` is true, and only then.
 //
 // **Why the reserved bits come last.** They are checked only after the tag verified. A packet that
 // is [not authentic](term:not-authentic) can then never close a connection: the caller drops it.
-// A caller that gets `Bad_Value` with argument 3 knows that its peer sent the packet.
+// The error kind alone does not tell the cases apart, because `Bad_Value` also comes before the
+// open. A caller that reads `opened.authentic_with_reserved_bits` as true knows that its peer sent
+// the packet.
 packet_payload_open :: proc "contextless" (cryptography: ^Cryptography, keys: ^Packet_Keys, datagram: []u8, header: ^Packet_Header, unprotected: ^Unprotected_Header, opened: ^Opened_Packet, error: ^errors.Error_Record) -> bool {
 	opened^ = {}
 	if !keys_usable(keys, error) {
@@ -474,6 +480,7 @@ packet_payload_open :: proc "contextless" (cryptography: ^Cryptography, keys: ^P
 	long := first & LONG_HEADER_FORM != 0
 	reserved := long ? first & 0x0C : first & 0x18
 	if reserved != 0 {
+		opened.authentic_with_reserved_bits = true
 		return fail_at(error, .Bad_Value, 3, start, 0, int(reserved))
 	}
 	opened^ = {

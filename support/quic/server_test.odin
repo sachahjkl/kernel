@@ -735,6 +735,54 @@ a_token_takes_a_record_once :: proc(t: ^testing.T) {
 	testing.expectf(t, harness.server.counters.authenticity_checks == 1, "%s", harness_describe(harness))
 }
 
+// Three records with three remotes end at once, and the caller has one place
+// for a remote in each sweep: each sweep frees one record and gives its
+// remote, and no remote is lost. Two records of one remote need one place:
+// the first is freed with no remote, the second gives it.
+@(test)
+a_sweep_with_few_places_loses_no_remote :: proc(t: ^testing.T) {
+	harness := harness_make(0)
+	defer harness_free(harness)
+	remotes := [3]Remote{{0x0B00_0003, 40_001}, {0x0B00_0004, 40_002}, {0x0B00_0005, 40_003}}
+	for remote, place in remotes {
+		harness.records[place] = Server_Record{in_use = true, remote = remote, generation = 1}
+		harness.connections[place].state = .Closed
+	}
+	seen: [3]bool
+	one: [1]Remote
+	for sweep in 0 ..< 3 {
+		count := server_sweep(&harness.server, one[:])
+		if !testing.expectf(t, count == 1, "sweep %d gave %d remotes, not 1", sweep, count) {
+			return
+		}
+		testing.expect_value(t, server_connections_in_use(&harness.server), 2 - sweep)
+		for remote, place in remotes {
+			if remote == one[0] {
+				testing.expectf(t, !seen[place], "the remote %d was given two times", place)
+				seen[place] = true
+			}
+		}
+	}
+	testing.expect(t, seen[0] && seen[1] && seen[2], "a remote of a freed record was never given")
+	testing.expect_value(t, harness.server.counters.ended, 3)
+	testing.expect_value(t, server_sweep(&harness.server, one[:]), 0)
+
+	// Two records of one remote, and a third remote, with one place.
+	shared := Remote{0x0B00_0006, 40_004}
+	harness.records[0] = Server_Record{in_use = true, remote = shared, generation = 2}
+	harness.records[1] = Server_Record{in_use = true, remote = shared, generation = 2}
+	harness.records[2] = Server_Record{in_use = true, remote = remotes[2], generation = 2}
+	for place in 0 ..< 3 {
+		harness.connections[place].state = .Closed
+	}
+	testing.expect_value(t, server_sweep(&harness.server, one[:]), 1)
+	testing.expect(t, one[0] == shared, "the remote of two records was not given when its last record was freed")
+	testing.expect_value(t, server_connections_in_use(&harness.server), 1)
+	testing.expect_value(t, server_sweep(&harness.server, one[:]), 1)
+	testing.expect(t, one[0] == remotes[2], "the remote that had no place was not given by the next sweep")
+	testing.expect_value(t, server_connections_in_use(&harness.server), 0)
+}
+
 // Two datagrams of a client that came back with its token arrive in one
 // batch, after a datagram of a known record. The order is decided once:
 // the known datagram first, then both new ones; the first new one takes a

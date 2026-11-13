@@ -382,7 +382,8 @@ Connection :: struct {
 // `connection_datagram_send`. The handshake deadline starts at `now`. The
 // record is cleared first, so a record that served before can serve again; the
 // stream records of the table are cleared too, and the bytes that an earlier
-// connection left in them are erased.
+// connection left in them, when it was started again before its end, are
+// erased.
 //
 // **Parameters**
 //
@@ -402,7 +403,7 @@ Connection :: struct {
 //
 // **Errors**
 //
-// - `Bad_Value`, argument 1: the least seed strength of the configuration is
+// - `Bad_Value`, argument 3: the least seed strength of the configuration is
 //   under `.Processor`.
 // - The error of `random.fill_for_a_key`: the seed of the generator is weaker
 //   than the least seed strength.
@@ -414,7 +415,7 @@ connection_start_client :: proc "contextless" (connection: ^Connection, streams:
 	connection.configuration.tls.role = .Client
 	connection.address_validated = true
 	connection.handshake_deadline = saturating_add(now, HANDSHAKE_TIME_LIMIT)
-	if !connection_seed_strength_check(configuration, error) {
+	if !connection_seed_strength_check(configuration, 3, error) {
 		connection.state = .Closed
 		return false
 	}
@@ -461,7 +462,7 @@ connection_start_client :: proc "contextless" (connection: ^Connection, streams:
 //
 // **Errors**
 //
-// - `Bad_Value`, argument 1: the least seed strength of the configuration is
+// - `Bad_Value`, argument 3: the least seed strength of the configuration is
 //   under `.Processor`.
 // - The error of `random.fill_for_a_key`: the seed of the generator is weaker
 //   than the least seed strength, so the server makes no connection identifier.
@@ -469,7 +470,7 @@ connection_start_server :: proc "contextless" (connection: ^Connection, streams:
 	connection_reset(connection, streams, configuration, cryptography, generator, now)
 	connection.configuration.tls.role = .Server
 	connection.streams_limit_given = u64(len(streams))
-	if !connection_seed_strength_check(configuration, error) {
+	if !connection_seed_strength_check(configuration, 3, error) {
 		connection.state = .Closed
 		return false
 	}
@@ -486,12 +487,15 @@ connection_start_server :: proc "contextless" (connection: ^Connection, streams:
 // A field left at its zero value would accept a weak seed for the keys.
 // `tls_start` refuses it too, but a server starts TLS only at the first
 // Initial packet: this check makes the start of a server, and `server_init`,
-// fail at once. It gives false and writes `Bad_Value`, argument 1, with the
-// strength found and the least strength allowed.
+// fail at once. It gives false and writes `Bad_Value` with the strength found
+// and the least strength allowed. `argument` is the number of the
+// configuration among the arguments of the caller, so that the record names
+// the argument as the program gave it: 3 for the two starts, 5 for
+// `server_init`.
 @(private)
-connection_seed_strength_check :: proc "contextless" (configuration: ^Connection_Configuration, error: ^errors.Error_Record) -> bool {
+connection_seed_strength_check :: proc "contextless" (configuration: ^Connection_Configuration, argument: i64, error: ^errors.Error_Record) -> bool {
 	if configuration.tls.least_seed_strength < .Processor {
-		errors.fail(error, -1, .Bad_Value, .None, 1, i64(configuration.tls.least_seed_strength), i64(random.Seed_Strength.Processor), 0)
+		errors.fail(error, -1, .Bad_Value, .None, argument, i64(configuration.tls.least_seed_strength), i64(random.Seed_Strength.Processor), 0)
 		return false
 	}
 	return true
@@ -507,7 +511,8 @@ connection_seed_strength_check :: proc "contextless" (configuration: ^Connection
 // - the state `Handshake`, and `last_activity` at `now`;
 // - the idle timeout of this side, in microseconds;
 // - each stream record cleared, and the bytes that an earlier connection left
-//   in a record in use erased;
+//   in a record in use erased (a connection that ended erased its own; this is
+//   for a record that is started again before its end);
 // - the flow control limit of the connection: the buffers of every stream
 //   record;
 // - the ack delay values of the peer at their defaults (25 ms, exponent 3),
@@ -523,8 +528,9 @@ connection_reset :: proc "contextless" (connection: ^Connection, streams: []Stre
 	connection.idle_timeout = saturating_multiply(configuration.idle_timeout_milliseconds, 1000)
 	connection.streams = streams
 	for &stream in streams {
-		// A connection that ended with streams still open left their bytes:
-		// the next connection of the table never holds them.
+		// A connection that was started again before it ended left the bytes
+		// of its open streams: the next connection of the table never holds
+		// them. A connection that ended erased them itself.
 		if stream.in_use {
 			stream_buffers_erase(&stream)
 		}
@@ -714,11 +720,13 @@ connection_tls_progress :: proc "contextless" (connection: ^Connection, now: u64
 //
 // It is 0x100 plus the alert of TLS (`CRYPTO_ERROR_BASE`; RFC 9001, section
 // 4.8): for example 0x100 + 42, bad_certificate, when the key of the server is
-// not the pinned key. It is PROTOCOL_VIOLATION when handshake bytes came at a
-// level whose keys were replaced (RFC 9001, section 4.1.3).
+// not the pinned key. It is PROTOCOL_VIOLATION when TLS says so
+// (`Tls_Handshake.protocol_violation`): handshake bytes came at a level whose
+// keys were replaced (RFC 9001, section 4.1.3), or a ClientHello carried a
+// session identifier (RFC 9001, section 8.4).
 @(private)
 tls_failure_code :: proc "contextless" (connection: ^Connection) -> u64 {
-	if connection.tls.bytes_after_key_change {
+	if connection.tls.protocol_violation {
 		return u64(Transport_Error.Protocol_Violation)
 	}
 	return CRYPTO_ERROR_BASE + u64(connection.tls.alert)
@@ -918,16 +926,29 @@ connection_enter_draining :: proc "contextless" (connection: ^Connection, code: 
 }
 
 // connection_end makes the connection `Closed`: it notes the time in
-// `ended_at`, and erases the keys of every packet number space and the secrets
-// of TLS.
+// `ended_at`, erases the keys of every packet number space and the secrets of
+// TLS, and ends each stream.
 //
 // It sends nothing. The idle timeout, the handshake deadline and the end of
-// the closing and draining states call it. The stream records keep their bytes
-// until the next start of the record, which erases them.
+// the closing and draining states call it. Each stream record that was in use
+// has the bytes of its rings erased and is free: the bytes of the peer do not
+// stay in memory after its connection ended. A `stream_read` after the end
+// therefore gives nothing: an application reads what it wants of a stream
+// before the connection is `Closed`. The closing and draining states last
+// three probe timeouts, in which it still can.
 @(private)
 connection_end :: proc "contextless" (connection: ^Connection, now: u64) {
 	connection.state = .Closed
 	connection.ended_at = now
+	for &stream in connection.streams {
+		if stream.in_use {
+			// The bytes are erased before the record is free: a record that
+			// is free and holds bytes would give them to no one, and keep
+			// them.
+			stream_buffers_erase(&stream)
+			stream.state = {}
+		}
+	}
 	for level in Encryption_Level {
 		space := &connection.spaces[level]
 		secret_erase(&space.send_keys, size_of(space.send_keys))

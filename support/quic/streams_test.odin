@@ -413,3 +413,59 @@ the_rings_of_a_stream_that_ended_are_zero :: proc(t: ^testing.T) {
 		testing.expectf(t, zero, "the record of the %v keeps bytes of the stream", side.configuration.tls.role)
 	}
 }
+
+// The bytes of the streams are erased when the connection ends: a stream
+// that is open, with bytes of the peer that the application did not read and
+// bytes of this side that the peer did not acknowledge, leaves nothing in its
+// record after the connection ended, and the record is free. Before the
+// correction the bytes stayed until the next start of the record.
+@(test)
+the_rings_of_an_open_stream_are_zero_after_the_connection_ended :: proc(t: ^testing.T) {
+	endpoints := endpoints_make()
+	defer free(endpoints)
+	testing.expect(t, endpoints_connect(endpoints))
+	client, server := &endpoints.client, &endpoints.server
+	identifier, opened := stream_open(client)
+	testing.expect(t, opened)
+	bytes: [3000]u8
+	for &byte in bytes {
+		byte = 0xA5
+	}
+	testing.expect_value(t, stream_write(client, identifier, bytes[:], false), len(bytes))
+	// The server gets the bytes and does not read them; it writes bytes of
+	// its own, which stay in its send ring.
+	for _ in 0 ..< 2000 {
+		endpoints_step(endpoints)
+		if stream := stream_of(server, identifier); stream != nil && stream.highest_received == u64(len(bytes)) {
+			break
+		}
+	}
+	server_stream := stream_of(server, identifier)
+	if !testing.expect(t, server_stream != nil && server_stream.highest_received == u64(len(bytes)), "the bytes of the client did not reach the server") {
+		return
+	}
+	testing.expect_value(t, stream_write(server, identifier, bytes[:], false), len(bytes))
+	testing.expect(t, server_stream.receive[0] == 0xA5 && server_stream.send[0] == 0xA5)
+	connection_close(client, 0, endpoints.now)
+	for _ in 0 ..< 100_000 {
+		if client.state == .Closed && server.state == .Closed {
+			break
+		}
+		endpoints_step(endpoints)
+	}
+	testing.expect_value(t, client.state, Connection_State.Closed)
+	testing.expect_value(t, server.state, Connection_State.Closed)
+	for side in ([]^Connection{client, server}) {
+		for &record in side.streams {
+			testing.expectf(t, !record.in_use, "a stream record of the %v is in use after the end", side.configuration.tls.role)
+			zero := true
+			for index in 0 ..< len(bytes) {
+				zero = zero && record.send[index] == 0 && record.receive[index] == 0
+			}
+			testing.expectf(t, zero, "a stream record of the %v keeps bytes after the end", side.configuration.tls.role)
+		}
+	}
+	// A read after the end gives nothing: no byte, no end, no reset.
+	count, finished, reset := stream_read(server, identifier, bytes[:])
+	testing.expect(t, count == 0 && !finished && !reset)
+}

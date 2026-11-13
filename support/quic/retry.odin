@@ -146,11 +146,12 @@ retry_token_additional :: proc "contextless" (remote: Remote) -> (additional: [7
 //
 // **Result**: true when the token is whole. False:
 //
-// - `Too_Long`: the length of the original identifier in `facts` is not 0 to `CONNECTION_ID_LIMIT`;
+// - `Too_Long` (argument 5): the length of the original identifier in `facts` is not 0 to
+//   `CONNECTION_ID_LIMIT`. The record holds that length as its value and the limit;
 // - an error of the seal of the module, with its own record.
 retry_token_make :: proc "contextless" (cryptography: ^Cryptography, key: ^[RETRY_TOKEN_KEY_SIZE]u8, counter: u64, remote: Remote, facts: ^Retry_Token_Facts, token: ^[RETRY_TOKEN_SIZE]u8, error: ^errors.Error_Record) -> bool {
 	if facts.original_destination_connection_id_length < 0 || facts.original_destination_connection_id_length > CONNECTION_ID_LIMIT {
-		return fail_at(error, .Too_Long, 4, facts.original_destination_connection_id_length, CONNECTION_ID_LIMIT)
+		return fail_at(error, .Too_Long, 5, facts.original_destination_connection_id_length, CONNECTION_ID_LIMIT)
 	}
 	plain: [RETRY_TOKEN_FACTS_SIZE]u8
 	plain[0] = u8(facts.original_destination_connection_id_length)
@@ -257,19 +258,32 @@ retry_token_open :: proc "contextless" (cryptography: ^Cryptography, key: ^[RETR
 //
 // **Results**: the length of the packet and true. 0 and false:
 //
-// - `Too_Long`: one of the three identifiers has more than `CONNECTION_ID_LIMIT` bytes;
-// - `Too_Small`: the token is empty, or the buffer has less than the packet needs (the record holds
-//   the size of the buffer as its value and the size needed as its limit);
+// - `Too_Long` (argument 4, 5 or 7): `destination`, `source` or `original_destination` has more
+//   than `CONNECTION_ID_LIMIT` bytes. The record names the first one at fault, and holds its size
+//   as its value and the limit;
+// - `Empty` (argument 6): the token has no byte. The limit of the record is `RETRY_TOKEN_LIMIT`,
+//   the most that a client of this library keeps;
+// - `Too_Small` (argument 2): the buffer has less than the packet needs. The record holds the size
+//   of the buffer as its value and the size needed as its limit;
 // - an error of `retry_integrity_tag`.
 //
 // A Retry of this server has 113 bytes at most: 7 bytes of header, two identifiers of 20 and 8
 // bytes, the token of 62 bytes and the tag.
 retry_packet_write :: proc "contextless" (cryptography: ^Cryptography, buffer: []u8, unused_bits: u8, destination, source, token, original_destination: []u8, error: ^errors.Error_Record) -> (length: int, ok: bool) {
-	if len(destination) > CONNECTION_ID_LIMIT || len(source) > CONNECTION_ID_LIMIT || len(original_destination) > CONNECTION_ID_LIMIT {
-		return 0, fail_at(error, .Too_Long, 4, CONNECTION_ID_LIMIT)
+	if len(destination) > CONNECTION_ID_LIMIT {
+		return 0, fail_at(error, .Too_Long, 4, len(destination), CONNECTION_ID_LIMIT)
+	}
+	if len(source) > CONNECTION_ID_LIMIT {
+		return 0, fail_at(error, .Too_Long, 5, len(source), CONNECTION_ID_LIMIT)
+	}
+	if len(original_destination) > CONNECTION_ID_LIMIT {
+		return 0, fail_at(error, .Too_Long, 7, len(original_destination), CONNECTION_ID_LIMIT)
+	}
+	if len(token) == 0 {
+		return 0, fail_at(error, .Empty, 6, 0, RETRY_TOKEN_LIMIT)
 	}
 	needed := 1 + 4 + 1 + len(destination) + 1 + len(source) + len(token) + TAG_SIZE
-	if len(token) == 0 || needed > len(buffer) {
+	if needed > len(buffer) {
 		return 0, fail_at(error, .Too_Small, 2, len(buffer), needed)
 	}
 	at := 0
