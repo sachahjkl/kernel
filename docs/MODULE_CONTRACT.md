@@ -472,6 +472,12 @@ For the Text result: after the parameters, the caller gives the address of a buf
 
 ## 5. The types
 
+**What this section is.** A type of the contract is one way to pass a value across the boundary of a module: as a parameter or a result of an export, or as a field of a record. The description of an export names the type of each parameter, so a caller that never saw the source of the module knows what to put in each register (section 4). The console builds a call from the description alone.
+
+**Two levels.** The tables "Base types" and "Built types" below are the layout rules of the contract: what a type is in memory, in any language. "The types that a description knows" is what the format and the tool implement today, which is a smaller set.
+
+**What a type of the contract is not.** It is not a type of a language. No type depends on a compiler, on an allocator or on a runtime: each one is bytes with a fixed layout. A type that needs a parser at the receiver (a text with a syntax, a pointer into the memory of the caller) is not a type of the contract.
+
 ### Base types
 
 | Type | Size | Zero means |
@@ -483,6 +489,8 @@ For the Text result: after the parameters, the caller gives the address of a buf
 
 Excluded: types whose size depends on the machine or the compiler (`long`, `size_t`, `enum` with no width), bit-fields, characters as a type. [Types §7]
 
+**Zero is valid.** Each type has a meaning for the value of all zero bytes, and that meaning is "none", "empty" or "the default". So a record of zeros is a valid record, and a reader that knows a shorter record reads the missing fields as zero (section 1, "Table directory").
+
 ### Built types
 
 | Type | Layout | Zero means |
@@ -492,52 +500,162 @@ Excluded: types whose size depends on the machine or the compiler (`long`, `size
 | Flags | An integer of declared width, one bit per flag | No flag |
 | Slice | `{u64 address or offset, u64 count}` | Empty |
 | String | A slice of UTF-8 bytes. No terminator | Empty |
-| Handle | One `u32` (`op.Handle`): the low 16 bits are the slot in the handle table of the program, from 1; the high 16 bits are the generation of the slot. The object kind and the rights are in the description | No object |
+| Handle | One `u32` (`op.Handle`): the low 16 bits are the slot in the handle table of the program, from 1; the high 16 bits are the generation of the slot. The rights that the callee needs are in the description | No object |
 | Variant | `{u32 tag, payload of the size of the largest case}` | Tag 0 is "none" |
 | Optional | No added tag when zero can mean "absent" (handle, slice, enumeration). Otherwise a `present` byte | Absent |
 
-- **As implemented** (`contract/module/format.odin`, `Type`): the description of an export knows six types: `Integer` (a signed or unsigned integer of 64 bits, in a register), `Text` (a slice of UTF-8 bytes), `Record` (described fields: integers of 1, 2, 4 or 8 bytes, handles of 4 bytes, and texts held in the record), `Handle` (lent for the time of the call, with the rights that the callee needs), `Table` (records of one description, with a direction) and `Bytes` (bytes with no description, with a direction). Floating-point values, enumerations as their own type, variants and optional values are not built: an enumeration or a set of flags is an `Integer`.
-- A handle is an index into the handle table of one program: the same number means nothing, or another object, in another program. So an isolated call does not pass the number of the caller: it gives the receiver its own copy of each lent handle, and the field holds the handle as the receiver names it (section 4, "Records and handles, as implemented").
 - This layout is identical in C, in an Odin `struct`, in a Rust `repr(C)` struct and in a Zig `extern struct`. [Types §7]
-- **Handles in the description**: A function declares the object type and the rights of each handle that it needs. The console can ask for the grants before the call (P2, P20). Fuchsia FIDL does this. [Types §3]
+- **Handles in the description**: A function declares the rights of each handle that it needs. The console can ask for the grants before the call (P2, P20). Fuchsia FIDL does this. [Types §3]
 - **References across a ring**: In a direct call, a slice holds an address. In an isolated call, the same field holds an offset in a shared region. The description marks these fields. The receiver checks the bounds.
 - **Streams**: A stream is not a type. It is a handle to a ring that carries batches of records. WASI 0.3 put streams in the type system, and this brought a scheduler into the contract. [Types §1]
 
+### The types that a description knows
+
+The description of an export names each parameter and the result with one member of `module.Type` (`contract/module/format.odin`). The value 0, `None`, means "no parameter" or "no result". Six types exist:
+
+| Type | What it is | As a parameter | As a result | As a field of a record |
+|---|---|---|---|---|
+| `Integer` | A signed integer of 64 bits | The value, in a register | The value, in the result register | An integer of 1, 2, 4 or 8 bytes, signed or unsigned |
+| `Text` | UTF-8 bytes | The address of a slice record `{address, count}` | One more argument, the address of a buffer record `{address, capacity}`; the integer result is the count of bytes of the full text | The bytes in the record, in a field of a fixed size, with zero bytes after the text |
+| `Record` | Bytes of a fixed size with described fields | The address of the record | One more argument, the address of the memory of the record; the export has no integer result | Not allowed: a record holds no record |
+| `Handle` | A handle that the caller lends for the time of the call, with the rights that the callee needs | The handle, in a register | Not allowed | The handle, in 4 bytes |
+| `Table` | Records of one description that follow each other, with a direction | The address of a table place `{address, count, capacity}` | One more argument, the address of a buffer record `{address, capacity in records}`; the integer result is the count of records of the full table | Not allowed |
+| `Bytes` | Bytes with no description, with a direction | The address of a table place, with the count and the capacity in bytes | Not allowed | Not allowed |
+
+- **A direction** (`module.Direction`) says what the callee does with the memory of a Table or Bytes parameter: `Read` (it reads and writes nothing), `Change` (it reads and writes the records that exist), `Append` (it writes after the records that exist). `Read` is the value 0: the direction with the least power is the default (section 4, "Tables and bytes as parameters").
+- **A count larger than the capacity** means "the answer did not fit" for a Text result and for a Table result. The caller owns all the memory, and the callee allocates no larger buffer.
+- **A record holds values only**, and no address: its bytes mean the same in each program. That is why a Text field holds its bytes, and why a record holds no slice.
+- **A handle is an index into the handle table of one program**: the same number means nothing, or another object, in another program. So an isolated call does not pass the number of the caller: it gives the receiver its own copy of each lent handle, and the field holds the handle as the receiver names it (section 4, "Records and handles, as implemented").
+
+**The limits** (constants of `contract/module/format.odin`):
+
+| Limit | Value |
+|---|---|
+| Parameters of one export | 6 (`PARAMETER_CAPACITY`): the integer registers of the call form |
+| Size of a record that a call carries | 256 bytes (`RECORD_SIZE_LIMIT`) |
+| Handles that one call lends | 16 (`HANDLE_CAPACITY`): its Handle parameters and the Handle fields of its Record parameters |
+| A result record, and a record of a table | no Handle field |
+
+**From the Odin source to the type.** The tool reads the description of each export in the source of the module (`tools/kerneltool/describe.odin`). It refuses an export whose types have no description, with the name of the type and the list of the forms below:
+
+| In the source | Type of the description |
+|---|---|
+| A parameter or a result `i64` | `Integer` |
+| A parameter `^string` | `Text` |
+| A last parameter `^[]u8`, with the result `i64` | The buffer of a `Text` result |
+| A parameter `^Name`, `Name` a struct | `Record` |
+| A last parameter `result: ^Name` | The memory of a `Record` result |
+| A last parameter `result: ^[]Name`, with the result `i64` | The buffer of a `Table` result |
+| A parameter `system.Lent({.Read, .Write})` | `Handle`, with the rights that the callee needs |
+| A parameter `^system.Table_To_Read(Name)`, `_To_Change`, `_To_Append` | `Table`, with the direction of its name |
+| A parameter `^system.Bytes_To_Read`, `_To_Change`, `_To_Append` | `Bytes`, with the direction of its name |
+| A field `i64`, `u64`, `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, or an enum with such a backing type | An `Integer` field of that size |
+| A field `system.Lent({...})` | A `Handle` field |
+| A field `[N]u8` | A `Text` field of N bytes |
+
+**An example**, three exports of `modules/sample`: an Integer result from a Record, a Record result, and a lent Handle.
+
+```odin
+area :: proc "c" (rectangle: ^Rectangle) -> i64
+grow :: proc "c" (rectangle: ^Rectangle, by: i64, result: ^Rectangle)
+fill :: proc "c" (memory: system.Lent({.Read, .Write}), value: i64) -> i64
+```
+
+**What is not built.** Floating-point values, an unsigned Integer parameter, enumerations as their own type, flags as their own type, variants and optional values have no member of `module.Type`. An enumeration or a set of flags crosses the boundary as an `Integer`. A struct of a record has the layout of the C language: no `#packed`, no `#align`, no `using`.
+
 ## 6. The context
 
-The context is what a program receives when it starts, in place of a command line and an environment. A program starts with one call: `entry(context)`. The context is one record in memory, at `CONTEXT_ADDRESS`, that the starter of the program wrote. It holds numbers and handles only, so a program has nothing to parse.
+**What it is.** The context is what a program receives when it starts, in place of a command line and an environment. A program starts with one call: `entry(context)`. The context is one record in memory, at `CONTEXT_ADDRESS`, that the starter of the program wrote. It holds numbers and handles only, so a program has nothing to parse.
 
-The first design had a header, a table of handles with a role and an argument each, the kernel ring, a caller ring and an argument record. The implemented record is smaller (`op.Context` in `contract/operation/operation.odin`):
+**What it is for.** A program of this system starts with no access at all: no file system, no name of a service, no ambient right. Everything that it can reach, it reaches through a handle that its starter gave. The context is the place of those handles: it is the whole authority of a program at its start. Who starts a program decides what the program can do.
+
+**How a program reads it.** The address of the record is the parameter of the entry, and it is also the fixed address `CONTEXT_ADDRESS`. A place in the record is a role: the index of a handle or of a value says what it is.
+
+```odin
+entry :: proc "c" (ctx: ^system.Context) -> ! {
+	system.log("fault: this program writes to address 0")
+```
+
+`system.log` writes with the handle `ctx.handles[CONTEXT_LOG]`; `system.context_record()` gives the same record anywhere in the program.
+
+**The record.** The first design had a header, a table of handles with a role and an argument each, the kernel ring, a caller ring and an argument record. The implemented record is smaller (`op.Context` in `contract/operation/operation.odin`): 16 handles and 24 values, 256 bytes.
 
 | Part | Content |
 |---|---|
-| `handles` | 16 handles (`CONTEXT_HANDLES`). The index of a handle is its role, which the starter fixes. Two roles are the same for every program: 14 the log of the kernel (`CONTEXT_LOG`), 15 the budget of the program (`CONTEXT_BUDGET`). A role that the program was not granted holds 0 |
-| `values` | 24 values of 64 bits (`CONTEXT_VALUES`). The values 0 to 8 are free for a starter and its program; the values 13 to 15 are free too, but a new role of the system never takes a number under 16. The values 9 to 12 are the random seed of the program (`CONTEXT_VALUE_SEED`, 32 bytes), and 16 its strength. The values 16 to 23 are for the roles that the system fixes for every program: 17 the boot pass of `settings`, 18 and 19 the second pointer theme of the compositor, 20 the fixed ranges that the starter mapped (`CONTEXT_VALUE_FIXED_RANGES_MAPPED`), 21 the size of the debug image |
+| `handles` | 16 handles (`CONTEXT_HANDLES`). The index of a handle is its role. The handles 0 to 13 have the roles that the starter and its program agree on. Two roles are the same for every program: 14 the log of the kernel (`CONTEXT_LOG`), 15 the budget of the program (`CONTEXT_BUDGET`). A role that the program was not granted holds 0 |
+| `values` | 24 values of 64 bits (`CONTEXT_VALUES`): sizes, addresses, flags. The values 0 to 8 have the roles that the starter and its program agree on. The other values have the roles of the table below |
 
-- **No header and no text.** A program reads its context with no allocator and no parser. The size of the record is fixed by the contract.
+The values that the system names:
+
+| Value | Role | Constant |
+|---|---|---|
+| 9 to 12 | The random seed of the program, 32 bytes. The generator of the program reads it, then writes zeros over the four values | `CONTEXT_VALUE_SEED` |
+| 13, 14, 15 | No role. A new role of the system never takes these numbers | |
+| 16 | The strength of the seed: 1 weak, 2 processor, 3 entropy | `CONTEXT_VALUE_SEED_STRENGTH` |
+| 17 | The program `settings` runs its boot pass (1) | `CONTEXT_VALUE_SETTINGS_BOOT_PASS` |
+| 18, 19 | The address and the size of the second pointer theme file of the compositor | `CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS`, `CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE` |
+| 20 | A set of bits: the fixed ranges that the starter mapped for this program | `CONTEXT_VALUE_FIXED_RANGES_MAPPED` |
+| 21 | The size in bytes of the debug image, when its fixed range is mapped | `CONTEXT_VALUE_DEBUG_IMAGE_SIZE` |
+| 22, 23 | No role yet. A new role of the system takes a number from 16 | |
+
+**Who writes it.**
+
+- **A starter** writes the record in one page of memory and maps that page at `CONTEXT_ADDRESS` in the new program (`system.program_start`). It copies each handle that it grants to the new program, with the rights of the grant: never more rights than the starter holds. The copy is at the same index in the context.
+- **The budget** is the one place that a starter cannot fill: the program receives its new budget at the index 15.
+- **The kernel** writes the context of the first program, the root service, at boot: the machine at the handle 0, the framebuffer at 1, the boot image at 2, the records of the log at 3, the debug image at 4, and, in the values 0 to 5, the screen (its width, its height, its pixels for each line, its format) and the sizes of the two images (the `ROOT_` constants).
+- **The root service** gives each program the handles of its grants at fixed indexes (`support/system`, the `GRANT_` constants): the ring to the compositor at 0, the ring to the root service at 1, and so on.
+
+Facts of the record:
+
+- **No header and no text.** A program reads its context with no allocator, no parser and no library. The size of the record is fixed by the contract. It holds no strings that the program must parse, no environment, no names.
 - **The kernel ring is not in the context.** Each thread finds its own kernel ring one page after its thread record, through the `gs` register (rule 7 of "Closed rules").
 - **A call host**: the caller ring is the call ring (role 0), and the argument records arrive in the call region (role 1).
-- **Example**: the root service gives `compositor` the two pointer theme files as an address and a size each, in the values 6 and 7, then 18 and 19 (`programs/root/resources.odin`, `pointer_theme_choice`).
-
-- It holds no strings that the program must parse, no environment, no names.
-- A program reads it with no memory allocator and no library.
+- **A program that starts with an all-zero context has no handles.** It can compute and stop. It can reach nothing (P2).
+- **A value is a statement of the starter.** Only the starter writes the context, so a program can trust a value of it more than a field of a page that another program can write. That is why the set of the mapped fixed ranges is a value of the context.
+- **Example**: the root service gives `compositor` the size and the format of the screen in the values 0 to 3, the address and the size of its own file in 4 and 5, and the two pointer theme files as an address and a size each, in the values 6 and 7, then 18 and 19 (`programs/root/main.odin`; the order of the two themes is `pointer_theme_choice` in `programs/root/resources.odin`).
 - **Prior art**: The `processargs` message of Fuchsia has a fixed header, offsets, and one typed entry per handle. It still carries `argv` and environment strings; this design does not. [Load §6]
-- A program that starts with an all-zero context has no handles. It can compute and stop. It can reach nothing (P2).
+
+**What the context is not.** It is not a channel: the starter writes it once, before the first thread runs, and nothing arrives through it later. A program that needs more after its start asks through a ring that one of its handles names.
 
 ## 7. How to build modules with existing tools
 
-The project writes no compiler and no linker.
+The project writes no compiler and no linker. It writes two things: one converter, which turns a linked file into a module, and one loader.
 
-1. Odin and clang produce normal ELF object files, position-independent.
+**The principle**, in five steps:
+
+1. A compiler produces a normal ELF object file, position-independent.
 2. The existing linker (`lld`) links one module into one ELF file.
 3. A tool of the project converts that ELF file into a module: it writes the flat tables, converts relocations to rebases and slots, and computes the hash.
-4. The description tables come from the source: from the Odin source for Odin (implemented: `tools/kerneltool/describe.odin` reads the syntax tree), from a small description file for C.
+4. The description tables come from the source: from the Odin source for Odin (implemented: `tools/kerneltool/describe.odin` reads the syntax tree), from a small description file for another language (designed, not built: every module of the system is written in Odin).
 5. Every module, the kernel and the boot program link `runtime/memory.asm`: `copy_bytes_without_overlap`, `copy_bytes_with_overlap` and `fill_bytes_with_value`. The compiler calls them by the names of the C library (`memcpy`, `memmove`, `memset`): the file gives these names as aliases, in a part of its own, and the code of the system uses the long names. The kernel tool builds without `-no-crt`, so the Odin runtime does not give its own functions under these names (loops of one byte, two with no optimization). A module in another language links the same file.
 
-This reuses the compiler, the linker and the debugger formats. The project writes one converter and one loader.
+This reuses the compiler, the linker and the debugger formats.
 
-- **ELF is a build-time intermediate format only.** LLVM, which Odin and clang use, writes only ELF, COFF and Mach-O objects. ELF never reaches the running system.
+- **ELF is a build-time intermediate format only.** LLVM, which Odin uses, writes only ELF, COFF and Mach-O objects. ELF never reaches the running system: the loader reads modules only.
 - **Every step is a command of the kernel tool.** No script calls the compiler or the linker directly.
+
+### The steps of one module, as implemented
+
+`build_module` (`tools/kerneltool/modules.odin`) builds one module in its own folder, `build/modules/<name>/`. `kerneltool build` runs it for each module of the module table, several at once (`REPRODUCIBLE_BUILD.md`, "5. The parallelism of the tool").
+
+| Step | Program | What it gives |
+|---|---|---|
+| 1. Compile | `odin build` with `-target:freestanding_amd64_sysv -build-mode:llvm-ir -reloc-mode:pic -no-entry-point -default-to-nil-allocator -o:speed -vet -debug` | One LLVM IR file, `<name>.ll` |
+| 2. Make the object | `llc -O3 --frame-pointer=all -relocation-model=pic --function-sections --data-sections` | One ELF object, `objects/<name>.o` |
+| 3. Assemble | `nasm -f elf64` | One object for `runtime/memory.asm`, one for each `.asm` file of the source folder, and for a module of the boot image one for each `.asm` file of `support/system` |
+| 4. Describe | The tool (`describe_package`) | The exports and their descriptions, from the source; a version script that makes only the exports visible |
+| 5. Link | `ld.lld -shared -nostdlib -Bsymbolic --gc-sections --build-id=none -z now -z relro` | One ELF file, `linked.elf` |
+| 6. Convert | The tool (`convert`) | The module, `build/modules/<name>.module`, with the hashes of its imports in its import table |
+| 7. Write the debug object | The tool | `build/modules/<name>.debug` (section "Debug information") |
+
+Why each choice:
+
+- **LLVM IR, then `llc`.** Odin has no option that keeps the frame pointers; `llc` has one. Every module keeps frame pointers, because the kernel walks them for the stack trace of a fault (rule 8 of "Closed rules").
+- **A module needs its imports only at its conversion.** The converter reads the file of each import for its hash. So the table of modules lists each module after its imports.
+- **The kernel is a module with three more rules.** It is compiled with `-disable-red-zone`, because an interrupt uses its stack. `llc` gets every x87, SSE and AVX feature off, and the tool refuses a linked kernel that has a vector instruction outside the save and the restore of the extended state (`ARCHITECTURE.md`, "The extended state of the processor"). Its `runtime/memory.asm` is assembled in the form with no vector register.
+- **No fact of the host in a module.** `-source-code-locations:filename` and `--build-id=none` keep the folder of the build and a build identifier out of the bytes: one source gives one module (`REPRODUCIBLE_BUILD.md`, "What the build does to give the same bytes").
+
+**The boot program is not a module.** The firmware loads it, and the firmware reads only its own format. So the tool compiles `boot` for the target `freestanding_amd64_win64` and links it with `lld-link` into a UEFI application. The boot program holds the loader, and loads the kernel as a module (rule 9 of "Closed rules").
 
 ### The linker
 
