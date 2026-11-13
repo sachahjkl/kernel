@@ -66,12 +66,12 @@ Canvas_Shape :: struct {
 Drawn :: system.Table_To_Append(interface.Draw_Record)
 
 foreign _ {
-	draw_background :: proc "c" (drawn: ^Drawn, area: ^Area) -> i64 ---
-	draw_card :: proc "c" (drawn: ^Drawn, text: ^system.Bytes_To_Append, area: ^system.Table_To_Change(Area), title: ^string, caption: ^string, accent: i64) -> i64 ---
-	draw_cell_text :: proc "c" (drawn: ^Drawn, text: ^system.Bytes_To_Append, cell: ^Area, words: ^string, color: i64, right: i64) -> i64 ---
-	draw_label_value_line :: proc "c" (drawn: ^Drawn, text: ^system.Bytes_To_Append, line: ^Label_Value, label: ^string, value: ^string) -> i64 ---
-	draw_table_band :: proc "c" (drawn: ^Drawn, area: ^Area, index: i64) -> i64 ---
-	draw_bar :: proc "c" (drawn: ^Drawn, bar: ^Bar_Value) -> i64 ---
+	draw_background :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), area: ^Area) -> i64 ---
+	draw_card :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), text: ^system.Bytes_To_Append, area: ^system.Table_To_Change(Area), title: ^string, caption: ^string, accent: i64) -> i64 ---
+	draw_cell_text :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), text: ^system.Bytes_To_Append, cell: ^Area, words: ^string, color: i64, right: i64) -> i64 ---
+	draw_label_value_line :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), text: ^system.Bytes_To_Append, line: ^Label_Value, label: ^string, value: ^string) -> i64 ---
+	draw_table_band :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), area: ^Area, index: i64) -> i64 ---
+	draw_bar :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), bar: ^Bar_Value) -> i64 ---
 	// The two exports of the drawing module.
 	damage_of_draw_table_7 :: proc "c" (before: ^system.Table_To_Read(interface.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle, error: ^errors.Error_Record) -> i64 ---
 	execute_draw_table_7 :: proc "c" (now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, rectangles: ^system.Table_To_Read(Damage_Rectangle), pixels: ^system.Bytes_To_Change, shape: ^Canvas_Shape, error: ^errors.Error_Record) -> i64 ---

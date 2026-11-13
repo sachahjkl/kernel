@@ -19,10 +19,6 @@ import "core:time"
 
 SCREENSHOT_FOLDER :: BUILD_FOLDER + "/screenshots"
 SCREEN_DUMP :: BUILD_FOLDER + "/screen.ppm"
-FILM_FOLDER :: BUILD_FOLDER + "/film"
-FILM_FRAME :: FILM_FOLDER + "/%05d.ppm"
-FILM_RATE :: 25 // Pictures in one second.
-FILM_FRAME_TIME :: time.Second / FILM_RATE
 // The one role of a time in a test of the tool: it ends a test that hangs.
 // A test checks a condition (a line, a value, a state), never a speed, so
 // this bound is generous and the same for each wait of the tool that has no
@@ -65,7 +61,13 @@ Step_Kind :: enum {
 	Move, // Drag the window with the title text to the place (to_x, to_y). The tool reads the place of the window in the log, before and after.
 	Front, // Open the menu of the windows, and press the line of the last window with the title text: the window comes to the front. The tool reads the lines of the menu in the log.
 	Close, // Press the close button of the window with the title text. The tool reads the place and the size of the window in the log.
-	Film, // Save the screen 25 times in one second, for x milliseconds, as the next pictures of the film.
+	// The four steps of a film (film.odin; docs/TOOLS.md, "The film"). Only
+	// the scenario of a film has them: Film_Type and Film_Hold are the only
+	// steps with a fixed time, because a film shows time.
+	Film_Start, // Start the film with the name text: from now on a worker saves the screen FILM_RATE times in one second, while the next steps run.
+	Film_Stop, // End the film that the last Film_Start started.
+	Film_Type, // Press the keys of text one by one, with the period of a hand that types (film_key_periods), and no Enter.
+	Film_Hold, // Do nothing for `milliseconds`: the time that a viewer needs to see the state of the screen.
 	Quit, // End QEMU: the machine does not stop by itself.
 	Monitor, // Send the line text to the QEMU monitor, as it is (for example "nmi": a non-maskable interrupt to each processor).
 	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool takes the name that the system wrote in a frame, or names a frame "module + offset" from the debug object of its module, and the names start with `names`.
@@ -124,6 +126,7 @@ Step :: struct {
 	least_answer_bytes: int, // For Call: the least bytes of the answer on its stream.
 	inside_window: string, // For Click: (x, y) are inside the surface of the window with this title, as the log of the compositor places it. For Point: from the corner of the window.
 	date_after: string, // For Call: the number after this text in what the tool prints is a date of the machine in milliseconds since 1970, which date_check checks by order against the clock of the host.
+	milliseconds: int, // For Film_Hold: how long the state stays on the screen.
 }
 
 // The two clocks agree to whole seconds: the machine reads its real-time
@@ -2627,25 +2630,28 @@ scenario_measure_scheduler := [?]Step {
 
 // The film of the terminal: the program flood writes lines, the scenario
 // holds the view, moves in the lines, then stops the lines with a key and
-// starts them again.
+// starts them again. The times between its keys are the times of a film,
+// for a viewer (film.odin).
 @(rodata)
 scenario_film := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Launch, text = "flood"},
 	{kind = .Wait, text = "terminal: ok, flood writes in a ring of 4096 records"},
-	{kind = .Film, x = 5000},
+	{kind = .Film_Start, text = "terminal"},
+	{kind = .Film_Hold, milliseconds = 5000},
 	{kind = .Key, text = "pgup"},
-	{kind = .Film, x = 2500},
+	{kind = .Film_Hold, milliseconds = 2500},
 	{kind = .Key, text = "spc"},
-	{kind = .Film, x = 2500},
+	{kind = .Film_Hold, milliseconds = 2500},
 	{kind = .Key, text = "pgup"},
-	{kind = .Film, x = 500},
+	{kind = .Film_Hold, milliseconds = 500},
 	{kind = .Key, text = "pgup"},
-	{kind = .Film, x = 500},
+	{kind = .Film_Hold, milliseconds = 500},
 	{kind = .Key, text = "pgup"},
-	{kind = .Film, x = 1500},
+	{kind = .Film_Hold, milliseconds = 1500},
 	{kind = .Key, text = "spc"},
-	{kind = .Film, x = 4000},
+	{kind = .Film_Hold, milliseconds = 4000},
+	{kind = .Film_Stop},
 	{kind = .Shot, text = "film_end"},
 	{kind = .Quit},
 }
@@ -2657,7 +2663,7 @@ Machine :: struct {
 	output:    string, // The file of the log of the kernel.
 	x, y:      int, // The pointer.
 	pointer_known: bool, // The tool knows where the pointer is.
-	film_frames: int, // The pictures of the film that the tool asked for.
+	film:        ^Film_Worker, // The worker of the film that runs, between the steps Film_Start and Film_Stop (film.odin); else nil.
 	call_socket: string, // The socket where the peer receives the calls of the tool.
 	peer:        ^Peer,
 	confirm:     bool, // The tool reads compositor.pointer() before each press: see pointer_confirm.
@@ -3019,6 +3025,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	}
 	_ = os.remove(output)
 	_ = os.remove(qmp_socket_of(output))
+	_ = os.remove(film_qmp_socket_of(output))
 	monitor_read, monitor_write, pipe_err := os.pipe()
 	if pipe_err != nil {
 		fmt.eprintfln("kerneltool: cannot create a pipe: %v", pipe_err)
@@ -3044,6 +3051,9 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	// machine protocol of QEMU: QEMU listens when it started.
 	passed := qmp_open(&machine.qmp, qmp_socket_of(output)) && scenario_run(&machine, steps)
 	scenario_ended := time.tick_now()
+	// A scenario that failed between Film_Start and Film_Stop: its worker
+	// ends before the connections to QEMU close.
+	_ = film_stop(&machine)
 	if !passed && firmware != .Usual {
 		// While QEMU still runs: what the firmware shows and wrote.
 		firmware_failure_report(&machine, output)
@@ -3799,14 +3809,31 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			if !screen_save(machine, step.text) {
 				return false
 			}
-		case .Film:
-			// QEMU does the commands of the monitor in order: one file for each picture.
-			start := time.tick_now()
-			for time.tick_since(start) < time.Duration(step.x) * time.Millisecond {
-				monitor_send(machine, "screendump ", fmt.tprintf(FILM_FRAME, machine.film_frames))
-				machine.film_frames += 1
-				time.sleep(FILM_FRAME_TIME - time.tick_since(start) % FILM_FRAME_TIME)
+		case .Film_Start:
+			if !film_start(machine, step.text) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the film %s did not start", index + 1, step.text)
+				return false
 			}
+		case .Film_Stop:
+			if machine.film == nil {
+				fmt.eprintfln("kerneltool: test failed: step %d: a step Film_Stop with no film that runs", index + 1)
+				return false
+			}
+			if !film_stop(machine) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the worker of the film ended before its stop", index + 1)
+				return false
+			}
+		case .Film_Type:
+			// The seed of the step: each text of a film has its own periods,
+			// the same in each run.
+			if !film_type(machine, step.text, FILM_TYPING_SEED + u64(index)) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not take the keys of \"%s\"", index + 1, step.text)
+				return false
+			}
+		case .Film_Hold:
+			// A time of a film, for its viewer: the scenario of a test has
+			// no such step, and waits for a condition (film.odin).
+			time.sleep(time.Duration(step.milliseconds) * time.Millisecond)
 		}
 		free_all(context.temp_allocator)
 	}

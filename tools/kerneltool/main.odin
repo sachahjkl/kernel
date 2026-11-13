@@ -264,10 +264,14 @@ COMMANDS :: [?]Command {
 	// The tool checks no speed: a program checks its counts, and the numbers
 	// are printed for a reader (docs/TOOLS.md, "The bounds of the tests").
 	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure clock|crowd|disk|flow|limits`: the program alone, and its lines; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
-	// Builds, starts a machine that types in the terminal, and films it: the
-	// pictures of the screen become a film with ffmpeg, which must be on the
-	// path. The film is for the development log, not a test.
-	{name = "film", about = "build, start the machine, film the terminal, and write " + FILM_OUTPUT + " and a copy in " + DEVELOPMENT_LOG_FOLDER + " (needs ffmpeg)", run = run_film},
+	// Builds, starts a machine that runs the scenario of a film, and films
+	// it: the pictures of the screen, taken while the scenario types, become
+	// a film with ffmpeg, which must be on the path. The film is for the
+	// development log, not a test.
+	//
+	// - no argument, or `terminal`: the film of the terminal.
+	// - `palette`: the film of the palette.
+	{name = "film", about = "build, start the machine, film a scenario (" + FILM_NAMES + "; no argument: terminal), and write " + FILM_FOLDER + "/<name>.mp4 and a copy in a new folder of " + DEVELOPMENT_LOG_FOLDER + " (needs ffmpeg)", run = run_film},
 	// Converts the BDF file of the font of the terminal (Spleen 8x16, from
 	// `FONT_SOURCE`) to Odin data in `support/graphics/font.odin`. The result
 	// is in the repository, so a build does not need the BDF file: run it only
@@ -784,43 +788,6 @@ run_measure :: proc(args: []string) -> int {
 	return 0
 }
 
-FILM_OUTPUT :: FILM_FOLDER + "/terminal.mp4"
-TEST_OUTPUT_FILM :: BUILD_FOLDER + "/test_output_film.txt"
-
-// run_film films the terminal. The film is for the development log: it is
-// not a test.
-run_film :: proc(args: []string) -> int {
-	if code := build_system(boot_volumes_of_command("film")); code != 0 {
-		return code
-	}
-	if !reset_folder(FILM_FOLDER) || !make_folder(SCREENSHOT_FOLDER) {
-		return EXIT_FAILURE
-	}
-	// The tool ends QEMU: status 0.
-	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) || !machine_test(scenario_film[:], BOOT_VOLUME, TEST_OUTPUT_FILM, 0, TEST_DATA_DISK) {
-		return EXIT_FAILURE
-	}
-	if !run({"ffmpeg", "-loglevel", "error", "-y", "-framerate", fmt.tprint(FILM_RATE), "-i", FILM_FRAME, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", FILM_OUTPUT}) {
-		return EXIT_FAILURE
-	}
-	frames, _ := files_with_suffix(FILM_FOLDER, ".ppm")
-	for frame in frames {
-		_ = os.remove(frame)
-	}
-	year, month, day := time.date(time.now())
-	hour, minute, second := time.clock(time.now())
-	target := fmt.tprintf("%s/%04d-%02d-%02d_%02d%02d%02d_terminal.mp4", DEVELOPMENT_LOG_FOLDER, year, int(month), day, hour, minute, second)
-	if !make_folder(DEVELOPMENT_LOG_FOLDER) {
-		return EXIT_FAILURE
-	}
-	if err := os.copy_file(target, FILM_OUTPUT); err != nil {
-		fmt.eprintfln("kerneltool: cannot write %s: %v", target, err)
-		return EXIT_FAILURE
-	}
-	fmt.printfln("kerneltool: wrote %s (%d pictures) and %s", FILM_OUTPUT, len(frames), target)
-	return 0
-}
-
 run_check :: proc(args: []string) -> int {
 	// The full check proves the build: it keeps no output of an earlier build.
 	build_whole = true
@@ -1044,6 +1011,10 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// pointer through it, and each command has a reply (qmp.odin).
 		append(&list, "-display", "none", "-serial", strings.concatenate({"file:", test_output}, context.temp_allocator), "-monitor", "stdio")
 		append(&list, "-qmp", strings.concatenate({"unix:", qmp_socket_of(test_output), ",server=on,wait=off"}, context.temp_allocator))
+		// A second socket of the same protocol, for the worker of a film:
+		// its pictures and the keys of the scenario never share a reply
+		// (film.odin). A machine with no film leaves it with no connection.
+		append(&list, "-qmp", strings.concatenate({"unix:", film_qmp_socket_of(test_output), ",server=on,wait=off"}, context.temp_allocator))
 	} else {
 		append(&list, "-serial", "stdio")
 	}

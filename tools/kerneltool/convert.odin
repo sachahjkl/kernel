@@ -319,6 +319,25 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 			append(&rebases, relocation.offset)
 		}
 	}
+	// A segment that the loader writes nowhere is only read. The linker puts
+	// its own table there, which is not copied, so such a segment is often
+	// empty: every program that has the module can then share its pages.
+	for &image in images {
+		if .Read_Only_After_Load not_in image.record.flags {
+			continue
+		}
+		written := false
+		first, end := image.record.memory_offset, image.record.memory_offset + image.record.memory_size
+		for offset in rebases {
+			written ||= offset >= first && offset < end
+		}
+		for slot in slot_records[1:] {
+			written ||= slot.memory_offset >= first && slot.memory_offset < end
+		}
+		if !written {
+			image.record.flags -= {.Write, .Read_Only_After_Load}
+		}
+	}
 	rebase_words := encode_rebases(rebases[:])
 
 	// Layout: header, directory, tables, then the data of each segment.
