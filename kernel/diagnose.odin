@@ -1109,7 +1109,8 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		// the operation kept them on this processor from its own copy. The
 		// command itself is a choice, below. A weight, a request and a
 		// weight limit have a largest value, which the operation kept too:
-		// for a weight it is the weight limit that the thread had then.
+		// for a weight it is the full weight, or the weight that the thread
+		// had then when its own program wrote a higher one.
 		if cpu := processor_self(); cpu.thread_write_refusal != .None {
 			record_set(record, .Bad_Value, .None, 4, cpu.thread_write_refused_value, cpu.thread_write_refused_limit, u64(cpu.thread_write_refusal))
 			return true

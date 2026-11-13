@@ -123,10 +123,10 @@ The request has the same rule for one reason. Under EEVDF the kernel keeps what 
 
 A write of the holder that lowers a weight, or keeps it, changes no strategy field, as a write of a program.
 
-**What a write that lowers can give, one time.** The strategy fields stay, and the kernel converts nothing. Two bounded effects exist under EEVDF, and none repeats, because the program cannot write the value up again:
+**What a write that lowers can give.** The strategy fields stay, and the kernel converts nothing. Two bounded effects exist under EEVDF. Each needs a lower value, and the program cannot write the value up again: a weight lowered in steps has the first effect at each step, and the sum over the life of a thread is about 13 requests at most.
 
 - A weight lowered while the thread waits. The kept lag was taken with the old weight, and the wake scales it with the new one. With `W` the weights of the other threads, the thread comes back at its place times `(W + new) / (W + old)`: nearer to the average. A thread that owed time owes less: at most the whole of one kept lag, which is at most two requests.
-- A request lowered before a wait. What the thread owes is then kept within two requests of the new value, so a part of one long turn is not kept: at most one time slice.
+- A request lowered before a wait. What the thread owes is then kept within two requests of the new value, so a part of one long turn is not kept: at most two requests of the old value.
 
 Each is less than what the end of the thread and a new thread give, which is a place at the average, and each costs the program a lower weight or a shorter request for the rest of the life of the thread. A thread that never writes its schedule has the same computation as before the schedule could be written.
 

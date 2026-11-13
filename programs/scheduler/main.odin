@@ -856,7 +856,7 @@ own_schedule_run :: proc "c" (parameter: rawptr) -> ! {
 	number := system.thread_record().number
 	read_status, write_status, again_status, last_status: system.Status
 	own_schedule.created, read_status = system.thread_schedule_read(0, number)
-	// The request 0 keeps the request of the thread.
+	// A thread lowers its own weight and its own request.
 	write_status = system.thread_schedule_write(0, number, {weight = OWN_WEIGHT / 2, request = OWN_REQUEST / 2})
 	own_schedule.written, again_status = system.thread_schedule_read(0, number)
 	// A program only lowers: the values of the creation are refused now.
