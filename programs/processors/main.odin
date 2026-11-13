@@ -282,7 +282,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.log("processors: the picture took ", times[0], " ms with 1 thread, ", times[1], " ms with 2 threads, ", times[2], " ms with 4 threads")
 			}
 		}
-		if done == PICTURE_HEIGHT && now >= complete_at + (phase < 0 ? 0 : PICTURE_PAUSE) {
+		// The pause between two pictures is for a reader. The first three
+		// pictures have none: the line of their times comes after a count
+		// of work, not after a time.
+		if done == PICTURE_HEIGHT && now >= complete_at + (logged ? PICTURE_PAUSE : 0) {
 			// A new picture: all the rows are free again.
 			phase = (phase + 1) % len(thread_counts)
 			graphics.clear(picture, graphics.COLOR_CARD_TOP)

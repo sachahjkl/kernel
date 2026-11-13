@@ -17,16 +17,16 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ## Groups
 
-1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191, D-205, D-214 to D-217, D-223
+1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191, D-205, D-214 to D-217, D-223, D-232
 2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213, D-218, D-219, D-224, D-230
 3. [The kernel](#3-the-kernel): D-071 to D-083, D-220
 4. [Memory](#4-memory): D-084 to D-088
-5. [The scheduler](#5-the-scheduler): D-089 to D-091, D-226, D-227, D-228, D-231
+5. [The scheduler](#5-the-scheduler): D-089 to D-091, D-226, D-227, D-228, D-231, D-233
 6. [Storage](#6-storage): D-092 to D-095, D-221
 7. [The network and QUIC](#7-the-network-and-quic): D-096 to D-100
 8. [Cryptography and randomness](#8-cryptography-and-randomness): D-101 to D-105
 9. [The interface, the fonts, the mark and the design](#9-the-interface-the-fonts-the-mark-and-the-design): D-106 to D-141, D-192, D-193
-10. [The console and the tools](#10-the-console-and-the-tools): D-142 to D-148, D-206, D-225
+10. [The console and the tools](#10-the-console-and-the-tools): D-142 to D-148, D-206, D-225, D-234
 11. [The build and the compiler](#11-the-build-and-the-compiler): D-149 to D-162, D-229
 12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194 to D-201, D-207 to D-210, D-222
 13. [The name and the repository](#13-the-name-and-the-repository): D-186 to D-189
@@ -357,6 +357,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "Amender la propriété"
 - State: replaced by D-226: the table is gone, and the exception left property 13.
 - Where: `PROPERTIES.md`, property 13; `kernel/strategy.odin`; `SCHEDULING.md`.
+
+### D-232 The creator of a program can debug it; the principal grants the debug access to each other program
+- 2026-11-13. Decided by: the owner, on a contradiction that the independent review of the debugger found.
+- Decision: the kernel gives the right `Debug` on the handle that a program gets when it creates a program. The review checked that this right adds no power (the creator already maps memory in the program, gives it handles and stops it) and reaches no program that the creator did not build. Property 20, row 2, is amended: the creator holds the debug access for the program it created; for each other program the principal grants it, through the root service.
+- Words: the owner chose "Amender la propriété" between that and the removal of `Debug` from the creator.
+- State: done.
+- Where: `PROPERTIES.md`, property 20; `TOOLS.md`, "The debugger: the design"; `ARCHITECTURE.md`, "The debugger of a program".
 
 ## 2. The way of working
 
@@ -842,6 +849,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done. Not built: the placement of a thread on processors, a share for each budget.
 - Where: `SCHEDULING.md`, "The schedule of a live thread"; the reviews are not in the repository.
 
+### D-233 No share for each budget in the kernel: the program `scheduler` sets the weights
+- 2026-11-13. Decided by: the owner, on a design with numbers.
+- Decision: a share of processor time for each budget is not built in the kernel. By the arithmetic of the design (4 processors, a program with 32 threads against a program with one; not measured), the smallest kernel form gives the single thread 0.50 of a processor, and a policy that sets the weight of each thread of the large program through `Write_Schedule` gives 0.80, with no change of the kernel; the kernel form that gives as much writes a sum shared by the processors, against property 13. So the policy is written in the program `scheduler`, then measured. The placement of a thread on processors is built in the kernel.
+- Words: the owner chose "Politique dans scheduler".
+- State: decided; the policy is not written.
+- Where: `SCHEDULING.md`; `FIRST_MILESTONE.md`, "Next steps".
+
 ## 6. Storage
 
 ### D-092 No save action; versions for all programs
@@ -1285,6 +1299,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "nos modules de commande de la console ne retournent pas de résultats [...] la console [...] elle prend pas profit du fait qu'on ait des canaux sur les modules et que aussi ça retourne des résultats [...] ces modules, ils devraient retourner des résultats, justement, c'est ces résultats qui devraient être affichés. Du coup, on doit avoir des capacités de rendu générique en fonction des types de résultats dans la console [...] Et avoir une capacité d'afficher, du coup, les canaux des modules quand ils s'exécutent. [...] Mieux intégrer la console et faire en sorte d'utiliser notre architecture pour qu'elle soit très composable."; on the reading: "tout à fait ça !"
 - State: decided, not built.
 - Where: `CONSOLE.md`; `FIRST_MILESTONE.md`, "Next steps".
+
+### D-234 Which program can be debugged follows from its grants, with no list of names; the debugger from another machine goes through `remote`
+- 2026-11-13. Decided by: the owner.
+- Decision: the root service gives the debug access to a program by one rule over the grants, with no name written in the code: each grant of the program is a grant that the caller holds and that was not revoked from it. A program with no grant can therefore be debugged; a service and a program with a device or a data grant cannot. The rule must not assume that a program is in the boot image: programs will come from a disk. Debugging from another machine uses the service `remote` over QUIC, with the commands of the debugger as exports of a service; the serial port stays the log of the kernel.
+- Words: "pas de cas particulier [...] on doit pas hardcoder. je te fais confiance. je pense: programmes simples [...] (anticiper que un jour les programmes seront sur disque, pas hardcodé que les modules sont dans la boot image, si jamais c'est pas déjà le cas)"; for the other machine the owner chose "Par remote sur QUIC".
+- State: decided; the rule for a program with no grant and the commands are in work.
+- Where: `TOOLS.md`, "The debugger: the design".
 
 ## 11. The build and the compiler
 

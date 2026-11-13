@@ -1302,6 +1302,11 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	}
 	// Each program: the date page, read-only.
 	date_page_give(mappings[:], &mapping_count, &values)
+	// Each program: whether the machine runs for a measure. The boot image
+	// says it, so the modules of a measure run are the modules of a test.
+	if system.image_resource_find(image, system.MEASURE_RUN_RESOURCE) != nil {
+		values[op.CONTEXT_VALUE_MEASURE_RUN] = 1
+	}
 	if .Debug_Image in role {
 		debug_image_give(mappings[:], &mapping_count, &values)
 	}

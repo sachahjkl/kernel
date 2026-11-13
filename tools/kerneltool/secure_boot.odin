@@ -24,9 +24,6 @@ FIRMWARE_SIGNING_KEY_FILE_NAME :: "firmware_signing_key.pem"
 FIRMWARE_CERTIFICATE_FILE_NAME :: "firmware_signing_key.crt"
 TEST_FIRMWARE_SIGNING_KEY_FILE :: RESOURCE_FOLDER + "/keys/test_" + FIRMWARE_SIGNING_KEY_FILE_NAME
 TEST_FIRMWARE_CERTIFICATE_FILE :: RESOURCE_FOLDER + "/keys/test_" + FIRMWARE_CERTIFICATE_FILE_NAME
-// The boot program signed for Secure Boot. BOOT_PROGRAM stays the unsigned
-// output of the link, which the repeated builds compare.
-BOOT_PROGRAM_SIGNED :: BOOT_OBJECT_FOLDER + "/BOOTX64.signed.EFI"
 // The variable store of the machine with Secure Boot on: OVMF_FULL_VARS
 // with the certificate enrolled. machine_command copies it for each machine.
 SECURE_BOOT_VARIABLES :: BUILD_FOLDER + "/ovmf_vars_secure_boot.fd"
@@ -105,20 +102,22 @@ firmware_signing_key_new :: proc(folder: string, test: bool) -> bool {
 	return true
 }
 
-// boot_program_sign writes the signed copy of BOOT_PROGRAM, and changes one
-// byte of it for a test that the firmware refuses it.
-boot_program_sign :: proc(signature: Firmware_Signature) -> bool {
+// boot_program_sign writes the signed copy of a boot program, and changes
+// one byte of it for a test that the firmware refuses it. The boot program
+// stays the output of the link with no signature, which the repeated builds
+// compare.
+boot_program_sign :: proc(signature: Firmware_Signature, program_path, signed_path: string) -> bool {
 	key := firmware_signing_key_find() or_return
-	_ = os.remove(BOOT_PROGRAM_SIGNED)
-	run({"sbsign", "--key", key.key_path, "--cert", key.certificate_path, "--output", BOOT_PROGRAM_SIGNED, BOOT_PROGRAM}) or_return
+	_ = os.remove(signed_path)
+	run({"sbsign", "--key", key.key_path, "--cert", key.certificate_path, "--output", signed_path, program_path}) or_return
 	if signature == .Signed_Then_Changed {
-		program := read_file(BOOT_PROGRAM_SIGNED) or_return
+		program := read_file(signed_path) or_return
 		// The middle of the file is in the boot image that the boot program
 		// holds: a byte that the Authenticode hash covers. The signature is
 		// at the end of the file.
 		program[len(program) / 2] ~= 0x01
-		if err := os.write_entire_file(BOOT_PROGRAM_SIGNED, program); err != nil {
-			fmt.eprintfln("kerneltool: cannot write %s: %v", BOOT_PROGRAM_SIGNED, err)
+		if err := os.write_entire_file(signed_path, program); err != nil {
+			fmt.eprintfln("kerneltool: cannot write %s: %v", signed_path, err)
 			return false
 		}
 	}
@@ -129,7 +128,8 @@ boot_program_sign :: proc(signature: Firmware_Signature) -> bool {
 // variable store of the firmware with Secure Boot, with the certificate of
 // the firmware signing key as the platform key, the key exchange key and
 // the one entry of db, and Secure Boot on. No key of another vendor is
-// enrolled: the firmware starts only what this certificate signed.
+// enrolled: the firmware starts only what this certificate signed. The
+// build of one boot volume writes it (boot_volumes.odin).
 secure_boot_variables_write :: proc() -> bool {
 	key := firmware_signing_key_find() or_return
 	template := os.get_env("OVMF_FULL_VARS", context.temp_allocator)

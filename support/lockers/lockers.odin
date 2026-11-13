@@ -1,7 +1,8 @@
 // What the program `locks` and its program `locker` agree on (the lock
 // split of the kernel). `locks` starts LOCKER_CAPACITY lockers. Each one
 // waits for a command on the board, works on its own objects from the time
-// `start` to the time `end`, writes what it counted, and waits again.
+// `start` to the time `end` or until it did `limit` operations, writes what
+// it counted, and waits again.
 package lockers
 
 import "contract:fixed_addresses"
@@ -53,6 +54,7 @@ Slot :: struct #align (64) {
 	entries:       u64, // The kernel entries of the locker during the command, as its library counted them.
 	budget_before: u64, // The pages of the budget of the locker before the command.
 	budget_after:  u64, // The same, after the command: each page returned.
+	limit:         u64, // The count of the work after which the locker stops before `end`: operations, pages or objects. 0: none, the work ends at `end`.
 }
 
 // The memory that `locks` shares with its lockers: one slot for each

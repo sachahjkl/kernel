@@ -17,7 +17,8 @@
 // **How it works.** `locks` starts it from the boot image with a
 // [locker](term:locker) slot of a shared board (`lockers.Board`). The
 // locker waits on the word `command` of its slot, then runs the mode that
-// the slot names until the next command: `Entries` (one cheap kernel
+// the slot names until the time `end` of the command, or until the count
+// `limit` of the command: `Entries` (one cheap kernel
 // operation on its own object, as often as it can), `Faults` (pages on
 // first use: create, map, write one byte in each page, unmap, close), or
 // `Large` (create and close a memory object of 600 pages). It counts its
@@ -33,9 +34,9 @@ import "support:lockers"
 import "support:system"
 
 // entries enters the kernel with one cheap operation on an own object,
-// until the time is end.
-entries :: proc "contextless" (memory: system.Handle, end: u64) -> (count: u64) {
-	for system.time() < end {
+// until the time is end or the count is limit (0: no limit).
+entries :: proc "contextless" (memory: system.Handle, end, limit: u64) -> (count: u64) {
+	for system.time() < end && (limit == 0 || count < limit) {
 		for _ in 0 ..< 64 {
 			system.call(.Memory_Size, u64(memory))
 		}
@@ -64,9 +65,10 @@ fault_round :: proc "contextless" () -> u64 {
 	return lockers.FAULT_PAGES
 }
 
-// faults repeats fault_round until the time is end.
-faults :: proc "contextless" (end: u64) -> (count: u64) {
-	for system.time() < end {
+// faults repeats fault_round until the time is end or the pages are limit
+// (0: no limit).
+faults :: proc "contextless" (end, limit: u64) -> (count: u64) {
+	for system.time() < end && (limit == 0 || count < limit) {
 		count += fault_round()
 	}
 	return count
@@ -144,6 +146,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		mode := slot.mode
 		start := slot.start
 		end := slot.end
+		limit := slot.limit
 		before, _ := system.budget_read()
 		entered := system.kernel_entries()
 		for system.time() < start {
@@ -152,11 +155,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		count: u64
 		#partial switch mode {
 		case .Entries:
-			count = entries(own, end)
+			count = entries(own, end, limit)
 		case .Faults:
-			count = faults(end)
+			count = faults(end, limit)
 		case .Large:
-			for system.time() < end {
+			for system.time() < end && (limit == 0 || count < limit) {
 				if memory, made := system.memory_create(lockers.LARGE_PAGES); made == .Ok {
 					system.close(memory)
 					count += 1

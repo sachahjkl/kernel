@@ -117,6 +117,8 @@ Client :: struct {
 	x, y:        int,
 	title:       system.Name,
 	pointer_shape: pointer_pictures.Pointer_Shape, // The shape that the program asked for over its surface (pointer_picture.odin).
+	presents:    u64, // The Present records that the program sent since it created its surface.
+	present_waits: bool, // A Present changed a part of the screen, and no frame drew it yet.
 }
 
 // A rectangle of the screen. right and bottom are not in the rectangle.
@@ -150,6 +152,12 @@ drag_x, drag_y: int
 damage: [DAMAGE_CAPACITY]Rectangle // The parts of the screen that the next frame draws again.
 damage_count: int
 frames: u64
+presents: u64 // The Present records of all the programs since the start.
+// A change of the desktop itself (the pointer, the bar, a menu, the
+// launcher, a window that appeared, moved or closed) is damage that no
+// frame drew yet. The damage of a Present is counted for its window, not
+// here: a caller tells a window that draws with no end from the rest.
+desktop_change_waits: bool
 // The measures of the time of a frame (docs/DESIGN.md, section 7). A full
 // frame draws the whole screen: the first frame, and the frame after the
 // input puts a window down. The frames of a move are the frames while the
@@ -174,13 +182,22 @@ launcher_state: interface.Interface_State
 // The colors of one line of a title bar, and of its lighter top line.
 title_row, title_light: [display.SURFACE_LIMIT + 2 * BORDER]graphics.Color
 
-// damage_add records that a rectangle of the screen changed. Rectangles that
-// touch become one rectangle. If there is no room, the new rectangle joins
-// the first one.
+// damage_add records that the desktop itself changed a rectangle of the
+// screen: each change but the Present of a program.
 damage_add :: proc "contextless" (x, y, width, height: int) {
+	if damage_rectangle_add(x, y, width, height) {
+		desktop_change_waits = true
+	}
+}
+
+// damage_rectangle_add records that a rectangle of the screen changed.
+// Rectangles that touch become one rectangle. If there is no room, the new
+// rectangle joins the first one. false: the rectangle is not on the screen,
+// and nothing waits for a frame.
+damage_rectangle_add :: proc "contextless" (x, y, width, height: int) -> bool {
 	area := Rectangle{max(x, 0), max(y, 0), min(x + width, screen.width), min(y + height, screen.height)}
 	if area.left >= area.right || area.top >= area.bottom {
-		return
+		return false
 	}
 	index := 0
 	for index < damage_count {
@@ -197,6 +214,7 @@ damage_add :: proc "contextless" (x, y, width, height: int) {
 	}
 	damage[damage_count] = area
 	damage_count += 1
+	return true
 }
 
 // damage_window records the rectangle of a window.
@@ -399,10 +417,11 @@ canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
 // 3. The input ring: a key goes to the launcher, or to the window in
 //    front; a move or a button of the pointer moves the pointer, drags a
 //    window, opens a menu or starts a program.
-// 4. The calls of `pointer` and `windows`, after the input, so that they
-//    give the place of now.
-// 5. The ring of each window: `Surface_Create`, `Present` (the changed
+// 4. The ring of each window: `Surface_Create`, `Present` (the changed
 //    rectangle becomes damage), and `Pointer_Shape`.
+// 5. The calls of `pointer`, `windows` and `screen`, after the input and
+//    after the rings of the windows, so that they give the place of now
+//    and count each `Present` that a program sent before the call.
 // 6. A frame, at most one each 16 ms, when the screen has damage.
 //
 // **The stop.** With no framebuffer or no ring, the compositor writes
@@ -516,8 +535,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				pointer_moves += 1
 			}
 		}
-		// The calls read the place of the pointer after the input records.
-		system.service_run(&service)
 		for &client, index in clients {
 			if client.ring.head == nil {
 				continue
@@ -541,13 +558,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 							changed_width = int(min(record.values[3], u64(client.surface.width - left)))
 							changed_height = int(min(record.values[4], u64(client.surface.height - top)))
 						}
-						damage_add(client.x + BORDER + left, client.y + TITLE_HEIGHT + top, changed_width, changed_height)
+						client.presents += 1
+						presents += 1
+						if damage_rectangle_add(client.x + BORDER + left, client.y + TITLE_HEIGHT + top, changed_width, changed_height) {
+							client.present_waits = true
+						}
 					}
 				case .Pointer_Shape:
 					pointer_shape_request(&client, record) // pointer_picture.odin
 				}
 			}
 		}
+		// The calls read the place of the pointer after the input records,
+		// and the state of the screen after each Present that a program
+		// sent before the call: a caller that reads "nothing waits" then
+		// knows that the screen shows what the programs sent.
+		system.service_run(&service)
 		pointer_update(now) // After each change of what is under the pointer.
 		if second_of_bar(now) != shown_second {
 			shown_second = second_of_bar(now)
@@ -825,6 +851,11 @@ draw :: proc "contextless" (now: u64) {
 		draw_area(area, now)
 	}
 	damage_count = 0
+	// The screen shows each change that the compositor received.
+	desktop_change_waits = false
+	for &client in clients {
+		client.present_waits = false
+	}
 	spent := system.nanoseconds() - start
 	if launcher_open {
 		launcher_frames += 1

@@ -20,8 +20,8 @@ TEST_TIMES_SLOWEST_COUNT :: 25
 
 // The parts of the time of one picture of the screen (screen_save).
 Picture_Time :: struct {
-	settle:     time.Duration, // The fixed wait before the tool asks QEMU for the picture.
-	dump:       time.Duration, // From the command `screendump` to its reply: QEMU wrote the whole file.
+	settle:     time.Duration, // The wait for a settled screen, without the pictures of QEMU that the wait took (screen_settle.odin).
+	dump:       time.Duration, // From each command `screendump` to its reply: QEMU wrote the whole file. A picture can take several.
 	read:       time.Duration, // The read of the file and the check of its header.
 	conversion: time.Duration, // The encoding of the PNG, on a worker thread: not a part of the time of the step.
 	write:      time.Duration, // The write of the PNG file, on the same worker thread.
@@ -325,7 +325,7 @@ test_times_report :: proc(started: time.Tick) {
 		}
 	}
 	fmt.printfln("kerneltool: measure: %d keys sent, %.1f s in the sends of keys, with the wait after each send", summary.keys, seconds_of(summary.key_time))
-	fmt.printfln("kerneltool: measure: %d pictures, %.1f s in their steps: the fixed wait before each %.1f s, the screendump of QEMU %.1f s, the read of the file %.1f s; on worker threads, while the scenario goes on: the conversion to PNG %.1f s, the write %.1f s", summary.pictures, seconds_of(summary.picture.settle + summary.picture.dump + summary.picture.read), seconds_of(summary.picture.settle), seconds_of(summary.picture.dump), seconds_of(summary.picture.read), seconds_of(summary.picture.conversion), seconds_of(summary.picture.write))
+	fmt.printfln("kerneltool: measure: %d pictures, %.1f s in their steps: the wait for a settled screen %.1f s, the screendumps of QEMU %.1f s, the read of the file %.1f s; on worker threads, while the scenario goes on: the conversion to PNG %.1f s, the write %.1f s", summary.pictures, seconds_of(summary.picture.settle + summary.picture.dump + summary.picture.read), seconds_of(summary.picture.settle), seconds_of(summary.picture.dump), seconds_of(summary.picture.read), seconds_of(summary.picture.conversion), seconds_of(summary.picture.write))
 	fmt.printfln("kerneltool: measure: %.1f s waited for lines of the log, by the program of the line:", seconds_of(summary.waited))
 	for program in summary.programs {
 		fmt.printfln("kerneltool: measure:     %8.1f s, %4d lines: %s", seconds_of(program.waited), program.count, program.program)

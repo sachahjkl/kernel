@@ -158,15 +158,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			row.before = used
 		}
 		sample += 1
-		// The first interval has the start of the threads: the second one
-		// counts, or the first later one where each thread ran. A loaded host
-		// can give a thread no time in one interval; the samples only end a
-		// hang.
+		// The first sample has no interval. The first interval has the start
+		// of the threads: the check, which is an upper limit, counts it, or
+		// the first later one where each thread ran. A measure run waits for
+		// the next interval, where each thread computes from its start: its
+		// line is the time that a budget uses. A loaded host can give a
+		// thread no time in one interval; the samples only end a hang.
 		each_ran := true
 		for row in rows {
 			each_ran &&= row.used > 0
 		}
-		if !reported && sample >= 3 && (each_ran || sample >= 3 + system.TEST_HANG_BOUND_MILLISECONDS / INTERVAL) {
+		first_counted := system.measure_run() ? 3 : 2
+		if !reported && sample >= first_counted && (each_ran || sample >= first_counted + system.TEST_HANG_BOUND_MILLISECONDS / INTERVAL) {
 			reported = true
 			right := started && log_right && rule_right && each_ran
 			for row in rows {

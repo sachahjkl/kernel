@@ -9,6 +9,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:sys/linux"
+import "core:time"
 
 MODULE_BUILD_FOLDER :: BUILD_FOLDER + "/modules"
 // The modules of the build with no debug information: the check that the
@@ -18,6 +19,13 @@ MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION :: BUILD_FOLDER + "/modules_withou
 BOOT_IMAGE :: BUILD_FOLDER + "/boot.image"
 BOOT_IMAGE_FAILS :: BUILD_FOLDER + "/boot_fails.image"
 BOOT_IMAGE_SHORTAGE :: BUILD_FOLDER + "/boot_shortage.image"
+// The boot image of a measure run: the usual one, with one resource more,
+// which the root service looks for (docs/TOOLS.md, "A check by count, a measure by time").
+BOOT_IMAGE_MEASURE :: BUILD_FOLDER + "/boot_measure.image"
+MEASURE_RUN_RESOURCE_NAME :: "measure_run" // system.MEASURE_RUN_RESOURCE.
+MEASURE_RUN_RESOURCE_FILE :: BUILD_FOLDER + "/measure_run.resource"
+// The bytes of the resource: the root service reads its name only.
+MEASURE_RUN_RESOURCE_TEXT :: "This machine runs for a measure.\n"
 SYSTEM_LIBRARY_FOLDER :: "support/system"
 // The copy and the fill of every module, of the kernel and of the boot
 // program: copy_bytes_without_overlap, copy_bytes_with_overlap,
@@ -163,20 +171,44 @@ module_path :: proc(name: string) -> string {
 
 build_modules :: proc() -> bool {
 	// One process for each module, several at once (parallel_build.odin).
+	// A module whose inputs are the same is kept (incremental_build.odin).
 	build_modules_in_parallel() or_return
+	// The steps below run at each build: each one reads outputs of the
+	// modules or files of the repository, and its time is in the measure of
+	// the build.
+	step_started := time.tick_now()
 	// The debug objects, beside the modules, in one file for the boot volumes.
 	debug_image_write() or_return
+	build_measure_step("the debug image", step_started)
+	step_started = time.tick_now()
 	// The pointer themes: the resources of the boot image (pointers.odin).
 	resources := build_pointer_themes(os.get_env(POINTER_THEME_SOURCE_VARIABLE, context.temp_allocator), false) or_return
+	build_measure_step("the pointer themes", step_started)
+	step_started = time.tick_now()
 	// The glyph caches of the default font and of the interface font: five more resources (vector_fonts.odin).
 	glyph_caches := build_glyph_caches() or_return
+	build_measure_step("the glyph caches", step_started)
+	step_started = time.tick_now()
 	all_resources := make([dynamic]Resource_File, context.temp_allocator)
 	append(&all_resources, ..resources)
 	append(&all_resources, ..glyph_caches[:])
 	// The second boot image has no compositor: with it, the start fails.
 	// The third has no input service: the root service starts only the
 	// program shortage (the test of the shortage of frames).
-	return build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:])
+	images_built := build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:])
+	if images_built {
+		// The fourth is the image of a measure run: the same modules and one
+		// resource more, so a measure runs the code that a test checked.
+		resource_text: string = MEASURE_RUN_RESOURCE_TEXT
+		if err := os.write_entire_file(MEASURE_RUN_RESOURCE_FILE, transmute([]u8)resource_text); err != nil {
+			fmt.eprintfln("kerneltool: cannot write %s: %v", MEASURE_RUN_RESOURCE_FILE, err)
+			return false
+		}
+		append(&all_resources, Resource_File{name = MEASURE_RUN_RESOURCE_NAME, path = MEASURE_RUN_RESOURCE_FILE})
+		images_built = build_boot_image(BOOT_IMAGE_MEASURE, "", all_resources[:])
+	}
+	build_measure_step("the four boot images", step_started)
+	return images_built
 }
 
 // files_with_suffix gives the paths of the files of a folder that end with suffix.
@@ -204,19 +236,14 @@ files_with_suffix :: proc(folder, suffix: string) -> (paths: []string, ok: bool)
 // passes the two defines in each build: the defaults of the source never
 // decide.
 test_build_checks := true
-// A measure run of the windows: the programs write the time of their
-// pictures (display.MEASURE_RUN, `kerneltool measure windows`).
-measure_run := false
 
-// build_module compiles a package to objects, assembles its .asm files, links
-// all with lld into one position-independent object, and converts that
-// object into a module.
-build_module :: proc(build: Module_Build) -> bool {
-	folder := join(module_build_folder, "/", build.name)
-	objects := join(folder, "/objects")
-	reset_folder(objects) or_return
-	llvm_ir_folder := join(folder, "/llvm_ir")
-	reset_folder(llvm_ir_folder) or_return
+// module_compile_command gives the command of the compiler for a module,
+// with each flag of its build: the checks of the kernel, the debug
+// information, the settings of the module. The build key of the module
+// holds this command (incremental_build.odin), so a flag is written here
+// and nowhere else.
+module_compile_command :: proc(build: Module_Build) -> []string {
+	llvm_ir_folder := join(module_build_folder, "/", build.name, "/llvm_ir")
 	compile := make([dynamic]string, context.temp_allocator)
 	append(
 		&compile,
@@ -235,6 +262,10 @@ build_module :: proc(build: Module_Build) -> bool {
 		// The file name and the line in a message of a check, not the full path:
 		// the hash of a module does not depend on the folder of the build.
 		"-source-code-locations:filename",
+		// The compiler writes the list of the files that it read: the inputs
+		// of the next build of this module.
+		"-export-dependencies:json",
+		join("-export-dependencies-file:", module_dependency_file(build.name)),
 		CONTRACT_LIBRARY,
 		join("-out:", llvm_ir_folder),
 	)
@@ -254,10 +285,54 @@ build_module :: proc(build: Module_Build) -> bool {
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_FRAME_SUMS=true" : "-define:TEST_BUILD_CHECKS_FRAME_SUMS=false")
 	} else {
 		append(&compile, SUPPORT_LIBRARY) // The kernel has the contract library only.
-		if measure_run {
-			append(&compile, "-define:MEASURE_RUN=true")
-		}
 	}
+	return compile[:]
+}
+
+// module_object_command gives the command of llc for a module: the LLVM
+// of the Odin compiler (18) makes the object. Each function keeps its
+// frame pointer: the kernel walks them for the stack trace of a fault.
+// The build key of the module holds this command.
+module_object_command :: proc(build: Module_Build) -> []string {
+	folder := join(module_build_folder, "/", build.name)
+	llc := make([dynamic]string, context.temp_allocator)
+	append(&llc, "llc", "-O3", "--frame-pointer=all", "-relocation-model=pic", "--function-sections", "--data-sections", "-filetype=obj")
+	if build.kernel {
+		// The kernel has no x87, SSE or AVX instruction: the registers of a
+		// program stay live through each kernel entry, and only the switch
+		// of threads saves them (docs/ARCHITECTURE.md, "The extended state
+		// of the processor").
+		append(&llc, KERNEL_TARGET_FEATURES)
+	}
+	append(&llc, "-o", join(folder, "/objects/", build.name, ".o"), join(folder, "/", build.name, ".ll"))
+	return llc[:]
+}
+
+// module_assembly_files gives the assembly files that a module links: the
+// copies and the fills, the files of its folder, and for a program the
+// files of the system library, which has instructions of its own.
+module_assembly_files :: proc(build: Module_Build) -> (files: []string, ok: bool) {
+	assembly := make([dynamic]string, context.temp_allocator)
+	append(&assembly, RUNTIME_MEMORY)
+	append(&assembly, ..(files_with_suffix(build.source, ".asm") or_return))
+	if build.image {
+		append(&assembly, ..(files_with_suffix(SYSTEM_LIBRARY_FOLDER, ".asm") or_return))
+	}
+	return assembly[:], true
+}
+
+// build_module compiles a package to objects, assembles its .asm files, links
+// all with lld into one position-independent object, and converts that
+// object into a module.
+build_module :: proc(build: Module_Build) -> bool {
+	folder := join(module_build_folder, "/", build.name)
+	objects := join(folder, "/objects")
+	reset_folder(objects) or_return
+	llvm_ir_folder := join(folder, "/llvm_ir")
+	reset_folder(llvm_ir_folder) or_return
+	// The list of an earlier build must not stay when this compiler fails.
+	_ = os.remove(module_dependency_file(build.name))
+	compile := module_compile_command(build)
 	run(compile[:]) or_return
 	// Odin writes the IR in the folder of -out, with the name of the first
 	// package of the module. The folder was empty: its one .ll file is the IR.
@@ -270,15 +345,8 @@ build_module :: proc(build: Module_Build) -> bool {
 		fmt.eprintfln("kerneltool: cannot move the LLVM IR of %s: %v", build.name, err)
 		return false
 	}
-	// The LLVM of the Odin compiler (18) makes the object. Each function keeps
-	// its frame pointer: the kernel walks them for the stack trace of a fault.
-	llc := make([dynamic]string, context.temp_allocator)
-	append(&llc, "llc", "-O3", "--frame-pointer=all", "-relocation-model=pic", "--function-sections", "--data-sections", "-filetype=obj")
 	if build.kernel {
-		// The kernel has no x87, SSE or AVX instruction: the registers of a
-		// program stay live through each kernel entry, and only the switch
-		// of threads saves them (docs/ARCHITECTURE.md, "The extended state
-		// of the processor"). These features hold for all of the IR only
+		// The features of llc for the kernel hold for all of the IR only
 		// while no function of it has target features of its own: a
 		// function attribute would take the place of -mattr for that
 		// function. The disassembly after the link would find its vector
@@ -288,17 +356,9 @@ build_module :: proc(build: Module_Build) -> bool {
 			fmt.eprintfln("kerneltool: the LLVM IR of %s has functions with target features of their own: the features of llc for the kernel would not hold for them", build.name)
 			return false
 		}
-		append(&llc, KERNEL_TARGET_FEATURES)
 	}
-	append(&llc, "-o", join(objects, "/", build.name, ".o"), join(folder, "/", build.name, ".ll"))
-	run(llc[:]) or_return
-	assembly := make([dynamic]string, context.temp_allocator)
-	append(&assembly, RUNTIME_MEMORY)
-	append(&assembly, ..(files_with_suffix(build.source, ".asm") or_return))
-	if build.image {
-		// A program uses the system library, which has instructions of its own.
-		append(&assembly, ..(files_with_suffix(SYSTEM_LIBRARY_FOLDER, ".asm") or_return))
-	}
+	run(module_object_command(build)) or_return
+	assembly := module_assembly_files(build) or_return
 	for source in assembly {
 		name := source[strings.last_index(source, "/") + 1:]
 		if build.kernel && source == RUNTIME_MEMORY {

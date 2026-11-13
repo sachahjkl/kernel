@@ -40,7 +40,7 @@ module_build_outputs :: proc(build: Module_Build) -> [4]Build_Output {
 }
 
 // The outputs of the boot program: the program, and the object that Odin made.
-BOOT_PROGRAM_OUTPUTS :: [2]Build_Output{{kind = "boot program", path = BOOT_PROGRAM}, {kind = "object", path = BOOT_OBJECT_FOLDER + "/boot.obj"}}
+BOOT_PROGRAM_OUTPUTS :: [2]Build_Output{{kind = "boot program", path = BOOT_PROGRAM}, {kind = "object", path = BOOT_PROGRAM_OBJECT}}
 
 // One output over several builds: each distinct content, in the order of its
 // first build, and the count of builds that gave it.
@@ -177,6 +177,9 @@ run_repeat :: proc(args: []string) -> int {
 		fmt.eprintln("kerneltool: repeat <module> <count>, or repeat all <count> [processes], with a count of 2 or more")
 		return EXIT_USAGE
 	}
+	// Each build of this command is a whole build: it counts the results
+	// of the compiler, not the outputs that a build record keeps.
+	build_whole = true
 	if args[0] == "all" {
 		return repeat_all(count)
 	}
@@ -221,6 +224,7 @@ run_repeat :: proc(args: []string) -> int {
 // order of `build`, and prints one row for each: the distinct modules (or
 // boot programs), LLVM IR files, objects and debug objects.
 repeat_all :: proc(count: int) -> int {
+	build_whole = true
 	if !reset_folder(DIFFERENT_BUILDS_FOLDER) {
 		return EXIT_FAILURE
 	}
@@ -235,7 +239,7 @@ repeat_all :: proc(count: int) -> int {
 		append(&all, Distinct_Results{owner = "boot", output = output})
 	}
 	for number in 1 ..= count {
-		if !build_modules() || !build_boot_program("boot.image", BOOT_VOLUME, 0) {
+		if !build_modules() || !main_boot_volume_build() {
 			return EXIT_FAILURE
 		}
 		for &result in all {
@@ -283,6 +287,10 @@ repeat_all :: proc(count: int) -> int {
 // resources of the boot image), the boot program and its object. The hash
 // of a module is the identity of its source, not of one build.
 outputs_same_after_second_build :: proc() -> bool {
+	// The second build is a whole build: a module that a build record keeps
+	// is the same bytes with no proof. The first build must be whole too:
+	// the commands that call this procedure set build_whole before it.
+	build_whole = true
 	reset_folder(DIFFERENT_BUILDS_FOLDER) or_return
 	all := make([dynamic]Distinct_Results)
 	defer {
@@ -300,7 +308,7 @@ outputs_same_after_second_build :: proc() -> bool {
 	for path in theme_paths {
 		append(&all, Distinct_Results{owner = "pointers", output = {kind = "pointer theme file", path = path}})
 	}
-	// The last build of `test` made the boot program of BOOT_VOLUME.
+	// The build of `test` made the boot program of the main boot volume.
 	for output in BOOT_PROGRAM_OUTPUTS {
 		append(&all, Distinct_Results{owner = "boot", output = output})
 	}
@@ -308,7 +316,7 @@ outputs_same_after_second_build :: proc() -> bool {
 		record_build_output(&result, 1) or_return
 	}
 	build_modules() or_return
-	build_boot_program("boot.image", BOOT_VOLUME, 0) or_return
+	main_boot_volume_build() or_return
 	different := 0
 	for &result in all {
 		record_build_output(&result, 2) or_return
@@ -337,6 +345,7 @@ outputs_same_after_second_build :: proc() -> bool {
 // option that writes the line program must change no byte of the module
 // (docs/MODULE_CONTRACT.md, "Debug information").
 modules_same_without_debug_information :: proc() -> bool {
+	build_whole = true
 	debug_information = false
 	module_build_folder = MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION
 	built := build_modules_in_parallel()

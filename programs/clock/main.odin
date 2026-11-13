@@ -1,10 +1,12 @@
-// A measure of the time page.
+// A check and a measure of the time page.
 //
 // The kernel writes the time in one page. Each program has this page and
 // can only read it: a program reads the time with one load from memory.
-// This program reads the time as often as it can for one second, in the
-// two ways: from the time page, and with a kernel entry. It counts the
-// kernel entries of each way.
+// This program reads the time in the two ways: from the time page, and
+// with a kernel entry. It counts the kernel entries of each way. The check
+// reads a fixed count of times. In a [measure run](term:measure-run) it
+// reads as often as it can for one second, and writes the reads in one
+// second.
 //
 // It checks that the time never goes back, that the two ways give the same
 // time, that the milliseconds of the page follow the cycle counter (the
@@ -17,12 +19,14 @@
 // with a kernel entry is measured too, for comparison.
 //
 // **What a reader sees.** Start it from the menu of the programs, or with
-// `start("clock")` in the console. The window shows the two measures: the
-// reads in one second and the kernel entries for one million reads. The
-// log gets one line for each way (`clock: the time page: <rate> reads in
-// one second, 0 kernel entries for one million reads`), the comparison with
-// the cycle counter, then `clock: ok, the time never went back, ...`, or
-// `clock: wrong: ...`.
+// `start("clock")` in the console. The window shows the two ways: the
+// reads of the check and their kernel entries. The log gets one line for
+// each way (`clock: the check of the time page: 1000000 reads, 0 kernel
+// entries`), the comparison with the cycle counter, then `clock: ok, the
+// time never went back, ...`, or `clock: wrong: ...`. In a measure run
+// (`kerneltool measure clock`) the window and the log have the reads in one
+// second (`clock: the time page: <rate> reads in one second, 0 kernel
+// entries for one million reads`).
 //
 // **Its grant**: **Inspect**: the machine handle reads the kernel entries
 // of this program (its program report), which the measure counts.
@@ -37,11 +41,18 @@ import "support:interface"
 import op "contract:operation"
 import "support:system"
 
-DURATION :: 1000 // Milliseconds of one measure.
+DURATION :: 1000 // Milliseconds of one measure, in a measure run.
+// The reads of the check of each way. A read with a kernel entry costs
+// much more than a load from memory, so its count is smaller.
+PAGE_READS_CHECKED :: 1_000_000
+ENTERED_READS_CHECKED :: 100_000
+// The changes of the time page that the check compares with the cycle
+// counter: the page is behind by less than one tick just after each one.
+PAGE_CHANGES_COMPARED :: 16
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 816
-HEIGHT :: 312
+HEIGHT :: 312 + LINE
 
 COLOR_PAGE :: 0x58D878
 COLOR_ENTRY :: 0x5890E0
@@ -49,7 +60,8 @@ COLOR_ENTRY :: 0x5890E0
 Measure :: struct {
 	name:    string,
 	done:    bool,
-	rate:    u64, // Reads in one second.
+	reads:   u64, // The reads of the run.
+	rate:    u64, // Reads in one second: a measure run only.
 	entries: u64, // Kernel entries for one million reads.
 }
 
@@ -80,12 +92,16 @@ entries :: proc "contextless" () -> u64 {
 	return report.entries
 }
 
-run :: proc "contextless" (measure: ^Measure, entered: bool) {
+// run reads the time in one way and counts the kernel entries. The check
+// ends after reads_checked reads; a measure run reads for DURATION, and
+// has the rate.
+run :: proc "contextless" (measure: ^Measure, entered: bool, reads_checked: u64) {
+	measured := system.measure_run()
 	before := entries()
 	begin := system.time()
 	last := begin
 	reads: u64
-	for last < begin + DURATION {
+	for (measured ? last < begin + DURATION : reads < reads_checked) {
 		now := entered ? system.time_entered() : system.time()
 		if now < last {
 			went_back += 1
@@ -96,7 +112,10 @@ run :: proc "contextless" (measure: ^Measure, entered: bool) {
 	// The count of one Inspect call is in the difference: the call of
 	// `before` ends before the kernel counts it.
 	after := entries() - 1
-	measure.rate = reads * 1000 / max(last - begin, 1)
+	measure.reads = reads
+	if measured {
+		measure.rate = reads * 1000 / max(last - begin, 1)
+	}
 	measure.entries = (after - before) * 1_000_000 / reads
 	measure.done = true
 }
@@ -146,11 +165,14 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "since boot", clock_text(&builder, system.time()), graphics.COLOR_TEXT, 120)
 	interface.column_take(&column, 8)
 
-	// The table: the way, its reads in one second as a bar and a number, its kernel entries.
+	// The table: the way, its reads, its kernel entries. A measure run
+	// has the reads in one second, as a bar and a number; else the number
+	// is the count of the reads of the check.
+	measured := system.measure_run()
 	cells: [4]interface.Area
 	sizes := [4]interface.Size{interface.pixels(120), interface.share(), interface.characters(12), interface.characters(20)}
 	interface.row_split(interface.column_take(&column, LINE), sizes[:], cells[:], 16)
-	interface.table_header(&frame, cells[:], {"way", "reads of the time in one second", "", "kernel entries"}, {.Left, .Left, .Right, .Right})
+	interface.table_header(&frame, cells[:], {"way", measured ? "reads of the time in one second" : "reads of the time in the check", "", "kernel entries"}, {.Left, .Left, .Right, .Right})
 	most: u64
 	for measure in measures {
 		most = max(most, measure.rate)
@@ -165,10 +187,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 			interface.cell_text(&frame, cells[1], "...", graphics.COLOR_DIM)
 			continue
 		}
-		interface.bar(&frame, {cells[1].x, cells[1].y + 8, cells[1].width, 8}, measure.rate, most, color)
-		interface.cell_text(&frame, cells[2], interface.number_text(&builder, measure.rate), graphics.COLOR_TEXT, .Right)
+		if measured {
+			interface.bar(&frame, {cells[1].x, cells[1].y + 8, cells[1].width, 8}, measure.rate, most, color)
+		}
+		interface.cell_text(&frame, cells[2], interface.number_text(&builder, measured ? measure.rate : measure.reads), graphics.COLOR_TEXT, .Right)
 		interface.cell_text(&frame, cells[3], interface.number_text(&builder, measure.entries), graphics.COLOR_TEXT, .Right)
 	}
+	interface.cell_text(&frame, interface.column_take(&column, LINE), measured ? "kernel entries: for one million reads." : "the reads in one second are a measure: run `kerneltool measure clock`.", graphics.COLOR_DIM)
 	interface.column_take(&column, 8)
 	if checked {
 		numbers: [5]interface.Text_Builder
@@ -191,8 +216,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.window_frame_end(&drawing, &frame, window)
 }
 
-// entry finds its own slot with the machine handle, runs the two measures
-// of one second each (`run`), compares the two ways and the cycle counter,
+// entry finds its own slot with the machine handle, reads the time in the
+// two ways (`run`), compares the two ways and the cycle counter,
 // tries to remove the time page, and writes the summary line. It then
 // draws the window at each event, and measures the time of a draw. It
 // never returns; with no window, it stops with the code 1.
@@ -213,12 +238,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			slot = index
 		}
 	}
+	measured := system.measure_run()
 	draw(&window)
-	run(&measures[0], false)
-	system.log("clock: the time page: ", measures[0].rate, " reads in one second, ", measures[0].entries, " kernel entries for one million reads")
+	run(&measures[0], false, PAGE_READS_CHECKED)
 	draw(&window)
-	run(&measures[1], true)
-	system.log("clock: a kernel entry: ", measures[1].rate, " reads in one second, ", measures[1].entries, " kernel entries for one million reads")
+	run(&measures[1], true, ENTERED_READS_CHECKED)
+	if measured {
+		system.log("clock: the time page: ", measures[0].rate, " reads in one second, ", measures[0].entries, " kernel entries for one million reads")
+		system.log("clock: a kernel entry: ", measures[1].rate, " reads in one second, ", measures[1].entries, " kernel entries for one million reads")
+	} else {
+		// The entries of the check are for its own count of reads.
+		system.log("clock: the check of the time page: ", measures[0].reads, " reads, ", measures[0].entries * measures[0].reads / 1_000_000, " kernel entries")
+		system.log("clock: the check of a kernel entry: ", measures[1].reads, " reads, ", measures[1].entries * measures[1].reads / 1_000_000, " kernel entries")
+	}
 
 	// The two ways give the same time: a kernel entry between two reads
 	// of the page gives a time that is not before the first read and not
@@ -243,10 +275,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		apart_most = max(apart_most, page_after - page_before)
 	}
 	system.log("clock: the time page and a kernel entry: in 1000 pairs of reads of the page with an entry between them, the entry was outside the two reads ", outside, " times; the two reads were at most ", apart_most, " ms apart (a measure)")
-	// The page follows the cycle counter: for half a second, each read of
-	// the page is compared with the time that the cycle counter gives now.
-	for begin := system.time(); system.time() < begin + DURATION / 2; {
+	// The page follows the cycle counter: each read of the page is
+	// compared with the time that the cycle counter gives now, until the
+	// page changed PAGE_CHANGES_COMPARED times. A measure run compares for
+	// half a second: how far behind the page was at most is a measure of
+	// how late a tick came. The bound is on the cycle counter and only
+	// ends a hang: a page that stands still never changes.
+	page_changes: u64
+	page_last := system.time()
+	compare_give_up := system.nanoseconds() + system.TEST_HANG_BOUND_MILLISECONDS * 1_000_000
+	for begin := page_last; (measured ? system.time() < begin + DURATION / 2 : page_changes < PAGE_CHANGES_COMPARED) && system.nanoseconds() < compare_give_up; {
 		page := system.time()
+		if page != page_last {
+			page_last = page
+			page_changes += 1
+		}
 		fine := system.nanoseconds() / 1_000_000
 		behind = max(behind, fine > page ? fine - page : 0)
 		least = min(least, fine > page ? fine - page : 0)
@@ -256,10 +299,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("clock: the time page and the cycle counter: in ", compared, " reads the page was ", least, " to ", behind, " ms behind and at most ", ahead, " ms ahead")
 	refused = system.memory_unmap(rawptr(uintptr(op.TIME_ADDRESS))) != .Ok && system.time() != 0
 	checked = true
-	if slot != 0 && went_back == 0 && outside == 0 && least <= LEAST_LIMIT && ahead <= AHEAD_LIMIT && refused && measures[0].entries == 0 {
+	if slot != 0 && went_back == 0 && outside == 0 && page_changes >= PAGE_CHANGES_COMPARED && least <= LEAST_LIMIT && ahead <= AHEAD_LIMIT && refused && measures[0].entries == 0 {
 		system.log("clock: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page")
 	} else {
-		system.log("clock: wrong: the time went back ", went_back, " times, a kernel entry was outside two reads of the page ", outside, " times, the page is at least ", least, " ms behind and ", ahead, " ms ahead of the cycle counter, the kernel ", refused ? "refuses" : "does not refuse", " to remove the time page")
+		system.log("clock: wrong: the time went back ", went_back, " times, a kernel entry was outside two reads of the page ", outside, " times, the page changed ", page_changes, " times and is at least ", least, " ms behind and ", ahead, " ms ahead of the cycle counter, the kernel ", refused ? "refuses" : "does not refuse", " to remove the time page")
 	}
 	deadline := system.time()
 	// The time of one picture: the mean of ten pictures after the checks
