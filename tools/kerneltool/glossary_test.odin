@@ -1,3 +1,4 @@
+#+feature dynamic-literals
 package kerneltool
 
 import "core:strings"
