@@ -559,3 +559,22 @@ history_file_hostile :: proc(t: ^testing.T) {
 	testing.expect_value(t, history_file_read(short[:], read_back), History_File_Problem.Too_Short)
 	testing.expect_value(t, history_file_read(nil, read_back), History_File_Problem.Too_Short)
 }
+
+// ---- The keys that come while a line runs.
+
+// Escape stops a call only when the line waits in one that it can stop;
+// if not, it waits in order as each key, so the keys of the next line mean
+// what they mean when typed slowly.
+@(test)
+keys_while_a_line_runs :: proc(t: ^testing.T) {
+	testing.expect_value(t, running_key_action(false, false, 0, 4), Running_Key_Action.Wait)
+	testing.expect_value(t, running_key_action(false, true, 0, 4), Running_Key_Action.Wait)
+	testing.expect_value(t, running_key_action(true, true, 0, 4), Running_Key_Action.Stop_Call)
+	// The line runs no call that Escape stops: Escape is a key of the next line.
+	testing.expect_value(t, running_key_action(true, false, 0, 4), Running_Key_Action.Wait)
+	testing.expect_value(t, running_key_action(true, false, 3, 4), Running_Key_Action.Wait)
+	// Escape stops the call also when keys wait, and when no key has room.
+	testing.expect_value(t, running_key_action(true, true, 4, 4), Running_Key_Action.Stop_Call)
+	testing.expect_value(t, running_key_action(true, false, 4, 4), Running_Key_Action.Drop)
+	testing.expect_value(t, running_key_action(false, false, 4, 4), Running_Key_Action.Drop)
+}

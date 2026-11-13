@@ -39,6 +39,9 @@ history_client: storage.Client
 history_connected: bool
 history_saved_lines: u64 // history.lines_written at the last save or load.
 history_save_failure_logged: bool
+// The history as the save writes it: a copy, so that the first thread can
+// add a line during the commit. Only the second thread uses it.
+history_copy: line_editor.History
 
 // history_store_open asks the root service for the connection to the store
 // of the history, and maps its call ring and its call region. The file of
@@ -138,16 +141,28 @@ history_load :: proc "contextless" () {
 // history_save writes the history to its store, when lines were added
 // since the last save. A failure writes one log line in a run: the history
 // stays in memory.
+//
+// The second thread calls it, also after its line ended: the first thread
+// can add a line meanwhile. So the save works on a copy of the history,
+// made under history_lock, and the call of the storage service holds no
+// lock.
 history_save :: proc "contextless" () {
-	if !history_connected || history.lines_written == history_saved_lines {
+	if !history_connected {
 		return
 	}
+	system.lock(&history_lock)
+	if history.lines_written == history_saved_lines {
+		system.unlock(&history_lock)
+		return
+	}
+	history_copy = history
+	system.unlock(&history_lock)
 	buffer: [line_editor.HISTORY_FILE_SIZE_LIMIT]u8
-	bytes := line_editor.history_file_write(&history, buffer[:])
+	bytes := line_editor.history_file_write(&history_copy, buffer[:])
 	error: errors.Error_Record
 	_, status := storage.write(&history_client, storage.ROOT, HISTORY_OBJECT_NAME, bytes, &error)
 	if status == .Ok {
-		history_saved_lines = history.lines_written
+		history_saved_lines = history_copy.lines_written
 		return
 	}
 	if !history_save_failure_logged {
@@ -169,8 +184,10 @@ history_save :: proc "contextless" () {
 // and its object and each version of it in its store. The line of the
 // command goes too.
 history_clear :: proc "contextless" (arguments: []Value) -> Value {
+	system.lock(&history_lock)
 	count := line_editor.history_count(&history)
 	history = {}
+	system.unlock(&history_lock)
 	history_place = 0
 	history_saved_lines = history.lines_written
 	if !history_connected {

@@ -762,12 +762,12 @@ Two more commands, `Read_Placement` and `Write_Placement`, read and write the pl
 
 A debugger stops another program where its author asks, reads its threads and its memory, and runs it one instruction at a time. The kernel gives it four things, each a right, an argument or a command of an operation that exists: the right `Debug` of a program handle, the delivery of the debug exceptions of that program to the debugger, the breakpoints of a thread, and the read of the memory of a program. The count of kernel operations does not change.
 
-The code is `kernel/fault_ring.odin` (the debug handler), `kernel/breakpoints.odin` (the debug registers and the read of memory), `kernel/thread_control.odin` and the cases of `kernel_interrupt`; the checks of a write are `op.thread_breakpoints_refusal` and `op.thread_breakpoints_control` in `contract/operation`, with host tests; the test is the program `debugged` (`kerneltool test debugger`). The terms are in `GLOSSARY.md`: debugger, debug handler, breakpoint, debug status. The commands of the console and the grant of the root service are in `TOOLS.md`, "The debugger: the design".
+The code is `kernel/fault_ring.odin` (the debug handler), `kernel/breakpoints.odin` (the debug registers and the read of memory), `kernel/thread_control.odin` and the cases of `kernel_interrupt`; the checks of a write are `op.thread_breakpoints_refusal` and `op.thread_breakpoints_control` in `contract/operation`, with host tests; the test is the program `debugged` (`kerneltool test debugger`). The terms are in `GLOSSARY.md`: debugger, debug handler, breakpoint, debug status. The debugger service, its exports, the commands of the console and the rule of the root service are in `TOOLS.md`, "The debugger".
 
 **The right `Debug`, and who has it.** Debug access is a handle to one program (property 20, line 2). `Debug` is a right of a program handle, and two holders have it:
 
 - **The creator of a program**, on the handle that `Program_Create` gave it. That handle also has `Control`, with which the creator maps memory in the program and gives it handles: `Debug` adds no power over a program that its creator built.
-- **The caller that the root service gives it to**, on the command `Debug` of the root ring: a handle with `Debug` and no other right, so its holder cannot give it on (`TOOLS.md`, "What the kernel gives a debugger").
+- **The debugger service**, to which the root service gives it on the command `Debug` of the root ring, on behalf of a caller of that service: a handle with `Debug` and no other right, so its holder cannot give it on. The root service applies its rule to that caller (`TOOLS.md`, "Who can debug which program").
 
 No other handle has it. `Handle_Give` copies the right only when the giver names it, and no operation adds a right; the root service gives no program a handle with `Debug` at its start. A creator can give `Debug` on its own child to another program, as it can give `Control`.
 

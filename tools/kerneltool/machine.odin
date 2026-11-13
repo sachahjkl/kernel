@@ -2459,6 +2459,16 @@ key_name :: proc(character: u8) -> string {
 		return "dot"
 	case '/':
 		return "slash"
+	case ':':
+		return "shift-semicolon"
+	case ';':
+		return "semicolon"
+	case '[':
+		return "bracket_left"
+	case ']':
+		return "bracket_right"
+	case '^':
+		return "shift-6"
 	}
 	return ""
 }

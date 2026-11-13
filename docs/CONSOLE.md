@@ -267,6 +267,16 @@ When the export has a table of error details and wrote more than one detail, one
 | `help()` | Table of `Command` | One row for each command: `name`, `signature`, `about` |
 | `describe(name)` | Text | The signature and the whole help of one command |
 | `programs()` | Table of `Program` | The export `monitor.programs()` ("The built-in commands and the services") |
+| `debug(program)`, `detach()` | Table | One row: the exports `debugger.attach()` and `debugger.detach()` ("The commands of the debugger") |
+| `threads()`, `hold(thread)`, `resume(thread)`, `continue_all()`, `step(thread)`, `step_line(thread)` | Table of `Thread_Row` | The threads of the debugged program: `thread`, `state`, `instruction`, `module`, `procedure`, `offset`, `file`, `line` |
+| `registers(thread)` | Table of `Register_Row` | `name`, `value`, `about` |
+| `stack(thread)` | Table of `Frame_Row` | `frame`, `module`, `procedure`, `offset`, `file`, `line`, `frame_pointer`, `return_address` |
+| `locals(thread, frame)` | Table of `Variable_Row` | `name`, `role`, `type`, `value`, `location` |
+| `value(thread, frame, path)` | Table of `Value_Row` | `name`, `type`, `value`, `address` |
+| `source(thread, frame)` | Table of `Source_Row` | `line`, `mark`, `text`, `path`, `hash` |
+| `break_at(place)`, `watch(place, length)`, `breaks()`, `break_remove(number)` | Table of `Break_Row` | `number`, `kind`, `address`, `length`, `place` |
+| `debug_memory(place, count)` | Table of `Memory_Row` | `address`, `bytes`, `text` |
+| `events()`, `wait_stop(milliseconds)` | Table of `Event_Row` | `thread`, `kind`, `instruction`, `module`, `procedure`, `offset`, `file`, `line` |
 | `program_modules()` | Table of `Program_Module` | One row for each module of each program: `slot`, `program`, `module`, `replaces`, `hash_head` |
 | `memory()` | Record `Memory` | The memory of the machine and the counters of the kernel. `free_pages_no_budget_holds` is 0 when each page is free or paid |
 | `locks()` | Table of `Lock` | One row for each kind of kernel lock: `lock`, `waits`, `takes` |
@@ -333,6 +343,7 @@ A fact that a service holds is an export of that service, and the console calls 
 | Built-in command | Where the fact comes from |
 |---|---|
 | `programs()` | The export `monitor.programs()`. With no service `monitor`, or when `monitor` lost its grant, the line fails with the error of the connection or of the export |
+| `debug`, `detach`, `threads`, `hold`, `resume`, `continue_all`, `registers`, `stack`, `locals`, `value`, `source`, `break_at`, `watch`, `breaks`, `break_remove`, `step`, `step_line`, `debug_memory`, `events`, `wait_stop` | The exports of the service `debugger`, which the root service starts when the console connects to it ("The commands of the debugger") |
 | `start`, `stop`, `grants`, `revoke`, `principal_create`, `lock`, `principals`, `replace`, `connect` | A command of the root ring, with typed values and an error record. The root service serves no exports: it has a ring of its own commands, and these built-in commands are its callers |
 | `modules()` | The boot image that the root service granted to the console. `manual.modules()` gives the same modules with more fields, when the program `manual` runs |
 | `replacements()` | The replacement table that the root service granted to the console, read-only. `manual.replacements()` gives it too, when `manual` runs |
@@ -341,6 +352,39 @@ A fact that a service holds is an export of that service, and the console calls 
 | `help`, `describe`, `variables`, `where`, `sort`, `join`, `columns`, `first`, `skip`, `rows`, `row`, `time`, `hash`, `length`, `text`, `repeat`, `clear`, `history_clear`, `measure_completion`, `shutdown` | The language and the console itself |
 
 `modules`, `replacements`, `program_modules`, `memory` and `locks` stay in the console because the programs that serve the same facts (`manual`, `monitor`) do not run at each boot, and these commands must work with no other program. The stores are a fact of the storage service: the console has no built-in command for them, and calls `storage.stores()` and `storage.usage()`.
+
+### The commands of the debugger
+
+The debugger is the service `debugger` (`TOOLS.md`, "The debugger"). The console holds no state of a debugging and has no code that draws one: each command of the debugger is a short name of one export of the service, and the drawers draw the table that the export gives. So a table of the debugger composes as each other table: `columns(stack(0), "frame procedure line")`, `where(locals(0, 1), "name", "total")`.
+
+| Command | Export of `debugger` |
+|---|---|
+| `debug(program)` | `attach` |
+| `detach()` | `detach` |
+| `threads()` | `threads` |
+| `hold(thread)` | `hold` |
+| `resume(thread)` | `release` |
+| `continue_all()` | `continue_all` |
+| `registers(thread)` | `registers` |
+| `stack(thread)` | `stack` |
+| `locals(thread, frame)` | `locals` |
+| `value(thread, frame, path)` | `value` |
+| `source(thread, frame)` | `source` |
+| `break_at(place)` | `break_at` |
+| `watch(place, length)` | `watch` |
+| `breaks()` | `breaks` |
+| `break_remove(number)` | `break_remove` |
+| `step(thread)` | `step` |
+| `step_line(thread)` | `step_line` |
+| `debug_memory(place, count)` | `memory` |
+| `events()` | `events` |
+| `wait_stop(milliseconds)` | `wait_stop` |
+
+Three short names are not the name of their export, because the console has a command with that name: `resume` (`release` closes a handle of the console), `debug_memory` (`memory` gives the memory of the machine), and `debug`, the word for the act. The command that holds one thread is `hold`: `stop` stops a whole program by its name. No command of the debugger takes the name of a command that the console had.
+
+**A loaded module can take a short name.** When two commands have one name, the command added last runs ("Calls"). `load` and `isolate` add each export of a module under its own name, with no prefix: a module with an export `debug`, `threads` or `stack` takes that name from the debugger, as it takes `programs` or `time`, until `unload`. `help()` then has two rows with the name, and `describe` gives the one that runs. The full name is never taken: `connect` adds the exports of a service as `service.export`, and a module cannot export a name with a period, so `debugger.attach(...)` always calls the service.
+
+After `connect("debugger")`, each export is also a command with its full name: `debugger.threads()`. Escape during `wait_stop` closes the connection to the service, which ends the debugging.
 
 ## 1. The keys
 
@@ -360,7 +404,15 @@ The keys edit one line, as in a text field. The same key does a different thing 
 
 Control-R and Control-S: the console tests the character of the key (`r`, `s`) with the modifier Control, not the code of the key. The input service gives the character of the US layout from the table of the Shift state, and gives it also when Control is held: the machine test sends `ctrl-r` and `ctrl-s` through QEMU and they work. With Shift also held the character is `R`, and the console takes the key as no search. The system has only the US layout today; with another layout, the input service gives the character of that layout, so Control-R follows the letter R wherever the layout puts it, as it is printed on the key. A test of the code follows the place of the key instead, and breaks with such a layout.
 
-While a line runs, each key but Escape waits, in order, and the edit line shows them (`|` Enter, `<` Backspace, `>` Tab, `^` a key with no character). Escape stops an isolated call, as before.
+### When a line ends, and the keys typed during a line
+
+A line ends when its result is drawn. The console then takes the keys again. What the console does after the result holds no key: the save of the line history (section 6) runs after the end of the line, in the thread that runs the lines.
+
+While a line runs, each key waits, in order, and the edit line shows them (`|` Enter, `<` Backspace, `>` Tab, `^` a key with no character; Escape is `^`). At the end of the line the console acts on them in their order, as if they came then: a key that waited means what it means when typed slowly. At most 128 keys wait; a key after them is lost.
+
+Escape has one more meaning, and only in one state: while the line waits in a call of a sandboxed program or of a service, Escape stops that call at once, also when keys wait. While the line is in no such call (a built-in command, a direct call, the drawing of the result), Escape waits as each key, and then closes the list that the keys before it opened. So `clear()`, then `mcnt`, Escape and Tab typed before `clear()` ended, give what they give when typed slowly: the list opens at `m`, Escape closes it, Tab opens it again.
+
+The rule is `line_editor.running_key_action` (`support/line_editor/running_keys.odin`), with its host test. A direct call that does not return cannot be stopped: the module runs in the thread of the lines; `isolate` such a module.
 
 A chosen name replaces the whole name at the caret, also its part after the caret, up to a dot. A command or an export gets its `(`, unless a `(` follows; a name in quotes gets its closing quote, unless one follows.
 
@@ -462,7 +514,7 @@ The history lives in the memory of the console: 256 lines at most in a ring of 1
 
 **The load.** At its start, before it reads a key, the console asks for the connection (it waits 30 s at most: the storage service mounts the disk at boot) and reads the object `line_history`. The second thread runs no line yet, so the history has one user. One log line says what came: "console: the line history: N lines kept from before the stop", or "no line history kept", or that the file is damaged, cannot be read, has more than 4096 bytes, or is refused by a check of `history_file_read` (with its name: "its hash is wrong", "a line has a byte that is not a character", ...). Each of these gives an empty history. A line of the file goes through the bounds of a typed line (200 bytes, the bytes 32 to 126), and nothing of the file runs: a line runs only when the input takes it (Up, or Enter in the search) and presses Enter.
 
-**The save, and its bound.** The second thread writes the file after each line that the history added, while the line still counts as running: the first thread adds no line to the history meanwhile. One commit for each line added. A held Enter adds one line at most: an empty line and the newest line again add nothing. So the commits follow the lines that are typed, about 4 ms each (one commit of `notes` in the machine test). `shutdown()` and `stop("console")` save before they act: their save after the line never comes. A stop that the console does not see (a close of its window, a fault, a loss of power) loses the line that runs then, and no line before it. A save that fails writes one log line in a run, and the history stays in memory.
+**The save, and its bound.** The second thread writes the file after each line that the history added, after the line ended: the save holds no key. The first thread can add the next line meanwhile, so the save writes a copy of the history, made under a lock that is held for the copy only. The second thread runs the next line after the save: the commits keep the order of the lines. One commit for each line added. A held Enter adds one line at most: an empty line and the newest line again add nothing. So the commits follow the lines that are typed, about 4 ms each (one commit of `notes` in the machine test). `shutdown()` and `stop("console")` save before they act: their save after the line never comes. A stop that the console does not see (a close of its window, a fault, a loss of power) loses the line that runs then and the line whose save is in flight, and no line before them. A save that fails writes one log line in a run, and the history stays in memory.
 
 Why after each line and not at most one write in a second: a generation counts the commits of the whole disk, of each store, and the machine tests check generations. A rule of time makes the count of commits depend on the speed of the host; a rule of lines makes it a fact of the scenario. The steps of the tool now count the generations from a base near them (the step `Generation`, `{generation+N}`), so that a line of the console before them moves nothing.
 
@@ -514,4 +566,4 @@ A part with no class has the color of the text around it: the tone of the line, 
 
 **The bound, and a hostile list.** A row has at most 64 runs: a line with more parts keeps its first 64 runs, and the text after them is whole, in the plain color. The text is never cut by the runs: only the color stops. The terminal checks the runs against the row that takes them: each run inside the row, after the run before it, with at least one byte and a kind that exists. One run that fails, or bytes that are not a whole count of runs, or a target that takes no runs: the row is plain, its text whole, and the terminal counts it and writes once on the log "terminal: console sent runs of code that do not fit their row: the row is drawn plain, its text whole".
 
-**The cost.** The runs of the edit line are made only when its text or its caret changes, on at most 202 bytes, with one look in the tables of names (192 commands, 16 variables, 12 services, the loaded modules) for each name. `measure_completion()` gives the time of the runs of one key in its fourth part (section 4). When Tab opens the list, the log line says the count of the runs of the first row ("...; its first row has 13 runs of code"), so that a test checks the colors with no pixel.
+**The cost.** The runs of the edit line are made only when its text or its caret changes, on at most 202 bytes, with one look in the tables of names (256 commands, 16 variables, 12 services, the loaded modules) for each name. `measure_completion()` gives the time of the runs of one key in its fourth part (section 4). When Tab opens the list, the log line says the count of the runs of the first row ("...; its first row has 13 runs of code"), so that a test checks the colors with no pixel.

@@ -625,6 +625,7 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 	case .Table:
 		described, _ := module.record_type(call.file, call.function.result_detail)
 		outcome.rows = table_print(&outcome.lines, call.file, described, result, answer.value)
+		source_lines_of_table(&outcome.lines, call.file, described, result)
 	}
 	return outcome
 }

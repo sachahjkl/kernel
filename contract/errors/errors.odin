@@ -222,6 +222,14 @@ Unit :: enum i64 {
 	Trees       = 39, // Absent: the name names no tree. Bad_Value: a tree would move inside itself.
 	Changes     = 40, // No_Grant: a change of a store; the connection reads only.
 	Pending     = 41, // The pending changes of an object in the storage service (docs/STORAGE.md, "Ranges"). Full: limit the blocks that the service holds for them. Absent: the object has no pending change on this connection; found 1: another change of the object came first, and its pending changes are dropped.
+	Debug_Objects = 42, // Absent: the debug objects of the modules of a debugged program; no one describes the module of the address (docs/TOOLS.md, "The debugger").
+	Breakpoints = 43, // The breakpoints of a thread. Full: limit the breakpoints that a thread has (`op.THREAD_BREAKPOINT_CAPACITY`). Absent: the number names no breakpoint of the debugger.
+	Held_Threads = 44, // Absent: the threads that the debugger holds; the thread of the argument runs, or the program has no thread with this number.
+	Debugged_Programs = 45, // The programs that the debugger service debugs. Absent: the caller attached to none. Full: the service debugs a program for another caller; limit the programs that it debugs at one time.
+	Readable_Variables = 46, // Absent: the variables that are visible and readable at the instruction of a frame; the name of the argument is none of them, or its location is not readable there.
+	Debug_Access = 47, // No_Grant: the debug access to a program. found: 0, or 1 + the number of the grant of the program that refuses it (the root service names it in its log).
+	Stack_Frames = 48, // Absent: the frames of the stack of a held thread; the number of the argument is past the last frame.
+	Source_Places = 49, // Absent: the procedures and the source lines of the debug objects; the place of the argument names none.
 }
 
 // How a handle ended (Handle_Ended).
@@ -324,6 +332,14 @@ UNIT_NAMES := [Unit]string {
 	.Trees       = "trees",
 	.Changes     = "a change of the store (the connection reads only)",
 	.Pending     = "pending changes of the object",
+	.Debug_Objects = "debug objects of the modules of the program",
+	.Breakpoints = "breakpoints of a thread",
+	.Held_Threads = "threads that the debugger holds",
+	.Debugged_Programs = "programs that the debugger service debugs for this caller",
+	.Readable_Variables = "variables that are readable at this instruction",
+	.Debug_Access = "the debug access to this program",
+	.Stack_Frames = "frames of the stack of the thread",
+	.Source_Places = "procedures and source lines of the debug objects",
 }
 
 // A ring completion (contract/ring) has the status of the contract of its

@@ -19,7 +19,7 @@ SITE_FIXED_ADDRESSES_FILE :: "contract/fixed_addresses/fixed_addresses.odin"
 SITE_SYSTEM_GRANTS_FILE :: "support/system/grants.odin"
 SITE_ROOT_FILE :: "programs/root/main.odin"
 SITE_MODULES_FILE :: "tools/kerneltool/modules.odin"
-SITE_CONSOLE_COMMAND_FILES :: [?]string{"programs/console/commands.odin", "programs/console/tables.odin"}
+SITE_CONSOLE_COMMAND_FILES :: [?]string{"programs/console/commands.odin", "programs/console/debugger_commands.odin", "programs/console/tables.odin"}
 
 // The folder of each page of a generated table: site_page_file gives its file.
 SITE_OPERATIONS_FOLDER :: SITE_REFERENCE_FOLDER + "/operations"

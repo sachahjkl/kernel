@@ -270,6 +270,11 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		}
 		write_part(writer, "the caller has no grant for this: ")
 		write_part(writer, unit)
+		if errors.Unit(record.unit) == .Debug_Access && record.found != 0 {
+			write_part(writer, ": the program holds a grant that the caller does not hold, the grant ")
+			write_part(writer, record.found - 1)
+			write_part(writer, " of the root service")
+		}
 	case .Malformed:
 		write_part(writer, "the module of ")
 		subject(writer, record, argument)
