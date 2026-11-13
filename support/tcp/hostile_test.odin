@@ -452,3 +452,69 @@ short_segment_is_dropped :: proc(t: ^testing.T) {
 	testing.expect_value(t, link.sides[1].table.bad_checksums, 1)
 	testing.expect_value(t, link.sides[1].sent_out, 0)
 }
+
+// A program releases the remote of a segment that no connection has. It
+// asks with the two ports at their fixed place, so a segment that the
+// library dropped still names its connection: a segment from the remote of
+// a live connection, with a malformed option and a wrong checksum, changes
+// no field of the connection and is not a segment of no connection. The
+// same segment with its checksum whole is malformed, and is not one either.
+// Data on the connection is taken after both.
+@(test)
+dropped_segment_of_a_live_connection_names_its_connection :: proc(t: ^testing.T) {
+	link := link_make(43)
+	defer link_free(link)
+	if !established(t, link) {
+		return
+	}
+	wait(link, 100_000) // The delayed ACKs of the handshake are done.
+	a := &link.sides[0].connections[0]
+	b := &link.sides[1].connections[0]
+	table := &link.sides[1].table
+	header := Header{source_port = a.local_port, destination_port = PORT_B, sequence = b.receive_next, acknowledgment = b.send_next, flags = {.Ack}, window = 8192, mss = 1460}
+	// An option of length 0, with the checksum of these bytes.
+	malformed := Flying{at = link.now, to = 1, from = ADDRESS_A, length = HEADER_MSS}
+	header_write(malformed.bytes[:], ADDRESS_A, ADDRESS_B, header, HEADER_MSS)
+	malformed.bytes[21] = 0
+	write_16(malformed.bytes[:], 16, checksum(ADDRESS_A, ADDRESS_B, malformed.bytes[:HEADER_MSS]))
+	_, header_whole := header_read(malformed.bytes[:HEADER_MSS])
+	testing.expect(t, !header_whole)
+	testing.expect(t, checksum_valid(ADDRESS_A, ADDRESS_B, malformed.bytes[:HEADER_MSS]))
+	// The same bytes with one bit of the checksum changed.
+	damaged := malformed
+	damaged.bytes[16] ~= 0x40
+	testing.expect(t, !checksum_valid(ADDRESS_A, ADDRESS_B, damaged.bytes[:HEADER_MSS]))
+	untouched := b^
+	sent_before := link.sides[1].sent_out
+	append(&link.flying, damaged)
+	append(&link.flying, malformed)
+	wait(link, 100_000)
+	testing.expect_value(t, table.bad_checksums, 1)
+	testing.expect_value(t, table.malformed, 1)
+	testing.expect(t, b^ == untouched, "a dropped segment changed the connection")
+	testing.expect_value(t, link.sides[1].sent_out, sent_before)
+	// Both name the connection: the program releases nothing for them.
+	testing.expect_value(t, connection_of_segment(table, {remote_address = ADDRESS_A, segment = damaged.bytes[:HEADER_MSS]}), 0)
+	testing.expect_value(t, connection_of_segment(table, {remote_address = ADDRESS_A, segment = malformed.bytes[:HEADER_MSS]}), 0)
+	// The same ports from another address, another remote port, and a
+	// segment too short for its ports: no connection.
+	testing.expect_value(t, connection_of_segment(table, {remote_address = ADDRESS_A + 1, segment = damaged.bytes[:HEADER_MSS]}), -1)
+	other := malformed
+	write_16(other.bytes[:], 0, a.local_port + 1)
+	testing.expect_value(t, connection_of_segment(table, {remote_address = ADDRESS_A, segment = other.bytes[:HEADER_MSS]}), -1)
+	testing.expect_value(t, connection_of_segment(table, {remote_address = ADDRESS_A, segment = damaged.bytes[:3]}), -1)
+	// The connection goes on.
+	data: [100]u8
+	for &byte, index in data {
+		byte = u8(index * 5)
+	}
+	header.mss = 0
+	header.flags = {.Ack, .Psh}
+	inject(link, header, data[:])
+	wait(link, 100_000)
+	got: [200]u8
+	count, _ := read(table, 0, got[:])
+	testing.expect_value(t, count, 100)
+	testing.expect(t, string(got[:100]) == string(data[:]))
+	testing.expect_value(t, b.state, State.Established)
+}

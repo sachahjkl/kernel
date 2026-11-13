@@ -119,6 +119,52 @@ udp_checksum_of_zero_is_written_as_ones :: proc(t: ^testing.T) {
 	testing.expect(t, ok)
 }
 
+// A datagram with an odd count of bytes: its last byte is the high byte of
+// the last word of the sum. The test sums the words by hand, apart from the
+// library: the pseudo-header, the header with its checksum and the data
+// fold to all ones. The last byte is in the checksum: one changed bit of it
+// is refused.
+@(test)
+udp_checksum_with_an_odd_length :: proc(t: ^testing.T) {
+	for text in ([]string{"after a key", "x", "an odd text of 23 bytes"}) {
+		datagram: [UDP_HEADER + 32]u8
+		copy(datagram[UDP_HEADER:], text)
+		length := udp_header_write(datagram[:], LOCAL_ADDRESS, GATEWAY_ADDRESS, 49152, 7, len(text))
+		testing.expect_value(t, length, UDP_HEADER + len(text))
+		testing.expect_value(t, length % 2, 1)
+		total := u32(LOCAL_ADDRESS >> 16) + u32(LOCAL_ADDRESS & 0xFFFF) + u32(GATEWAY_ADDRESS >> 16) + u32(GATEWAY_ADDRESS & 0xFFFF) + u32(PROTOCOL_UDP) + u32(length)
+		for index := 0; index < length; index += 2 {
+			total += u32(datagram[index]) << 8
+			if index + 1 < length {
+				total += u32(datagram[index + 1])
+			}
+		}
+		for total > 0xFFFF {
+			total = (total & 0xFFFF) + (total >> 16)
+		}
+		testing.expect_value(t, total, 0xFFFF)
+		data, ok := udp_data_read(datagram[:length], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Verify)
+		testing.expect(t, ok && string(data) == text)
+		datagram[length - 1] ~= 0x01
+		_, ok = udp_data_read(datagram[:length], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Verify)
+		testing.expect(t, !ok, "the last byte of an odd datagram is not in the checksum")
+		datagram[length - 1] ~= 0x01
+		// The length field one more and one less than the count: refused
+		// with each rule, before any read of the checksum.
+		write_16(datagram[:], 4, u16(length + 1))
+		_, ok = udp_data_read(datagram[:length], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Do_Not_Verify)
+		testing.expect(t, !ok)
+		write_16(datagram[:], 4, u16(length - 1))
+		_, ok = udp_data_read(datagram[:length], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Verify)
+		testing.expect(t, !ok)
+	}
+	// A datagram of 7 bytes, whose field would say 7: under its header.
+	short: [7]u8
+	write_16(short[:], 4, 7)
+	_, short_taken := udp_data_read(short[:], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Do_Not_Verify)
+	testing.expect(t, !short_taken)
+}
+
 @(test)
 arp_and_echo_written_then_read :: proc(t: ^testing.T) {
 	frame: [128]u8
