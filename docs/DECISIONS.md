@@ -21,7 +21,7 @@ This file is the record of the decisions of the project: who decided what, when,
 2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213, D-218, D-219, D-224
 3. [The kernel](#3-the-kernel): D-071 to D-083, D-220
 4. [Memory](#4-memory): D-084 to D-088
-5. [The scheduler](#5-the-scheduler): D-089 to D-091, D-226
+5. [The scheduler](#5-the-scheduler): D-089 to D-091, D-226, D-227
 6. [Storage](#6-storage): D-092 to D-095, D-221
 7. [The network and QUIC](#7-the-network-and-quic): D-096 to D-100
 8. [Cryptography and randomness](#8-cryptography-and-randomness): D-101 to D-105
@@ -812,6 +812,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Decision: the scheduler is not a module and no module replaces it. It runs at each tick, each wake and each wait, under the run lock; a module is another address space, the thread that serves it must itself be scheduled, and a scheduler that fails stops the machine. The strategy still changes while the machine runs, among the strategies that the kernel contains (D-089, D-091). Because the set is closed, the table of functions of D-223 is to be replaced by a `switch` with direct calls, and the exception of property 13 then leaves.
 - Words: "vu que le [scheduler] c'est littéralement la pièce chaude du [kernel] ça vaut pas la peine de le mettre dans un module et de le rendre du coup surchargeable pour toi faudrait que ce soit [built in] on est d'accord" [dictated; the words in brackets are the coordinator's reading]; then: "il faut que ce soit proche dans le code et qui est pas du dispatch virtuel etc c'est ça dans ce cas là je pense que [...] un switch ce serait bien"
 - State: decided. The `switch` is not written: it waits for the end of the pause.
+- Where: `SCHEDULING.md`; `FIRST_MILESTONE.md`, "Next steps".
+
+### D-227 The policy of scheduling is outside the kernel, the mechanism inside; no compiler in the kernel
+- 2026-11-13. Decided by: the owner, after a discussion of an embedded compiler for a small verified language in the kernel (the idea of eBPF).
+- Decision: the kernel gets no verifier and no compiler (D-079 and D-091 stay). A custom scheduling has this form: a program that holds a right sets the weights, the budgets and the placement of threads, at a slow rate; the kernel applies them at each tick with its own built-in strategy. No code of a program runs on the path of the scheduler.
+- Words: "tu m'as convaincu que il y a pas besoin du coup de ce compilateur dans le noyau c'était juste une discussion [...] vaut mieux bien choisir nos contraintes par exemple la forme proche que tu as dit la politique dehors le mécanisme dedans c'est exactement je pense que ce sur quoi on devrait s'arrêter"
+- State: decided, not built: which values a program can set, and under which right, is not designed.
 - Where: `SCHEDULING.md`; `FIRST_MILESTONE.md`, "Next steps".
 
 ## 6. Storage
