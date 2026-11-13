@@ -1,10 +1,10 @@
 // The storage service: it keeps the store of each program on the data disk, through a block service: a tree of entries, each an object or a tree inside it (docs/STORAGE.md). No program sees a shared tree of names.
 //
-// The root service decides who has a store: it names the store of each connection, and its limit of blocks. A connection reaches the tree of its store and what is under it: each export takes a place (0 is the root of the connection) and a name of one step under it, never a path, and never the name of a store. A connection that `share` makes reaches a tree of the store of its maker only, and can read only; `unshare` revokes it.
+// The root service decides who has a store: it names the store of each connection, and its limit of blocks. A connection reaches the tree of its store and what is under it: each export takes a place (0 is the root of the connection) and a name of one step under it, never a path, and never the name of a store. A connection that [share](storage.share) makes reaches a tree of the store of its maker only, and **can read only**; [unshare](storage.unshare) revokes it.
 //
-// A change is one commit, on the disk when the call returns: the system has no save action. The state of an object before a change is a version: a program reads, compares, restores and clones versions with no code of its own. The disk always has the state of the last commit, or of the one before: a stop of the machine during a commit never shows a part of it. The checks of the blocks show each change that the service did not make.
+// **A change is one commit**, on the disk when the call returns: the system has no save action. The state of an object before a change is a version: a program reads, compares, restores and clones versions with no code of its own. The disk always has the state of the last commit, or of the one before: a stop of the machine during a commit never shows a part of it. The checks of the blocks show each change that the service did not make.
 //
-// A program that acts for a principal (the console, remote for the host) sees the stores of that principal with stores(), and opens a place on one of them with open_store.
+// A program that acts for a principal (the console, remote for the host) sees the stores of that principal with [stores](storage.stores), and opens a place on one of them with [open_store](storage.open_store).
 package storage_service
 
 import "contract:block"
@@ -268,7 +268,16 @@ named_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_R
 
 // write makes the object `name` under a place the bytes of data, in one commit on the disk: a cut or an extension to the size of data, and a change of each of its blocks, as a commit of ranges does; a block that keeps its bytes keeps its block. A new name is a new object. The state before becomes a version. At the limit of the store, the oldest versions of the store are thinned in the same commit. The result is the generation of the commit, or a negative number with an error record.
 //
-// The error kinds: No_Grant (-1, the caller has no store; -12, unit Changes, the connection reads only); Absent (-12, unit Places: the place is not a place of this connection; -7, unit Places: its tree was removed or renamed; -7, unit Objects: the name is a tree); Over_Limit (-2, the current objects with the change need more blocks than the limit, with no earlier version kept); Empty, Too_Long or Bad_Byte (-3, the name has 1 to 64 bytes, no zero byte, no byte '/', and is not "." or ".."); Too_Long (-4, the data has more bytes than the call region holds: write a larger object by ranges); Full (-5, no place for one more store, or no free block; with the unit Commit_Blocks, the commit changes more blocks than one commit can); Device (-6); Damaged (-8, unit Stores: a node of a tree of the store has a wrong check; unit Counts: the counts of the store are not trusted after a fault of the service).
+// **Error kinds**
+//
+// - `No_Grant` (-1, the caller has no store; -12, unit Changes, the connection reads only);
+// - `Absent` (-12, unit Places: the place is not a place of this connection; -7, unit Places: its tree was removed or renamed; -7, unit Objects: the name is a tree);
+// - `Over_Limit` (-2, the current objects with the change need more blocks than the limit, with no earlier version kept);
+// - `Empty`, `Too_Long` or `Bad_Byte` (-3, the name has 1 to 64 bytes, no zero byte, no byte '/', and is not "." or "..");
+// - `Too_Long` (-4, the data has more bytes than the call region holds: write a larger object by ranges);
+// - `Full` (-5, no place for one more store, or no free block; with the unit Commit_Blocks, the commit changes more blocks than one commit can);
+// - `Device` (-6);
+// - `Damaged` (-8, unit Stores: a node of a tree of the store has a wrong check; unit Counts: the counts of the store are not trusted after a fault of the service).
 @(export, link_name = "write")
 write :: proc "c" (place: i64, name: ^string, data: ^string, error: ^errors.Error_Record) -> i64 {
 	named, refused := named_of(place, name^, error, 1, true)
@@ -280,7 +289,13 @@ write :: proc "c" (place: i64, name: ^string, data: ^string, error: ^errors.Erro
 
 // read gives the bytes of the object `name` under a place: the range from 0 to its end, as read_range gives it, with the pending changes of this connection. The result is the count of bytes; the size when they do not fit in the result; or a negative number with an error record.
 //
-// The error kinds: No_Grant (-1); Absent (-12, -7: the place; -7: the tree has no such object); Empty, Too_Long or Bad_Byte (-3, the name); Device (-6); Damaged (-8: a block of the object or a node of a tree of the store has a wrong check: the service does not give its bytes).
+// **Error kinds**
+//
+// - `No_Grant` (-1);
+// - `Absent` (-12, -7: the place; -7: the tree has no such object);
+// - `Empty`, `Too_Long` or `Bad_Byte` (-3, the name);
+// - `Device` (-6);
+// - `Damaged` (-8: a block of the object or a node of a tree of the store has a wrong check: the service does not give its bytes).
 @(export, link_name = "read")
 read_export :: proc "c" (place: i64, name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	ranged, refused := ranged_of(place, name^, error, false)
@@ -296,7 +311,9 @@ read_export :: proc "c" (place: i64, name: ^string, result: ^[]u8, error: ^error
 
 // size gives the count of bytes of the object `name` under a place, with the pending changes of this connection, or a negative number with an error record.
 //
-// The error kinds: those of read, but Device and Damaged for a block of the object: size reads the tree only.
+// **Error kinds**
+//
+// - those of [read](storage.read), but `Device` and `Damaged` for a block of the object: size reads the tree only.
 @(export, link_name = "size")
 size :: proc "c" (place: i64, name: ^string, error: ^errors.Error_Record) -> i64 {
 	ranged, refused := ranged_of(place, name^, error, false)
@@ -308,7 +325,9 @@ size :: proc "c" (place: i64, name: ^string, error: ^errors.Error_Record) -> i64
 
 // remove removes the entry `name` under a place, in one commit: an object with all its versions, or a tree with all that is under it. The name is gone at the commit; the blocks of a tree are freed after it, in steps of 64 entries, one commit each, while no call waits (usage gives the trees that wait). The result is the generation of the commit, or a negative number with an error record.
 //
-// The error kinds: those of write, and Absent (-7, the tree has no entry with this name).
+// **Error kinds**
+//
+// - those of [write](storage.write), and `Absent` (-7, the tree has no entry with this name).
 @(export, link_name = "remove")
 remove :: proc "c" (place: i64, name: ^string, error: ^errors.Error_Record) -> i64 {
 	named, refused := named_of(place, name^, error, 1, true)
@@ -328,7 +347,13 @@ Add_Row_Export :: struct {
 
 // add makes up to 256 entries under a place in one commit, each an empty object or an empty tree: all of them, or none. The names are bytes of the argument names, each named by a row. The result is the generation of the commit, or a negative number with an error record.
 //
-// The error kinds: those of write; Too_Long (-5, more than 256 rows); Bad_Value (-3, a kind that is not 1 or 2); Out_Of_Range (-3, a row names bytes past the names); Exists (-11, a name exists, or two rows have one name: found is the row).
+// **Error kinds**
+//
+// - those of [write](storage.write);
+// - `Too_Long` (-5, more than 256 rows);
+// - `Bad_Value` (-3, a kind that is not 1 or 2);
+// - `Out_Of_Range` (-3, a row names bytes past the names);
+// - `Exists` (-11, a name exists, or two rows have one name: found is the row).
 @(export, link_name = "add")
 add :: proc "c" (place: i64, rows: ^system.Table_To_Read(Add_Row_Export), names: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> i64 {
 	caller := caller_of()
@@ -349,7 +374,15 @@ add :: proc "c" (place: i64, rows: ^system.Table_To_Read(Add_Row_Export), names:
 
 // open gives the place of the tree `name` under a place: a number for the calls of this connection only. The tree and what is under it are what the place reaches; no name under it reaches above it.
 //
-// The error kinds: No_Grant (-1); Absent (-12, -7: the place; -7, unit Trees: no tree has this name); the errors of a name (-3); Too_Long (-3, unit Trees: the place would be more than 32 trees deep); Full (-5, unit Places: no free place); Damaged (-8); Device (-6).
+// **Error kinds**
+//
+// - `No_Grant` (-1);
+// - `Absent` (-12, -7: the place; -7, unit Trees: no tree has this name);
+// - the errors of a name (-3);
+// - `Too_Long` (-3, unit Trees: the place would be more than 32 trees deep);
+// - `Full` (-5, unit Places: no free place);
+// - `Damaged` (-8);
+// - `Device` (-6).
 @(export, link_name = "open")
 open :: proc "c" (place: i64, name: ^string, error: ^errors.Error_Record) -> i64 {
 	named, refused := named_of(place, name^, error, 1, false)
@@ -384,7 +417,9 @@ open :: proc "c" (place: i64, name: ^string, error: ^errors.Error_Record) -> i64
 
 // close frees a place of this connection. The result is 0, or a negative number with an error record.
 //
-// The error kinds: Absent (-12, unit Places).
+// **Error kinds**
+//
+// - `Absent` (-12, unit Places).
 @(export, link_name = "close")
 close :: proc "c" (place: i64, error: ^errors.Error_Record) -> i64 {
 	caller := caller_of()
@@ -411,7 +446,13 @@ Listed :: struct {
 
 // list gives a page of the entries of the tree of a place, in the order of the bytes of their names, from the first name after `after` (from the first entry when it is empty): as many as the rows and the names hold. A tree of any size is read in pages; the next page starts after the last name of this one. The result is the count of the rows of the page (0: no more entries), or a negative number with an error record.
 //
-// The error kinds: No_Grant (-1); Absent (-12, -7: the place); Too_Long or Bad_Byte (-3, after); Damaged (-8); Device (-6).
+// **Error kinds**
+//
+// - `No_Grant` (-1);
+// - `Absent` (-12, -7: the place);
+// - `Too_Long` or `Bad_Byte` (-3, after);
+// - `Damaged` (-8);
+// - `Device` (-6).
 @(export, link_name = "list")
 list :: proc "c" (place: i64, after: ^string, rows: ^system.Table_To_Append(Listed), names: ^system.Bytes_To_Append, error: ^errors.Error_Record) -> i64 {
 	caller := caller_of()
@@ -471,7 +512,12 @@ list :: proc "c" (place: i64, after: ^string, rows: ^system.Table_To_Append(List
 
 // rename moves the entry `name` under a place to the name `to_name` under the place `to_place`, in one commit: an object with its versions, or a tree with all under it. Both places are of this connection, so of one store. The result is the generation of the commit, or a negative number with an error record.
 //
-// The error kinds: those of write; Absent (-7, no entry `name`); Exists (-11, `to_name` exists); Bad_Value (-3, unit Trees: `to_place` is inside the tree that moves).
+// **Error kinds**
+//
+// - those of [write](storage.write);
+// - `Absent` (-7, no entry `name`);
+// - `Exists` (-11, `to_name` exists);
+// - `Bad_Value` (-3, unit Trees: `to_place` is inside the tree that moves).
 @(export, link_name = "rename")
 rename :: proc "c" (place: i64, name: ^string, to_place: i64, to_name: ^string, error: ^errors.Error_Record) -> i64 {
 	named, refused := named_of(place, name^, error, 1, true)
@@ -501,7 +547,12 @@ Shared :: struct {
 
 // share makes a new connection to this service whose root is the tree of a place, and gives its call ring and its call region to the caller, which can give them to another program. With read_only 1 the connection changes nothing. A connection that reads only makes shares that read only. The share ends when the caller calls unshare, or when the connection that made it loses its store. The result is one row, or a negative number with an error record.
 //
-// The error kinds: No_Grant (-1); Absent (-12, -7: the place); Full (-5, unit Connections: no free share); Refused (-6: the kernel refused a memory object or a give).
+// **Error kinds**
+//
+// - `No_Grant` (-1);
+// - `Absent` (-12, -7: the place);
+// - `Full` (-5, unit Connections: no free share);
+// - `Refused` (-6: the kernel refused a memory object or a give).
 @(export, link_name = "share")
 share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors.Error_Record) -> i64 {
 	caller := caller_of()
@@ -579,7 +630,9 @@ share_end :: proc "contextless" (item: ^Share) {
 
 // unshare ends a share that this connection made: the kernel ends its handles in each program that has them, and its places end. The result is 0, or a negative number with an error record.
 //
-// The error kinds: Absent (-12, unit Connections: no share of this connection has this number).
+// **Error kinds**
+//
+// - `Absent` (-12, unit Connections: no share of this connection has this number).
 @(export, link_name = "unshare")
 unshare :: proc "c" (number: i64, error: ^errors.Error_Record) -> i64 {
 	caller := caller_of()
@@ -679,7 +732,11 @@ stores :: proc "c" (result: ^[]u8) -> i64 {
 
 // open_store gives a place on the root of another store, for the exports that read it and for restore and clone: a caller that acts for principal N names the stores of principal N; another caller names its own store only (may_name_store). write, add, remove, rename and share refuse a place of another store. The result is the place, or a negative number with an error record.
 //
-// The error kinds: No_Grant (-10, unit Acts_For_Principal: the caller may not name this store); Absent (-7, unit Stores: no such store); Full (-5, unit Places: no free place).
+// **Error kinds**
+//
+// - `No_Grant` (-10, unit Acts_For_Principal: the caller may not name this store);
+// - `Absent` (-7, unit Stores: no such store);
+// - `Full` (-5, unit Places: no free place).
 @(export, link_name = "open_store")
 open_store :: proc "c" (store: ^string, error: ^errors.Error_Record) -> i64 {
 	caller := caller_of()
@@ -723,7 +780,14 @@ Byte_Range :: struct {
 
 // versions gives the states of the object `name` under a place, the oldest first, and its current version last: the generation, the time since the format of the disk, the date, the bytes, and the blocks that only this state holds. The place can be a place of another store (open_store). The result is the count of the rows, or a negative number with an error record.
 //
-// The error kinds: No_Grant (-1, the caller has no store); Absent (-12: the place); Empty, Too_Long or Bad_Byte (-3, the name); Absent (-7, no such object); Damaged (-8, the version index of the object has a wrong check); Device (-6).
+// **Error kinds**
+//
+// - `No_Grant` (-1, the caller has no store);
+// - `Absent` (-12: the place);
+// - `Empty`, `Too_Long` or `Bad_Byte` (-3, the name);
+// - `Absent` (-7, no such object);
+// - `Damaged` (-8, the version index of the object has a wrong check);
+// - `Device` (-6).
 @(export, link_name = "versions")
 versions :: proc "c" (place: i64, name: ^string, result: ^[]Version, error: ^errors.Error_Record) -> i64 {
 	named, refused := named_of(place, name^, error, 1, false)
@@ -749,7 +813,11 @@ versions :: proc "c" (place: i64, name: ^string, result: ^[]Version, error: ^err
 
 // version gives the bytes of the object `name` under a place at a generation: one of its versions, or its current version. The place: as for versions. The result is the count of bytes, or a negative number with an error record.
 //
-// The error kinds: those of versions; Absent (-9, the object has no version of this generation); Damaged (-8, a block of this version has a wrong check).
+// **Error kinds**
+//
+// - those of versions;
+// - `Absent` (-9, the object has no version of this generation);
+// - `Damaged` (-8, a block of this version has a wrong check).
 @(export, link_name = "version")
 version :: proc "c" (place: i64, name: ^string, generation: i64, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	named, refused := named_of(place, name^, error, 1, false)
@@ -772,7 +840,9 @@ version :: proc "c" (place: i64, name: ^string, generation: i64, result: ^[]u8, 
 
 // restore makes a version of the object `name` under a place its current version again, in one commit: the current version before it becomes a version, so nothing is lost. No block of data is written: the object names the blocks of the version. The place: as for versions. The result is the generation of the commit, or a negative number with an error record.
 //
-// The error kinds: those of version, and those of write.
+// **Error kinds**
+//
+// - those of version, and those of write.
 @(export, link_name = "restore")
 restore :: proc "c" (place: i64, name: ^string, generation: i64, error: ^errors.Error_Record) -> i64 {
 	named, refused := named_of(place, name^, error, 1, false)
@@ -800,7 +870,10 @@ restore :: proc "c" (place: i64, name: ^string, generation: i64, error: ^errors.
 
 // clone makes the object `new_name` under a place a copy of the object `name` under the same place: the two name the same blocks until one of them changes. A state of new_name before becomes a version. The place: as for versions. The result is the generation of the commit, or a negative number with an error record.
 //
-// The error kinds: those of restore; new_name is argument 3.
+// **Error kinds**
+//
+// - those of restore;
+// - new_name is argument 3.
 @(export, link_name = "clone")
 clone :: proc "c" (place: i64, name: ^string, new_name: ^string, error: ^errors.Error_Record) -> i64 {
 	named, refused := named_of(place, name^, error, 1, false)
@@ -826,7 +899,10 @@ clone :: proc "c" (place: i64, name: ^string, new_name: ^string, error: ^errors.
 
 // compare gives the ranges of bytes that differ between two states of the object `name` under a place (two generations: a version or the current version). Two blocks that the two states both name are equal bytes and are not read. The place: as for versions. The result is the count of the ranges, or a negative number with an error record.
 //
-// The error kinds: those of version; first and second are arguments 3 and 4.
+// **Error kinds**
+//
+// - those of version;
+// - first and second are arguments 3 and 4.
 @(export, link_name = "compare")
 compare :: proc "c" (place: i64, name: ^string, first: i64, second: i64, result: ^[]Byte_Range, error: ^errors.Error_Record) -> i64 {
 	named, refused := named_of(place, name^, error, 1, false)

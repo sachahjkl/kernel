@@ -6,7 +6,6 @@ import "core:testing"
 // A site with the guide of the architecture, whose page has a few headings
 // of known ids. The file of the guide is read for its title only when the
 // site has no guide for it: here the guide gives the title.
-@(private = "file")
 reference_test_site :: proc() -> Site {
 	site := test_site()
 	site.documents["docs/ARCHITECTURE.md"] = "docs/guides/ARCHITECTURE/index.html"
@@ -207,7 +206,7 @@ site_source_comment_text :: proc(t: ^testing.T) {
 	page := "docs/reference/modules/kernel/index.html"
 	reference := "<a class=\"document-reference value-guide value-icon\" href=\"../../../../docs/guides/ARCHITECTURE/index.html#kernel-systems\">Architecture: Kernel systems</a>"
 
-	html := site_source_comment_html(&site, page, "The kernel: the interrupts (docs/ARCHITECTURE.md, \"Kernel systems\").\nA second <line>.", .Paragraphs)
+	html := site_source_comment_html(&site, page, "The kernel: the interrupts (docs/ARCHITECTURE.md, \"Kernel systems\").\n\nA second <line>.", .Paragraphs)
 	testing.expect_value(t, html, strings.concatenate({"<p>The kernel: the interrupts.</p>\n<p>A second &lt;line&gt;.</p>\n<p class=\"document-references\">See: ", reference, "</p>\n"}, context.temp_allocator))
 
 	in_place := site_source_comment_html(&site, page, "The rules of docs/ARCHITECTURE.md, \"Kernel systems\", hold.", .Paragraphs)
@@ -224,7 +223,7 @@ site_source_comment_text :: proc(t: ^testing.T) {
 	once := site_source_comment_html(&site, page, "A (docs/ARCHITECTURE.md, \"Kernel systems\"). B (docs/ARCHITECTURE.md, \"kernel systems\").", .Paragraphs)
 	testing.expect_value(t, strings.count(once, SITE_DOCUMENT_REFERENCE_OPEN), 1)
 
-	plain := "Maps <memory>.\nA second paragraph."
+	plain := "Maps <memory>.\n\nA second paragraph."
 	testing.expect_value(t, site_source_comment_html(&site, page, plain, .Paragraphs), "<p>Maps &lt;memory&gt;.</p>\n<p>A second paragraph.</p>\n")
 	testing.expect_value(t, site_source_comment_html(&site, page, "No pointer.", .Line), "No pointer.")
 	testing.expect_value(t, site_source_comment_html(&site, page, "docs/NOPE.md stays.", .Line), "docs/NOPE.md stays.")
@@ -346,7 +345,7 @@ site_document_pointer_check :: proc(t: ^testing.T) {
 
 // Every pointer of the repository resolves: the source comments of the
 // system, the guides, the glossary, the news and the working record that
-// the status page reads.
+// the status page reads. Every link of a source comment names a place.
 @(test)
 site_document_pointers_of_the_repository :: proc(t: ^testing.T) {
 	site := test_site()
@@ -368,6 +367,9 @@ site_document_pointers_of_the_repository :: proc(t: ^testing.T) {
 	site.glossary = glossary_terms
 	site.terms = site_glossary_terms(site.glossary)
 	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
+	// The links of the comments name rows, exports and declarations.
+	testing.expect(t, site_reference_read(&site))
+	testing.expect(t, site_declarations_read(&site))
 	testing.expect(t, site_guides_add(&site))
 	problems := site_document_pointer_problems(&site)
 	testing.expectf(t, len(problems) == 0, "%d stale pointers: %v", len(problems), problems)

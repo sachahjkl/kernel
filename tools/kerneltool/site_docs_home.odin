@@ -166,7 +166,7 @@ site_search_chart :: proc(b: ^strings.Builder, site: ^Site, path: string, rows: 
 	strings.write_string(b, "<section class=\"search-chart\" aria-labelledby=\"search-finds\">\n<h2 class=\"search-chart-heading\" id=\"search-finds\">What the search finds</h2>\n<div class=\"search-chart-line\">\n")
 	strings.write_string(b, "<svg class=\"search-chart-bar\" id=\"search-chart-bar\" aria-hidden=\"true\" focusable=\"false\">")
 	for row, index in rows {
-		value_name := site_value_kinds[site_search_kinds[row.kind].value_kind].name
+		value_name := value_kinds.VALUE_KIND_NAMES[site_search_kinds[row.kind].value_kind]
 		fmt.sbprintf(b, "<rect class=\"search-chart-segment value-%s\" data-kind=\"%d\" x=\"%s\" width=\"%s\" height=\"100%%\"/>", value_name, int(row.kind), site_search_chart_percent(segments[index].start), site_search_chart_percent(segments[index].width))
 	}
 	strings.write_string(b, "</svg>\n")

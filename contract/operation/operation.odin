@@ -63,7 +63,7 @@ Handle :: distinct u32 // 0 names no object.
 // handle with a part of its rights. No operation adds a right to a handle.
 Right :: enum u32 {
 	Give    = 0, // Each kind: give a copy of the handle to another program.
-	Read    = 1, // Memory: map it. Program, Thread: read its state. Interrupt: read its count.
+	Read    = 1, // Memory: map it. Program, Thread: read its state. Interrupt: read its count. Budget: read what it holds (Budget_Read).
 	// Memory: map it with Write. Log: write text on the log. Thread: write its registers and its extended state
 	// while it is held (Thread_Control): full control of the code that its program runs.
 	Write   = 2,
@@ -93,138 +93,833 @@ Object_Kind :: enum u8 {
 	Program   = 2,
 	Interrupt = 3,
 	Ports     = 4,
-	Machine   = 5, // The machine: its rights are Devices, Inspect and Stop.
+	Machine   = 5, // The machine: its rights are Give, Inspect, Devices, Stop, Physical, Schedule and Events.
 	Thread    = 6,
 	Budget    = 7,
 	Log       = 8, // The log of the kernel.
 }
 
+// What a program asks the kernel. A thread asks for an operation with one
+// command record in its kernel ring: `kind` is the operation, and the
+// values are its arguments, in the order of its form. Then it enters the
+// kernel with the `syscall` instruction. The kernel executes the commands
+// of the ring in their order, and gives one completion record for each:
+// `kind` is a `Status`, and the values are the results, in the order that
+// each operation states. A completion with the status `Ok` has the results;
+// with another status the operation failed, and the values of its
+// completion are an [error record](errors.Error_Record): the
+// argument that was wrong, its value, and what the kernel found (the
+// [errors of the kernel](docs/MODULE_CONTRACT.md#8-errors-that-diagnose)).
+//
+// A handle argument names an object of this program by the number that a
+// grant or an operation gave. When the handle names no object of the kind
+// that the operation needs, the status is `Bad_Handle`; when it names the
+// object but has not the right that the operation needs, `No_Right`. The
+// rights that each operation needs are in **bold**.
+//
+// `support/system` calls each operation with a procedure of its own
+// (`system.memory_create`) or with `system.call`.
 Operation :: enum u32 {
 	None           = 0,
-	Log            = 1, // (log, address, count, level, channel 0, channel 1, runs): write one text on the log. The channel is 16 bytes in two values. The value runs of the text (value_kinds.Value_Run_In_Call, at most LOG_CALL_RUN_LIMIT) follow its count bytes at the address; runs that do not fit the text leave it plain.
-	Memory_Create  = 2, // (budget, page_count, Memory_Flags) -> memory handle. The memory is zero.
-	// The budget pays now for each page. A page gets its page frame at its first use (a page on first use),
-	// or now with Frames_Now. An access to the memory never fails for lack of memory.
-	Memory_Map     = 3, // (memory, program or 0 for self, address or 0, Map_Flags, first page, page_count or 0 for all) -> address
-	Memory_Unmap   = 4, // (program or 0, address)
-	Memory_Size    = 5, // (memory) -> page_count
-	Program_Create = 6, // (budget, name address, name count) -> program handle. The program has no memory and no handle.
-	// The budget pays for the program, for its page tables and for its first thread.
-	Program_Start  = 7, // (program, entry address, stack address, context address): the first thread of the program.
-	Program_Stop   = 8, // (program or 0 for self, code)
-	Program_State  = 9, // (program, address of a Stop_Report or 0) -> Program_State, code, kernel entries of the program.
-	// With an address, the kernel writes the Stop_Report of the program there.
-	Handle_Give    = 10, // (target: program handle, memory handle, or 0 for this program; handle; Rights) -> the handle in the target program.
-	// The new handle has the rights of the handle that are also in Rights: a grant never adds a right.
-	// With a memory handle, the target is the other program that maps this memory: the other side of a ring.
-	// If no other program maps it, the target is the one other program that holds a handle to it.
-	// The kernel keeps, with the new handle, the memory object that it came through (Handle_State).
-	Handle_Close   = 11, // (handle). The kernel stops a program when its last handle closes.
-	Interrupt_Read = 12, // (interrupt) -> the number of interrupts since the last read.
-	Device_Create  = 13, // (machine, Device_Kind, a, b) -> handle. Ports: a = first port, b = count. Interrupt: a = line.
-	// Memory: a = physical address, b = page count: the registers of a device, as a memory object that a program maps
-	// with no cache. The kernel refuses addresses of the memory that it manages.
-	// Message: an interrupt that a device sends as a write to the interrupt controller (MSI-X). The results
-	// are the handle, then the address and the value that the device must write.
-	Inspect        = 14, // (machine, Inspect_Kind, index, address, size) -> bytes written
-	Machine_Stop   = 15, // (machine, code)
-	Thread_Create  = 16, // (budget, entry address, stack address, parameter, weight, request) -> thread handle. A new thread
-	// of this program. The thread starts at the entry with the parameter in the first register. The weight (1 to
-	// WEIGHT_FULL; 0 is WEIGHT_FULL) and the request (microseconds, 1 to REQUEST_LIMIT; 0 is REQUEST_DEFAULT) are for
-	// the strategies that use them (Strategy). A weight can only be lower than the weight of a thread with 0.
-	Thread_Stop    = 17, // (thread or 0 for self). A program with no thread stops.
-	Thread_State   = 18, // (thread) -> Program_State: Ready, Waiting or Stopped; the stop count (Thread_Control); the bytes
-	// of the extended state area of a thread; its components (the bits of XCR0: 0 x87, 1 SSE, 2 AVX, 5 to 7 AVX-512); 1
-	// when the area has the header of xsave at byte 512, 0 when it is the 512 bytes of fxsave. A thread that a stop
-	// holds is Ready when its wait ended, and runs only when its stop count is 0.
-	// The word wait: the one way to wait for something else than a time.
-	// A thread waits while each word of a list holds its value. The kernel
-	// names a word by its page frame, so two programs that map one memory
-	// object can use one word.
-	Word_Wait      = 19, // (address of Word records, count): the wait of this entry ends when a Word_Wake names one
-	// of these words, or at its deadline. If a word does not hold its value, the wait ends at once.
-	// One entry can wait on WORD_WAIT_CAPACITY words.
-	Word_Wake      = 20, // (address, count) -> threads woken: wake at most count threads that wait on this word.
-	Budget_Create  = 21, // (budget, pages, programs, threads, processor, log_records) -> budget handle. See Budget_Amounts.
-	Budget_Read    = 22, // (budget) -> pages, programs, threads: what the budget can still pay; processor, log_records: its limits;
-	// the microseconds of processor time that it used since it was made; the log records that the kernel refused.
-	Handle_State   = 23, // (handle, memory or 0) -> Object_Kind, Rights, 1 if the handle came through this memory object,
-	// the count of the holdings that came from this handle.
-	// A program that receives the number of a handle from another program, in a ring, proves with this
-	// operation that the other program gave the handle through that ring. Without the proof, the
-	// other program can name a handle that the receiver holds for itself.
-	Handle_Revoke  = 24, // (handle, program or 0) -> the count of holdings that ended.
-	// A holding is a handle or a mapping. The origin of a handle that Handle_Give made is the handle
-	// that was given. The origin of a mapping is the memory handle that was mapped. When a handle
-	// closes, what came from it comes from its origin. Handle_Revoke ends each holding that came from
-	// the handle, in one program (a handle with the right Control) or in each program, and what came
-	// from those holdings in any program. The handle stays, and the mappings of the program that
-	// revokes stay. A program that lost a holding gets an event. A thread that uses memory that
-	// its program lost stops its program on a page fault.
-	Memory_Physical = 25, // (machine, memory) -> the physical address of the first page of a memory object that was
-	// created Contiguous, or of device memory: its pages follow each other in physical memory and do not move.
-	// Another memory object gives Bad_Operation. A device service gives these addresses to its device: the device
-	// reads and writes the memory with no processor (direct memory access). Needs the right Physical on the machine.
-	Program_Module = 26, // (program or 0 for self, address of a Module_Record): the module record of a module that a
-	// loader put in the program. A record with the base of a record that exists replaces it; with the size 0
-	// it removes it. The kernel does not read the module: the record is what the loader asserts. The kernel
-	// names the module of the address of a fault with it, and Inspect gives the records (Module_Report).
-	Strategy_Set = 27, // (machine, Strategy) -> the strategy before. The scheduling strategy of the machine changes
-	// while it runs: no thread stops, none is lost. The state of the strategy of each thread starts from zero
-	// (docs/SCHEDULING.md). Needs the right Schedule on the machine.
-	// The virtual memory of a program (docs/ARCHITECTURE.md, "The virtual memory of a program").
-	Memory_Commit = 28, // (memory, budget or 0, address of a table of Page_Range, count, Commit_Flags) -> pages changed.
-	// The pages of the ranges of an object made with Uncommitted become committed: the budget pays one page for each,
-	// and each gets a frame at its first use. The budget handle must name the budget of the object, with the right
-	// Commit or Spend (the right Write on the object does not spend the budget of its maker; to let
-	// another program commit, give it the object and a budget handle with Commit only). With Decommit, the committed
-	// pages of the ranges are no longer paid: their frames and their pages return at once to the budget of the object,
-	// and a page committed again is zero; the budget argument is not read. The ranges are in increasing order and do not
-	// overlap; at most RANGE_TABLE_CAPACITY, and RANGE_TABLE_PAGE_LIMIT pages. Needs the right Write on the object.
-	// Decommit needs an object that only this program names, with one mapping at most. A table that the budget cannot
-	// pay changes nothing.
-	Memory_Protect = 29, // (address of a table of Address_Range, count, Map_Flags) -> pages changed. The protection of
-	// the pages of mappings of this program: Read only (no flag), Write, Execute, or No_Access. It can only take away
-	// what the mapping was made with (Bad_Operation); Write and Execute together are refused. A range inside a mapping,
-	// not its whole, takes away from the protection of the mapping now (it cannot get more: Bad_Operation), and needs
-	// an object with a frame list that only this program names, with one mapping; while a part has its own protection,
-	// the object is not mapped again and not given (Bad_State). At most RANGE_TABLE_PAGE_LIMIT pages. Each processor
-	// that runs a thread of the program forgets the old translations before the operation returns (one shoot-down).
-	// The fault ring (docs/ARCHITECTURE.md, "The fault ring").
-	Fault_Handler_Set = 30, // (thread handle with Control or 0 for the calling thread, 1 to end the delivery, Fault_Kinds
-	// or 0 for page faults only): the faults of these kinds of the other threads of this program become records of
-	// the fault ring in the thread record of this thread, in place of a stop; the thread of a fault waits for
-	// Fault_Answer. A page fault is delivered only below THREAD_AREA_BASE. A fault of a kind that the handler did not
-	// ask for stops the program as with no handler. Bad_Operation for a kind that the kernel never delivers
-	// (FAULT_KINDS_DELIVERED), and for kinds with the end of the delivery. Only a thread of this program. A new handler
-	// replaces the one before; its ring starts empty. A new handler, or the end of the delivery, while a thread waits
-	// for an answer ends the ring that holds its record: the program stops with STOP_CODE_FAULT_UNANSWERED, as when the
-	// handler thread ends.
-	Fault_Answer = 31, // (thread number, fault serial, Fault_Answer_Kind): the answer for a thread of this program that
-	// waits in the fault ring, by the two values of its record. Bad_State if no thread with that number waits for the
-	// fault of that serial: a wrong answer, a second answer, or an answer from another program. Bad_State also for
-	// Resume after a fault kind that does not resume by itself (fault_kind_resumes) when Thread_Control wrote neither
-	// the registers nor the extended state of the thread since its fault: the thread still waits, and Stop ends it.
-	// Kernel events (docs/ARCHITECTURE.md, "Kernel events").
-	Events_Set = 32, // (machine with Events, memory or 0, address of a table of Event_Rule, count, records in each ring)
-	// -> the bytes of one event ring, the count of processors. The event table of the machine: the kernel writes an
-	// Event_Record into the event ring of the processor of each kernel event that a rule accepts. The memory object
-	// is Contiguous, with Write, and holds one ring of EVENT_RING_HEAD_BYTES + records * 64 bytes for each processor,
-	// one after the other from its first byte; records is a power of two from EVENT_RING_RECORDS_LEAST to
-	// EVENT_RING_RECORDS_MOST. At most EVENT_RULE_CAPACITY rules (No_Slot above). A new table replaces the table of
-	// the caller; a table of another program is not replaced (Bad_State). With memory 0 the caller takes its table
-	// away (Bad_State if it has none): when the operation returns, no processor writes in the old memory object.
-	// The table also ends when its program ends, and when the last machine handle of its program with Events closes
-	// or is revoked: the table lives while the right that made it lives.
-	// The control of a thread (docs/ARCHITECTURE.md, "The control of a thread").
-	Thread_Control = 33, // (thread handle or 0, thread number when the handle is 0, Thread_Control_Command, address,
-	// size) -> see Thread_Control_Command. The handle needs the rights of thread_control_rights: Inspect for each
-	// command, and Write too for a write. With the handle 0, the number names a live thread of this program
-	// (Thread_Record.number, Fault_Record.thread; Bad_State if none); a thread of another program needs a handle.
-	// Stop and Resume change the stop count of the thread: it runs only while the count is 0. The registers are read
-	// and written only while the thread is held: its stop count is above 0, or it waits for an answer of the fault
-	// ring (Bad_State else, and for the calling thread). A write of values that a thread of a program cannot hold
-	// changes nothing (Bad_Operation): thread_registers_refusal, extended_state_refusal.
+	Log            = 1, // (log, address, length, level: Log_Level, channel, channel, runs).
+	// Writes one text on the log of the kernel: records of the log, which a reader with the memory of the log
+	// reads, and one line `[name:channel] text` on the serial port. The kernel sets the time, the program and
+	// the thread of each record, so a program cannot write a record of another program.
+	//
+	// **Arguments**
+	//
+	// - `log`: the log handle, with **Write**. Each program has it in its context at `CONTEXT_LOG`.
+	// - `address`, `length`: the text, at most 4096 bytes, in memory that the program can read. A text longer
+	//   than `LOG_TEXT_CAPACITY` continues in the next records (`Log_Record`, `more`).
+	// - `level`: a `Log_Level`, from `Info` (0) to `Error` (3).
+	// - `channel`, `channel`: the name of the channel, 16 bytes in two values. The name is the bytes before
+	//   the first one that is not a printable character: all zero is no channel.
+	// - `runs`: the count of the value runs of the text, at most `LOG_CALL_RUN_LIMIT`; 0 is a plain text. The
+	//   runs (`value_kinds.Value_Run_In_Call`) follow the `length` bytes of the text at `address`. A run says
+	//   which bytes of the text are one value, and its kind: a reader of the log shows each value in the color
+	//   of its kind. The text is written whole in every case: if a run is wrong, the record is plain.
+	//
+	// **Results**: none.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `log` is not a log handle with **Write**.
+	// - `Bad_Address`: `length` is above 4096, `runs` is above `LOG_CALL_RUN_LIMIT`, or the program cannot
+	//   read the text and its runs.
+	// - `Bad_Operation`: `level` is above `Error`.
+	// - `No_Budget`: the budget of the program, or a budget above it, accepted all the records of its limit
+	//   in this second (`Budget_Amounts`, `log_records`).
+	Memory_Create  = 2, // (budget, pages, flags: Memory_Flags) -> memory handle.
+	// Makes a memory object of `pages` pages of 4096 bytes, and gives a handle to it with each right of
+	// memory: **Give**, **Read**, **Write** and **Execute**. The memory is zero. The budget pays now, so an
+	// access to the memory never fails for lack of memory.
+	//
+	// **Arguments**
+	//
+	// - `budget`: a budget handle with **Spend**. It pays now for each page and for the frame list of the
+	//   object (`memory_cost`). A `Contiguous` object has no frame list; an `Uncommitted` object pays its
+	//   frame list only, and at least one page.
+	// - `pages`: the count of pages, from 1; at most `MEMORY_PAGE_LIMIT` (1 GiB) for an object that is not
+	//   contiguous.
+	// - `flags`: a `Memory_Flags`:
+	//   - `Frames_Now`: each page gets its page frame now, not at its first use (a page on first use);
+	//   - `Contiguous`: the frames follow each other in physical memory and do not move, for a device;
+	//   - `Uncommitted`: no page is paid now, and `Memory_Commit` pays them later; with no other flag;
+	//   - `Large_Pages`: `Contiguous`, in one run aligned on 2 MiB, with `pages` a multiple of
+	//     `LARGE_PAGE_PAGES`, so that a mapping uses large pages.
+	//
+	// **Results**: the memory handle.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Spend**.
+	// - `Bad_Operation`: `pages` is 0, or above the limit; a flag that the kernel does not know;
+	//   `Uncommitted` with another flag; `Large_Pages` with a count that is not a multiple of
+	//   `LARGE_PAGE_PAGES`.
+	// - `No_Budget`: the budget cannot pay.
+	// - `No_Slot`: the table of the memory objects of the kernel is full, or the handle table of the program.
+	// - `No_Memory`: a contiguous object finds no free run of its length, though the budget can pay.
+	//
+	// ```odin
+	// memory, status := system.memory_create(16, flags = {.Frames_Now})
+	// ```
+	Memory_Map     = 3, // (memory, program, address, flags: Map_Flags, first, pages) -> address.
+	// Maps pages of a memory object in this program or in another program, and gives the address of the
+	// first page.
+	//
+	// **Arguments**
+	//
+	// - `memory`: a memory handle with **Read**, and **Write** to map with `Write`, **Execute** to map with
+	//   `Execute`.
+	// - `program`: 0 for this program, or a program handle with **Control**.
+	// - `address`: the address of the first page: a multiple of 4096, at least 4096, with the mapping below
+	//   `USER_END` and over no other mapping. 0: the kernel chooses the lowest free place from
+	//   `CHOSEN_BASE`, with a page with no mapping before and after it, on 2 MiB for an object of
+	//   `Large_Pages` that is mapped by whole large pages.
+	// - `flags`: a `Map_Flags`: `Write`, `Execute` (never both: no page is writable and executable), or
+	//   `No_Access`: the pages fault until `Memory_Protect` gives them access. No flag: read only. The
+	//   kernel reads no other bit.
+	// - `first`: the first page of the object.
+	// - `pages`: the count of pages, or 0 for each page from `first` to the end of the object.
+	//
+	// **Results**: the address of the first page.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `memory` or `program` is not a handle of its kind with its rights.
+	// - `Bad_State`: the program is stopped; or a part of the object has a protection of its own
+	//   (`Memory_Protect`): such an object has one mapping only.
+	// - `Bad_Address`: the pages are not inside the object; the address is not a multiple of 4096, is below
+	//   4096, ends above `USER_END`, or meets another mapping.
+	// - `Bad_Operation`: `Write` with `Execute`.
+	// - `No_Slot`: the program has 128 mappings, or the kernel finds no free place for the address that it
+	//   chooses.
+	// - `No_Budget`, `No_Memory`: the budget of the program that receives the mapping cannot pay its page
+	//   tables, or no page frame is free.
+	//
+	// ```odin
+	// address, status := system.memory_map(memory, flags = {.Write})
+	// ```
+	Memory_Unmap   = 4, // (program, address).
+	// Removes the mapping that starts at an address, in this program or in another program. The memory
+	// object ends when no handle and no mapping names it.
+	//
+	// **Arguments**
+	//
+	// - `program`: 0 for this program, or a program handle with **Control**.
+	// - `address`: the first byte of a mapping, below `THREAD_AREA_BASE`: the thread areas and the time page
+	//   stay.
+	//
+	// **Results**: none.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Control**.
+	// - `Bad_State`: the program is stopped.
+	// - `Bad_Address`: no mapping starts at the address, or it is a thread area or the time page.
+	Memory_Size    = 5, // (memory) -> pages.
+	// Gives the count of pages of a memory object.
+	//
+	// **Arguments**
+	//
+	// - `memory`: a memory handle, with any rights.
+	//
+	// **Results**: the count of pages.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`: `memory` is not a memory handle.
+	Program_Create = 6, // (budget, name, name_length) -> program handle.
+	// Makes a program, in the state `Created`, and gives a handle to it with **Give**, **Read** and
+	// **Control**. The program has no memory and no handle: its addresses hold the time page only.
+	// `Program_Start` starts it.
+	//
+	// **Arguments**
+	//
+	// - `budget`: a budget handle with **Spend**. It pays for one program slot and for the page tables of
+	//   the program. The program keeps it: it pays for its first thread at `Program_Start`, and for each
+	//   page table of the program after.
+	// - `name`, `name_length`: the name of the program, at most 31 bytes, in memory that the program can
+	//   read: the reports and the log show it.
+	//
+	// **Results**: the program handle.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Spend**.
+	// - `Bad_Address`: `name_length` is above 31, or the program cannot read the name.
+	// - `No_Budget`: the budget has no program slot or no page left, or it cannot pay the page tables.
+	// - `No_Slot`: the table of the programs of the kernel is full, or the handle table of the program.
+	Program_Start  = 7, // (program, entry, stack, context).
+	// Starts a program that `Program_Create` made: its first thread runs at `entry`, and the program goes
+	// from `Created` to `Ready`. The budget of the program pays for the thread, as `Thread_Create` does.
+	//
+	// **Arguments**
+	//
+	// - `program`: a program handle with **Control**, of a program in the state `Created`.
+	// - `entry`: the address of the first instruction, below `USER_END`.
+	// - `stack`: the top of the stack, from 8 to `USER_END`; the thread starts with its stack pointer at
+	//   `stack` minus 8, as after a call.
+	// - `context`: the value of the first register of the thread. By the rule of the system it is the
+	//   address of the `Context` of the program (`CONTEXT_ADDRESS`); the kernel does not read it.
+	//
+	// **Results**: none.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Control**.
+	// - `Bad_State`: the program is not in the state `Created`.
+	// - `Bad_Address`: `entry` or `stack` is out of its range.
+	// - `No_Budget`: the budget of the program has no thread slot left, or it cannot pay for the thread
+	//   area or its page tables.
+	// - `No_Slot`: the thread table of the kernel is full, or the program has `THREAD_CAPACITY` threads.
+	// - `No_Memory`: no free run of page frames for the thread area.
+	Program_Stop   = 8, // (program, code).
+	// Stops a program: this one or another one. Each of its threads ends, and the operation returns when no
+	// thread of the program runs an instruction any more. The program is `Stopped` with the stop code, which
+	// `Program_State` gives. Its handles, its mappings and its memory end when its last thread left its
+	// processor. A program that is stopped already stays as it is.
+	//
+	// **Arguments**
+	//
+	// - `program`: 0 for this program, or a program handle with **Control**. With 0, the thread that asks
+	//   ends with its program: the operation does not return.
+	// - `code`: the stop code, any value. The kernel uses the codes `STOP_CODE_FAULT` to
+	//   `STOP_CODE_FAULT_UNANSWERED` for the stops that it makes.
+	//
+	// **Results**: none.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Control**.
+	Program_State  = 9, // (program, report: Stop_Report) -> state: Program_State, code, entries.
+	// Gives the state of a program, its stop code and its count of kernel entries. With an address, the
+	// kernel also writes there where the program stopped on a fault.
+	//
+	// **Arguments**
+	//
+	// - `program`: a program handle with **Read**.
+	// - `report`: 0, or the address of a `Stop_Report` that the program can write: the instruction, the
+	//   address of a page fault, the module and the stack trace of the fault that stopped the program. All
+	//   zero while the program runs, or when it stopped with no fault.
+	//
+	// **Results**
+	//
+	// 1. the `Program_State` of the program: `Created`, `Ready` (one of its threads is ready), `Waiting` or
+	//    `Stopped`;
+	// 2. its stop code: 0 while it runs;
+	// 3. its kernel entries since its start.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Read**.
+	// - `Bad_Address`: the program cannot write the `Stop_Report` at `report`.
+	Handle_Give    = 10, // (target, handle, rights: Rights) -> the handle in the target.
+	// Copies a handle into a program, with a part of its rights: a grant never adds a right. The kernel
+	// records where the copy came from (its origin): `Handle_Revoke` of the given handle ends the copy, and
+	// when the given handle closes, the copy comes from the origin of the given handle.
+	//
+	// **Arguments**
+	//
+	// - `target`: where the copy goes:
+	//   - 0: this program, with no right needed;
+	//   - a program handle with **Control**: that program;
+	//   - a memory handle: the other program that maps this memory, the other side of a ring. If no other
+	//     program maps it, the one other program that holds a handle to it. The kernel keeps, with the
+	//     copy, the memory object that it came through: `Handle_State` proves it to the receiver.
+	// - `handle`: the handle to give, with **Give** when the target is another program.
+	// - `rights`: the rights of the copy are the rights of `handle` that are also in `rights`.
+	//
+	// **Results**: the number of the copy in the target program.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`: `handle` or `target` names nothing; `target` is a handle of another kind; or it is a
+	//   memory object that no other program maps or holds, or that two other programs hold.
+	// - `No_Right`: `handle` has not **Give**, or the program handle `target` has not **Control**.
+	// - `Bad_State`: the target program is stopped; or `handle` names a memory object with a protection of
+	//   its own on a part (`Memory_Protect`), and the target is another program.
+	// - `No_Slot`: the handle table of the target program is full.
+	//
+	// ```odin
+	// copy, status := system.give(program, memory, {.Read})
+	// ```
+	Handle_Close   = 11, // (handle).
+	// Closes a handle of this program. What came from it (its copies and its mappings) comes from its origin
+	// now. The object ends when nothing names it:
+	//
+	// - a memory object, when no handle and no mapping names it;
+	// - a budget, when its last handle closes: what it holds returns to the budget that it came from, which
+	//   pays for its objects;
+	// - a program: it stops with `STOP_CODE_NO_HANDLE` when its last handle closes;
+	// - the event table of the machine, when the last machine handle with **Events** of its program closes.
+	//
+	// **Arguments**
+	//
+	// - `handle`: any handle of this program.
+	//
+	// **Results**: none.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`: `handle` names nothing.
+	Interrupt_Read = 12, // (interrupt) -> count.
+	// Gives the count of the interrupts of a line or of a message interrupt since the last read, and sets
+	// it to 0. Each interrupt also adds 1 to the `events` word of the threads of the program that holds the
+	// handle, and wakes them.
+	//
+	// **Arguments**
+	//
+	// - `interrupt`: an interrupt handle with **Read**.
+	//
+	// **Results**: the count of interrupts.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `interrupt` is not an interrupt handle with **Read**.
+	Device_Create  = 13, // (machine, kind: Device_Kind, a, b) -> handle, address, value.
+	// Makes a handle to a part of the machine, for a device service.
+	//
+	// **Arguments**
+	//
+	// - `machine`: the machine handle, with **Devices**.
+	// - `kind`, `a`, `b`: a `Device_Kind` and its two values:
+	//   - `Ports`: `a` the first port, below 65536, and `b` the count, from 1 to 65536 minus `a`: a ports
+	//     handle with **Give**; the threads of the program use the ports with `in` and `out`;
+	//   - `Interrupt`: `a` a line of the 8259, from 1 to 15: an interrupt handle with **Give** and **Read**;
+	//   - `Memory`: `a` the physical address, a multiple of 4096, and `b` the count of pages of the
+	//     registers of a device: a memory handle with **Give**, **Read** and **Write**, mapped with no cache.
+	//     The range meets no memory that the firmware gave as free or as loaded;
+	//   - `Message`: a message interrupt (MSI-X) of the first processor: an interrupt handle with **Give**
+	//     and **Read**.
+	//
+	// **Results**
+	//
+	// 1. the handle;
+	// 2. for `Message` only: the address that the device writes;
+	// 3. for `Message` only: the value that the device writes there.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `machine` is not the machine handle with **Devices**.
+	// - `Bad_Address`: the ports, the line or the range of memory is out of its range.
+	// - `Bad_Operation`: `kind` is `None` or a kind that the kernel does not know.
+	// - `No_Slot`: no free memory object, no free message interrupt (`MESSAGE_CAPACITY`), or the handle
+	//   table of the program is full.
+	Inspect        = 14, // (machine, kind: Inspect_Kind, index, address, size) -> bytes written.
+	// Writes a report of the kernel into memory of the program. Each `Inspect_Kind` has its report:
+	//
+	// - `System`: a `System_Report`; `index` is not read;
+	// - `Program`: the `Program_Report` of the program slot `index`;
+	// - `Processor`: the `Processor_Report` of the processor `index`;
+	// - `Boot`: the `Boot_Report`;
+	// - `Mappings`: the `Mapping_Report` of the page table: `index` 0 for the kernel half of the addresses,
+	//   another value for the half of the program that asks;
+	// - `Modules`: the `Module_Report` of the program slot `index`;
+	// - `Program_Mappings`, `Threads`, `Stop`: the reports of a developer tool for the program slot `index`:
+	//   `Program_Mapping_Report`, `Thread_Table_Report`, `Stop_Report`;
+	// - `Pages`: the `Page_Report` of the program that asks, for the address that it wrote in the record;
+	//   `index` must be 0.
+	//
+	// A slot or a processor with no program, or out of the table, gives a report of zeros.
+	//
+	// **Arguments**
+	//
+	// - `machine`: the machine handle, with **Inspect**.
+	// - `kind`, `index`: the report, as above.
+	// - `address`, `size`: the memory of the report: `size` is at least the size of the report, and the
+	//   program can write it.
+	//
+	// **Results**: the bytes written: the size of the report.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `machine` is not the machine handle with **Inspect**.
+	// - `Bad_Address`: `size` is below the size of the report, or the program cannot write the memory.
+	// - `Bad_Operation`: `kind` is `None` or a kind that the kernel does not know; for `Pages`, `index` is
+	//   not 0, or the address in the record is not a multiple of 4096, or its 64 pages pass `USER_END`.
+	Machine_Stop   = 15, // (machine, code).
+	// Stops the machine: the kernel writes `kernel: the machine stops with code <code>` on the log, then
+	// stops each processor. The operation does not return.
+	//
+	// **Arguments**
+	//
+	// - `machine`: the machine handle, with **Stop**.
+	// - `code`: the code of the stop; the machine gives its low 8 bits to its host.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `machine` is not the machine handle with **Stop**.
+	Thread_Create  = 16, // (budget, entry, stack, parameter, weight, request) -> thread handle.
+	// Starts a new thread of this program, and gives a handle to it with **Give**, **Read**, **Write**,
+	// **Control** and **Inspect**. The thread is ready at once: it starts at `entry` with `parameter` in its
+	// first register, and its stack pointer at `stack` minus 8.
+	//
+	// **Arguments**
+	//
+	// - `budget`: a budget handle with **Spend**. It pays for the thread slot and for the thread area: the
+	//   thread record, the kernel ring and a page with no memory. The budget of the program pays for the
+	//   page tables of the area.
+	// - `entry`: the address of the first instruction, below `USER_END`.
+	// - `stack`: the top of the stack, from 8 to `USER_END`.
+	// - `parameter`: any value.
+	// - `weight`: from 1 to `WEIGHT_FULL`; 0 is `WEIGHT_FULL`. The share of the thread under the strategies
+	//   that use weights. A weight can only be lower than the weight of a thread created with 0.
+	// - `request`: microseconds, from 1 to `REQUEST_LIMIT`; 0 is `REQUEST_DEFAULT`. The delay that the
+	//   thread asks for under EEVDF ([weights and requests](docs/SCHEDULING.md#weights-and-requests-a-field-at-thread-creation)).
+	//
+	// **Results**: the thread handle.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Spend**.
+	// - `Bad_Operation`: `weight` is above `WEIGHT_FULL`, or `request` above `REQUEST_LIMIT`.
+	// - `Bad_Address`: `entry` or `stack` is out of its range.
+	// - `Bad_State`: the program stops.
+	// - `No_Slot`: the thread table of the kernel is full, the program has `THREAD_CAPACITY` threads, or
+	//   its handle table is full.
+	// - `No_Budget`: the budget has no thread slot left, or it cannot pay for the thread area or its page
+	//   tables.
+	// - `No_Memory`: no free run of page frames for the thread area.
+	//
+	// ```odin
+	// thread, status := system.thread_start(worker, nil)
+	// ```
+	Thread_Stop    = 17, // (thread).
+	// Ends a thread: the calling thread, or a thread that a handle names, of this program or of another one.
+	// A thread on another processor leaves it at once, and the operation returns after it left. The other
+	// threads of its program get an event. A program with no thread left stops, with the code 0.
+	//
+	// **Arguments**
+	//
+	// - `thread`: 0 for the calling thread, which ends: the operation does not return. Else a thread handle
+	//   with **Control**.
+	//
+	// **Results**: none. A thread that ended already stays as it is.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with **Control**.
+	Thread_State   = 18, // (thread) -> state: Program_State, stop count, area bytes, components, form.
+	// Gives the state of a thread, and what a holder of the thread needs for `Thread_Control`.
+	//
+	// **Arguments**
+	//
+	// - `thread`: a thread handle with **Read**.
+	//
+	// **Results**
+	//
+	// 1. its `Program_State`: `Ready`, `Waiting` or `Stopped`. A thread that a stop holds is `Ready` when
+	//    its wait ended, and runs only when its stop count is 0;
+	// 2. its stop count (`Thread_Control`);
+	// 3. the bytes of the extended state area of a thread on this machine;
+	// 4. its components: the bits of XCR0 (0 x87, 1 SSE, 2 AVX, 5 to 7 AVX-512);
+	// 5. 1 when the area has the header of `xsave` at byte 512, 0 when it is the 512 bytes of `fxsave`.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with **Read**.
+	Word_Wait      = 19, // (words: Word, count).
+	// Adds words to the wait of this kernel entry: the one way to wait for something else than a time. A
+	// thread that asks for a wait when it enters the kernel waits at the end of the entry while each word
+	// of its list holds its value. The wait ends when `Word_Wake` names one of its words, or at its
+	// deadline. The kernel names a word by its page frame, so two programs that map one memory object wait
+	// on one word. If a word does not hold its value already, the wait ends at once: no wake is lost
+	// between a read of the word and the wait.
+	//
+	// **Arguments**
+	//
+	// - `words`: the address of `count` records `Word`: each one is the address of a word of 32 bits, a
+	//   multiple of 4 that the program can read, and the value that the word holds while the thread waits
+	//   (the low 32 bits of `value`).
+	// - `count`: the words of this command. One entry holds at most `WORD_WAIT_CAPACITY` words in all its
+	//   commands.
+	//
+	// **Results**: none.
+	//
+	// **Statuses**
+	//
+	// - `No_Slot`: the entry would hold more than `WORD_WAIT_CAPACITY` words.
+	// - `Bad_Address`: the program cannot read the table or a word, or a word is not a multiple of 4. The
+	//   entry then does not wait.
+	//
+	// ```odin
+	// system.word_wait(&ready, 0, deadline)
+	// ```
+	Word_Wake      = 20, // (word, count) -> threads woken.
+	// Ends the wait of at most `count` threads that wait on a word. A thread that put the word in the wait
+	// of its entry and does not wait yet counts too: it does not wait, and reads its words again.
+	//
+	// **Arguments**
+	//
+	// - `word`: the address of a word of 32 bits, a multiple of 4 that the program can read.
+	// - `count`: the most threads to wake.
+	//
+	// **Results**: the count of threads woken.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Address`: the program cannot read the word, or its address is not a multiple of 4.
+	//
+	// ```odin
+	// system.word_wake(&ready)
+	// ```
+	Budget_Create  = 21, // (budget, pages, programs, threads, processor, log_records) -> budget handle.
+	// Makes a budget from a budget, and gives a handle to it with **Give**, **Read**, **Spend** and
+	// **Commit** (`Budget_Amounts` says what each amount is). The pages, the program slots and the thread
+	// slots move from `budget` to the new budget. The processor time and the log records are limits for
+	// each second, for the new budget and each budget that comes from it. When the last handle to the new
+	// budget closes, what it holds returns to `budget`, which pays for its objects.
+	//
+	// **Arguments**
+	//
+	// - `budget`: a budget handle with **Spend**.
+	// - `pages`, `programs`, `threads`: what moves to the new budget.
+	// - `processor`: microseconds of processor time in each second, on all the processors together: at most
+	//   the limit of `budget`.
+	// - `log_records`: records of the log in each second: at most the limit of `budget`.
+	//
+	// **Results**: the budget handle.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Spend**.
+	// - `No_Budget`: `budget` holds less than an amount that moves, or a limit is above its own.
+	// - `No_Slot`: the table of the budgets of the kernel is full, or the handle table of the program.
+	Budget_Read    = 22, // (budget) -> pages, programs, threads, processor, log_records, processor time, refused.
+	// Gives what a budget can still pay, its limits, and what it used.
+	//
+	// **Arguments**
+	//
+	// - `budget`: a budget handle with **Read**.
+	//
+	// **Results**
+	//
+	// 1. the pages that it can still pay;
+	// 2. the program slots that it can still pay;
+	// 3. the thread slots that it can still pay;
+	// 4. its limit of processor time: microseconds in each second;
+	// 5. its limit of log records in each second;
+	// 6. the microseconds of processor time that its threads used since it was made;
+	// 7. the log records that the kernel refused to it.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Read**.
+	Handle_State   = 23, // (handle, memory) -> kind: Object_Kind, rights: Rights, through, holdings.
+	// Gives the kind and the rights of a handle of this program, and proves where it came from. A program
+	// that receives the number of a handle from another program, in a ring, proves with this operation that
+	// the other program gave the handle through that ring (`Handle_Give` with the memory of the ring as its
+	// target). Without the proof, the other program can name a handle that the receiver holds for itself.
+	//
+	// **Arguments**
+	//
+	// - `handle`: any handle of this program.
+	// - `memory`: 0, or a memory handle with any rights: the memory of the ring.
+	//
+	// **Results**
+	//
+	// 1. the `Object_Kind` of the object;
+	// 2. the `Rights` of the handle;
+	// 3. 1 when the handle came through the memory object of `memory`, else 0;
+	// 4. the count of the holdings that came from this handle, in all programs: what `Handle_Revoke` ends.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`: `handle` names nothing, or `memory` is not a memory handle.
+	Handle_Revoke  = 24, // (handle, program) -> holdings ended.
+	// Ends each holding that came from a handle. A holding is a handle or a mapping. The origin of a handle
+	// that `Handle_Give` made is the handle that was given; the origin of a mapping is the memory handle
+	// that was mapped. When a handle closes, what came from it comes from its origin. The operation ends
+	// each holding that came from the handle, and what came from those holdings, in any program. The handle
+	// stays, and the mappings of the program that revokes stay. A program that lost a holding gets an event.
+	// A thread that uses memory that its program lost stops its program on a page fault.
+	//
+	// **Arguments**
+	//
+	// - `handle`: any handle of this program, with any rights: the program that holds it is the origin of
+	//   what came from it.
+	// - `program`: 0 for each program, or a program handle with **Control**: only the holdings in that
+	//   program.
+	//
+	// **Results**: the count of the holdings that ended.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`: `handle` names nothing, or `program` is not a program handle.
+	// - `No_Right`: the program handle has not **Control**.
+	Memory_Physical = 25, // (machine, memory) -> physical address.
+	// Gives the physical address of the first page of a memory object whose pages follow each other in
+	// physical memory and do not move: an object created `Contiguous` or `Large_Pages`, or the registers of
+	// a device. A device service gives these addresses to its device, which reads and writes the memory
+	// with no processor (direct memory access).
+	//
+	// **Arguments**
+	//
+	// - `machine`: the machine handle, with **Physical**.
+	// - `memory`: a memory handle with **Read**.
+	//
+	// **Results**: the physical address.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `machine` or `memory` is not a handle of its kind with its right.
+	// - `Bad_Operation`: the pages of the object are not contiguous: they get their frames at their first
+	//   use, from anywhere.
+	Program_Module = 26, // (program, record: Module_Record).
+	// Records a module that a loader put in a program, in the module records of the program. The kernel
+	// does not read the module: the record is what the loader asserts. The kernel names the module of the
+	// address of a fault with it, and `Inspect` gives the records (`Module_Report`).
+	//
+	// **Arguments**
+	//
+	// - `program`: 0 for this program, or a program handle with **Control**.
+	// - `record`: the address of a `Module_Record` that the program can read. A record with the base of a
+	//   record that exists replaces it; a record with the size 0 removes the record of its base. A program
+	//   has at most `PROGRAM_MODULE_CAPACITY` records, and no two of them share an address.
+	//
+	// **Results**: none.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Control**.
+	// - `Bad_State`: the program is stopped.
+	// - `Bad_Address`: the program cannot read the record; the module passes `USER_END`; it meets another
+	//   record; or a record of size 0 names a base that no record has.
+	// - `No_Slot`: the program has `PROGRAM_MODULE_CAPACITY` records.
+	Strategy_Set = 27, // (machine, strategy: Strategy) -> the strategy before.
+	// Changes the scheduling strategy of the machine while it runs: no thread stops, and none is lost. The
+	// state of the strategy of each thread starts from zero
+	// ([the change of strategy](docs/SCHEDULING.md#the-change-of-strategy-is-a-kernel-operation-with-a-right)).
+	//
+	// **Arguments**
+	//
+	// - `machine`: the machine handle, with **Schedule**.
+	// - `strategy`: `Round_Robin`, `Fair` or `Eevdf`.
+	//
+	// **Results**: the `Strategy` before.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `machine` is not the machine handle with **Schedule**.
+	// - `Bad_Operation`: `strategy` is `None` or a strategy that the kernel does not know.
+	//
+	// ```odin
+	// before, status := system.strategy_set(machine, .Eevdf)
+	// ```
+	Memory_Commit = 28, // (memory, budget, ranges: Page_Range, count, flags: Commit_Flags) -> pages changed.
+	// Commits the pages of ranges of an object made with `Uncommitted`: the budget pays one page for each
+	// page that was not committed, and each gets a frame at its first use. With `Decommit`, the committed
+	// pages of the ranges are no longer paid: their frames and their pages return at once to the budget of
+	// the object, and a page committed again is zero
+	// ([the virtual memory of a program](docs/ARCHITECTURE.md#the-virtual-memory-of-a-program)).
+	//
+	// **Arguments**
+	//
+	// - `memory`: a memory handle with **Write**, of an object made with `Uncommitted`.
+	// - `budget`: a handle to the budget of the object, with **Commit** or **Spend**. **Write** on the object
+	//   does not spend the budget of its maker: to let another program commit, give it the object and a
+	//   budget handle with **Commit** only ([who pays a commit](docs/ARCHITECTURE.md#who-pays-a-commit)).
+	//   Not read with `Decommit`.
+	// - `ranges`, `count`: a table of `count` records `Page_Range`, from 1 to `RANGE_TABLE_CAPACITY`, in
+	//   increasing order, with no overlap, inside the object, with at most `RANGE_TABLE_PAGE_LIMIT` pages in
+	//   all.
+	// - `flags`: a `Commit_Flags`: `Decommit`, or none.
+	//
+	// **Results**: the count of pages that changed.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `memory` is not a memory handle with **Write**; `budget` is not a budget
+	//   handle with **Commit** or **Spend**.
+	// - `Bad_Handle`: `budget` names another budget than the budget of the object.
+	// - `Bad_Operation`: `count` is 0 or above `RANGE_TABLE_CAPACITY`; a flag that the kernel does not know;
+	//   the table has more than `RANGE_TABLE_PAGE_LIMIT` pages; the object was not made `Uncommitted`.
+	// - `Bad_Address`: the program cannot read the table, or the ranges are not in order, overlap, or pass
+	//   the end of the object.
+	// - `No_Budget`: the budget cannot pay the table: nothing changes.
+	// - `Bad_State`: a `Decommit` of an object that another program names, or that has more than one
+	//   mapping.
+	//
+	// ```odin
+	// changed, status := system.memory_commit(memory, ranges[:])
+	// ```
+	Memory_Protect = 29, // (ranges: Address_Range, count, flags: Map_Flags) -> pages changed.
+	// Changes the protection of pages of mappings of this program: read only (no flag), `Write`, `Execute`,
+	// or `No_Access`. Each processor that runs a thread of the program forgets the old translations before
+	// the operation returns (one shoot-down). A table is done whole or not at all
+	// ([protection and the shoot-down](docs/ARCHITECTURE.md#protection-and-the-shoot-down)).
+	//
+	// **Arguments**
+	//
+	// - `ranges`, `count`: a table of `count` records `Address_Range`, from 1 to `RANGE_TABLE_CAPACITY`.
+	//   Each range is inside one mapping of this program, below `THREAD_AREA_BASE`.
+	// - `flags`: a `Map_Flags`. A protection can only take away what the mapping was made with: `Write`
+	//   needs a mapping made with `Write`, `Execute` one made with `Execute`. `No_Access` takes no other
+	//   flag, and `Write` with `Execute` is refused.
+	//
+	// A range that is a part of a mapping, not its whole, takes away from the protection of the mapping now:
+	// it cannot get more. It needs an object with a frame list that only this program names, with one
+	// mapping; while a part has its own protection, the object is not mapped again and not given
+	// (`Bad_State`). At most `RANGE_TABLE_PAGE_LIMIT` pages change in one call.
+	//
+	// **Results**: the count of pages that changed.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Operation`: `count` is 0 or above `RANGE_TABLE_CAPACITY`; a flag that the kernel does not know;
+	//   `Write` with `Execute`, or `No_Access` with another flag; more than the mapping was made with; one
+	//   table names a mapping whole and in part; more than `RANGE_TABLE_PAGE_LIMIT` pages.
+	// - `Bad_Address`: the program cannot read the table; a range is not on whole pages, is empty, or is not
+	//   inside one mapping; the mapping is a thread area or the time page; a part of a mapping of a
+	//   contiguous object.
+	// - `Bad_State`: a part of a mapping of an object that another program names, or that has another
+	//   mapping.
+	//
+	// ```odin
+	// changed, status := system.memory_protect(ranges[:], {})
+	// ```
+	Fault_Handler_Set = 30, // (thread, end, kinds: Fault_Kinds).
+	// Makes a thread of this program the fault handler of the program: the faults of the chosen kinds of
+	// the other threads of the program become records of the
+	// [fault ring](docs/ARCHITECTURE.md#the-fault-ring) in the thread record of the handler, in place of a
+	// stop. The thread of a fault waits for `Fault_Answer`. A page fault is delivered only below
+	// `THREAD_AREA_BASE`. A fault of a kind that the handler did not ask for stops the program as with no
+	// handler. A new handler replaces the one before, and its ring starts empty.
+	//
+	// **Arguments**
+	//
+	// - `thread`: 0 for the calling thread, or a thread handle with **Control** of a live thread of this
+	//   program.
+	// - `end`: 1 to end the delivery: each fault stops the program again. 0 to set the handler.
+	// - `kinds`: the `Fault_Kinds` to deliver, or 0 for page faults only, so that a handler of pages never
+	//   gets a kind that it does not know. Only the kinds of `FAULT_KINDS_DELIVERED`.
+	//
+	// When a thread of the program waits for an answer, a new handler or the end of the delivery ends the
+	// ring that holds its record: the program stops with `STOP_CODE_FAULT_UNANSWERED`, as when the handler
+	// thread ends, and the operation gives `Ok`.
+	//
+	// **Results**: none.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Operation`: `end` is above 1; a kind that the kernel never delivers; kinds with the end of the
+	//   delivery.
+	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with **Control**.
+	// - `Bad_State`: the thread is not a live thread of this program.
+	//
+	// ```odin
+	// status := system.fault_handler_set(kinds = {.Page_Fault, .Breakpoint})
+	// ```
+	Fault_Answer = 31, // (thread, serial, answer: Fault_Answer_Kind).
+	// Answers a thread of this program that waits in the fault ring, by the two values of its
+	// `Fault_Record`.
+	//
+	// **Arguments**
+	//
+	// - `thread`, `serial`: the `thread` and the `serial` of the record.
+	// - `answer`: a `Fault_Answer_Kind`:
+	//   - `Resume`: the thread continues with its registers, at the instruction of its record (the faulting
+	//     instruction again, or the next one after a trap), or where `Thread_Control` wrote;
+	//   - `Stop`: the program stops as with no handler: the stop code and the stop report of the fault.
+	//
+	// **Results**: none.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Operation`: `answer` is not `Resume` or `Stop`.
+	// - `Bad_State`: no thread with that number waits for the fault of that serial: a wrong answer, a second
+	//   answer, or an answer from another program. Also for `Resume` after a fault kind that does not resume
+	//   by itself (`fault_kind_resumes`) when `Thread_Control` wrote neither the registers nor the extended
+	//   state of the thread since its fault: the thread still waits, and `Stop` ends it.
+	//
+	// ```odin
+	// status := system.fault_answer(record, .Resume)
+	// ```
+	Events_Set = 32, // (machine, memory, rules: Event_Rule, count, records) -> ring bytes, processors.
+	// Gives the event table of the machine: the kernel writes an `Event_Record` into the event ring of the
+	// processor of each [kernel event](docs/ARCHITECTURE.md#kernel-events) that a rule accepts. A new table
+	// replaces the table of the caller. The table also ends when its program ends, and when the last
+	// machine handle of its program with **Events** closes or is revoked: the table lives while the right
+	// that made it lives.
+	//
+	// **Arguments**
+	//
+	// - `machine`: the machine handle, with **Events**.
+	// - `memory`: a memory handle with **Write** of an object made `Contiguous` (not the registers of a
+	//   device), with room for one ring of `EVENT_RING_HEAD_BYTES` plus `records` times 64 bytes for each
+	//   processor, one after the other from its first byte. 0: the caller takes its table away; when the
+	//   operation returns, no processor writes in the old memory object.
+	// - `rules`, `count`: a table of `count` records `Event_Rule`, from 1 to `EVENT_RULE_CAPACITY`.
+	// - `records`: the records of each ring: a power of two from `EVENT_RING_RECORDS_LEAST` to
+	//   `EVENT_RING_RECORDS_MOST`.
+	//
+	// **Results**
+	//
+	// 1. the bytes of one event ring;
+	// 2. the count of processors: the count of rings.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `machine` is not the machine handle with **Events**, or `memory` not a
+	//   memory handle with **Write**; the program of a rule is not a program handle with **Read**.
+	// - `Bad_State`: `memory` is 0 and the caller has no table; or another program has the table: one table
+	//   at a time.
+	// - `No_Slot`: `count` is above `EVENT_RULE_CAPACITY`.
+	// - `Bad_Operation`: `count` is 0; `records` is not a power of two in its range; the object is not
+	//   contiguous, is the registers of a device, or is too small for the rings; a rule that the kernel
+	//   refuses (its kind, its flags, its reserved values, its least duration or its one in N).
+	// - `Bad_Address`: the program cannot read the table of rules.
+	Thread_Control = 33, // (thread, number, command: Thread_Control_Command, address, size) -> see the command.
+	// Controls a thread: holds it and releases it, reads its registers and its extended state, and writes
+	// them ([the control of a thread](docs/ARCHITECTURE.md#the-control-of-a-thread)). `Stop` and `Resume`
+	// change the stop count of the thread: it runs only while the count is 0. The registers and the
+	// extended state are read and written only while the thread is held: its stop count is above 0, or it
+	// waits for an answer of the fault ring.
+	//
+	// **Arguments**
+	//
+	// - `thread`: a thread handle with **Inspect** for each command, and **Write** too for a write
+	//   (`thread_control_rights`); or 0, and then `number` names a live thread of this program
+	//   (`Thread_Record.number`, `Fault_Record.thread`). A thread of another program needs a handle.
+	// - `number`: the number of the thread when `thread` is 0.
+	// - `command`: a `Thread_Control_Command`.
+	// - `address`, `size`: the memory of the command that reads or writes: `size` is at least the size of
+	//   a `Thread_Registers`, or of the extended state area (`Thread_State`), and the program can read it,
+	//   or write it for a read of the thread.
+	//
+	// **Results**: what the command gives: the stop count, or the bytes written and the components.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Operation`: `command` is `None` or a command that the kernel does not know; a write of values
+	//   that a thread of a program cannot hold changes nothing (`thread_registers_refusal`,
+	//   `extended_state_refusal`).
+	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with the rights of the command.
+	// - `Bad_State`: no live thread of this program has `number`; the thread or its program ended; a read or
+	//   a write of a thread that is not held, or of the calling thread; a `Stop` above
+	//   `THREAD_STOP_COUNT_LIMIT` or of a thread that ends; a `Resume` at the count 0.
+	// - `Bad_Address`: `size` is too small, or the program cannot read or write the memory.
 }
 
 // The scheduling strategy of the machine (docs/SCHEDULING.md): the rule that

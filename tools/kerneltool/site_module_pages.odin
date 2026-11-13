@@ -152,7 +152,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		}
 		// The documentation text: one paragraph for each line (text_of),
 		// then the references to the documents that it names.
-		site_source_comment(site, &b, item.page, description.text, .Paragraphs)
+		site_source_comment(site, &b, item.page, description.markdown, .Paragraphs)
 		strings.write_string(&b, "</div>\n")
 		// Its identity card: the same markup as on the page of the graph.
 		site_module_card_write(site, &b, item.page, site_module_card_of(site, item, graph_inputs, graph_layout), false)
@@ -357,7 +357,7 @@ site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, page, module_
 			append(&facts, Site_Symbol_Fact{label = "When it fails", html = strings.concatenate({site_text_html("a negative result, and the error record "), site_type_reference_html(site, site_module_record_key(module_name, record_name), record_name, true)}, context.temp_allocator)})
 		}
 	}
-	site_symbol_write(site, b, Site_Symbol{id = strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), name = export.name, signature = site_export_signature(description, export), signature_html = site_export_signature_html(site, module_name, description, export), description = export.text, page = page, facts = facts[:], source = export.file, line = export.line})
+	site_symbol_write(site, b, Site_Symbol{id = strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), name = export.name, signature = site_export_signature(description, export), signature_html = site_export_signature_html(site, module_name, description, export), description = export.markdown, page = page, facts = facts[:], source = export.file, line = export.line})
 }
 
 // The tiles of the boot image on the home: one tile for each module of the

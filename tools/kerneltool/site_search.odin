@@ -504,7 +504,7 @@ site_search_index_json :: proc(site: ^Site, entries: []Site_Search_Entry, pages:
 		strings.write_byte(&b, '[')
 		site_json_string(&b, site_search_kinds[kind].name)
 		strings.write_byte(&b, ',')
-		site_json_string(&b, site_value_kinds[site_search_kinds[kind].value_kind].name)
+		site_json_string(&b, value_kinds.VALUE_KIND_NAMES[site_search_kinds[kind].value_kind])
 		strings.write_byte(&b, ']')
 	}
 	strings.write_string(&b, "],\n\"pages\":[")

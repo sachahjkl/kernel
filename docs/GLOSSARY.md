@@ -735,6 +735,8 @@ A program with the grant to read the log serves the records as a table: `log.rec
 
 The design: `docs/TOOLS.md`, "The log".
 
+Do not use: log line, message.
+
 ### Value run
 
 A value run is a part of the text of a log record that is one value: a start, a length and its value kind.
@@ -744,8 +746,6 @@ A writer states the kind of each part of a line of the log (`system.Size`, `syst
 The design: `docs/TOOLS.md`, "The log".
 
 Do not use: span (for this), token, highlight range.
-
-Do not use: log line, message.
 
 ### Cut mark
 

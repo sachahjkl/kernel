@@ -74,7 +74,7 @@ site_documentation_outline_of_a_body :: proc(t: ^testing.T) {
 site_documentation_symbol :: proc(t: ^testing.T) {
 	site := test_site()
 	b := strings.builder_make(context.temp_allocator)
-	site_symbol_write(&site, &b, Site_Symbol{id = "operation-memory-map", name = "Memory_Map", signature = "Memory_Map(memory) -> address", description = "Maps <memory>.\nA second paragraph.", source = "contract/operation/operation.odin", line = 12})
+	site_symbol_write(&site, &b, Site_Symbol{id = "operation-memory-map", name = "Memory_Map", signature = "Memory_Map(memory) -> address", description = "Maps <memory>.\n\nA second paragraph.", source = "contract/operation/operation.odin", line = 12})
 	html := strings.to_string(b)
 	testing.expect(t, strings.contains(html, "<h3 id=\"operation-memory-map\" data-outline=\"Memory_Map\"><code>Memory_Map</code></h3>"))
 	testing.expect(t, strings.contains(html, "<pre class=\"signature\"><code>Memory_Map(memory) -&gt; address</code></pre>"))

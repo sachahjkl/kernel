@@ -392,6 +392,11 @@ site_document_pointers :: proc(text: string) -> []Site_Document_Pointer {
 		}
 		path_start := position + found
 		path_end, is_path := site_document_path_end(text, path_start)
+		// The target of a link "[text](docs/X.md#id)" is not a pointer: the
+		// link names its place (site_comment_link_target).
+		if path_start >= 2 && text[path_start - 2:path_start] == "](" {
+			is_path = false
+		}
 		if !is_path {
 			position = path_start + len("docs/")
 			continue
@@ -1010,10 +1015,10 @@ site_comment_parts :: proc(site: ^Site, text: string, count: bool, after: ^[dyna
 	return strings.to_string(builder), places[:]
 }
 
-// site_comment_text_write writes a text that site_comment_parts marked: as
-// HTML, each mark is the reference of its pointer; as plain text, the text
-// of the reference.
-site_comment_text_write :: proc(site: ^Site, b: ^strings.Builder, from_page, marked: string, in_place: [][]Site_Document_Target, html: bool) {
+// site_comment_marks_plain gives a text that site_comment_parts marked with
+// the text of the reference of each mark in its place.
+site_comment_marks_plain :: proc(marked: string, in_place: [][]Site_Document_Target) -> string {
+	b := strings.builder_make(context.temp_allocator)
 	rest := marked
 	for {
 		mark := strings.index_byte(rest, 0)
@@ -1024,98 +1029,73 @@ site_comment_text_write :: proc(site: ^Site, b: ^strings.Builder, from_page, mar
 		if closing < 0 {
 			break
 		}
-		site_comment_words_write(site, b, from_page, rest[:mark], html)
+		strings.write_string(&b, rest[:mark])
 		number := site_digits_value(rest[mark + 1:mark + 1 + closing])
 		if number >= 0 && number < len(in_place) {
-			if html {
-				site_document_references_write(site, b, from_page, in_place[number], " and ")
-			} else {
-				for target, index in in_place[number] {
-					if index > 0 {
-						strings.write_string(b, " and ")
-					}
-					strings.write_string(b, site_document_target_text(target))
+			for target, index in in_place[number] {
+				if index > 0 {
+					strings.write_string(&b, " and ")
 				}
+				strings.write_string(&b, site_document_target_text(target))
 			}
 		}
 		rest = rest[mark + 1 + closing + 1:]
 	}
-	site_comment_words_write(site, b, from_page, rest, html)
+	strings.write_string(&b, rest)
+	return strings.to_string(b)
 }
 
-// site_comment_words_write writes words of a source comment. A comment
-// holds code in backticks ("`test return_fault`"): as HTML each pair is a
-// code element, or the link to the declaration that it names, or a colored
-// fragment of Odin (docs/SITE.md, "The declarations of the sources"); as
-// plain text the backticks go away. No other mark of Markdown is read: a
-// comment is not a document.
-site_comment_words_write :: proc(site: ^Site, b: ^strings.Builder, from_page, text: string, html: bool) {
-	rest := text
-	for {
-		open := strings.index_byte(rest, '`')
-		if open < 0 {
-			break
+// site_comment_is_one_paragraph tells whether the Markdown of a comment is
+// one paragraph: no empty line, no list item, no line of an example and no
+// fence. A cell of a table writes such a comment as a line, with no <p>.
+site_comment_is_one_paragraph :: proc(markdown: string) -> bool {
+	for line in site_lines(markdown) {
+		if strings.trim_space(line) == "" || line[0] == ' ' || strings.has_prefix(line, "```") {
+			return false
 		}
-		closing := strings.index_byte(rest[open + 1:], '`')
-		if closing <= 0 {
-			break
+		if _, is_marker := site_list_marker(line); is_marker {
+			return false
 		}
-		code := rest[open + 1:open + 1 + closing]
-		if html {
-			site_escape(b, rest[:open])
-			// A comment names no folder around its spans: a name that
-			// several packages declare stays plain.
-			if !site_declaration_code_span(site, b, from_page, from_page, code, nil) {
-				strings.write_string(b, "<code>")
-				site_escape(b, code)
-				strings.write_string(b, "</code>")
-			}
-		} else {
-			strings.write_string(b, rest[:open])
-			strings.write_string(b, code)
-		}
-		rest = rest[open + 1 + closing + 1:]
 	}
-	if html {
-		site_escape(b, rest)
-	} else {
-		strings.write_string(b, rest)
-	}
+	return true
 }
 
-// site_source_comment writes the text of a source comment on a page: each
+// site_source_comment writes the text of a source comment on a page. The
+// comment is Markdown (docs/SITE.md, "The Markdown of a source comment"),
+// written by the renderer of the guides in its mode for comments. Each
 // pointer to a document becomes a reference. A pointer that is an aside
 // leaves its sentence, and its reference goes into one line "See:" after
 // the text: the sentence reads with no break, and the reader finds the
 // documents in one place. A path that is a word of its sentence ("the rules
 // of docs/DESIGN.md") is the reference in its place. Each place is counted.
+// In a cell of a table (the form Line), a comment of one paragraph is one
+// line with no <p>.
 site_source_comment :: proc(site: ^Site, b: ^strings.Builder, from_page, text: string, form: Site_Comment_Form) {
 	after := make([dynamic]Site_Document_Target, context.temp_allocator)
-	if form == .Line {
-		line_text, line_places := site_comment_parts(site, text, true, &after)
-		site_comment_text_write(site, b, from_page, strings.trim_space(line_text), line_places, true)
-		if len(after) > 0 {
-			strings.write_string(b, " <span class=\"document-references\">See: ")
-			site_document_references_write(site, b, from_page, after[:], ", ")
-			strings.write_string(b, "</span>")
-		}
+	marked, in_place := site_comment_parts(site, text, true, &after)
+	marked = strings.trim_space(marked)
+	renderer := site_renderer_make(site, from_page, "")
+	renderer.comment = true
+	renderer.comment_references = in_place
+	if form == .Line && site_comment_is_one_paragraph(marked) {
+		joined, _ := strings.replace_all(marked, "\n", " ", context.temp_allocator)
+		site_render_inline(&renderer, joined)
+	} else if marked != "" {
+		site_render_markdown(&renderer, marked)
+	}
+	strings.write_string(b, strings.to_string(renderer.builder))
+	if len(after) == 0 {
 		return
 	}
-	for paragraph in strings.split(text, "\n", context.temp_allocator) {
-		paragraph_text, paragraph_places := site_comment_parts(site, strings.trim_space(paragraph), true, &after)
-		paragraph_text = strings.trim_space(paragraph_text)
-		if paragraph_text == "" {
-			continue
-		}
-		strings.write_string(b, "<p>")
-		site_comment_text_write(site, b, from_page, paragraph_text, paragraph_places, true)
-		strings.write_string(b, "</p>\n")
-	}
-	if len(after) > 0 {
-		strings.write_string(b, "<p class=\"document-references\">See: ")
+	if form == .Line {
+		strings.write_string(b, " <span class=\"document-references\">See: ")
 		site_document_references_write(site, b, from_page, after[:], ", ")
-		strings.write_string(b, "</p>\n")
+		strings.write_string(b, "</span>")
+		return
 	}
+	strings.write_string(b, "<p class=\"document-references\">See: ")
+	site_document_references_write(site, b, from_page, after[:], ", ")
+	strings.write_string(b, "</p>\n")
 }
 
 // site_source_comment_html gives the markup of site_source_comment.
@@ -1126,17 +1106,16 @@ site_source_comment_html :: proc(site: ^Site, from_page, text: string, form: Sit
 }
 
 // site_source_comment_plain gives the text of a source comment with no
-// pointer, for a summary: the purpose in a table, the description of a
-// page, the search, the first line of a type card. An aside leaves the
-// text; a path that is a word of its sentence becomes the title of its
-// document. A summary is not counted: the page of the thing shows the
-// whole text with its references.
+// pointer and no mark, on one line, for a summary: the purpose in a table,
+// the description of a page, the search, the first line of a type card. An
+// aside leaves the text; a path that is a word of its sentence becomes the
+// title of its document; bold, italics and code lose their marks, and a
+// link becomes its label. A summary is not counted: the page of the thing
+// shows the whole text with its references.
 site_source_comment_plain :: proc(site: ^Site, text: string) -> string {
 	after := make([dynamic]Site_Document_Target, context.temp_allocator)
 	marked, in_place := site_comment_parts(site, text, false, &after)
-	b := strings.builder_make(context.temp_allocator)
-	site_comment_text_write(site, &b, "", marked, in_place, false)
-	return strings.trim_space(strings.to_string(b))
+	return strings.trim_space(markdown_inline_plain(site_comment_marks_plain(marked, in_place), false))
 }
 
 // site_comment_cell writes a cell of a table that holds a source comment.
@@ -1259,8 +1238,9 @@ site_guide_pointer_problems :: proc(site: ^Site, file, content: string) -> []str
 // comments of the system and of the documents that the site renders (the
 // guides, the glossary, the news, and the working record that the status
 // page reads): each label finds its place. A pointer that does not is stale,
-// and the command stops: it cannot come back. The guides are read first,
-// for their headings.
+// and the command stops: it cannot come back. It checks each link of the
+// source comments in the same way (site_comment_link_problems). The guides
+// are read first, for their headings.
 site_document_pointer_problems :: proc(site: ^Site) -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
 	files := make([dynamic]string, context.temp_allocator)
@@ -1274,6 +1254,7 @@ site_document_pointer_problems :: proc(site: ^Site) -> []string {
 			continue
 		}
 		append(&problems, ..site_comment_pointer_problems(site, file, content))
+		append(&problems, ..site_comment_link_problems(site, file, content))
 	}
 	documents := make([dynamic]string, context.temp_allocator)
 	for guide in site.guides {

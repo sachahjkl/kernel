@@ -73,6 +73,8 @@ A module is one file:
 
 The documentation is part of the file, so it has the hash of the module: a text cannot describe another version of the code. A record of the Functions table also names the documentation text of its export. A documentation text is UTF-8 bytes. A line feed ends a line. A line is a paragraph: the reader breaks it at the width that it has. A line that starts with a space stays as it is. An empty line separates two paragraphs. No loader reads these records.
 
+The build takes the documentation from the comments of the source: the comment before `package`, and the comment before each export. A comment is Markdown in a small part (`TOOLS.md`, "The form of a documented comment"). The file carries the text with the marks removed, because `manual` and the console draw plain lines with the cell font: a paragraph is one line; a list item is one line that starts with `- ` or with its number, and a nested item keeps its indentation; a line of an example starts with four spaces; a link becomes its text; bold and italics lose their stars; a code span keeps its backticks. The one line of the module and the help of an export are the first sentence of that text. The marks and the targets of the links cost no byte of a module, and the documentation has no limit of size but the 32 bits of its count.
+
 The model is the BTF format of Linux, changed so that all records have a fixed size. [Types §5]
 
 ## 2. Loading

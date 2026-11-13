@@ -106,7 +106,7 @@ The renderer (`tools/kerneltool/site_render.odin`) knows the Markdown that the d
 - tables with a line of dashes, `\|` for a `|` in a cell;
 - block quotes `>`;
 - fenced code, with or without a language;
-- code spans, bold, links and pictures.
+- code spans, bold, italics (`*words*`: a star with a space after it, or between two letters, is a star), links and pictures.
 
 Links:
 
@@ -118,7 +118,9 @@ Links:
 - A code span that names a declaration of the sources (`blend_coverage_row_in_order`, `graphics.mix`, `layout_place()`) is a link to it, with a declaration card; a code span that is a fragment of Odin (`square_root[(d * d) >> 12]`) is colored as a block of code. A document, a row and a file come first. See "The declarations of the sources".
 - The first use of each term of the glossary on a page links to the term, with its short definition as the tooltip of the link. The rule: the letters of the term with no regard to case, a whole word, or the word with an `s`; outside code, links and headings; the longest terms first; once for each term on a page. On the page of the glossary the rule holds inside each entry, and an entry never links its own term.
 
-What it does not render, shown as text and listed by the command: a mermaid diagram (shown as its code), a line of HTML, a table with no line of dashes, a fence with no end, a link to a file that is not in the repository. A single `*` or `_` is text: the documents use no italics.
+What it does not render, shown as text and listed by the command: a mermaid diagram (shown as its code), a line of HTML, a table with no line of dashes, a fence with no end, a link to a file that is not in the repository. A `_` is text.
+
+The same renderer writes the source comments, in its mode for comments (see "The Markdown of a source comment").
 
 Each guide has the documentation layout (see "The two layouts"): its headings of levels 2 and 3 are in "On this page". It links to the guides before and after it.
 
@@ -638,7 +640,7 @@ The kernel operations, the commands of the console, the commands of the tool and
 
 - its name, as a heading with its id (`operation-<name>`, `command-<name>`, `tool-command-<name>`, `export-<name>`), which "On this page" lists; the name in the table is a link to it;
 - its signature in a block of code: an operation as `Name(<parameters>) -> <result>` from the start of its comment (none when the comment does not start with `(`), a command as `help()` prints it, a command of the tool as `nix develop -c kerneltool <name>`, an export as the console prints it;
-- the text of its source comment, one paragraph a line, then its document references; nothing when the source has none;
+- the text of its source comment, as Markdown (see "The Markdown of a source comment"), then its document references; nothing when the source has none;
 - its facts: the number of an operation and the statuses that its comment names (links to the table of statuses); the parameters and the result of a command; the parameters, the result and the error record of an export (the rule of the build: it fails with a negative result and writes the record);
 - its source line, a link to `<repository>/blob/<commit>/<file>#L<line>`.
 
@@ -647,7 +649,7 @@ The command prints the count of the symbols and of those with no comment in thei
 What the tables cannot show:
 
 - The values 13 and 15 of the context (the settings page and the date page) have a comment in `contract/operation` and no constant: they are not in the table.
-- A heading comment inside an enumeration (as "The word wait" before `Word_Wait`) shows under the member before it: the form cannot tell it from a comment that continues.
+- A heading comment inside an enumeration shows under the member before it: the form cannot tell it from a comment that continues. The kernel operations have none: the text of each operation is under its own member.
 - The limits of processor time and of log records of a program come from `budget_of`, a computation: the page names it and does not show its values.
 
 ## The module pages
@@ -758,7 +760,7 @@ A reference is `<a class="document-reference value-guide value-icon" href="...">
 
 One form for every page: the text of the comment, then one line "See:" with the references of its asides, each once. In a paragraph form (a description, a symbol, the quote at the start of a reference page) the line is a paragraph `<p class="document-references">`; in a cell of a table it is a `<span>` after the text. Why: a reference inside a sentence breaks it, as the parenthesis did, and several references in one paragraph are hard to tell apart; after the text, the sentence reads as one ("The kernel: ... the interrupts."), and the reader finds the documents of a text in one place. The text on the two sides of an aside joins: no space before a period, and no "()". A path that is a word of its sentence ("the rules of docs/DESIGN.md") is the one exception: the sentence needs it, so its reference takes its place.
 
-`site_source_comment` writes every source comment that a page shows: the description of a module, the text of each symbol (an operation, a command of the console or of the tool, an export, a type), the comment above a declaration, and each cell of a reference table that holds a comment. A summary (the purpose of a module in the index, the first column of a table of exports or commands, the description of a page, the text of an entry of the search, the first line of a type card) has no reference: `site_source_comment_plain` takes the asides out, and a path that is a word of its sentence becomes the title of its document. The page of the thing shows the whole text with its references.
+`site_source_comment` writes every source comment that a page shows, as Markdown (see "The Markdown of a source comment"): the description of a module, the text of each symbol (an operation, a command of the console or of the tool, an export, a type), the comment above a declaration, and each cell of a reference table that holds a comment. A summary (the purpose of a module in the index, the first column of a table of exports or commands, the description of a page, the text of an entry of the search, the first line of a type card) has no reference: `site_source_comment_plain` takes the asides out, a path that is a word of its sentence becomes the title of its document, and the marks of Markdown go. The page of the thing shows the whole text with its references.
 
 A code span of a guide, of the glossary or of a news entry that names a document is a reference of the same markup (see "The Markdown that the site renders"): one look for a reference to a document on every page.
 
@@ -766,11 +768,51 @@ A code span of a guide, of the glossary or of a news entry that names a document
 
 The command prints "N document references, M with no heading found: <the first three>": N is the count of the different pointers of the pages and of the code spans of the guides that name a document, M those whose labels found no place.
 
-Before it writes a page, the command checks every pointer, also those of a comment that no page shows: each comment of each source file of `kernel`, `programs`, `modules`, `support`, `contract`, `runtime` and `boot` (the lines of comment that follow each other are one text), and each code span that names a document in the guides, the glossary, the news and `FIRST_MILESTONE.md`. A pointer whose labels do not all find their place stops the command, with its file and its line: a stale pointer or a label that names no heading (a free text) cannot come back. The tool is not read: its tests hold stale pointers on purpose. A guide names no working record and no decision; a working record names a decision by its identifier (`DECISIONS.md`, D-163), which is a label.
+Before it writes a page, the command checks every pointer, also those of a comment that no page shows: each comment of each source file of `kernel`, `programs`, `modules`, `support`, `contract`, `runtime` and `boot` (the lines of comment that follow each other are one text), and each code span that names a document in the guides, the glossary, the news and `FIRST_MILESTONE.md`. A pointer whose labels do not all find their place stops the command, with its file and its line: a stale pointer or a label that names no heading (a free text) cannot come back. The tool is not read: its tests hold stale pointers on purpose. The target of a link `[text](docs/X.md#id)` is not a pointer; the same pass checks each link of the comments (see "The links of a comment"). A guide names no working record and no decision; a working record names a decision by its identifier (`DECISIONS.md`, D-163), which is a label.
 
-### Code in a comment
+## The Markdown of a source comment
 
-A comment of the source holds code in backticks (`test return_fault`). The writer of the source comments writes each pair as a code element, a link to the declaration that it names, or a colored fragment of Odin (see "The declarations of the sources"); the plain form drops the backticks. It reads no other mark of Markdown: a comment is not a document.
+The owner asked for it on 2026-11-13: "I suppose you extract text from the code BUT it lacks emphasis (bold, italics, lists, shit like that) and makes the paragraphs displayed in the docs look very plain and boring to read. we could use markdown for this (and have []() references to symbols and stuff if that's not already done". The code is `tools/kerneltool/comment_markdown.odin`, `site_comment_links.odin` and the mode for comments of `site_render.odin`; the host tests are `comment_markdown_test.odin`. `docs/TOOLS.md`, "The form of a documented comment", is the rule for the author of a comment.
+
+A source comment is Markdown in a small part, written by the renderer of the guides (`Site_Renderer.comment`): one renderer, and a mode that refuses what a comment does not have.
+
+| Construct | In a comment | Why |
+|---|---|---|
+| Paragraphs, joined lines, an empty line `//` between two | Yes | |
+| Bold, italics, code spans | Yes | A code span takes the path of the code spans of the guides: a row of a reference table, a file, a declaration, a fragment of Odin. A comment names no folder around its spans |
+| Lists `- ` and `1. `, nested by two spaces | Yes | A line right after an item continues it, as the comment wraps where its width ends. An item of a comment has no id |
+| A fence with `odin` or no language | Colored as Odin | The comment is in an Odin source. A fence of another language is plain |
+| Lines that start with a space, outside a list | A block of code, not colored | The form that the documentation of a module keeps; these lines are often words aligned in columns |
+| Links `[text](target)` | Yes, to a place of the site (see "The links of a comment") | |
+| Headings, tables, quotes, lines of HTML, pictures | No: words of a paragraph | A comment sits under the heading of its symbol, in a page or in a cell of a table: a heading would break "On this page", and a table does not fit a cell |
+| Terms of the glossary | Only as a link `term:` | Each comment of a page is rendered alone: the rule "the first use on the page" would link each term in each comment |
+
+In a cell of a table (`.Line`), a comment of one paragraph is one line with no `<p>`, as before; a comment with a list or an example writes its blocks in the cell. A comment with no mark renders as before. The summary of a comment (`site_source_comment_plain`: the purpose of a module, the description of a page, the text of an entry of the search, the first line of a card) has no mark and no link.
+
+The readers of the reference tables keep the lines of a comment: a line `//` alone is an empty line, and the indentation after `// ` stays (`markdown_comment_line`). The form of an operation, `(parameters) -> result.`, is on the line of its member and can run over two lines; its text is the Markdown after it.
+
+### The links of a comment
+
+A code span that names a thing links to it by itself: it stays the usual form of a name. `[text](target)` is for a link whose text is not the name. The target (`site_comment_link_target`):
+
+| Target | Example | What it names |
+|---|---|---|
+| An address of another host | `https://www.rfc-editor.org/rfc/rfc8439` | That address |
+| `term:` and a term | `term:handle` | The entry of the term in the glossary, by its name with no regard to case, from the terms that the reader of the glossary gives: a link of the class `term`, with its short definition as its `title`, as a term that a guide links |
+| A guide, or its heading by the id of the heading | `docs/ARCHITECTURE.md#the-fault-ring` | The page of the guide, at that heading. A working record is not a page: it is refused |
+| A name of a row | `Memory_Map`, `No_Grant`, `math`, `load()` | The row, by the rule of the code spans |
+| A module and its export | `manual.edges` | The export on the page of its module |
+| A declaration | `fault_deliver`, `operation.Fault_Record`, `system.word_wait` | The declaration, with its card; a type of the contract opens its type card. A name that several packages declare, or a common word, takes its package |
+
+There is no short form `[name]`: the code span is that form.
+
+The check: before it writes a page, the command reads every comment of the sources, as it does for the pointers (see "The count and the check"), and stops on a link whose target names nothing, with its file and its line, outside the code spans. A link is a claim of its author; a code span that names nothing is not.
+
+### The text that a module carries
+
+The documentation of a module is the same comments (`describe_package`). The module carries them with the marks removed (`documentation_text_of_markdown`), in the form of `contract/module/format.odin`, `Documentation`: a paragraph is one line, a list item stays a line that starts with its marker, a line of an example keeps its form behind four spaces, a link becomes its text, bold and italics lose their stars, and a code span keeps its backticks. The help of an export is the first sentence of that text, so it has no mark. The description keeps the Markdown too (`Module_Description.markdown`, `Export_Description.markdown`): the site renders it.
+
+Why the marks are removed at build time, and `manual` does not read Markdown: `manual` and the console draw plain lines with the cell font. A reader of the subset in the system would need a parser in a freestanding program, the bold cell font in the drawing of `manual` (`glyph_cache_bold` exists), and a target in the system for each link: a declaration and a guide have no page in the system. The text gains little from it in a window of 84 columns, and a link target would cost bytes in each module. What a reader in `manual` would need: a reader of the subset in `support` with no allocator, which gives runs (plain, bold, code) and blocks (paragraph, item, example); the bold font in `put_text`; the targets that the system has (a module, an export); and the form of `Documentation` stating that the text is Markdown.
 
 ## The types
 

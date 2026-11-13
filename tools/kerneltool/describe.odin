@@ -73,8 +73,9 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 		source := read_file(path) or_return
 		file := parse_source(path, string(source), &state) or_return
 		append(&files, file)
-		if text := text_of(file.docs); description.text == "" {
-			description.text = text
+		if markdown := markdown_of(file.docs); description.markdown == "" {
+			description.markdown = markdown
+			description.text = documentation_text_of_markdown(markdown)
 		}
 	}
 	for file in files {
@@ -694,7 +695,8 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 		if handles > module.HANDLE_CAPACITY {
 			return describe_fail(path, declaration, "%s: a call lends at most %d handles; this export takes %d", name, module.HANDLE_CAPACITY, handles)
 		}
-		description.text = text_of(declaration.docs)
+		description.markdown = markdown_of(declaration.docs)
+		description.text = documentation_text_of_markdown(description.markdown)
 		description.about = about_of(description.text, name)
 		if description.about == "" {
 			return describe_fail(path, declaration, "%s has no comment: the first sentence of the comment is the help of the export", name)
@@ -704,44 +706,30 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 	return true
 }
 
-// text_of gives the documentation text of a comment (module.Documentation
-// says the form). Lines of the source that follow each other are one
-// paragraph: one line of the text. A line of the source that starts with
-// more than one space stays as it is. A line that starts with "- " starts a
-// new paragraph.
-text_of :: proc(docs: ^ast.Comment_Group) -> string {
+// markdown_of gives the Markdown of a comment, as its author wrote it: the
+// lines of the comment with "//" and one space taken away, and no empty
+// line at its start or at its end (docs/SITE.md, "The Markdown of a source
+// comment"). The site renders it.
+markdown_of :: proc(docs: ^ast.Comment_Group) -> string {
 	if docs == nil {
 		return ""
 	}
-	lines := make([dynamic]string, context.temp_allocator)
-	open := false // The last line is a paragraph that the next line can continue.
+	comment := ""
 	for token in docs.list {
 		if !strings.has_prefix(token.text, "//") {
 			continue
 		}
-		line := strings.trim_right_space(token.text[2:])
-		line = strings.trim_prefix(line, " ")
-		line, _ = strings.replace_all(line, "\t", "    ", context.temp_allocator)
-		switch {
-		case line == "":
-			if len(lines) > 0 && lines[len(lines) - 1] != "" {
-				append(&lines, "")
-			}
-			open = false
-		case line[0] == ' ':
-			append(&lines, line)
-			open = false
-		case open && !strings.has_prefix(line, "- "):
-			lines[len(lines) - 1] = strings.concatenate({lines[len(lines) - 1], " ", line}, context.temp_allocator)
-		case:
-			append(&lines, line)
-			open = true
-		}
+		_, line, _ := markdown_comment_line(token.text)
+		comment = markdown_comment_add(comment, line)
 	}
-	for len(lines) > 0 && lines[len(lines) - 1] == "" {
-		pop(&lines)
-	}
-	return strings.join(lines[:], "\n", context.temp_allocator)
+	return markdown_comment_end(comment)
+}
+
+// text_of gives the documentation text of a comment that a module carries
+// (module.Documentation says the form): its Markdown with the marks
+// removed (documentation_text_of_markdown).
+text_of :: proc(docs: ^ast.Comment_Group) -> string {
+	return documentation_text_of_markdown(markdown_of(docs))
 }
 
 // about_of gives the first sentence of a documentation text, without the
