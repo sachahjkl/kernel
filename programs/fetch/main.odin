@@ -404,7 +404,7 @@ cases_run :: proc "contextless" () {
 	}
 	state := connections[0].state
 	note("the close from this side", (state == .Time_Wait || state == .Fin_Wait_2) && connections[0].fin_acknowledged, "the remote acknowledged the FIN, ", state == .Time_Wait ? "and sent its own: TIME-WAIT for 10 s" : state == .Fin_Wait_2 ? "and keeps its half open: FIN-WAIT-2" : "WRONG: no ACK of the FIN")
-	system.log("fetch: the connection: ", connections[0].segments_sent, " segments sent, ", connections[0].segments_received, " received, ", connections[0].retransmissions, " retransmissions, srtt ", connections[0].smoothed_rtt, " us")
+	system.log("fetch: the connection: ", connections[0].segments_sent, " segments sent, ", connections[0].segments_received, " received, ", connections[0].retransmissions, " retransmissions, srtt ", connections[0].smoothed_rtt, " us, ", table.bad_checksums, " segments dropped for a wrong checksum")
 }
 
 rate :: proc "contextless" (bytes: u64, nanoseconds: u64) -> u64 {

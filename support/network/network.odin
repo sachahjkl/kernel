@@ -1,8 +1,16 @@
-// The protocols of the network service: Ethernet, ARP, IPv4, ICMP echo and
-// UDP, and the checks of a TCP segment (its header and its checksum; TCP
-// itself is support/tcp, in the program). The functions read and write frames in memory that the caller gives;
-// they do no input or output, allocate nothing and keep no state, so the
-// host runs their tests (network_test.odin).
+// The protocols of the network service: Ethernet, ARP, IPv4 and ICMP echo,
+// and the checks of the header of a UDP datagram and of a TCP segment. The
+// functions read and write frames in memory that the caller gives; they do
+// no input or output, allocate nothing and keep no state, so the host runs
+// their tests (network_test.odin).
+//
+// The network service reads no byte of the data of a datagram or of a
+// segment here: `parse` checks the lengths and the header, not the
+// checksum of the transport. The program checks that checksum, after the
+// network service found its endpoint: TCP in support/tcp, UDP with
+// `udp_data_read` of this package. The program also writes the header and
+// the checksum of what it sends: `udp_header_write` for a datagram
+// (docs/NETWORK.md, "The path of a datagram and of a segment").
 //
 // A frame from the wire is input that nobody checked. parse reads each field
 // only after it checked that the bytes are there; a frame that breaks a
@@ -15,8 +23,10 @@
 //
 // Who uses it: the network service (`programs/network`), which parses each
 // frame of the frame service with `parse` and writes the frames of its
-// endpoints with the `_write` procedures, and keeps the tables of
-// `tables.odin` (the refused frames, the admitted remotes, the neighbors).
+// endpoints with the `_frame` procedures, and keeps the tables of
+// `tables.odin` (the refused frames, the admitted remotes, the neighbors);
+// and each program with a datagram endpoint, which writes and reads its
+// datagrams with `udp_header_write` and `udp_data_read`.
 //
 // See [network service](term:network-service) and (docs/NETWORK.md).
 package network
@@ -37,9 +47,8 @@ ICMP_HEADER :: 8 // The header of an ICMP echo.
 ARP_SIZE :: 28 // An ARP message of Ethernet and IPv4.
 FRAME_LEAST :: 60 // A shorter frame gets zero bytes at its end.
 MTU :: 1500 // The bytes of IPv4 in one frame.
-UDP_DATA :: ETHERNET_HEADER + IPV4_HEADER + UDP_HEADER // The place of the data of a UDP datagram that this library writes.
 ICMP_DATA :: ETHERNET_HEADER + IPV4_HEADER + ICMP_HEADER // The place of the data of an echo that this library writes.
-IPV4_DATA :: ETHERNET_HEADER + IPV4_HEADER // The place of a segment in a frame that this library writes.
+IPV4_DATA :: ETHERNET_HEADER + IPV4_HEADER // The place of a datagram or a segment in a frame that this library writes.
 UDP_DATA_LIMIT :: MTU - IPV4_HEADER - UDP_HEADER // 1472: no fragment.
 ICMP_DATA_LIMIT :: MTU - IPV4_HEADER - ICMP_HEADER // 1472: the data of one echo with no fragment.
 
@@ -92,7 +101,7 @@ Packet :: struct {
 	// UDP and TCP.
 	source_port:      u16,
 	destination_port: u16, // UDP and TCP: the port of the receiver.
-	data:             []u8, // UDP: the data. TCP: the whole segment, with its header.
+	data:             []u8, // ICMP echo: the data. UDP: the whole datagram, with its header. TCP: the whole segment, with its header.
 	tcp_flags:        u8, // TCP: the control bits.
 }
 
@@ -144,7 +153,7 @@ checksum :: proc "contextless" (total: u32) -> u16 {
 	return ~u16(sum(total, nil))
 }
 
-// pseudo gives the sum of the pseudo-header of UDP over IPv4.
+// pseudo gives the sum of the pseudo-header of UDP or of TCP over IPv4.
 pseudo :: proc "contextless" (source, destination: u32, protocol: u8, length: int) -> u32 {
 	return (source >> 16) + (source & 0xFFFF) + (destination >> 16) + (destination & 0xFFFF) + u32(protocol) + u32(length)
 }
@@ -280,7 +289,8 @@ icmp_parse :: proc "contextless" (message: []u8, offset: int, packet: Packet) ->
 	return packet, {}
 }
 
-// udp_parse reads a UDP datagram.
+// udp_parse checks the header of a UDP datagram: its length. It reads no
+// byte of the data: the checksum is for the program (udp_data_read).
 @(private)
 udp_parse :: proc "contextless" (datagram: []u8, offset: int, packet: Packet) -> (Packet, Problem) {
 	packet := packet
@@ -294,26 +304,16 @@ udp_parse :: proc "contextless" (datagram: []u8, offset: int, packet: Packet) ->
 	if length > len(datagram) {
 		return packet, {kind = .Bad_Length, layer = .Udp, offset = u16(offset + 4), value = u32(length), limit = u32(len(datagram))}
 	}
-	// A checksum of zero: the sender computed none (IPv4 permits it).
-	if read_16(datagram, 6) != 0 {
-		ok, expected := checked(datagram[:length], 6, pseudo(packet.source_address, packet.destination_address, PROTOCOL_UDP, length))
-		if expected == 0 {
-			expected = 0xFFFF // UDP sends a zero checksum as 0xFFFF.
-			ok = read_16(datagram, 6) == expected
-		}
-		if !ok {
-			return packet, {kind = .Bad_Checksum, layer = .Udp, offset = u16(offset + 6), value = u32(read_16(datagram, 6)), limit = u32(expected)}
-		}
-	}
 	packet.source_port = read_16(datagram, 0)
 	packet.destination_port = read_16(datagram, 2)
-	packet.data = datagram[UDP_HEADER:length]
+	packet.data = datagram[:length]
 	packet.kind = .Udp
 	return packet, {}
 }
 
-// tcp_parse checks a segment: its length, its data offset and its
-// checksum. The rest of the segment is for TCP in the program.
+// tcp_parse checks the header of a segment: its length and its data
+// offset. It reads no byte of the data: the checksum and the rest of the
+// segment are for TCP in the program (support/tcp).
 @(private)
 tcp_parse :: proc "contextless" (segment: []u8, offset: int, packet: Packet) -> (Packet, Problem) {
 	packet := packet
@@ -326,9 +326,6 @@ tcp_parse :: proc "contextless" (segment: []u8, offset: int, packet: Packet) -> 
 	}
 	if header > len(segment) {
 		return packet, {kind = .Bad_Length, layer = .Tcp, offset = u16(offset + 12), value = u32(header), limit = u32(len(segment))}
-	}
-	if ok, expected := checked(segment, 16, pseudo(packet.source_address, packet.destination_address, PROTOCOL_TCP, len(segment))); !ok {
-		return packet, {kind = .Bad_Checksum, layer = .Tcp, offset = u16(offset + 16), value = u32(read_16(segment, 16)), limit = u32(expected)}
 	}
 	packet.source_port = read_16(segment, 0)
 	packet.destination_port = read_16(segment, 2)
@@ -394,30 +391,11 @@ arp_frame :: proc "contextless" (frame: []u8, operation: u16, sender_hardware: H
 	return pad(frame, ETHERNET_HEADER + ARP_SIZE)
 }
 
-// udp_frame writes the headers of a UDP datagram whose data_length bytes
-// are already at frame[UDP_DATA:], and its checksum. It gives the length of
-// the frame, or 0 when the data is too large for one frame or for frame.
-udp_frame :: proc "contextless" (frame: []u8, destination, source: Hardware, source_address, destination_address: u32, source_port, destination_port: u16, data_length: int, identification: u16) -> int {
-	if data_length < 0 || data_length > UDP_DATA_LIMIT || len(frame) < max(UDP_DATA + data_length, FRAME_LEAST) {
-		return 0
-	}
-	length := UDP_HEADER + data_length
-	ethernet_write(frame, destination, source, KIND_IPV4)
-	ipv4_write(frame, source_address, destination_address, PROTOCOL_UDP, length, identification)
-	datagram := frame[ETHERNET_HEADER + IPV4_HEADER:][:length]
-	write_16(datagram, 0, source_port)
-	write_16(datagram, 2, destination_port)
-	write_16(datagram, 4, u16(length))
-	write_16(datagram, 6, 0)
-	value := checksum(sum(pseudo(source_address, destination_address, PROTOCOL_UDP, length), datagram))
-	write_16(datagram, 6, value == 0 ? 0xFFFF : value)
-	return pad(frame, UDP_DATA + data_length)
-}
-
 // ipv4_frame writes the headers of Ethernet and IPv4 of a frame whose
-// payload of payload bytes is already at frame[IPV4_DATA:]: a segment that
-// the program wrote with its checksum. It gives the length of the frame, or
-// 0 when the payload is too large.
+// payload of payload bytes is already at frame[IPV4_DATA:]: a datagram or a
+// segment that the program wrote with its header and its checksum. It
+// reads no byte of the payload. It gives the length of the frame, or 0 when
+// the payload is too large.
 ipv4_frame :: proc "contextless" (frame: []u8, destination, source: Hardware, source_address, destination_address: u32, protocol: u8, payload: int, identification: u16) -> int {
 	if payload < 0 || payload > MTU - IPV4_HEADER || len(frame) < max(IPV4_DATA + payload, FRAME_LEAST) {
 		return 0
@@ -425,6 +403,68 @@ ipv4_frame :: proc "contextless" (frame: []u8, destination, source: Hardware, so
 	ethernet_write(frame, destination, source, KIND_IPV4)
 	ipv4_write(frame, source_address, destination_address, protocol, payload, identification)
 	return pad(frame, IPV4_DATA + payload)
+}
+
+// udp_header_write writes the header of a UDP datagram whose data_length
+// bytes of data are already at datagram[UDP_HEADER:], and its checksum over
+// the pseudo-header, the header and the data. It gives the length of the
+// datagram, or 0 when the data is too large for one frame or for datagram.
+//
+// A program with a datagram endpoint calls it before each Send: the
+// network service copies the datagram and computes no checksum. The source
+// address and the source port are the local address and the local port of
+// the endpoint (the command Info gives them); the network service refuses
+// a datagram with another source port.
+udp_header_write :: proc "contextless" (datagram: []u8, source_address, destination_address: u32, source_port, destination_port: u16, data_length: int) -> int {
+	if data_length < 0 || data_length > UDP_DATA_LIMIT || len(datagram) < UDP_HEADER + data_length {
+		return 0
+	}
+	length := UDP_HEADER + data_length
+	whole := datagram[:length]
+	write_16(whole, 0, source_port)
+	write_16(whole, 2, destination_port)
+	write_16(whole, 4, u16(length))
+	// The sum passes over the checksum field, and the field is written one
+	// time: the datagram never holds a checksum of zero, which says "no
+	// checksum", also not for a moment.
+	value := checksum(sum(sum(pseudo(source_address, destination_address, PROTOCOL_UDP, length), whole[:6]), whole[UDP_HEADER:]))
+	write_16(whole, 6, value == 0 ? 0xFFFF : value) // UDP sends a zero checksum as 0xFFFF.
+	return length
+}
+
+// What udp_data_read does with the checksum of a datagram.
+Udp_Checksum_Rule :: enum u8 {
+	// Refuse a datagram whose checksum is not the one of its bytes. A
+	// checksum of zero is taken: the sender computed none (IPv4 permits it).
+	Verify        = 0,
+	// Do not read the bytes for a checksum: for a protocol that
+	// authenticates each datagram itself (QUIC), where the checksum adds
+	// nothing.
+	Do_Not_Verify = 1,
+}
+
+// udp_data_read gives the data of a UDP datagram that an endpoint
+// received: the whole datagram, with its header, as the network service
+// copied it. The network service checked the lengths and the ports, not
+// the checksum: with the rule Verify, this procedure checks it, over the
+// pseudo-header of the remote address and the local address. ok is false
+// for a datagram that is shorter than its header, whose length field is
+// not its length, or whose checksum is wrong: the program drops it and
+// counts it.
+udp_data_read :: proc "contextless" (datagram: []u8, remote_address, local_address: u32, rule: Udp_Checksum_Rule) -> (data: []u8, ok: bool) {
+	if len(datagram) < UDP_HEADER || int(read_16(datagram, 4)) != len(datagram) {
+		return nil, false
+	}
+	if rule == .Verify && read_16(datagram, 6) != 0 {
+		matches, expected := checked(datagram, 6, pseudo(remote_address, local_address, PROTOCOL_UDP, len(datagram)))
+		if expected == 0 {
+			matches = read_16(datagram, 6) == 0xFFFF // The sender wrote a zero checksum as 0xFFFF.
+		}
+		if !matches {
+			return nil, false
+		}
+	}
+	return datagram[UDP_HEADER:], true
 }
 
 // echo_frame writes the headers of an ICMP echo request or reply whose

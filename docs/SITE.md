@@ -370,7 +370,7 @@ A rate over a duration comes from a measure run (`docs/TOOLS.md`, "A check by co
 | A full frame of the compositor (the last line) | `test_output.txt` | `compositor: a full frame of` | no |
 | Blocks read in one second, 32 in flight | `test_output_measure_disk.txt` | `disk: read, 1 block in each request, 32 in flight` | yes |
 | 1000 commits to a private store | `test_output_persist_1.txt` | `notes: count 1000, stopped` | yes |
-| The headers and the checksum of a UDP datagram | `test_output_network.txt` | `network: the headers and the checksum of a datagram` | yes |
+| The header and the checksum of a UDP datagram, in the program that sends it | `test_output_network.txt` | `net: the header and the checksum of a datagram` | yes |
 | The round trip of a UDP datagram | `test_output_network.txt` | `net: the round trip of one datagram` | yes |
 | UDP datagrams in one second, 64 in flight | `test_output_network.txt` | `net: a burst with 64 datagrams in flight` | yes |
 | TCP, 1 MiB received from the host | `test_output_tcp_real.txt` | `fetch: GET /large:` | yes |

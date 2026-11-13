@@ -355,3 +355,100 @@ options_that_break_a_rule :: proc(t: ^testing.T) {
 	_, ok = header_read(segment[:24])
 	testing.expect(t, !ok)
 }
+
+// inject_damaged puts one segment from A to B on the link, with its
+// checksum written, then one bit of it changed: what the wire can do.
+inject_damaged :: proc(link: ^Link, header: Header, data: []u8, changed_byte: int) {
+	offset := header.mss != 0 ? HEADER_MSS : HEADER
+	flying := Flying{at = link.now, to = 1, from = ADDRESS_A, length = offset + len(data)}
+	copy(flying.bytes[offset:], data)
+	header_write(flying.bytes[:], ADDRESS_A, ADDRESS_B, header, flying.length)
+	flying.bytes[changed_byte] ~= 0x04
+	append(&link.flying, flying)
+}
+
+// The checksum is checked here, in the library: the network service does
+// not check it. A segment with one changed bit, in its data or in its
+// header, changes no field of the connection, gets no answer, and adds
+// one to the count of the table. The same segment with its checksum whole
+// is taken.
+@(test)
+wrong_checksum_is_dropped_and_counted :: proc(t: ^testing.T) {
+	link := link_make(40)
+	defer link_free(link)
+	if !established(t, link) {
+		return
+	}
+	wait(link, 100_000) // The delayed ACKs of the handshake are done.
+	a := &link.sides[0].connections[0]
+	b := &link.sides[1].connections[0]
+	table := &link.sides[1].table
+	data: [100]u8
+	for &byte, index in data {
+		byte = u8(index * 3)
+	}
+	header := Header{source_port = a.local_port, destination_port = PORT_B, sequence = b.receive_next, acknowledgment = b.send_next, flags = {.Ack, .Psh}, window = 8192}
+	untouched := b^
+	sent_before := link.sides[1].sent_out
+	// One bit of the data, then one bit of the sequence number, then a RST
+	// at the exact sequence with one bit of its window changed.
+	inject_damaged(link, header, data[:], HEADER + 50)
+	inject_damaged(link, header, data[:], 5)
+	inject_damaged(link, {source_port = a.local_port, destination_port = PORT_B, sequence = b.receive_next, flags = {.Rst}}, nil, 15)
+	wait(link, 100_000)
+	testing.expect_value(t, table.bad_checksums, 3)
+	testing.expect(t, b^ == untouched, "a segment with a wrong checksum changed the connection")
+	testing.expect_value(t, link.sides[1].sent_out, sent_before)
+	testing.expect_value(t, table.malformed, 0)
+	// The same data with its checksum: taken, in order.
+	inject(link, header, data[:])
+	wait(link, 100_000)
+	testing.expect_value(t, table.bad_checksums, 3)
+	got: [200]u8
+	count, _ := read(table, 0, got[:])
+	testing.expect_value(t, count, 100)
+	testing.expect(t, string(got[:100]) == string(data[:]))
+}
+
+// The pseudo-header is in the checksum: a segment whose bytes are right
+// for another pair of addresses is dropped, so a segment for another
+// machine, or from another remote than the one that the network service
+// names, does not reach a connection.
+@(test)
+checksum_holds_the_two_addresses :: proc(t: ^testing.T) {
+	link := link_make(41)
+	defer link_free(link)
+	link.block = true // A must not answer the SYN, ACK of the last case with a RST.
+	// A SYN to the listen port, written for another destination address.
+	flying := Flying{at = link.now, to = 1, from = ADDRESS_A, length = HEADER}
+	header_write(flying.bytes[:], ADDRESS_A, ADDRESS_B + 1, {source_port = 41003, destination_port = PORT_B, sequence = 9000, flags = {.Syn}, window = 8192}, HEADER)
+	append(&link.flying, flying)
+	// The same SYN, written from another source address than the one that
+	// the link names.
+	flying = Flying{at = link.now, to = 1, from = ADDRESS_A, length = HEADER}
+	header_write(flying.bytes[:], ADDRESS_A + 1, ADDRESS_B, {source_port = 41003, destination_port = PORT_B, sequence = 9000, flags = {.Syn}, window = 8192}, HEADER)
+	append(&link.flying, flying)
+	wait(link, 1000)
+	table := &link.sides[1].table
+	testing.expect_value(t, table.bad_checksums, 2)
+	testing.expect(t, available(&link.sides[1].connections[0]))
+	testing.expect_value(t, link.sides[1].sent_out, 0)
+	// The SYN with the two addresses of the link opens a record.
+	inject(link, {source_port = 41003, destination_port = PORT_B, sequence = 9000, flags = {.Syn}, window = 8192})
+	wait(link, 1000)
+	testing.expect_value(t, table.bad_checksums, 2)
+	testing.expect_value(t, link.sides[1].connections[0].state, State.Syn_Received)
+}
+
+// A segment shorter than a header has no checksum to hold: it is counted
+// as a wrong checksum, and never read further.
+@(test)
+short_segment_is_dropped :: proc(t: ^testing.T) {
+	link := link_make(42)
+	defer link_free(link)
+	flying := Flying{at = link.now, to = 1, from = ADDRESS_A, length = 12}
+	append(&link.flying, flying)
+	wait(link, 1000)
+	testing.expect_value(t, link.sides[1].table.bad_checksums, 1)
+	testing.expect_value(t, link.sides[1].sent_out, 0)
+}

@@ -400,7 +400,7 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "frame: ok, the hardware address 52:54:00:12:34:56, the link is up", any_order = true},
 	{kind = .Wait, text = "root: started network"},
 	{kind = .Wait, text = "network: ok, the address 10.0.2.15/24 52:54:00:12:34:56, the gateway 10.0.2.2, the link is up", any_order = true},
-	{kind = .Wait, text = "network: the headers and the checksum of a datagram of 1472 bytes: ", any_order = true},
+	{kind = .Wait, text = "network: the headers of IPv4 and Ethernet of a frame with a payload of 1480 bytes: ", any_order = true},
 	{kind = .Wait, text = "network: an endpoint for net: the local port 49152, the grant 10.0.2.2 port 7", any_order = true},
 	{kind = .Wait, text = "root: started net"},
 	{kind = .Wait, text = "net: the link and the address: 10.0.2.15/24, the link is up, 52:54:00:12:34:56"},
@@ -409,15 +409,23 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "net: UDP to 10.0.2.2 port 7, 41 bytes: the same 41 bytes came back from 10.0.2.2 port 7 in "},
 	{kind = .Wait, text = "net: UDP to 10.0.2.2 port 9: refused: datagram.Send: the argument address, 10.0.2.2 port 9, is refused: the grant names 10.0.2.2 port 7 only"},
 	{kind = .Wait, text = "net: ICMP echo to 10.0.2.3: refused: datagram.Echo: the argument address, 10.0.2.3, is refused: the grant names 10.0.2.2 port 7 only"},
-	{kind = .Wait, text = "net: UDP of 2000 bytes: refused, no fragment: datagram.Send: the argument count has 2000 bytes; it can have at most 1472 bytes"},
+	{kind = .Wait, text = "net: UDP of 2000 bytes: refused, no fragment: datagram.Send: the argument count has 2000 bytes; it can have at most 1480 bytes"},
+	// The program writes the UDP header: the network service checks the
+	// source port in its own copy of it.
+	{kind = .Wait, text = "net: UDP from the source port 1234: refused: the source port 1234 of the header is not the local port of this endpoint, 49152"},
+	// The network service computes no checksum of a datagram: the datagram
+	// of the peer with a wrong one reaches the endpoint of its port, and
+	// the program drops it.
+	{kind = .Wait, text = "net: UDP from 10.0.2.2 port 7 with a wrong checksum: dropped by this program: 1 datagram; the network service gave it to the endpoint of its port"},
 	// The row of the endpoint names its own grant; the rows of the machine
 	// need the right Inspect, that `net` has with the machine.
 	{kind = .Wait, text = "net: refused for this endpoint: 1 x udp, byte 34: the remote port 9 is not the port of the grant, 7"},
-	{kind = .Wait, text = "net: refused for the machine: 1 x udp, byte 40: the checksum is 0x"},
+	{kind = .Wait, text = "net: refused for the machine: 1 x ipv4, byte 24: the checksum is 0x"},
 	{kind = .Wait, text = "net: UDP from 10.0.2.2 port 9 to this endpoint: refused: from port 9; a row of this endpoint"},
-	{kind = .Wait, text = "net: malformed frames from the wire: 10 refused in 10 kinds, 10 of 10 expected; no fault"},
+	{kind = .Wait, text = "net: malformed frames from the wire: 9 refused in 9 kinds, 9 of 9 expected; no fault"},
 	{kind = .Wait, text = "net: ICMP echo from 10.0.2.2 to this machine: the network service answered 1 request"},
-	{kind = .Wait, text = "net: ok, 10 cases"},
+	{kind = .Wait, text = "net: ok, 12 cases"},
+	{kind = .Wait, text = "net: the header and the checksum of a datagram of 1472 bytes: "},
 	{kind = .Wait, text = "net: the round trip of one datagram of 64 bytes: "},
 	{kind = .Wait, text = "net: a burst with 64 datagrams in flight: "},
 	{kind = .Wait, text = " datagrams in one second, sent and answered, 0 lost"},
@@ -440,6 +448,11 @@ scenario_network := [?]Step {
 	{kind = .Close, text = "net"},
 	{kind = .Wait, text = "root: net stopped with code 0"},
 	{kind = .Wait, text = "network: the endpoint of net ended: "},
+	// The passes of the network service over the bytes of the datagrams of
+	// `net`: a measure, then the structural count: one copy each way, and no
+	// checksum.
+	{kind = .Wait, text = "network: a measure: the endpoint of net, UDP: the passes of this service over the data for each payload byte: "},
+	{kind = .Wait, text = "network: the endpoint of net, UDP: this service read each payload byte one time on receive and one time on send, for the copy, and computed no checksum of it: as it must"},
 	// The calls of the host (docs/MODULE_CONTRACT.md, "A call from the
 	// host"). The remote service holds an endpoint whose grant names the
 	// host, and connects to the services that the root service names for it.

@@ -7,10 +7,14 @@
 // (no ambient network and no global port names: docs/PROPERTIES.md, "No
 // ambient access").
 //
-//   a datagram endpoint  UDP: a client grant names the one remote address
-//                        and remote UDP port that the program reaches; the
-//                        network service gives the local port and writes the
-//                        UDP header. A listen grant names one local UDP
+//   a datagram endpoint  UDP: the program writes and reads whole
+//                        datagrams, with the UDP header and its checksum
+//                        (support/network, udp_header_write and
+//                        udp_data_read); the network service writes the
+//                        IPv4 header. A client grant names the one remote
+//                        address and remote UDP port that the program
+//                        reaches; the network service gives the local
+//                        port. A listen grant names one local UDP
 //                        port, and can name one remote address: then a
 //                        datagram of another address is dropped. It answers
 //                        only the admitted remotes: each
@@ -49,9 +53,15 @@
 // network service, and its revocation would stop the network service on a
 // page fault, for all programs: a thread that uses memory that its program
 // lost stops its program on a page fault.
-// The network service copies the data of a datagram one time: from the
-// region to its frame, or from its frame to the region. A header or a
-// checksum is never computed over bytes that the program can still change.
+// The network service copies a datagram or a segment one time: from the
+// region to its frame, or from its frame to the region. It computes no
+// checksum of the transport: the program writes the checksum of what it
+// sends, and checks the checksum of what it receives. The network service
+// checks the ports of what a program sends in its own copy, which the
+// program cannot change: a program sends only from the local ports of its
+// endpoint, to the remote of its grant. A program that writes a wrong
+// checksum, or that does not check one, harms its own traffic only
+// (docs/NETWORK.md, "The path of a datagram and of a segment").
 //
 // Many requests are in flight. A Receive stays in flight until a datagram
 // arrives: the program gives the places before (the caller supplies the
@@ -66,7 +76,10 @@
 package datagram
 
 RING_CAPACITY :: 256 // The capacity of the datagram ring.
-DATA_LIMIT :: 1472 // The bytes of one datagram: one frame of Ethernet, no fragment.
+UDP_HEADER :: 8 // The header of UDP: the two ports, the length and the checksum.
+DATA_LIMIT :: 1472 // The bytes of the data of one datagram: one frame of Ethernet, no fragment.
+DATAGRAM_LIMIT :: UDP_HEADER + DATA_LIMIT // The bytes of one datagram, with its UDP header.
+DATAGRAM_LEAST :: UDP_HEADER // A datagram with no data.
 SEGMENT_LIMIT :: 1480 // The bytes of one segment, with its TCP header: one frame of Ethernet, no fragment.
 SEGMENT_LEAST :: 20 // A TCP header with no option.
 PORT_BLOCK :: 64 // The local TCP ports of a client grant.
@@ -74,7 +87,8 @@ ADMITTED_CAPACITY :: 64 // The admitted remotes of a listen grant.
 // The least bytes of a datagram that admits a new remote to a UDP listen
 // port. The protocol that listens over UDP, QUIC, starts each connection
 // with a datagram of 1200 bytes at least (RFC 9000, section 14.1): a
-// shorter datagram of an unknown remote takes no place of the table.
+// shorter datagram of an unknown remote takes no place of the table. The
+// bytes are the data, with no UDP header.
 LISTEN_FIRST_LEAST :: 1200
 
 REGION_PAGES :: 128 // The datagram region: 512 KiB.
@@ -97,18 +111,31 @@ Command :: enum u32 {
 	// device (the first byte in the low bits), values[5] 1 if the link is
 	// up, values[6] the grant (grant_pack), with the right Inspect if it has it.
 	Info       = 1,
-	// values[0]: the place of the data in the region. values[1]: its count of
-	// bytes, DATA_LIMIT at most. values[2], values[3]: the remote address and
-	// port. The completion comes when the network service has copied the
-	// data: the place is free again. A segment endpoint: the place holds a
-	// whole segment, SEGMENT_LEAST to SEGMENT_LIMIT bytes, with its checksum;
-	// the ports are the ones of its header, and values[3] is not read.
+	// values[0]: the place in the region of a whole datagram, with its UDP
+	// header and its checksum. values[1]: its count of bytes, DATAGRAM_LEAST
+	// to DATAGRAM_LIMIT. values[2]: the remote address. The ports are the
+	// ones of the header: the network service reads them in its copy;
+	// values[3] is not read. The source port must be the local port of the
+	// endpoint, and the length field must be values[1]. The completion comes
+	// when the network service has copied the datagram: the place is free
+	// again. A segment endpoint: the place holds a whole segment,
+	// SEGMENT_LEAST to SEGMENT_LIMIT bytes, with its checksum; the source
+	// port must be a local port of the endpoint. The network service
+	// computes no checksum of a datagram or a segment: a wrong one goes on
+	// the wire as it is, and the remote drops the packet.
 	Send       = 2,
 	// values[0]: the place in the region. values[1]: the room there. The
 	// completion comes when a datagram arrives: values[0] the place,
-	// values[1] its count of bytes (the data that did not fit is lost),
-	// values[2], values[3] the remote address and port. A segment endpoint:
-	// a whole segment, whose TCP checksum the network service checked.
+	// values[1] its count of bytes (the bytes that did not fit are lost),
+	// values[2], values[3] the remote address and port, values[4] the local
+	// port. The place holds the whole datagram, with its UDP header; a
+	// segment endpoint: a whole segment. The network service checked the
+	// lengths, the ports and the remote, not the checksum of the datagram
+	// or of the segment: the program checks it (network.udp_data_read,
+	// support/tcp), with the remote address of values[2] and its local
+	// address. A frame whose port the wire damaged can so reach the
+	// endpoint of another port: its checksum is wrong, and the program
+	// drops it.
 	Receive    = 3,
 	// values[0]: an address. The network service asks its hardware address
 	// on the link (ARP) again, also when it knows it. The completion:
@@ -161,14 +188,14 @@ Command :: enum u32 {
 // (errors.completion_record), with the kind and the values below.
 Status :: enum u32 {
 	Ok           = 0, // The request is done: the values are its results.
-	Bad_Command  = 1, // Unsupported: the command is not known, or not for this grant; Too_Small: a segment of fewer bytes than SEGMENT_LEAST.
+	Bad_Command  = 1, // Unsupported: the command is not known, or not for this grant; Too_Small: a segment of fewer bytes than SEGMENT_LEAST, or a datagram of fewer bytes than DATAGRAM_LEAST; Bad_Value, unit Bytes: the length field of the UDP header of a Send is not its count of bytes (value: the field; limit: the count).
 	Out_Of_Range = 2, // Out_Of_Range, unit Bytes: a byte is not in the region. value: the end of the place and its count; limit: the size of the region.
 	No_Region    = 3, // Absent, unit Region: the endpoint has no datagram region.
 	// No_Grant, unit Endpoint: the remote is not the remote of the grant.
 	// value: the remote that the request named (errors.endpoint_pack);
 	// limit: the remote of the grant, 0 when it names none (revoked, or a
-	// listen grant with no admitted remote); found: the local port of a
-	// segment, when it is not a port of the endpoint.
+	// listen grant with no admitted remote); found: the source port of a
+	// datagram or a segment, when it is not a local port of the endpoint.
 	Not_Granted  = 4,
 	Too_Large    = 5, // Too_Long, unit Bytes. value: the count of bytes; limit: the most.
 	No_Answer    = 6, // No_Answer: value the address, limit the milliseconds waited, found what did not answer.
@@ -177,7 +204,7 @@ Status :: enum u32 {
 	// Over_Limit, unit Bytes: a Send of a UDP listen grant to a remote that
 	// is not validated would pass 3 times the bytes that came from it.
 	// value: the bytes that the remote would have received; limit: 3 times
-	// the bytes that came from it.
+	// the bytes that came from it. Both count the data, with no UDP header.
 	Amplification = 9,
 }
 

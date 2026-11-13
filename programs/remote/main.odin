@@ -176,6 +176,8 @@ call_buffers: [][CALL_BUFFER_SIZE]u8
 public_key: [32]u8
 weak_seed: bool // The seed is weaker than "processor": no key, no endpoint.
 listen_port: u16
+local_address: u32 // The address of this machine: the source of each datagram, in its UDP checksum.
+datagrams_malformed: u64 // Datagrams with no whole UDP header: the network service never gives one.
 
 // The phases of one call stream. A record of a stream frees when the host
 // read the end of this side and this side read the end of the host
@@ -309,8 +311,18 @@ post :: proc "contextless" (place: u32) {
 	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Receive), tag = place, values = {0 = u64(place) * PLACE_SIZE, 1 = PLACE_SIZE}})
 }
 
+// data_bytes gives the place of the data of a datagram to send: after the
+// place of its UDP header. QUIC writes its packets there.
+data_bytes :: proc "contextless" (place: u32) -> []u8 {
+	return place_bytes(place)[network.UDP_HEADER:]
+}
+
+// send sends length bytes of data that are at data_bytes(place). This
+// program writes the UDP header and a real checksum: the network service
+// computes none, and a remote can refuse a datagram with no checksum.
 send :: proc "contextless" (place: u32, length: int, peer: quic.Remote) {
-	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Send), tag = SEND_TAG + place, values = {0 = u64(place) * PLACE_SIZE, 1 = u64(length), 2 = u64(peer.address), 3 = u64(peer.port)}})
+	whole := network.udp_header_write(place_bytes(place), local_address, peer.address, listen_port, peer.port, length)
+	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Send), tag = SEND_TAG + place, values = {0 = u64(place) * PLACE_SIZE, 1 = u64(whole), 2 = u64(peer.address)}})
 }
 
 // validate tells the network service that the remote of the record at
@@ -600,18 +612,30 @@ exchange :: proc "contextless" (arrived: []ring.Record) -> (deadline: u64) {
 	now := now_microseconds()
 	// The datagrams of known connections first, as quic_echo: the order is
 	// decided once for the batch, so each datagram is given once.
+	//
+	// A place holds a whole UDP datagram. The UDP checksum is not checked
+	// (the rule Do_Not_Verify): QUIC authenticates each packet, so a
+	// datagram that the wire damaged fails there, and a second pass over
+	// the bytes adds nothing.
 	batch: [RECEIVE_PLACES]quic.Server_Datagram
-	for record, index in arrived {
-		batch[index] = {place_bytes(record.tag)[:min(record.values[1], PLACE_SIZE)], quic.Remote{u32(record.values[2]), u16(record.values[3])}}
+	batch_count := 0
+	for record in arrived {
+		data, whole := network.udp_data_read(place_bytes(record.tag)[:min(record.values[1], PLACE_SIZE)], u32(record.values[2]), local_address, .Do_Not_Verify)
+		if !whole {
+			datagrams_malformed += 1
+			continue
+		}
+		batch[batch_count] = {data, quic.Remote{u32(record.values[2]), u16(record.values[3])}}
+		batch_count += 1
 	}
 	order: [RECEIVE_PLACES]int
-	count := quic.server_batch_order(&server, batch[:len(arrived)], order[:])
+	count := quic.server_batch_order(&server, batch[:batch_count], order[:])
 	for index in order[:count] {
 		bytes, peer := batch[index].bytes, batch[index].remote
 		answer_place, has_place := place_take()
 		answer: []u8
 		if has_place {
-			answer = place_bytes(answer_place)
+			answer = data_bytes(answer_place)
 		}
 		outcome := quic.server_datagram_receive(&server, bytes, peer, answer, now)
 		if outcome.answer_length > 0 {
@@ -633,7 +657,7 @@ exchange :: proc "contextless" (arrived: []ring.Record) -> (deadline: u64) {
 		sent := 0
 		for free_count > 0 {
 			place, _ := place_take()
-			length, peer := quic.server_datagram_send(&server, place_bytes(place), now)
+			length, peer := quic.server_datagram_send(&server, data_bytes(place), now)
 			if length == 0 {
 				free_places[free_count] = place
 				free_count += 1
@@ -1052,6 +1076,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("the grant is not a listen grant of UDP for the address of the host only")
 	}
 	listen_port = grant.port
+	local_address = u32(info.values[0])
 	// The connections, their streams and their buffers: one mapping.
 	memory, memory_status := system.memory_create(TABLE_PAGES)
 	table, table_status := system.memory_map(memory, {.Write})

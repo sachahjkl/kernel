@@ -116,6 +116,7 @@ bytes_in, bytes_out: u64
 retransmissions, resets, timeouts: u64
 aborted_count: u64 // Connections that this server ended for a limit.
 released_strays: u64 // Remotes released because a segment of theirs had no record.
+bad_checksums_logged: u64 // The count of table.bad_checksums at its last line on the log.
 handshake_last, handshake_least: u64 // Microseconds.
 draw_time: u64
 start_time: u64
@@ -345,6 +346,13 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 	output := tcp.Output{memory = region, place_size = PLACE_SIZE, places = free_places[:free_count], segments = segments[:]}
 	count: int
 	deadline, count = tcp.step(&table, incoming, now, &output, events[:])
+	// The library checks the checksum of each segment: the network service
+	// does not. A line at the first dropped segment, then each time the
+	// count doubles: a flood of damaged segments writes few lines.
+	if table.bad_checksums >= max(2 * bad_checksums_logged, 1) {
+		bad_checksums_logged = table.bad_checksums
+		system.log("server: ", table.bad_checksums, " segments dropped for a wrong checksum")
+	}
 	// The events and the answers write data; the next step sends it. A few
 	// rounds end the work of one pass; what is left waits for the next pass.
 	for round := 0; round < 4; round += 1 {
