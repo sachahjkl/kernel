@@ -423,8 +423,8 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 
 | Command | What it does |
 |---|---|
-| `build [whole] [processes]` | Builds the modules, the boot images and the boot programs: the usual one, and one for each volume that a test or a measure needs (a start that fails, a shortage of frames, a measure run, the volumes of the trusted boot that the boot program must refuse, the volumes of Secure Boot, one for each self test of the kernel). It keeps each module and each boot volume when its inputs are the same; `build whole` keeps nothing ("The incremental build") |
-| `module <name> ...` | Builds one module of the table, and its debug object. The parallel build runs it; run it by hand to see the errors of one module alone |
+| `build [whole] [processes]` | Builds the modules, the boot images and the boot programs: the usual one, and one for each volume that a test or a measure needs (a start that fails, a shortage of frames, a measure run, the volumes of the trusted boot that the boot program must refuse, the volumes of Secure Boot, one for each self test of the kernel). It keeps each module and each boot volume when its inputs are the same, and only converts a module when the file of an import changed; `build whole` keeps nothing ("The incremental build") |
+| `module <name> ...` | Builds one module of the table, and its debug object; with `compile` or `convert` as its last argument, runs one of the two steps alone. The parallel build runs it for each step; run it by hand to see the errors of one module alone |
 | `volume <name>` | Builds one boot volume: its boot image with the system description, its boot program, and the volume file. The build runs it for each volume that it must build; run it by hand, after a build, to see the errors of one volume alone |
 | `run [without_checks]` | Builds the modules and the main boot volume, then starts the machine under QEMU in a window, with the log of the kernel on the terminal. The data disk stays from run to run. It starts the peer that takes the calls of `kerneltool call` |
 | `call <key> "<call>"` | Calls an export of a service of the machine that `run` started, through the program `remote` over QUIC, and prints the typed result |
@@ -524,7 +524,16 @@ The same test with the input in batches took 83 s of machine time. Of these, the
 
 A build keeps the outputs of an earlier build when their inputs are the same. The rule that makes it sound is the rule of the reproducible build: the same inputs give the same bytes (`REPRODUCIBLE_BUILD.md`, "The incremental build and the same bytes"). A kept module that is not the module of its sources is a wrong system, so the tool keeps an output only when it can prove each input, and builds in every case of doubt.
 
-**The inputs of a module.** The tool does not guess them: the compiler writes the list of the files that it read (`-export-dependencies:json`, in `build/modules/<name>/dependencies.json`).
+**The two steps of a module.** The build of a module has two steps, and each step has its own build key and its own build record.
+
+| Step | What it runs | What it gives | What it reads of an import |
+|---|---|---|---|
+| The compile step | The compiler, `llc`, the assembler and the link | The linked file, `build/modules/<name>/linked.elf` | Nothing |
+| The conversion | The tool only: no compiler | The module file, and its debug object | The whole file: its hash goes into the import table, and the number of each export that a slot names comes from it |
+
+A source names an export of an import in a `foreign` block: a name, the parameters and the result, written by hand in the source of the importer. No file of the import stands behind it. The compiler makes a call to a symbol that is not defined, and the link leaves the symbol not defined (`ld.lld -shared`, with no file of the import on its command). So the linked file of an importer is the same for every file of its import, and the build key of the compile step holds no import. A change of the body of an export of a library compiles the library, and only converts each module that imports it.
+
+**The inputs of the compile step.** The tool does not guess them: the compiler writes the list of the files that it read (`-export-dependencies:json`, in `build/modules/<name>/dependencies.json`).
 
 | Input | How the tool knows it |
 |---|---|
@@ -532,22 +541,40 @@ A build keeps the outputs of an earlier build when their inputs are the same. Th
 | The files of `#load` | The same list |
 | Every other file of the folder of each of these packages | The tool lists each folder. A file that the compiler did not read becomes a source with no change of a listed file in one way only: it is in such a folder (a new file, or a file whose build tag now admits the target) |
 | The assembly files that the module links: `runtime/memory.asm`, the `.asm` files of its folder, and those of `support/system` for a program | The tool lists them as the build does |
-| The module file of each import of the module table | Its hash at the time of the key: the hash of an import is in the import table of the module |
 | The command of the compiler and the command of `llc`, with each flag: the checks of the kernel, `-debug`, the settings of the module, the features of the target | The text of the two commands (`module_compile_command`, `module_object_command`) |
 | The programs `odin`, `llc`, `nasm` and `ld.lld` | The path of each file after each link, its size and its time. In the store of Nix the path holds the hash of the package |
 | The tool | One hash over every file of `tools/kerneltool` and of each package of the repository that it imports, to any depth. The code that builds a module is in the tool. The executable of the tool is not the identity: two builds of the tool do not give the same file |
 
-**The build key and the build record.** The build key of a module is one BLAKE3 hash over these inputs, each list sorted. After the tool built a module, it writes its build record, `build/modules/<name>.build_record`: a text file with the key, the hash of each output that a later step or a test reads (the module, its debug object, the linked file), and the list of the compiler. The build with no debug information has its own records in its own folder.
+**The inputs of the conversion.**
 
-**When a module is kept.** At the next build the tool hashes each file of the source folders of the repository one time, on several threads, before the first compiler starts. For each module it computes the key again, from the files of the recorded list as they are now. The module is kept, with no process, when the three conditions hold:
+| Input | How the tool knows it |
+|---|---|
+| The linked file | Its hash, which the record of the compile step holds |
+| The sources of the module: the conversion reads them for the description of the exports and for the documentation | The build key of the compile step, which holds each of them, is an input of the key of the conversion |
+| The module file of each import of the module table | Its hash at the time of the key |
+| The imports in the order of the module table | Their names, in that order: it is the order of the import table of the module file |
+| Whether the build writes a debug object | One setting |
+| The tool | The same hash as for the compile step |
 
-1. the record is there and has its form;
-2. the key is the same;
-3. each output is there with its recorded hash.
+**Why the compile step is sound with no import in its key.** A kept linked file must be the linked file that a compile step of now would give. Each way in which an import can reach the code of an importer was checked:
 
-In every other case the module is built: no record, a damaged record, a changed or a missing input, a changed or a missing output. A damaged record is never an error. The tool decides for a module after its imports were built or kept. It prints one line with the count, for example "kerneltool: 81 of 84 modules kept, 3 built: console (an input changed), ...".
+- **The body of an export.** The compiler, `llc` and the link never open a file of the import, so no body of it can be inlined in the importer. To inline across two bodies of code, their sources are compiled into one module (`MODULE_CONTRACT.md`, "Closed rules"); then they are sources of that module, and the list of the compiler holds them.
+- **The description of an export** (its name, its parameters, its result). The compiled code depends on the declaration in the `foreign` block of the importer, which is a source of the importer. The description in the file of the import is not read by the compile step. The tool does not compare the two: a declaration that disagrees with the import is a fault of the source, and the conversion sees it only when the name is not an export of the import.
+- **The layout of a record, and a constant.** An importer that uses a record or a constant of a library imports the package that declares it (`contract:`, `support:`, or the folder of the module). That package is in the list of the compiler, so its files are inputs of the compile step.
+- **A file of `#load`.** It is in the list of the compiler. No source loads a module file of the build; if one did, the list names that file, and the key of the compile step holds its hash.
+- **The number of an export, and the hash of the import.** They are in the module file only, and the conversion writes them. They are why the conversion holds the whole file of the import, not its description.
 
-**When no record is written.** The tool writes no record for a module when the compiler gave no list, or when it cannot prove that the hash and the compiler read the same bytes: an input file must be older than the start of the build by one second, and its size and its time must be the same after the build. A file that was saved during the build, or in the last second before it, costs one more build of its modules.
+**The build key and the build record.** A build key is one BLAKE3 hash over the inputs of its step, each list sorted. After the steps of a module ran, the tool writes two build records: `build/modules/<name>.compile.build_record` (the key of the compile step, the hash of the linked file, the list of the compiler) and `build/modules/<name>.convert.build_record` (the key of the conversion, the hash of the module and of its debug object). The build with no debug information has its own records in its own folder.
+
+**When a module is kept, converted or built.** At the next build the tool hashes each file of the source folders of the repository one time, on several threads, before the first compiler starts. For each module it computes the key of the compile step again, from the files of the recorded list as they are now.
+
+- The module is **built** (the compile step, then the conversion) when the record of the compile step is absent or damaged, when its key is not the key of now, or when the linked file is absent or has not its recorded hash.
+- If not, the module is **converted** (the conversion alone) when the record of the conversion is absent or damaged, when its key is not the key of now, or when the module file or the debug object is absent or has not its recorded hash.
+- If not, the module is **kept**: no process starts.
+
+A damaged record is never an error. The tool decides for a module after its imports were built, converted or kept. A converted module has a new hash, as a built one, so each module that imports it is converted in its turn: a change goes up the levels of the imports as a chain of conversions. An import that is built again to the same bytes changes nothing above it. The tool prints one line with the counts, for example "kerneltool: 48 of 84 modules kept, 33 converted, 3 built: drawing (built: an input changed), clock (converted: an import or the linked file changed), ...".
+
+**When no record is written.** The tool writes no record for a module when the compiler gave no list, or when it cannot prove that the hash and the build read the same bytes: an input file must be older than the start of the build by one second, and its size and its time must be the same after the build. The conversion reads the sources too, so the rule holds for a module that was only converted: its record of the conversion is removed. A file that was saved during the build, or in the last second before it, costs one more build of its modules.
 
 **The boot volumes.** The build has 19 boot volumes. Each one has its own boot program, because the boot program holds its boot image and its kernel (`#load`).
 
@@ -600,9 +627,9 @@ A volume that a command does not need is not built and not checked. It stays wit
 
 **How to force a whole build.** `kerneltool build whole` ignores every record, builds each module and each boot volume, and writes new records. The commands that prove the build always build whole, with no option: `check`, `screenshots` and `repeat`, and the two procedures of the second build set it themselves, so no caller can compare two builds of which one kept its outputs. `nix flake check` builds in an empty folder, with no record.
 
-**What costs a whole build.** A change of a file of `tools/kerneltool`, or of a package that the tool imports, changes the identity of the tool, so every module and every boot volume that the command needs is built again: a scenario of a machine test is such a file. A change of the compiler or of a program of the build does the same. A change of a file of a package builds again each module that imports the package, also when the file is a host test that a build tag leaves out.
+**What costs a whole build.** A change of a file of `tools/kerneltool`, or of a package that the tool imports, changes the identity of the tool, so every module and every boot volume that the command needs is built again: a scenario of a machine test is such a file. A change of the compiler or of a program of the build does the same. A change of a file of a package builds again each module that compiles the package in, also when the file is a host test that a build tag leaves out. A change of a file of a module that other modules import (an import of the module table, not a package) builds that module and converts the others.
 
-**The measure.** Each `build` prints its measure, lines that start with `kerneltool: measure: the build`: the whole time, the time of the hash of the input files with their count and their bytes, the time of the modules with the count of the modules built and kept (and in it the checks and the writes of the records), then one line for each later step: the debug image, the pointer themes, the glyph caches, the four boot images, the checks and the writes of the build records of the boot volumes, and the boot volumes in all. One line gives the count of the volumes built, kept and not needed by the command, with the count of volume processes at once; then one line for each built volume gives the whole time of its process. The process of a volume prints its own line, `kerneltool: measure: the build of the boot volume <name>`: the signed boot image, the compiler of the boot program, the assembler with the link and the firmware signature, and the volume file. Each number is a measure: nothing reads one.
+**The measure.** Each `build` prints its measure, lines that start with `kerneltool: measure: the build`: the whole time, the time of the hash of the input files with their count and their bytes, the time of the modules with the count of the modules built, converted and kept (and in it the time of the compile steps, the time of the conversions, the checks and the writes of the records; the time of a step is the time on the clock from the start of its first process to the end of its last one, in each level, with several processes at once), then one line for each later step: the debug image, the pointer themes, the glyph caches, the four boot images, the checks and the writes of the build records of the boot volumes, and the boot volumes in all. One line gives the count of the volumes built, kept and not needed by the command, with the count of volume processes at once; then one line for each built volume gives the whole time of its process. The process of a volume prints its own line, `kerneltool: measure: the build of the boot volume <name>`: the signed boot image, the compiler of the boot program, the assembler with the link and the firmware signature, and the volume file. Each number is a measure: nothing reads one.
 
 One whole build before the incremental build, on a host with 16 processors, read in the times of the files that it wrote: 83 s from the first LLVM IR file to the last module (84 modules, one compiler process for each processor), under 1 s for the debug image, the pointer themes and the three boot images, then 51 s for the 18 boot volumes, one after the other, 2.8 s each.
 
