@@ -8,6 +8,37 @@
 // replacement and with each replacement, and shows what the loader answers.
 // It also imports calendar itself: the root service gave it the
 // replacements of the machine when it started it.
+//
+// **What it is for.** It shows that a module is named by the hash of its
+// code, and that the principal can give another module where a module
+// imports one, with a check: a [replacement](term:replacement) with the
+// same description is accepted, and one with another description is a
+// [load error](term:load-error) that names the export and its difference.
+// It also shows that the import of a module is a direct call through an
+// import slot, with its cost measured, and that two programs that import
+// one module share one copy of its code.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("imports")` in the console. The window has one row for each case:
+// the load of `agenda` with no replacement (the year 2000 has 365 days),
+// with `calendar_fixed` (366 days), and with `calendar_changed` (refused at
+// the check). The log gets `imports: ok, <count> cases`, then the measures:
+// a call through an import slot, the bind of `agenda`, and the pages of
+// the shared code.
+//
+// The cases also cover a missing import (`lonely`), a cycle (`agenda` in
+// place of `calendar`), a type that differs (`number` against `fibonacci`),
+// the unload of a module with its imports, and one copy of the code of
+// `calendar` for two loads.
+//
+// **The replacements of the machine** apply to its own import of
+// `calendar`: after `replace("calendar", "calendar_fixed")` in the console,
+// a new start of `imports` finds 29 days in February 2000 in its last row,
+// and says that the root service gave `calendar_fixed`.
+//
+// **Its grants**: **Image**, to load the modules of the boot image, and
+// **Inspect**, to read its module records and to measure with the cycle
+// counter.
 package imports
 
 import "base:intrinsics"
@@ -189,6 +220,10 @@ module_report: op.Module_Report
 // The random generator of this program (support/random).
 program_generator: random.Generator
 
+// entry runs each load case once with the loader of the system, calls
+// `agenda` and `calendar` through their import slots, measures the calls
+// and the bind, writes the lines on the log, then keeps the window open
+// until the program is stopped. With no window, it stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random generator of this program, from the seed that its starter

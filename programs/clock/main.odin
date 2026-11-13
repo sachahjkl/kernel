@@ -10,6 +10,25 @@
 // time, that the milliseconds of the page follow the cycle counter (the
 // kernel writes them from it at each tick: a late tick loses no time), and
 // that the kernel refuses to remove the time page.
+//
+// **What it is for.** It shows that the kernel is off the path of a read
+// of the time: the [time page](term:time-page) gives the time with one
+// load from memory, and one million reads make 0 kernel entries. The read
+// with a kernel entry is measured too, for comparison.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("clock")` in the console. The window shows the two measures: the
+// reads in one second and the kernel entries for one million reads. The
+// log gets one line for each way (`clock: the time page: <rate> reads in
+// one second, 0 kernel entries for one million reads`), the comparison with
+// the cycle counter, then `clock: ok, the time never went back, ...`, or
+// `clock: wrong: ...`.
+//
+// **Its grant**: **Inspect**: the machine handle reads the kernel entries
+// of this program (its program report), which the measure counts.
+//
+// **What it does not prove.** The rates are measures of the host of the
+// run: no test compares them to a bound.
 package clock
 
 import "support:display"
@@ -171,6 +190,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.window_frame_end(&drawing, &frame, window)
 }
 
+// entry finds its own slot with the machine handle, runs the two measures
+// of one second each (`run`), compares the two ways and the cycle counter,
+// tries to remove the time page, and writes the summary line. It then
+// draws the window at each event, and measures the time of a draw. It
+// never returns; with no window, it stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "clock")

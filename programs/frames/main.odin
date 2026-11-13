@@ -8,6 +8,29 @@
 //
 // The program needs the grant to inspect the machine (it reads the page
 // table of its own half), and the boot image (it starts the program `twin`).
+//
+// **What it is for.** It shows two uses of paging that the system relies
+// on. A [page on first use](term:page-on-first-use) costs its frame only
+// when a program touches it, and the budget pays at creation, so no access
+// fails for lack of memory. [Shared code](term:shared-code) lets several
+// programs that run one module map one memory object for its code, read
+// only: the code is in memory once, and a program that writes to it faults
+// alone.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("frames")` in the console. The window has one row for each case,
+// with the answer of the kernel, then the measures. Its lines in the log:
+// the time to create and map 8192 pages with each frame now and with
+// pages on first use; the time of the first use of a page; the time to
+// start a `twin` with its own copy of the module and with the shared code;
+// and the pages that 4 twins cost each way (`frames: 4 twins: ...`).
+//
+// **Its grants**: **Inspect**, to read the page table of its own half, and
+// **Image**, to start the program `twin` from the boot image. Its budget
+// holds 12288 pages: 8192 pages at a time, and 5 twins.
+//
+// **What it does not prove.** The times are measures of the host of the
+// run; no case checks a speed.
 package frames
 
 import "base:intrinsics"
@@ -261,6 +284,10 @@ shared_code_cases :: proc "contextless" () {
 // The random generator of this program (support/random).
 program_generator: random.Generator
 
+// entry runs each case and each measure once, writes the lines of the
+// measures, then keeps the window open until the program is stopped. With
+// no random seed (it gives the seed of each twin) or no window, it stops
+// with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random generator of this program, from the seed that its starter

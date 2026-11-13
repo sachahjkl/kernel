@@ -7,6 +7,29 @@
 // byte of output, measures the speed of
 // each primitive and the cost of one call of an export, and shows the hash
 // of the module in the boot image: the hash names the code that ran.
+//
+// **What it is for.** A reader trusts a primitive of cryptography only when
+// it gives the published answers. This program checks the
+// [cryptography module](term:cryptography-module) that the system ships,
+// through the same exports that the QUIC of the remote service calls, and
+// names it by its hash, so the check is of that exact code.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("cryptography_vectors")` in the console. The window has one row
+// for each primitive and its standard, passed or failed, then the speeds.
+// The log gets one line for each primitive (`cryptography_vectors: <name>
+// (<standard>): passed; a bad input is refused`), one line for each speed,
+// the cost of one call of an export, and the summary with the BLAKE3 hash
+// of the module.
+//
+// **Its grant**: **Image**: it reads the hash of the module
+// `cryptography` in the boot image. The module itself comes through its
+// imports, as for any program.
+//
+// **What it does not prove.** Vectors show that the code gives the right
+// answers on those inputs. They do not show that it runs in constant time,
+// or that it has no fault on other inputs. The speeds are measures of the
+// host of the run.
 package cryptography_vectors
 
 import "contract:blake3"
@@ -357,6 +380,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.window_frame_end(&drawing, &frame, window)
 }
 
+// entry runs the vectors of each primitive, the refused inputs, the
+// measures of speed and of one call, reads the hash of the module, writes
+// the lines on the log, then keeps the window open until the program is
+// stopped. With no window, it stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "cryptography_vectors")

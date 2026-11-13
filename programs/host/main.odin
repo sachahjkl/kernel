@@ -7,6 +7,29 @@
 // can reach nothing else: a program holds only the handles that it was
 // given. A fault in the module stops this
 // program only.
+//
+// **What it is for.** It makes an [isolated call](term:isolated-call)
+// possible: the same export, with the same
+// [record description](term:record-description), runs in another program
+// with nothing of the caller. A module that the caller does not trust
+// cannot read its memory, use its handles, or stop it: a fault, or a call
+// that never returns, ends the call host, and the caller goes on.
+//
+// **Who starts it.** Not the input: a program that wants an isolated call.
+// The console starts one for `isolate("name")`, in one of its
+// [sandboxes](term:sandbox); the program `tables` starts one of the module
+// `sample`. The starter maps, read-only, the file of the module, the files
+// of its imports, and the replacements that apply, and gives the
+// [call ring](term:call-ring) and the [call region](term:call-region).
+//
+// **What a reader sees.** No window. The log gets `host: ready, <count>
+// exports` when the module is loaded, or `host: cannot load the module:
+// <the load error>`.
+//
+// **Its grants**: none of the root service. Its two handles come from its
+// starter.
+//
+// The design: docs/MODULE_CONTRACT.md, "The isolated call, as implemented".
 package host
 
 import op "contract:operation"
@@ -19,6 +42,24 @@ file: []u8
 region: []u8
 space: system.Module_Space // The module and its imports, in this program.
 
+// entry loads the module of its starter, tells the starter the result of
+// the load, then runs each call of the call ring, until the starter stops
+// it.
+//
+// **The load.** The loader checks the hash of each file, applies the
+// replacements, and maps the segments in this program. A failure writes
+// the [load error](term:load-error) in the call region, sends the
+// completion `Load_Failed`, and stops with the code 1. A success sends the
+// completion `Ok`.
+//
+// **The loop.** It takes up to one ring of commands at a time; each one is
+// a call of an export with its argument records in the call region
+// (`system.export_serve`), and gets one completion. It then waits for the
+// next command.
+//
+// **The stop**: with no call ring or no call region, it writes `host: no
+// call ring or no call region` and stops with the code 1. A fault of the
+// module stops it with the stop report of the fault.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ring_memory := ctx.handles[isolated.GRANT_RING]

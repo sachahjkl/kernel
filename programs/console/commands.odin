@@ -27,7 +27,7 @@ Command :: struct {
 	file:            []u8, // The module of the description.
 	record:          u32, // Not 0: the command makes a record with this description of file, from its fields.
 	// Not 0: the number, from 1, of the parameter of the export that is its
-	// table of error details. The console gives the table; the person does
+	// table of error details. The console gives the table; the input does
 	// not write it, so parameter_count does not count it.
 	details_parameter: int,
 }
@@ -802,7 +802,7 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 		}
 	}
 	// The table of error details: the last parameter, after those of the
-	// person. The export appends to it only when it fails.
+	// input. The export appends to it only when it fails.
 	parameter_total := len(arguments)
 	details: [ERROR_DETAILS_CAPACITY]errors.Error_Record
 	details_place: module.Table_Place
@@ -1184,7 +1184,7 @@ stop_reason :: proc "contextless" (code: u32) -> string {
 // go in the call region as one argument record; one command record of the
 // call ring names it; the completion record has the result.
 // A module that faults stops alone: the console reports an error and
-// continues. A call has no time limit: the person stops it with Escape,
+// continues. A call has no time limit: the input stops it with Escape,
 // and the console then stops the call host. The next call starts a new
 // call host.
 call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Value {
@@ -1213,7 +1213,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 		}
 	}
 	// The table of error details: the last parameter, after those of the
-	// person. Its places are reserved in the call region; the details come
+	// input. Its places are reserved in the call region; the details come
 	// back when the export fails.
 	parameter_total := len(arguments)
 	details: [ERROR_DETAILS_CAPACITY]errors.Error_Record

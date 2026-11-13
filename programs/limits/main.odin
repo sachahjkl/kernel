@@ -9,6 +9,29 @@
 // of the program has a limit too, and what the three budgets use counts in
 // it. Then the program writes 100 records on the log at once: its budget
 // has 40 records for each second.
+//
+// **What it is for.** It shows that a [limit](term:limit) of a budget holds
+// against a program that tries to take more: a thread that never waits
+// gets no more than the processor time of its budget in each
+// [period](term:period), and a burst of log records past the limit is
+// refused with `No_Budget`, so no program fills the log of the others.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("limits")` in the console. The window has one bar for each of the
+// four budgets: the processor time that it used in the last second,
+// against its limit. The log gets a line of the times used, then
+// `limits: ok, 4 budgets within their processor time, <count> log records
+// written and <count> refused with <limit> for each second`, or
+// `limits: wrong: ...`. The burst writes its records on the channel
+// `burst`, at the level debug.
+//
+// **Its grants**: none. Its budget from the root service holds 2048 pages,
+// 1 program and 5 threads, with a limit of processor time and of log
+// records.
+//
+// **What it does not prove.** The bars are measures: a loaded host gives a
+// thread less time than its limit, and the check reads only that no budget
+// used more than its limit.
 package limits
 
 import "base:intrinsics"
@@ -69,6 +92,12 @@ within :: proc "contextless" (row: Row) -> bool {
 	return row.used <= row.limit + row.limit / 5 + 3000
 }
 
+// entry writes the burst of 100 log records first and counts the accepted
+// and the refused ones; it then makes the three budgets with a limit of
+// processor time, starts one thread that computes with no end on each, and
+// one on its own budget. Each second it reads the processor time of each
+// budget, draws the bars, and writes the summary on the log once. It never
+// returns; with no window, it stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "limits")

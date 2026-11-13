@@ -1,4 +1,61 @@
 // The kernel: the handle table, memory, the scheduler, the rings and the waits, the device grants and the interrupts (docs/ARCHITECTURE.md, "Kernel systems").
+//
+// The kernel is the one module that runs in kernel mode. It keeps the
+// tables that no program can be trusted to keep: which program holds which
+// [handle](term:handle) with which rights, which page frame belongs to which
+// [memory object](term:memory-object), which thread runs on which processor.
+// Every other part of the system is a program: the device services, the
+// storage, the network, the compositor, the console. The kernel has no
+// driver, no file system, no network protocol, no loader of modules and no
+// name of a user (docs/ARCHITECTURE.md, "What the kernel does not contain").
+//
+// **What it is for.** A program asks the kernel for a thing with a
+// [kernel operation](term:kernel-operation): a record in its kernel ring,
+// or a direct entry. The kernel checks the kind and the rights of each
+// handle in the record, does the operation, and writes a status. The
+// operations, their arguments and their statuses are in
+// `contract/operation/operation.odin`; the page of each operation on the
+// site comes from there.
+//
+// **The five systems.**
+//
+// - The handle table: one table of handles for each program; the check of
+//   the kind and the rights of a handle (`kernel/program.odin`).
+// - Memory: the page frames, the page tables, the memory objects, the
+//   [budgets](term:budget) that pay for each page (`kernel/memory.odin`,
+//   `kernel/virtual_memory.odin`, `kernel/paging.odin`).
+// - The scheduler: one [run queue](term:run-queue) for each processor, and
+//   the [strategy](term:strategy) of the machine (`kernel/schedule.odin`,
+//   `kernel/strategy.odin`; docs/SCHEDULING.md).
+// - The rings and the waits: the kernel ring of each program, the
+//   [word wait](term:word-wait), the wait on rings (`kernel/wait.odin`).
+// - The device grants and the interrupts: device memory and message
+//   interrupts for a device service (`kernel/apic.odin`).
+//
+// Around them: the [log records](term:log-record) and the serial port
+// (`kernel/serial.odin`), the [fault ring](term:fault-ring)
+// (`kernel/fault_ring.odin`), the [kernel events](term:kernel-event)
+// (`kernel/events.odin`), the [extended state](term:extended-state) of the
+// processor (`kernel/extended_state.odin`) and the
+// [stop report](term:stop-report) (`kernel/diagnose.odin`).
+//
+// **How it starts.** The [boot program](term:boot-program) loads the kernel
+// and the [boot image](term:boot-image), builds the first page tables and
+// jumps to the export `entry` with the [boot record](term:boot-record). The
+// kernel then builds the [root service](term:root-service), the first
+// program, and gives it every handle that exists at boot. From that point
+// the kernel only answers: every other program is built by a program, with
+// kernel operations (docs/ARCHITECTURE.md, "Boot").
+//
+// **What a reader sees.** The kernel writes its lines to the serial port and
+// to the log, from its first steps on: `kernel: <count> processors`,
+// `kernel: free memory <size>`, the size and the address of the
+// framebuffer, `kernel: ok`, then one line for each [stage](term:stage) of
+// the start with its time, on the channel `boot`. The console line
+// `programs()` lists the programs that the kernel runs.
+//
+// The locks of the kernel and their order are in docs/ARCHITECTURE.md,
+// "Locks of the kernel".
 package kernel
 
 import info "contract:boot_info"
@@ -9,6 +66,41 @@ import "base:intrinsics"
 KERNEL_MARK :: "kernel: ok"
 ROOT_NAME :: "root"
 
+// entry starts the kernel: the boot program jumps here once, on the first
+// processor, with the boot record, and the kernel never returns to it.
+//
+// **Parameter**: `boot`, the [boot record](term:boot-record) that the boot
+// program wrote: the memory map, the framebuffer, the boot image, the debug
+// image, the cycle counts of the firmware and of the load, and the
+// [self test](term:self-test) to run. The kernel copies it into
+// `boot_record`, because the memory of the boot program is not kept.
+//
+// **What it does**, in order:
+//
+// 1. It starts the serial port, then checks the magic number of the boot
+//    record. A wrong number writes `kernel: the boot record is not valid`
+//    and stops the machine with the code 1.
+// 2. It takes the free page frames and builds the page table of the kernel
+//    (`memory_start`).
+// 3. It starts this processor (`processor_start`), chooses the strategy of
+//    each run queue (`strategy_start`), then starts the other processors
+//    (`processors_start`).
+// 4. It writes the count of processors, the free memory, the framebuffer
+//    and the mark `kernel: ok` on the log.
+// 5. It builds the [root service](term:root-service) from the module
+//    `root` of the boot image, and gives it every handle that exists at
+//    boot (`root_start`). If that fails, the log names the reason and the
+//    machine stops with the code 1.
+// 6. It checks the rules of the kernel half of the page tables
+//    (`paging_audit`), and writes one log record for each
+//    [stage](term:stage) of the start, with its time in microseconds.
+// 7. It moves to the kernel stack of this processor, which has guard
+//    pages, runs the self test that the boot record names (none in a normal
+//    start), and enters the scheduler. The first thread to run is the
+//    first thread of the root service.
+//
+// The entry has no result and no stop code: the machine stops only with
+// the operation `Machine_Stop` or a stop of the kernel itself.
 @(export, link_name = "entry")
 entry :: proc "c" (boot: ^info.Boot_Info) -> ! {
 	stage_end(.Boot_Program_Tables)

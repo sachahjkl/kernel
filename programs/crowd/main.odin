@@ -12,6 +12,26 @@
 // that the counts of each writer increase. At the end, the records that
 // the readers took are the records that the writers wrote: no record is
 // lost, and no record arrives two times.
+//
+// **What it is for.** It shows the [shared queue](term:shared-queue) and
+// the [event](term:event): several writers and several readers on one
+// queue with no lock and no kernel entry for a record, and one wake that
+// starts many threads at once. The queue with one lock gives the measure
+// to compare.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("crowd")` in the console. The window has one row for each
+// measure: the writers, the readers, the records in one second. The log
+// gets one line for each measure (`crowd: shared queue, 2 writers, 2
+// readers: ...`), then `crowd: ok, <count> measures, each record written
+// is read one time, each event started all the threads`, or
+// `crowd: wrong: ...`.
+//
+// **Its grant**: **Inspect**: the machine handle reads the kernel entries
+// of this program, which the measure counts.
+//
+// **What it does not prove.** The rates are measures of the host of the
+// run. The check is of order and of count, not of speed.
 package crowd
 
 import "support:display"
@@ -310,6 +330,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.window_frame_end(&drawing, &frame, window)
 }
 
+// entry finds its own slot with the machine handle, runs each measure
+// (`run`), and writes the summary line: it is wrong when a record is lost,
+// read two times, or out of the order of its writer. The program then keeps
+// its window open until it is stopped; with no window, it stops with the
+// code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "crowd")

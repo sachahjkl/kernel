@@ -15,6 +15,37 @@
 // not on the path of the data, so data moves with no kernel entry. This
 // service does not read a
 // frame: the client builds and checks each one.
+//
+// **What it is for.** It shows that a network driver is a program, with no
+// right beyond its one device, and that the frames move with no copy by
+// the kernel: the client holds a [frame region](term:frame-region), lends
+// it once with `Attach`, and the device reads and writes it directly.
+//
+// **Who uses it.** The root service starts it for the program with the
+// grant **Network_Device**: the [network service](term:network-service),
+// which builds and checks each frame. It gives the
+// [frame ring](term:frame-ring) to that one client.
+//
+// **The commands of the frame ring** (`contract/frame`):
+//
+// - `Attach`: take the frame region of the client.
+// - `Info`: the [hardware address](term:hardware-address), whether the
+//   link is up, the most bytes of a frame, and the most `Receive` and
+//   `Send` in flight.
+// - `Send`: send the frame at a place of the frame region.
+// - `Receive`: give a place of the frame region for the next frame that
+//   arrives; the completion comes with the frame.
+// - `Statistics`: the frames and bytes sent and received, the kernel
+//   entries and the interrupts of the service, for a measure.
+//
+// **What a reader sees.** No window: the line `frame: ok, the hardware
+// address <address>, the link is up, queues of ...` on the log. A failure
+// at the start writes a line at the level error on the channel `frame` and
+// stops the service.
+//
+// **What it does not prove.** It drives virtio under QEMU only, with no
+// IOMMU, and sends no offload. The design of the network is in
+// docs/NETWORK.md.
 package frame_service
 
 import "contract:errors"
@@ -272,6 +303,15 @@ harvest :: proc "contextless" () -> (count: int) {
 	return count
 }
 
+// entry starts the device and then serves the frame ring, until the
+// machine stops. It finds the virtio registers in the configuration that
+// the root service copied, agrees on the features, gives the device its
+// receive queue and its send queue, and writes `frame: ok, ...`. Its loop
+// completes the frames that the device sent or received, gives the device
+// each new command of the client, and waits for the interrupt of the
+// device or a new command. With no ring, no configuration, or a device
+// that refuses its setup, it writes the reason at the level error and
+// stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[pci.GRANT_MACHINE]

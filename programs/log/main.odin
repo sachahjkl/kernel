@@ -14,6 +14,50 @@
 // The program needs the grant to read the records of the log. It is also a
 // service: records() and value_runs() give the records and their value runs
 // as tables (exports.odin).
+//
+// **What it is for.** The log is the one record of what the machine did:
+// the kernel and every program write to it, and the serial port prints the
+// same texts. This program shows the log as [log records](term:log-record)
+// with typed fields, not as lines of text: a reader sees at once which
+// program wrote a record, at which [level](term:level), on which
+// [channel](term:channel), and which parts of the text are values (a
+// number, a size, a time, a module, a version, a status: the
+// [value runs](term:value-run)). It shows that a log is data, not text to
+// parse again.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("log")` in the console. The window has:
+//
+// - a top line: the count of records read, the count lost, and the count of
+//   each level;
+// - the channels, each with its count of records (at most 12; the others
+//   count together);
+// - the last 30 records: the time in seconds, the program, the channel and
+//   the text, with the legend of the value kinds over the column of the
+//   text.
+//
+// At its start it writes two records: `log: the kernel wrote <count>
+// records in the channel boot` and `log: ok, <count> records, <count> lost,
+// <count> channels`.
+//
+// **Lost records.** The kernel keeps the last 2047 records in a ring of
+// memory, and writes over the oldest one when the ring is full. A reader
+// that is slower than the writers loses records. This program counts them,
+// in red when the count is not 0.
+//
+// **Its grants**: **Log_Records**, the memory of the log records with the
+// right Read, and **Serve**, its exports. The program writes no record in
+// the name of another program: the kernel sets the program, the thread and
+// the time of each record.
+//
+// **Its exports** (`exports.odin`): `records` and `value_runs`, to a caller
+// that [acts for the principal](term:acts-for-the-principal).
+//
+// ```
+// connect("log")
+// log.records(0)
+// where(log.records(0), "level", "error")
+// ```
 package log
 
 import "contract:value_kinds"
@@ -112,6 +156,9 @@ record_text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, reco
 	graphics.text(canvas, left, y, string(record.text[at:end]), plain)
 }
 
+// take keeps one new record: it is the newest of the last 30 rows, and it
+// counts for its level and for its channel. A channel that finds no free
+// place of the 12 counts in `other_channels`.
 take :: proc "contextless" (record: ^system.Log_Record) {
 	rows[row_count % ROWS] = record^
 	row_count += 1
@@ -133,6 +180,9 @@ take :: proc "contextless" (record: ^system.Log_Record) {
 	channel_count += 1
 }
 
+// draw draws the whole window: the counts, the channels, the legend of the
+// value kinds, and the last records. A text drops the start that repeats
+// its program and its channel (`repeated_start`).
 draw :: proc "contextless" (canvas: graphics.Canvas) {
 	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 	graphics.fill(canvas, MARGIN, MARGIN - 4, WIDTH - 2 * MARGIN, 2, COLOR_ACCENT)
@@ -201,6 +251,27 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	}
 }
 
+// entry opens the window of the log and runs its loop: it shows each new
+// log record until the program is stopped.
+//
+// **What it sets up**: a window, the reader of the log records (the memory
+// of the records that the grant **Log_Records** gives, mapped read-only),
+// and the service ring of its exports, which read the same memory.
+//
+// **The loop.** One wait covers the window, the counter of the log and the
+// service ring. After each wake it takes every new record (`take`): the
+// counts of each level and of each channel, and the last 30 records. It
+// adds the records that the kernel wrote over before the read to the lost
+// count. It draws the window again only when a record came. At the first
+// turn it writes two records of its own on the channel `log`: the count of
+// the records of the kernel on the channel `boot`, then
+// `log: ok, <count> records, <count> lost, <count> channels`. Then it runs
+// the calls of its exports.
+//
+// **The stop**: with no window, it stops with the code 1. With no grant of
+// the log records, it writes `log: cannot read the records of the log:
+// status <status>` at the level error, and stops with the code 1. Else it
+// never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "log")

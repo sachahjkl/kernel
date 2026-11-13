@@ -3,6 +3,32 @@
 //
 // This program is also a service: another program reads and changes the
 // cells with isolated calls, while the game runs.
+//
+// **What it is for.** It shows a program that is at once a window and a
+// [service](term:service): its exports change the state that its window
+// draws, while the window runs. A caller reaches them through a connection
+// that the root service grants; it sees
+// the cells only through the exports, never the memory of the program.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("life")` in the console. A board of 96 by 64 cells, filled at
+// random, takes one step each 80 ms. The input draws cells with the left
+// button; Space pauses; `r` fills the board at random; `c` clears it. The
+// log gets `life: ok` after the first frame.
+//
+// **Its grant**: **Serve**, its exports. It needs no other.
+//
+// **Its exports**: `population`, `empty` and `glider`.
+//
+// ```
+// connect("life")
+// life.empty()
+// life.glider(10, 10)
+// life.population()
+// ```
+//
+// The board wraps at its edges: a cell at the right edge has neighbours at
+// the left edge.
 package life
 
 import "support:display"
@@ -36,6 +62,9 @@ fill_random :: proc "contextless" () {
 }
 
 // population gives the count of live cells.
+//
+// It counts the cells of the board that the window shows now. The result is
+// from 0 to 6144 (96 by 64). It has no parameter and no error.
 @(export, link_name = "population")
 population :: proc "c" () -> i64 {
 	count: i64
@@ -48,6 +77,9 @@ population :: proc "c" () -> i64 {
 }
 
 // empty removes all the cells.
+//
+// The window shows the empty board at its next frame. The game goes on: an
+// empty board stays empty until a cell is added.
 @(export, link_name = "empty")
 empty :: proc "c" () {
 	cells[shown] = {}
@@ -55,6 +87,13 @@ empty :: proc "c" () {
 }
 
 // glider adds a glider: five cells that move down and right.
+//
+// **Parameters**: `column` and `row`, the top left corner of the 3 by 3
+// box of the glider, from 0. A value past the board wraps: `column` modulo
+// 96, `row` modulo 64. A negative value does not wrap to the other edge in
+// the same way: it is read as a large unsigned number first.
+//
+// It adds cells and removes none. It has no error.
 @(export, link_name = "glider")
 glider :: proc "c" (column, row: i64) {
 	shape := [5][2]i64{{1, 0}, {2, 1}, {0, 2}, {1, 2}, {2, 2}}
@@ -93,6 +132,14 @@ board_draw :: proc "contextless" () {
 	board_drawn_generation = board_generation
 }
 
+// entry opens the window, fills the board at random, and runs the game
+// until the program is stopped.
+//
+// **The loop**: it runs the calls of its exports, takes the keys and the
+// pointer of the window, takes one step when the time of the next step
+// came and the game is not paused, and draws the board when a cell
+// changed. It then waits for an event, a call, or the next step (with no
+// end while paused). With no window, it stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
@@ -153,6 +200,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 }
 
+// step computes the next generation into the other board, then shows it:
+// a cell lives with 3 live neighbours, or with 2 when it was alive.
 step :: proc "contextless" () {
 	from := &cells[shown]
 	to := &cells[1 - shown]

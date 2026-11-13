@@ -17,6 +17,28 @@
 //
 // Then the main thread measures one empty kernel entry with each level of
 // registers in use.
+//
+// **What it is for.** The kernel keeps the [extended state](term:extended-state)
+// of each thread (the vector registers, the x87 and MXCSR) and saves it
+// only at a [switch of threads](term:switch-of-threads). A fault there
+// leaks the registers of one program into another, or changes the result
+// of a computation in silence. This program puts that work under load,
+// with a pattern in each register, and checks every bit.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("extended_state")` in the console. The window shows the level of
+// registers that the threads use, the threads, the passes and the checks.
+// The log gets `extended_state: ok, <count> threads on <count> processors,
+// <count> passes, <count> kernel entries ...`, or `extended_state: failed:
+// <count> wrong registers after a pass, <count> parts of a start state
+// wrong`, then the cost of one empty kernel entry with each level.
+//
+// **Its grants**: none. Its budget holds 32 threads: the main thread and
+// up to 31 threads that hold their registers.
+//
+// **What it does not prove.** The widest level that it uses is the level
+// of the processor of the run: under QEMU with no AVX-512, the zmm and k
+// registers are not checked. The rules are in docs/SIMD.md.
 package extended_state
 
 import "base:intrinsics"
@@ -700,6 +722,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.window_frame_end(&drawing, &frame, window)
 }
 
+// entry starts the threads that fill and check the registers
+// (`registers.asm` holds the code that touches each register), waits for
+// their passes, writes the summary line, measures the empty kernel entry
+// with each level of registers in use, then keeps the window open until the
+// program is stopped.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "extended_state")

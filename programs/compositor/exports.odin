@@ -70,6 +70,34 @@ acts_for_principal :: proc "contextless" () -> bool {
 }
 
 // pointer gives the place of the pointer on the screen, its buttons, the menu of the bar that is open, whether the launcher is open, and the name of the pointer shape, as one row. The result is 1, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+//
+// **What it is for.** A caller that drives the desktop from outside, as
+// the machine test does through the remote service, reads where the
+// pointer is and what is open before it moves the pointer or presses a
+// button. The row is the state after the input records that the compositor
+// took before the call.
+//
+// **The row** (`Pointer`):
+//
+// - `x`, `y`: the place of the pointer, in pixels from the top left corner.
+//   It is the point where a press acts: the hot spot of the picture.
+// - `buttons`: bit 0 the left button, bit 1 the right one, bit 2 the
+//   middle one.
+// - `moves`, `keys`: the pointer records and the key records that the
+//   input service sent since the start.
+// - `menu`: `programs`, `windows`, or empty.
+// - `launcher`: 1 while the launcher is open and takes the keys.
+// - `shape`: the name of the pointer shape on the screen (`arrow`, `move`,
+//   `text`...; docs/POINTERS.md).
+//
+// **Grant**: the caller must **act for the principal**. A caller without
+// it gets the error kind `No_Grant`, with the result -1: the place of the
+// pointer tells where the input goes.
+//
+// ```
+// connect("compositor")
+// compositor.pointer()
+// ```
 @(export, link_name = "pointer")
 pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
@@ -89,6 +117,33 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 }
 
 // windows gives one row for each window, the front one first: its title, its place and its size with the frame, its order from the front, whether it has the focus, and whether the keys go to it. The result is the count of rows, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+//
+// **What it is for.** A caller finds a window by its title, then presses
+// its title bar or its close button at a place that it computes from the
+// row. The machine test does so before each drag.
+//
+// **A row** (`Window`):
+//
+// - `title`: the name of the program of the window.
+// - `x`, `y`, `width`, `height`: the window with its frame and its title
+//   bar, in pixels of the screen. The title bar is the top 24 pixels; the
+//   close button is the square of 24 pixels at its right end.
+// - `order`: 0 for the window in front, 1 for the one under it, and so on.
+// - `focus`: 1 for the window in front.
+// - `keyboard`: 1 when the keys go to the window: the window in front,
+//   while the launcher is closed.
+//
+// Only a program that created its surface has a window. If the table of
+// the caller has fewer places than windows, the rows of the windows at the
+// back are missing, and the result still gives the count of all windows.
+//
+// **Grant**: the caller must **act for the principal**; else the error
+// kind `No_Grant`, with the result -1.
+//
+// ```
+// connect("compositor")
+// where(compositor.windows(), "focus", 1)
+// ```
 @(export, link_name = "windows")
 windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {

@@ -73,6 +73,37 @@ first_kept :: proc "contextless" (after: i64, written: u64) -> (next, lost: u64)
 }
 
 // records gives the log records from the number `after` on, one row each: the number, the time in microseconds, the program and its slot, the level, the channel, the count of its value runs, and the text. A row says when its text goes on in the next row. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows from `after` to the last record, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+//
+// **What it is for.** A reader of the log checks the program, the channel
+// and the level of a record as fields, not by a search in a line of text.
+// The machine test reads the log this way, through the remote service.
+//
+// **Parameter**: `after`, the number of the first record to give, from 0.
+// A negative number is 0. A number past the last record gives no row.
+//
+// **A row** (`Record`): `number`; `time`, microseconds since the start of
+// the machine; `program`, its name or `kernel`; `slot`, 0 for the kernel;
+// `level`, `info`, `debug`, `warning` or `error`; `channel`, empty when the
+// program gave none; `lost`, in the first row only; `continues`, 1 when the
+// text goes on in the next row; `runs`, the count of its value runs; `text`,
+// at most 152 bytes.
+//
+// **The result** counts the rows from `after` to the last record, also the
+// ones that do not fit in the table of the caller: a caller that gets a
+// result larger than its table calls again with `after` set past its last
+// row. The kernel keeps the last 2047 records only: `lost` in the first row
+// counts the records after `after` that the kernel wrote over before the
+// read, and the rows start after them.
+//
+// **Grant**: the caller must **act for the principal**: the records are
+// facts of all the programs. A caller without it gets the error kind
+// `No_Grant`, with the result -1.
+//
+// ```
+// connect("log")
+// log.records(0)
+// where(log.records(0), "program", "console")
+// ```
 @(export, link_name = "records")
 records :: proc "c" (after: i64, result: ^[]Record, error: ^errors.Error_Record) -> i64 {
 	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
@@ -113,6 +144,29 @@ records :: proc "c" (after: i64, result: ^[]Record, error: ^errors.Error_Record)
 }
 
 // value_runs gives the value runs of the log records from the number `after` on: for each one, the number of its record, its start and its length in bytes of the text of the record, and the name of its kind (number, size, time, module, version, status...). The rows of one record are in the order of its text. The result is the count of the runs from `after` to the last record, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+//
+// **What it is for.** A value run says that a part of the text of a record
+// is a value of a known kind. A reader joins these rows to the rows of
+// `records` by `number`, and finds each value without a parse of the text:
+// the window of the log draws each run in the color of its kind.
+//
+// **Parameter**: `after`, the number of the first record, as for
+// `records`. The records that the kernel wrote over are skipped.
+//
+// **A row** (`Value_Run`): `number`, the record; `start` and `length`, in
+// bytes of its text; `kind`, the name of the value kind. A run that does
+// not fit in the text of its record gives no row.
+//
+// **The result** counts all the runs from `after` on, also the ones that do
+// not fit in the table of the caller.
+//
+// **Grant**: the caller must **act for the principal**; else the error
+// kind `No_Grant`, with the result -1.
+//
+// ```
+// connect("log")
+// join(log.records(0), log.value_runs(0), "number")
+// ```
 @(export, link_name = "value_runs")
 value_runs :: proc "c" (after: i64, result: ^[]Value_Run, error: ^errors.Error_Record) -> i64 {
 	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {

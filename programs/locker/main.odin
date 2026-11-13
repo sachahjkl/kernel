@@ -2,6 +2,30 @@
 // kernel from several programs at one time (package support:lockers). It
 // works only on its own objects: another program never waits for it, unless
 // the kernel makes it wait.
+//
+//
+// **What it is for.** The program `locks` needs load on the kernel from
+// several programs whose kernel entries touch no common object: then a
+// locker waits for another one only when a lock of the kernel makes it
+// wait, and the waits that `locks` counts are the cost of the
+// [locks of the kernel](term:lock-of-the-kernel). This program is that
+// load.
+//
+// **What a reader sees.** Nothing of its own: no window, no menu line. It
+// runs while `locks` measures, and `locks` writes its counts.
+//
+// **How it works.** `locks` starts it from the boot image with a
+// [locker](term:locker) slot of a shared board (`lockers.Board`). The
+// locker waits on the word `command` of its slot, then runs the mode that
+// the slot names until the next command: `Entries` (one cheap kernel
+// operation on its own object, as often as it can), `Faults` (pages on
+// first use: create, map, write one byte in each page, unmap, close), or
+// `Large` (create and close a memory object of 600 pages). It counts its
+// operations and its kernel entries in its slot. In the stress case
+// (`lockers.ROLE_CHURN`) it starts and stops programs with a peer instead.
+//
+// **Its grants**: none of the root service. The board and its role come
+// from `locks`.
 package locker
 
 import "base:intrinsics"
@@ -86,6 +110,11 @@ churn :: proc "contextless" (stop_after: u64, peer: system.Handle) -> ! {
 	}
 }
 
+// entry runs the role that `locks` wrote in the context: the stress case
+// (`churn`), or a locker slot of the board. A locker prepares the page
+// tables of its range, tells `locks` that it is ready, then waits for each
+// command and runs its mode until the next one. With no board or a slot
+// number past the board, it stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if ctx.values[lockers.VALUE_ROLE] == lockers.ROLE_CHURN {

@@ -3,6 +3,30 @@
 // A driver of a clock is a program, not a part of the kernel: the root service gives this program the two ports and the page with the right Write, and nothing else.
 //
 // The clock gives whole seconds. The service waits for the clock to change its second, so the date of the time 0 is exact to about one millisecond. The clock of the machine keeps UTC (QEMU: -rtc base=utc). Leap seconds are not counted. The year has two digits: the dates are from 2020 to 2099 (support/calendar, clock_seconds).
+//
+// **What it is for.** It gives the system a [date](term:date) with no
+// kernel entry for a read: the service writes once, in the
+// [date page](term:date-page), the date of the time 0 of the system; a
+// program adds the time of the [time page](term:time-page) to it. The bar
+// of the compositor shows the date and the time this way.
+//
+// **What a reader sees.** No window. The root service starts it at each
+// boot, before the console. The log gets `date: ok, <date> UTC, seconds
+// since 1970 <count>, from the real-time clock at the time <time> ms of the
+// system; ...`, then, after a new read of the clock, a line with the
+// correction (`date: the clock read again ... the date moved by <count>
+// ms`): after the first read, after each 30th read, and after a move of one
+// second or more. With no valid clock, the log says `the system has no
+// date` at the level error, and the bar shows the time since boot.
+//
+// **Its grants**: **Clock**, the date page with the right Write and the two
+// ports of the clock (the one writer of the date), and **Serve**, its
+// export `now`.
+//
+// ```
+// connect("date")
+// date.now()
+// ```
 package date_service
 
 import "contract:date"
@@ -87,6 +111,23 @@ Date :: struct {
 page: ^date.Page
 
 // now gives the date and the time of day in UTC, from the date page and the time page: the same value that each program reads with no call. All zero: the machine has no date.
+//
+// **What it is for.** A caller with no date page (the console, the host
+// through the remote service) reads the date as one record, with its
+// fields already split.
+//
+// **The record** (`Date`): `milliseconds` since 1970-01-01 00:00:00 UTC;
+// `year`, `month` (1 to 12), `day`, `hour`, `minute`, `second`; `weekday`,
+// 1 for Monday to 7 for Sunday (ISO 8601). Leap seconds are not counted.
+//
+// **Errors**: none. A record of zeros means that the date page has no date
+// yet: the clock was not read, or gave no valid date. The export needs no
+// grant beyond a connection to the service.
+//
+// ```
+// connect("date")
+// date.now().year
+// ```
 @(export, link_name = "now")
 now :: proc "c" (result: ^Date) {
 	milliseconds, known := date.milliseconds_now(page, system.time())
@@ -119,6 +160,20 @@ synchronize :: proc "contextless" () -> (at_zero: i64, seconds: i64, edge_millis
 	return seconds * 1000 - i64(edge / 1_000_000), seconds, edge / 1_000_000, true
 }
 
+// entry maps the date page, reads the clock and writes the first date,
+// then reads the clock again each 10 seconds and serves `now`, until the
+// machine stops.
+//
+// **The first read** waits for the clock to change its second
+// (`synchronize`), so the date of the time 0 is exact to about one
+// millisecond. **Each next read** corrects the page: the time of the
+// system comes from the cycle counter, with a frequency that the kernel
+// measured at boot, and it drifts from the clock.
+//
+// **The stop**: with no date page or no ports, it writes `date: no date
+// page or no ports of the clock: the system has no date` at the level
+// error, and stops with the code 1. A clock that gives no valid date does
+// not stop it: it writes the error, and tries again at the next read.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)

@@ -1,7 +1,7 @@
 package console
 
 // The completion of the console: a list of names that opens under the
-// line while the person types, and the search of the history.
+// line while the input types, and the search of the history.
 //
 // The console knows the names: its commands, the exports of the modules
 // and services that it loaded or connected (from their descriptions), its
@@ -109,7 +109,7 @@ completion_key :: proc "contextless" (pressed: Key) -> (taken: bool) {
 			history_search_open()
 			return true
 		}
-		// No line is newer than the line that the person types.
+		// No line is newer than the line that the input types.
 		return newer
 	case .Names:
 		switch {
@@ -138,7 +138,7 @@ completion_key :: proc "contextless" (pressed: Key) -> (taken: bool) {
 		case pressed.code == display.KEY_ENTER || pressed.code == display.KEY_TAB:
 			history_take()
 		case pressed.code == display.KEY_ESCAPE:
-			// The line that the person typed stays as it was.
+			// The line that the input typed stays as it was.
 			completion_close()
 		case pressed.code == display.KEY_BACKSPACE:
 			if completion.search_count > 0 {
@@ -321,7 +321,7 @@ programs_collect :: proc "contextless" (quote_place: int) {
 }
 
 // names_rank makes the list of the names for the place of the caret.
-// by_tab: the person asked with Tab: an empty name lists all the names, and
+// by_tab: the input asked with Tab: an empty name lists all the names, and
 // a name that is already whole stays in the list.
 names_rank :: proc "contextless" (by_tab: bool) {
 	text := line_editor.line_text(&line)
@@ -424,7 +424,7 @@ history_rank :: proc "contextless" () {
 	completion.list_changed = true
 }
 
-// history_take puts the chosen line of the history in the line; the person
+// history_take puts the chosen line of the history in the line; the input
 // can change it, then Enter runs it.
 history_take :: proc "contextless" () {
 	if completion.ranked_count > 0 {

@@ -26,7 +26,7 @@
 //      with a rule that accepts each of its operations; the records
 //      written plus lost must be 0 for the second and the third, and its
 //      count for the fourth.
-//  12. The right revoked: the person revokes the grant machine of this
+//  12. The right revoked: the principal revokes the grant machine of this
 //      program (the console, in the scenario); the table ends with it, no
 //      record comes after, and Events_Set is refused.
 //
@@ -35,6 +35,25 @@
 // kernel, and starts it again; the first table of the second run is taken
 // (a table that the kernel had kept would make it Bad_State). This program
 // is the one holder of the right Events: it gives no right on.
+//
+// **What it is for.** A reader who wants to see what the kernel does for
+// one program (its operations, its switches, its faults, its waits for a
+// lock) asks for [kernel events](term:kernel-event), with no change of the
+// kernel and no cost when no [event rule](term:event-rule) asks. This
+// program checks that the counts are exact, that a rule that names
+// another program costs nothing, and that the right **Events** holds.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("kernel_events")` in the console. The window has one row for each
+// case. The log gets one line for each case, then `kernel_events: ok, 12
+// cases: each count of the rings was exact, ...`, or `kernel_events:
+// failed: <count> cases of 12`.
+//
+// **Its grants**: **Events**, the machine handle with the right Events,
+// which gives an [event table](term:event-table) for every program, and
+// **Image**, to start its children from the boot image. Its budget holds
+// its window, an [event ring](term:event-ring) for each processor, and two
+// children at one time.
 package kernel_events
 
 import "base:intrinsics"
@@ -591,7 +610,7 @@ case_of_the_ends_under_load :: proc "contextless" (load: ^Child, window: ^displa
 
 // Case 12: the right revoked. The table names the operations Memory_Size
 // of the load child. A round before the revocation gives CALLS records;
-// then this program waits until its machine handle ends (the person
+// then this program waits until its machine handle ends (the principal
 // revokes the grant machine; the scenario types it in the console). The
 // table must have ended with it: a round after it adds no record, and
 // Events_Set with the handle is refused.
@@ -600,7 +619,7 @@ case_of_the_revoked_right :: proc "contextless" (load: ^Child) {
 	ran := table_give(rules[:], RING_RECORDS) == .Ok && round_run(load, ROUND_BEFORE_REVOCATION)
 	written_before, lost_before, _ := heads()
 	system.log("kernel_events: the table is given; waiting for the revocation of the grant machine")
-	// The wait for the person has no bound: a person takes the time that
+	// The wait for the principal has no bound: the principal takes the time that
 	// they take, and the machine test bounds each of its own steps.
 	revoked := false
 	for !revoked {
@@ -845,6 +864,10 @@ child_role_run :: proc "contextless" (role: Role) -> ! {
 	system.stop(30) // The child that faults does not come here: its fault stops it.
 }
 
+// entry runs the role that the context names, for a child; else it runs
+// each case in order, writes one line for each and the summary, then keeps
+// the window open until the program is stopped. The last case waits for
+// the console to revoke its machine handle, in the scenario of the test.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if role := role_of(ctx.values[VALUE_ROLE]); role != .Parent {

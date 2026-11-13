@@ -6,6 +6,24 @@
 // compiled in. It compares the two draw tables, measures the two builds,
 // and draws its window through the module: the damage by difference and
 // the execution of the records into its pixels are exports too.
+//
+// **What it is for.** It shows that one code module can be a library in
+// another program with no loss: the [interface package](term:interface-package)
+// as the module `interface_module` gives the same
+// [draw table](term:draw-table) as the package compiled in, and a
+// [table parameter](term:table-parameter) passes the tables of the caller
+// with no copy. The measures give the cost of a call through an import.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("interface_through_module")` in the console. The window is drawn
+// through the module. The log gets the times of the two builds, the time
+// of the damage and the drawing through the module and the size of its
+// code, the case of a draw table of 16 places that is too small, then
+// `interface_through_module: ok, the two draw tables are equal`, or
+// `wrong: the two draw tables differ`.
+//
+// **Its grant**: **Image**: it reads the size of the code of
+// `interface_module` in the boot image.
 package interface_through_module
 
 import "support:display"
@@ -291,6 +309,11 @@ present :: proc "contextless" (window: ^display.Window) {
 
 BUILDS :: 200
 
+// entry builds the frame through the module and with the package, compares
+// the two draw tables, measures both builds and the case of a table that is
+// too small, writes the lines on the log, then draws its window through the
+// module at each event until the program is stopped. With no window, it
+// stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "interface_through_module")

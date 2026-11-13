@@ -15,6 +15,30 @@
 //
 // The program needs the grant to inspect the machine, and the boot image
 // (it starts the lockers).
+//
+// **What it is for.** It shows how the kernel behaves when many programs
+// enter it at one time: the count of the waits of each
+// [lock of the kernel](term:lock-of-the-kernel), one
+// [run queue](term:run-queue) for each processor, and the
+// [word wait](term:word-wait) that loses no wake under load. The checks
+// are of counts and of order; the rates are measures.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("locks")` in the console. The window shows the kernel entries and
+// the page faults in one second with 1, 2 and 4 lockers, the time of the
+// word wait between two threads alone and under load, and, for each
+// measure, the waits of each lock. The log gets one line for each locker
+// (`locks: locker 1 counted ... entries, the kernel ...`), the lines of the
+// stress case and of the case of the frames, then the summary.
+//
+// **Its grants**: **Inspect**, to read the counts of the locks and of the
+// kernel entries, and **Image**, to start the program `locker`. Its budget
+// holds 9216 pages and 8 programs: 4 lockers of 1024 pages, then 3 at a
+// time in the stress case.
+//
+// **What it does not prove.** A count of waits says how often a lock was
+// contended, not how long: the times are printed as measures, and depend
+// on the host of the run.
 package locks
 
 import "base:intrinsics"
@@ -541,6 +565,12 @@ stopper_run :: proc "c" (parameter: rawptr) -> ! {
 // The random generator of this program (support/random).
 program_generator: random.Generator
 
+// entry starts the four lockers, runs the measures with 1, 2 and 4 of
+// them, the word wait alone and under load, the stress case and the case
+// of the frames, checks the counts, and writes the summary. It then keeps
+// the window open until the program is stopped. With no random seed, no
+// boot image, no memory for the board, or a locker that does not start, it
+// writes the reason on the log and stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random generator of this program, from the seed that its starter

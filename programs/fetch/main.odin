@@ -7,6 +7,31 @@
 //
 // The window shows each case, its answer, and whether it is the expected
 // answer; the log has the same lines and the measures.
+//
+// **What it is for.** It shows the shape of a network client in this
+// system: the network service moves segments, and TCP itself (the
+// handshake, the retransmissions, the window) is a library in the program.
+// It also shows that a [client grant](term:client-grant) is narrow: one
+// [remote](term:remote) address and one port. A segment to another address,
+// or from a port that the grant does not name, is refused with an
+// [error record](term:error-record) that names the grant.
+//
+// **What a reader sees.** It is not in the menu of the programs: start it
+// with `start("fetch")` in the console. The window lists the cases: the
+// grant that the network service reports, the two refused segments, the
+// handshake with 10.0.2.100 port 80, then requests of HTTP/1.1
+// (`GET /hello`, and larger bodies, with their rates). The log has one
+// line for each case (`fetch: GET /hello: status 200, ...`), the counts of
+// the connection (segments, retransmissions), then `fetch: ok, <count>
+// cases`, or `fetch: WRONG: <count> of <count> cases`.
+//
+// **Its grant**: **Network**: a [segment endpoint](term:segment-endpoint)
+// in the network service, with the client grant of TCP to 10.0.2.100 port
+// 80. Nothing else: no store, no listen grant.
+//
+// **What it does not prove.** It speaks plain HTTP over TCP, with no
+// encryption, to one listener of the tool on the host. The design of the
+// network is in docs/NETWORK.md.
 package fetch
 
 import "contract:datagram"
@@ -413,6 +438,16 @@ draw :: proc "contextless" (window: ^display.Window) {
 // The random generator of this program, from the seed of its starter.
 program_generator: random.Generator
 
+// entry opens its endpoint, runs every case once, closes the connection,
+// then shows the cases until the program is stopped.
+//
+// It takes the secret of its initial sequence numbers from the random
+// generator of the program, opens the segment endpoint and the datagram
+// region that the grant gives, and runs the cases (`cases_run`). After the
+// summary line it ends the connection and writes `fetch: the connection
+// ended, its record is free`. With no random seed, no endpoint, no
+// datagram region, or no memory for the connections, it writes the reason
+// on the log and stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&program_generator, ctx) {

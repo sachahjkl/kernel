@@ -35,7 +35,7 @@ Key_Time :: struct {
 }
 
 // The edit line of the measure of the colors: calls, texts, numbers and
-// operators up to LINE_CAPACITY bytes, the longest line that a person can
+// operators up to LINE_CAPACITY bytes, the longest line that the input can
 // type, after the prompt. It has more parts than CODE_RUN_LIMIT: the runs
 // are full, the most work of one line.
 measure_line_bytes: [len(PROMPT) + LINE_CAPACITY]u8
