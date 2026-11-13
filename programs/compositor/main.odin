@@ -416,7 +416,9 @@ canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
 // 2. The control ring: a window to add or to remove.
 // 3. The input ring: a key goes to the launcher, or to the window in
 //    front; a move or a button of the pointer moves the pointer, drags a
-//    window, opens a menu or starts a program.
+//    window, opens a menu or starts a program. Before the new records, the
+//    records that wait for a window whose ring was full go to it, in order
+//    (window_events.odin).
 // 4. The ring of each window: `Surface_Create`, `Present` (the changed
 //    rectangle becomes damage), and `Pointer_Shape`.
 // 5. The calls of `pointer`, `windows` and `screen`, after the input and
@@ -497,6 +499,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.wait_records(&wait, &client.ring.commands)
 			}
 		}
+		window_events_wait(&wait) // window_events.odin
 		deadline := damage_count > 0 ? max(next_frame, 1) : next_second_of_bar(system.time())
 		if wake := pointer_wake(); wake != 0 {
 			deadline = min(deadline, wake) // An animated pointer shape shows.
@@ -523,6 +526,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				client_remove(system.Handle(record.values[0]))
 			}
 		}
+		window_events_pass() // The records that wait go before the new ones.
 		for record in system.receive(&input.commands) {
 			#partial switch display.Input(record.kind) {
 			case .Key:
@@ -617,8 +621,10 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 	system.log("compositor: the settings changed: ", system.written(&writer), "; ", u64(told), " windows draw again")
 }
 
+// send gives an event to a window. A full ring loses no key: the event
+// waits for the window in the compositor (window_events.odin).
 send :: proc "contextless" (client: ^Client, record: ring.Record) {
-	system.send(&client.ring.completions, record)
+	window_event_send(client, record)
 }
 
 client_add :: proc "contextless" (memory: system.Handle) {
@@ -656,6 +662,7 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		if client.surface.pixels != nil {
 			system.memory_unmap(client.pictures)
 		}
+		window_queue_close(index) // window_events.odin
 		system.ring_close(&client.ring)
 		system.close(client.ring_memory)
 		client = {}

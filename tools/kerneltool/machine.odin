@@ -47,10 +47,15 @@ MOUSE_STEP :: 40
 // The exit status of QEMU when the kernel stops the machine with code 0.
 MACHINE_STOP_OK :: 1
 
+// A line of 100 keys, none with Shift, so that the terminal sends 100 key
+// presses for it: 1000 less 24 times 1, which is 976.
+KEYS_HELD_LINE :: "1000 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1"
+#assert(len(KEYS_HELD_LINE) == 100)
+
 Step_Kind :: enum {
 	Wait, // The log of the kernel has text, after the text of the last Wait.
 	Date, // As Wait; then the number after text is a date of the machine in seconds since 1970, which date_check checks by order against the clock of the host.
-	Type, // Press the keys of text, then Enter.
+	Type, // Press the keys of text, then Enter. When the console is in front, the tool then waits for the echo of the line on the log (console_echo.odin).
 	Keys, // Press the keys of text, with no Enter.
 	Key, // Press one key: text is its QEMU name.
 	Click, // Press the left button at (x, y).
@@ -1012,6 +1017,25 @@ scenario := [?]Step {
 	{kind = .Wait, text = "console: Escape stops the line after "},
 	{kind = .Wait, text = "[console] error: Escape stopped the call of spin"},
 	{kind = .Wait, text = "[console] 13"},
+	// No key is lost while the console does not take a line: 100 keys
+	// typed during a call that does not return wait, in order, and are the
+	// next line. The count of the keys that wait is exact, the echo is the
+	// exact line, and no queue of the path of a key wrote that a record is
+	// lost (docs/ARCHITECTURE.md, "The path of a key").
+	{kind = .Type, text = "spin()"},
+	{kind = .Keys, text = KEYS_HELD_LINE},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "console: Escape stops the line after "},
+	{kind = .Wait, text = " ms; keys that wait: 100"},
+	{kind = .Wait, text = "[console] error: Escape stopped the call of spin"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "[console] > " + KEYS_HELD_LINE, fails_on = "is lost"},
+	{kind = .Wait, text = "[console] 976"},
+	// The Escape stopped the sandboxed program of probe: a call starts it
+	// again, so that the list of the programs has it for the picture.
+	{kind = .Type, text = "count()"},
+	{kind = .Wait, text = "[probe] host: ready"},
+	{kind = .Wait, text = "[console] 1"},
 	{kind = .Type, text = "where(programs(), \"name\", \"probe\")"},
 	{kind = .Wait, text = "probe  "},
 	{kind = .Shot, text = "isolated"},
@@ -2434,6 +2458,7 @@ Machine :: struct {
 	started_at:  time.Tick, // When QEMU started: the first Wait says how long the boot took.
 	started_unix: i64, // When QEMU started, in seconds since 1970: no date that the machine prints is before it.
 	times:       Machine_Step_Times, // The times of the step that runs (test_times.odin).
+	echo:        Console_Echo, // The lines typed into the console whose echo the tool waits for (console_echo.odin).
 }
 
 monitor_send :: proc(machine: ^Machine, parts: ..string) {
@@ -2914,6 +2939,9 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		step_started := time.tick_now()
 		test_times_step_start(machine)
 		defer test_times_step_end(machine, index, given_step, step_started)
+		if index > 0 {
+			console_echo_note_step(&machine.echo, steps[index - 1]) // The step before passed.
+		}
 		if index > 0 && remote_starts_or_ends(steps[index - 1]) && machine.peer != nil && machine.peer.remote != nil {
 			// The step before started or closed `remote`: its key of the
 			// start before is forgotten, and the tool no longer reads the
@@ -3010,8 +3038,17 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			if step.kind == .Type {
 				append(&keys, "ret")
 			}
+			// A line that goes to the console: the console writes it on the
+			// log when it enters it (console_echo.odin).
+			echo_wanted := step.kind == .Type && console_echo_wanted(&machine.echo, step.text)
+			if echo_wanted {
+				console_echo_owe(machine, step.text)
+			}
 			if !keys_send(machine, keys[:], fmt.tprintf("\"%s\"", step.text)) {
 				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not take the keys of \"%s\"", index + 1, step.text)
+				return false
+			}
+			if echo_wanted && !machine.echo.line_can_run && !console_echo_wait(machine, index + 1) {
 				return false
 			}
 		case .Key:

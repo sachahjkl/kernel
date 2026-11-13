@@ -83,10 +83,11 @@ input_room_wait :: proc(machine: ^Machine, bytes: int) -> bool {
 }
 
 // key_records_read gives the count of the key records that the compositor
-// received, through the remote service.
-key_records_read :: proc(machine: ^Machine) -> (count: i64, ok: bool) {
-	values := record_fields(&machine.client, "compositor.pointer()", {"keys"}) or_return
-	return values[0], true
+// received, and the count of the key records that it lost because a window
+// did not read (0 on a system that works), through the remote service.
+key_records_read :: proc(machine: ^Machine) -> (count: i64, refused: i64, ok: bool) {
+	values := record_fields(&machine.client, "compositor.pointer()", {"keys", "keys_refused"}) or_return
+	return values[0], values[1], true
 }
 
 // keys_send presses and releases each key of a list of names of the
@@ -97,7 +98,8 @@ key_records_read :: proc(machine: ^Machine) -> (count: i64, ok: bool) {
 //
 // The condition after the last command: when the tool can call the
 // compositor (machine.confirm), the count of its key records grew by the
-// records of the list, one for each press and each release; else, and
+// records of the list, one for each press and each release, and the
+// compositor lost no key record since the start; else, and
 // when the scenario revoked the grant of remote or remote stopped during
 // the keys, the system read each byte of the keyboard.
 keys_send :: proc(machine: ^Machine, names: []string, what: string) -> bool {
@@ -106,7 +108,7 @@ keys_send :: proc(machine: ^Machine, names: []string, what: string) -> bool {
 	before: i64
 	counted := false
 	if machine.confirm {
-		before, counted = key_records_read(machine)
+		before, _, counted = key_records_read(machine)
 	}
 	for chunk in key_chunks(names) {
 		bytes := 0
@@ -122,9 +124,13 @@ keys_send :: proc(machine: ^Machine, names: []string, what: string) -> bool {
 	wanted := before + key_record_count(names)
 	received := before
 	for start := time.tick_now(); time.tick_since(start) < HANG_BOUND; {
-		now, read := key_records_read(machine)
+		now, refused, read := key_records_read(machine)
 		if !read {
 			return input_read_wait(machine)
+		}
+		if refused > 0 {
+			fmt.eprintfln("kerneltool: test failed: the compositor lost %d key records since the start: a window did not read its events, and the queue of the compositor for it was full (the log has a line \"does not read its events\"); the keys were those of %s or of a step before", refused, what)
+			return false
 		}
 		received = now
 		if received >= wanted {
