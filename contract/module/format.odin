@@ -247,7 +247,10 @@ Field :: struct {
 // A documentation text is UTF-8 bytes. A line feed ends a line. A line is a
 // paragraph: the reader breaks it at the width that it has. A line that
 // starts with a space is not a paragraph: the reader keeps it as it is.
-// An empty line separates two paragraphs.
+// An empty line separates two paragraphs. The build writes it from the
+// Markdown of the comments of the source, with the marks removed: a list
+// item is a line that starts with "- " or its number, and a code span keeps
+// its backticks (docs/TOOLS.md, "The form of a documented comment").
 Documentation :: struct {
 	about_offset: u32, // One line, in the string table: what the module is.
 	about_count:  u32,

@@ -1,16 +1,31 @@
 // The manual: it shows the documentation of each module of the boot image.
 //
-// A module carries its documentation in its file: one line that says what the module is, a text, and for each export its name, the name and the type of each parameter, the type of the result, and a text. The build tool takes all of it from the source of the module. This program reads the file only: it does not load the module, and it does not start it.
+// A module carries its documentation in its file
+// ([the description tables](docs/MODULE_CONTRACT.md#description-tables)):
 //
-// The page of a module also says how the module can be used. The system has one kind of file for a program, a library and a service, so the answer comes from two facts: the module has an entry or not, and it has exports or not.
+// - one line that says what the module is, and a text;
+// - for each export: its name, the name and the type of each parameter, the type of the result, and a text.
 //
-// Keys:
-//   up, down               the module before, the module after
-//   page up, page down     move the text
-//   home                   the start of the text
+// The build tool takes all of it from the comments of the source of the module, and removes the marks of their
+// Markdown: the manual draws plain lines with the cell font, where a list stays lines that start with "- ". This
+// program reads the file only: it **does not load the module**, and it does not start it.
+//
+// The page of a module also says how the module can be used. The system has *one kind of file* for a program, a
+// library and a service, so the answer comes from two facts: the module has an entry or not, and it has exports
+// or not.
+//
+// **Keys**
+//
+// - up, down: the module before, the module after;
+// - page up, page down: move the text;
+// - home: the start of the text;
+// - Tab: the table of all the modules, as `overview()` shows it.
+//
 // A click on a name of the list shows that module.
 //
-// The manual is a service: another program asks for a page with show, and reads a description as a text with about and signature.
+// The manual is a service: another program asks for a page with [show](manual.show), and reads a description as
+// a text with [about](manual.about) and [signature](manual.signature). The other exports give the facts of the
+// modules as tables, which the console combines with `where()`, `sort()`, `join()` and `columns()`.
 package manual
 
 import "support:display"

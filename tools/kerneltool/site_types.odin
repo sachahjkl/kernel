@@ -514,9 +514,9 @@ site_type_declarations_read :: proc(folder: string) -> (declarations: []Site_Typ
 			if !is_type {
 				continue
 			}
-			description := text_of(declaration.docs)
+			description := markdown_of(declaration.docs)
 			if description == "" {
-				description = text_of(declaration.comment)
+				description = markdown_of(declaration.comment)
 			}
 			append(&list, Site_Type_Declaration{package_name = package_name, name = identifier.name, file = path, line = declaration.pos.line, description = description, declaration = source[declaration.pos.offset:declaration.end.offset]})
 		}
@@ -949,7 +949,7 @@ site_type_summary :: proc(site: ^Site, type: Site_Type) -> string {
 	if type.alias_of != "" {
 		fmt.sbprintf(&b, " An alias of %s.", type.alias_of)
 	}
-	if first := site_source_comment_plain(site, about_of(type.description, "")); first != "" {
+	if first := site_source_comment_plain(site, markdown_first_sentence(type.description)); first != "" {
 		strings.write_byte(&b, ' ')
 		strings.write_string(&b, first)
 		strings.write_byte(&b, '.')

@@ -160,13 +160,13 @@ site_readers_of_small_files :: proc(t: ^testing.T) {
 	testing.expect_value(t, problem, "")
 	testing.expect_value(t, len(members), 2)
 	if len(members) == 2 {
-		testing.expect_value(t, members[0].comment, "The first and its second line.")
+		testing.expect_value(t, members[0].comment, "The first\nand its second line.")
 		testing.expect_value(t, members[1].number, 1)
 		testing.expect_value(t, members[1].line, 4)
 	}
 	constants, constants_problem := site_constants_read("// Above,\n// two lines.\nROLE_A :: 3 // Its own.\nOTHER :: 0x10\n", "file.odin", "", {"ROLE_"})
 	testing.expect_value(t, constants_problem, "")
-	testing.expect(t, len(constants) == 1 && constants[0].comment == "Above, two lines. Its own." && constants[0].value == 3)
+	testing.expect(t, len(constants) == 1 && constants[0].comment == "Above,\ntwo lines.\nIts own." && constants[0].value == 3)
 	commands, commands_problem := site_console_commands_read("\tcommand(\"say\", {.Text, .None}, .Text, \"a \\\"quoted\\\" help\", say)\n", "file.odin")
 	testing.expect_value(t, commands_problem, "")
 	if len(commands) == 1 {

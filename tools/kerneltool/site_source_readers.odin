@@ -15,7 +15,7 @@ import "core:strings"
 Site_Enumeration_Member :: struct {
 	name:    string,
 	number:  int, // Its value: "= <n>", or its place when the line gives no value.
-	comment: string, // The comment of its line, then the comment lines after it, joined.
+	comment: string, // The Markdown of the comment of its line, then of the comment lines after it, one line each.
 	line:    int,
 }
 
@@ -23,7 +23,7 @@ Site_Enumeration_Member :: struct {
 Site_Constant :: struct {
 	name:    string,
 	value:   int,
-	comment: string, // The comment lines just above it, then the comment of its line, joined.
+	comment: string, // The Markdown of the comment lines just above it, then of the comment of its line, one line each.
 	line:    int,
 }
 
@@ -166,23 +166,14 @@ comment_block_line :: proc(block: Comment_Block, offset: int) -> int {
 	return line + 1
 }
 
-// site_join_comment adds a part to a comment, with one space between.
-site_join_comment :: proc(comment, part: string) -> string {
-	if comment == "" {
-		return part
-	}
-	if part == "" {
-		return comment
-	}
-	return strings.concatenate({comment, " ", part}, context.temp_allocator)
-}
-
 // site_enumeration_read reads the members of an enumeration. The form:
 //   a line "<enumeration> :: enum <type> {" at the start of a line;
 //   one member on each line: "<Name> = <decimal>," or "<Name>,", with a
 //   comment "// ..." or not;
 //   a line that is only a comment continues the comment of the member above
-//   it (the comments of the contracts run over several lines);
+//   it (the comments of the contracts run over several lines), as a line of
+//   its Markdown: a line "//" alone is an empty line, and the indentation
+//   after "// " stays;
 //   a line "}" at the start of a line ends it.
 site_enumeration_read :: proc(content, file, enumeration: string) -> (members: []Site_Enumeration_Member, problem: string) {
 	lines := site_lines(content)
@@ -204,15 +195,19 @@ site_enumeration_read :: proc(content, file, enumeration: string) -> (members: [
 			if len(list) == 0 {
 				return nil, fmt.tprintf("%s, line %d: the enumeration %s has no member", file, index + 1, enumeration)
 			}
+			for &member in list {
+				member.comment = markdown_comment_end(member.comment)
+			}
 			return list[:], ""
 		}
-		code, comment := site_code_and_comment(line)
+		code, comment, is_comment := markdown_comment_line(line)
 		if code == "" {
-			if comment != "" && len(list) > 0 {
-				list[len(list) - 1].comment = site_join_comment(list[len(list) - 1].comment, comment)
+			if is_comment && len(list) > 0 {
+				list[len(list) - 1].comment = markdown_comment_add(list[len(list) - 1].comment, comment)
 			}
 			continue
 		}
+		comment = strings.trim_space(comment)
 		if !strings.has_suffix(code, ",") {
 			return nil, fmt.tprintf("%s, line %d: a member of %s is \"<Name> = <number>,\" or \"<Name>,\"; the line is \"%s\"", file, index + 1, enumeration, strings.trim_space(line))
 		}
@@ -317,10 +312,10 @@ site_constants_read :: proc(content, file, first: string, prefixes: []string) ->
 		}
 		comment_above := ""
 		for comment_line in lines[above:index] {
-			_, text := site_code_and_comment(comment_line)
-			comment_above = site_join_comment(comment_above, text)
+			_, text, _ := markdown_comment_line(comment_line)
+			comment_above = markdown_comment_add(comment_above, text)
 		}
-		append(&list, Site_Constant{name = name, value = value, comment = site_join_comment(comment_above, comment), line = index + 1})
+		append(&list, Site_Constant{name = name, value = value, comment = markdown_comment_end(markdown_comment_add(comment_above, comment)), line = index + 1})
 	}
 	if len(list) == 0 {
 		return nil, fmt.tprintf("%s: no constant \"<NAME> :: <decimal>\" whose name starts with %v", file, prefixes)
@@ -344,10 +339,10 @@ site_comment_above :: proc(content, prefix: string) -> string {
 		}
 		comment := ""
 		for comment_line in lines[above:index] {
-			_, text := site_code_and_comment(comment_line)
-			comment = site_join_comment(comment, text)
+			_, text, _ := markdown_comment_line(comment_line)
+			comment = markdown_comment_add(comment, text)
 		}
-		return comment
+		return markdown_comment_end(comment)
 	}
 	return ""
 }
@@ -397,26 +392,26 @@ site_name_switch_read :: proc(content, file, procedure: string) -> (cases: []Sit
 			}
 			return list[:], otherwise, ""
 		}
-		code, comment := site_code_and_comment(line)
+		code, comment, is_comment := markdown_comment_line(line)
 		switch {
 		case strings.has_prefix(code, "case \""):
 			if has_pending {
 				return nil, {}, fmt.tprintf("%s, line %d: a case of %s has no line \"return <value>\"", file, index + 1, procedure)
 			}
-			pending = Site_Name_Case{names = site_quoted_list(code), comment = comment}
+			pending = Site_Name_Case{names = site_quoted_list(code), comment = strings.trim_space(comment)}
 			has_pending = true
-		case code == "" && comment != "" && has_pending:
-			pending.comment = site_join_comment(pending.comment, comment)
+		case code == "" && is_comment && has_pending:
+			pending.comment = markdown_comment_add(pending.comment, comment)
 		case strings.has_prefix(code, "return "):
 			value := strings.trim_space(code[len("return "):])
 			if has_pending {
 				pending.value = value
-				pending.comment = site_join_comment(pending.comment, comment)
+				pending.comment = markdown_comment_end(markdown_comment_add(pending.comment, strings.trim_space(comment)))
 				pending.line = index + 1
 				append(&list, pending)
 				has_pending = false
 			} else if strings.has_prefix(line, "\treturn ") {
-				otherwise = Site_Name_Case{value = value, comment = comment, line = index + 1}
+				otherwise = Site_Name_Case{value = value, comment = strings.trim_space(comment), line = index + 1}
 			}
 		}
 	}
@@ -560,17 +555,31 @@ site_operation_parts :: proc(member: Site_Enumeration_Member) -> Site_Operation 
 	if closing < 0 {
 		return operation
 	}
-	operation.parameters = comment[1:closing]
+	// The form can run over two lines of the comment: a line feed in it is
+	// a space.
+	one_line :: proc(text: string) -> string {
+		joined, _ := strings.replace_all(text, "\n", " ", context.temp_allocator)
+		return joined
+	}
+	operation.parameters = one_line(comment[1:closing])
 	rest := comment[closing + 1:]
 	if strings.has_prefix(rest, " -> ") {
 		rest = rest[len(" -> "):]
-		end := strings.index(rest, ". ")
+		// The result ends at the end of its sentence: a period before a
+		// space, a line feed or the end of the comment.
+		end := -1
+		for index in 0 ..< len(rest) {
+			if rest[index] == '.' && (index + 1 == len(rest) || rest[index + 1] == ' ' || rest[index + 1] == '\n') {
+				end = index
+				break
+			}
+		}
 		if end < 0 {
-			operation.result = strings.trim_suffix(strings.trim_space(rest), ".")
+			operation.result = one_line(strings.trim_space(rest))
 			rest = ""
 		} else {
-			operation.result = rest[:end]
-			rest = rest[end + 2:]
+			operation.result = one_line(rest[:end])
+			rest = rest[end + 1:]
 		}
 	}
 	rest = strings.trim_prefix(rest, ":")

@@ -721,14 +721,15 @@ site_build :: proc(address: string) -> bool {
 	// written after the index (site_docs_home_fill).
 	site_docs_home_add(&site)
 	site_home_add(&site)
-	// A pointer to a document whose label finds no place is stale: the
-	// command stops with its file and its line, so that none comes back.
+	// A pointer to a document whose label finds no place is stale, and a
+	// link of a comment whose target names nothing is false: the command
+	// stops with its file and its line, so that none comes back.
 	pointer_problems := site_document_pointer_problems(&site)
 	if len(pointer_problems) > 0 {
 		for problem in pointer_problems {
 			fmt.eprintfln("kerneltool: site: %s", problem)
 		}
-		fmt.eprintfln("kerneltool: site: %d pointers to documents name no heading; no page is written", len(pointer_problems))
+		fmt.eprintfln("kerneltool: site: %d pointers to documents and links of comments name no place; no page is written", len(pointer_problems))
 		return false
 	}
 	if len(site.news) > 0 {

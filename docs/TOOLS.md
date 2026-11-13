@@ -78,6 +78,33 @@ The check prefers a comment breach that it does not see to a correct comment tha
 
 A file that `support/cryptography/origin.manifest` lists is not read: it is taken from the cryptography of Odin, `kerneltool cryptography-origin` proves that it is its origin with listed changes only, and its comments are those of Odin. A file is exempt only by a manifest that the table of exemptions of `tools/kerneltool/comment_rule_check.odin` names, with the reason.
 
+The marks of Markdown (next section) are not words: a list item, a mark of bold or a link is not a breach, and a breach in bold or in a list item is still a breach. The host test `comment_markdown_and_the_comment_rules` checks both.
+
+## The form of a documented comment
+
+A comment above a declaration, on the line of a member of an enumeration, or before `package` is a documented comment: the site shows it on the reference pages (the kernel operations, the types, the modules and their exports, the console, the errors, the context, the grants), and a module carries the one of its package and of each export. A documented comment is Markdown, in a small part:
+
+- **Paragraphs**: lines that follow each other are one paragraph; an empty comment line `//` separates two.
+- **Emphasis**: `**bold**` and `*italics*`. A star with a space after it, or between two letters (`2*3`), is a star.
+- **Code**: a code span in backticks. A span that names a declaration, a kernel operation, an error kind, a module or a command links to it by itself: this is the usual form of a name.
+- **Lists**: a line that starts with `- ` or with a number and a period (`1. `). A line right after an item continues it; an item indented by two spaces more is nested.
+- **Examples**: a fence of three backticks, with `odin` or with no language: the site colors it as Odin. A run of lines that start with a space, outside a list, is kept as it is and not colored: it is often words aligned in columns.
+- **Links**: `[text](target)`, when the text is not the name of what it names. The target is:
+  - an address of another host, `https://...`;
+  - a term of the glossary, `term:handle`;
+  - a guide, `docs/ARCHITECTURE.md`, or a heading of it by the id of the heading on its page, `docs/ARCHITECTURE.md#the-fault-ring`;
+  - a kernel operation, an error kind, a module or a command of the console by its name (`Memory_Map`, `load()`);
+  - an export of a module, `manual.edges`;
+  - a declaration of the sources, `fault_deliver`, `operation.Fault_Record`, `system.word_wait`: a name that several packages declare takes its package.
+
+A comment has no heading, no table, no quote, no line of HTML and no picture: it sits under the heading of its symbol, in a page or in a cell of a table, where a heading would break the outline of the page and a table would not fit. The site shows these lines as words of a paragraph.
+
+A link is a claim of its author: `kerneltool site` stops on a link whose target names nothing, with its file and its line, as it stops on a pointer whose heading does not exist. A code span that names nothing stays code.
+
+A module carries the same text with the marks taken away, because `manual` and the help of the console draw plain lines with the cell font (`MODULE_CONTRACT.md`, "Description tables"): a paragraph is one line, a list item stays a line that starts with `- ` or its number, a line of an example keeps its form, a link becomes its text, bold and italics lose their stars, and a code span keeps its backticks, the one sign of code in a text of one font. The help of an export is the first sentence of that text.
+
+The documentation of the kernel operations is the model: for each operation, one sentence that says what it does, its arguments as a list, its results, its statuses as a list with when each comes, the rights that it needs in bold, links to its records and to its guide, and an example call through `support/system` when one helps.
+
 ## The bounds of the tests
 
 A test checks a condition: a value, a state, a line of the log. A test that depends on the speed of the computer that runs it fails on a loaded host with no fault of the system, so no test asserts a speed.

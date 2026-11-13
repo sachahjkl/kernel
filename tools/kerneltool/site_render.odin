@@ -48,6 +48,17 @@ Site_Renderer :: struct {
 	linked_terms: map[string]bool,
 	glossary:     bool, // The page of the glossary: its terms get anchors, and no term links.
 	in_heading:   bool,
+	// A source comment, not a document (docs/SITE.md, "The Markdown of a
+	// source comment"): a heading, a table, a quote, a line of HTML and a
+	// picture are text; a line that starts with a space is a line of an
+	// example; a fence with no language is Odin; a link names a place of
+	// the site (site_comment_link_target); no term of the glossary links by
+	// itself, because each comment of a page is rendered alone.
+	comment:            bool,
+	// The references of the pointers to documents that are words of their
+	// sentence: site_comment_parts put a mark (a zero byte, its number, a
+	// zero byte) in the text in their place.
+	comment_references: [][]Site_Document_Target,
 	// The folders of the sources that the heading of level 2, the heading
 	// of level 3 and the paragraph name: a name that several packages
 	// declare is resolved by them (site_declaration_resolve).
@@ -64,6 +75,13 @@ site_renderer_context_folders :: proc(renderer: ^Site_Renderer) -> []string {
 	append(&folders, ..renderer.subsection_folders)
 	append(&folders, ..renderer.paragraph_folders)
 	return folders[:]
+}
+
+// site_renderer_place gives the place that the command names for a part of
+// the text: the Markdown file, or the page for a source comment, which has
+// no file of its own here.
+site_renderer_place :: proc(renderer: ^Site_Renderer) -> string {
+	return renderer.source != "" ? renderer.source : renderer.page
 }
 
 site_renderer_make :: proc(site: ^Site, page, source: string) -> Site_Renderer {
@@ -225,6 +243,18 @@ site_render_markdown :: proc(renderer: ^Site_Renderer, content: string, first_li
 			index = site_render_fence(renderer, lines, index, first_line_number)
 			continue
 		}
+		if renderer.comment {
+			// A comment sits under the heading of its symbol, in a page or
+			// in a cell: it has paragraphs, lists and examples only.
+			if _, is_marker := site_list_marker(line); is_marker {
+				index = site_render_list(renderer, lines, index, first_line_number)
+			} else if line[0] == ' ' {
+				index = site_render_example(renderer, lines, index)
+			} else {
+				index = site_render_paragraph(renderer, lines, index)
+			}
+			continue
+		}
 		if level, text := site_heading_level(line); level > 0 {
 			id := site_unique_id(renderer, site_slug(text))
 			if level == 2 {
@@ -271,30 +301,82 @@ site_render_markdown :: proc(renderer: ^Site_Renderer, content: string, first_li
 		if strings.has_prefix(trimmed, "<") {
 			site_not_rendered(renderer, number, "a line of HTML, shown as text")
 		}
-		// A paragraph: lines up to an empty line or the start of a block.
-		parts := make([dynamic]string, context.temp_allocator)
-		for index < len(lines) {
-			next := strings.trim_space(lines[index])
-			if next == "" || strings.has_prefix(next, "```") || strings.has_prefix(next, "|") || strings.has_prefix(next, ">") {
-				break
-			}
-			if level, _ := site_heading_level(lines[index]); level > 0 {
-				break
-			}
-			if _, is_marker := site_list_marker(lines[index]); is_marker && len(parts) > 0 {
-				break
-			}
-			append(&parts, next)
-			index += 1
-		}
-		paragraph := strings.join(parts[:], " ", context.temp_allocator)
-		if len(renderer.headings) > 0 && renderer.headings[len(renderer.headings) - 1].first_paragraph == "" {
-			renderer.headings[len(renderer.headings) - 1].first_paragraph = paragraph
-		}
-		strings.write_string(b, "<p>")
-		site_render_inline(renderer, paragraph)
-		strings.write_string(b, "</p>\n")
+		index = site_render_paragraph(renderer, lines, index)
 	}
+}
+
+// site_render_paragraph writes a paragraph: the lines from start up to an
+// empty line or the start of a block. In a comment, a line that starts with
+// a space starts an example, and a heading, a table and a quote are words.
+// It gives the line after the paragraph.
+site_render_paragraph :: proc(renderer: ^Site_Renderer, lines: []string, start: int) -> int {
+	parts := make([dynamic]string, context.temp_allocator)
+	index := start
+	for index < len(lines) {
+		line := lines[index]
+		next := strings.trim_space(line)
+		if next == "" || strings.has_prefix(next, "```") {
+			break
+		}
+		if _, is_marker := site_list_marker(line); is_marker && len(parts) > 0 {
+			break
+		}
+		if renderer.comment {
+			if line[0] == ' ' && len(parts) > 0 {
+				break
+			}
+		} else {
+			if strings.has_prefix(next, "|") || strings.has_prefix(next, ">") {
+				break
+			}
+			if level, _ := site_heading_level(line); level > 0 {
+				break
+			}
+		}
+		append(&parts, next)
+		index += 1
+	}
+	paragraph := strings.join(parts[:], " ", context.temp_allocator)
+	if len(renderer.headings) > 0 && renderer.headings[len(renderer.headings) - 1].first_paragraph == "" {
+		renderer.headings[len(renderer.headings) - 1].first_paragraph = paragraph
+	}
+	strings.write_string(&renderer.builder, "<p>")
+	site_render_inline(renderer, paragraph)
+	strings.write_string(&renderer.builder, "</p>\n")
+	return index
+}
+
+// site_render_example writes the lines of a comment that start with a space
+// as one block of code, as they are, with the indentation that they share
+// taken away: the form that the documentation of a module keeps
+// (contract/module/format.odin, Documentation). Its language is not known,
+// so it is not colored: these lines are often words aligned in columns. It
+// gives the line after the block.
+site_render_example :: proc(renderer: ^Site_Renderer, lines: []string, start: int) -> int {
+	end := start
+	shared := -1
+	for end < len(lines) {
+		line := lines[end]
+		if line == "" || line[0] != ' ' {
+			break
+		}
+		if _, is_marker := site_list_marker(line); is_marker {
+			break
+		}
+		if strings.trim_space(line) != "" {
+			indent := len(line) - len(strings.trim_left(line, " "))
+			shared = shared < 0 ? indent : min(shared, indent)
+		}
+		end += 1
+	}
+	b := &renderer.builder
+	strings.write_string(b, "<pre><code>")
+	for line in lines[start:end] {
+		site_escape(b, line[min(max(shared, 0), len(line)):])
+		strings.write_byte(b, '\n')
+	}
+	strings.write_string(b, "</code></pre>\n")
+	return max(end, start + 1)
 }
 
 site_render_fence :: proc(renderer: ^Site_Renderer, lines: []string, start: int, first_line_number: int) -> int {
@@ -319,9 +401,10 @@ site_render_fence :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 	}
 	strings.write_string(b, "<pre><code>")
 	// Only a block that its document marks as Odin is colored: the language
-	// of a block with no mark is not guessed.
-	if language == "odin" && renderer.site != nil {
-		place := fmt.tprintf("%s:%d", renderer.source, start + first_line_number)
+	// of a block with no mark is not guessed. A fence of a comment is in an
+	// Odin source, so its block is Odin unless it names another language.
+	if (language == "odin" || renderer.comment && language == "") && renderer.site != nil {
+		place := fmt.tprintf("%s:%d", site_renderer_place(renderer), start + first_line_number)
 		strings.write_string(b, site_code_block_html(renderer.site, strings.to_string(code_text), "", place))
 	} else {
 		site_escape(b, strings.to_string(code_text))
@@ -429,7 +512,10 @@ site_render_list :: proc(renderer: ^Site_Renderer, lines: []string, start: int, 
 			index += 1
 			continue
 		}
-		if len(items) > 0 && line[0] == ' ' {
+		// In a comment, a line right after an item continues it, as in the
+		// text that a module carries: a comment wraps its lines where its
+		// width ends, with no indentation.
+		if len(items) > 0 && (line[0] == ' ' || renderer.comment) {
 			if strings.has_prefix(trimmed, "```") {
 				// A block of code inside the item.
 				saved := renderer.builder
@@ -464,7 +550,9 @@ site_write_list :: proc(renderer: ^Site_Renderer, items: []Site_Pending_Item, po
 		text := strings.join(item.text[:], " ", context.temp_allocator)
 		if ordered {
 			id := ""
-			if depth == 0 {
+			// An item of a comment has no id: a page holds many comments,
+			// and a pointer names the items of a document only.
+			if depth == 0 && !renderer.comment {
 				id = site_unique_id(renderer, strings.concatenate({renderer.section != "" ? renderer.section : "item", "-", item.marker.label}, context.temp_allocator))
 				append(&renderer.items, Site_List_Item{section = renderer.section, label = item.marker.label, id = id, text = text, line = item.line, heading = len(renderer.headings) - 1})
 				fmt.sbprintf(b, "<li id=\"%s\">", id)
@@ -503,13 +591,17 @@ site_repository_path :: proc(source, text: string) -> (path: string, found: bool
 	if colon := strings.last_index_byte(candidate, ':'); colon > 0 && site_digits_value(candidate[colon + 1:]) >= 0 {
 		candidate = candidate[:colon]
 	}
-	if candidate == "" || strings.contains_any(candidate, " *?<>\"'(){}$`") || !strings.contains_any(candidate, "/.") || strings.has_prefix(candidate, "-") || strings.has_prefix(candidate, ".") {
+	// A path from the root of the host ("/dev/kvm") is not a file of the
+	// repository, even when the host has it.
+	if candidate == "" || strings.contains_any(candidate, " *?<>\"'(){}$`") || !strings.contains_any(candidate, "/.") || strings.has_prefix(candidate, "-") || strings.has_prefix(candidate, ".") || strings.has_prefix(candidate, "/") {
 		return "", false
 	}
 	folder := source[:max(strings.last_index_byte(source, '/'), 0)]
 	for option in ([]string{candidate, strings.concatenate({folder, "/", candidate}, context.temp_allocator)}) {
 		cleaned := strings.trim_suffix(option, "/")
-		if strings.has_prefix(cleaned, BUILD_FOLDER) || cleaned == "" {
+		// A text with no folder (a source comment) has no folder option: "/"
+		// and the candidate would be a path of the host.
+		if strings.has_prefix(cleaned, BUILD_FOLDER) || cleaned == "" || strings.has_prefix(cleaned, "/") {
 			continue
 		}
 		if os.exists(cleaned) {
@@ -525,9 +617,11 @@ site_repository_path :: proc(source, text: string) -> (path: string, found: bool
 site_render_inline :: proc(renderer: ^Site_Renderer, text: string) {
 	b := &renderer.builder
 	bold_open := false
+	italic_close := -1
 	plain_start := 0
 	index := 0
-	if renderer.site != nil && !renderer.in_heading {
+	// A source comment names no folder around its spans.
+	if renderer.site != nil && !renderer.in_heading && !renderer.comment {
 		renderer.paragraph_folders = site_context_folders(&renderer.site.declarations, text)
 	}
 	flush :: proc(renderer: ^Site_Renderer, text: string) {
@@ -568,8 +662,51 @@ site_render_inline :: proc(renderer: ^Site_Renderer, text: string) {
 			plain_start = index
 			continue
 		}
-		is_picture := character == '!' && index + 1 < len(text) && text[index + 1] == '['
-		if character == '[' || is_picture {
+		// Italics: "*words*", and only when the closing star exists, so a
+		// star of an expression ("a * b", "2*3") stays a star.
+		if character == '*' && (index == italic_close || italic_close < 0 && markdown_italic_opens(text, index)) {
+			flush(renderer, text[plain_start:index])
+			if index == italic_close {
+				strings.write_string(b, "</em>")
+				italic_close = -1
+			} else {
+				strings.write_string(b, "<em>")
+				italic_close = markdown_italic_close(text, index + 1)
+			}
+			index += 1
+			plain_start = index
+			continue
+		}
+		// The place of a pointer to a document that is a word of its
+		// sentence: its reference (site_comment_parts).
+		if character == 0 && renderer.comment {
+			closing := strings.index_byte(text[index + 1:], 0)
+			if closing >= 0 {
+				flush(renderer, text[plain_start:index])
+				number := site_digits_value(text[index + 1:index + 1 + closing])
+				if number >= 0 && number < len(renderer.comment_references) {
+					site_document_references_write(renderer.site, b, renderer.page, renderer.comment_references[number], " and ")
+				}
+				index += closing + 2
+				plain_start = index
+				continue
+			}
+		}
+		// A comment links to the places of the site, not to files, and has
+		// no picture: "![" is text there.
+		if renderer.comment && character == '[' {
+			if label, target, end, found := markdown_link_at(text, index); found {
+				flush(renderer, text[plain_start:index])
+				site_comment_link_write(renderer, label, target)
+				index = end
+				plain_start = index
+				continue
+			}
+			index += 1
+			continue
+		}
+		is_picture := !renderer.comment && character == '!' && index + 1 < len(text) && text[index + 1] == '['
+		if (character == '[' && !renderer.comment) || is_picture {
 			open := is_picture ? index + 1 : index
 			closing := strings.index_byte(text[open + 1:], ']')
 			if closing >= 0 {
@@ -595,6 +732,9 @@ site_render_inline :: proc(renderer: ^Site_Renderer, text: string) {
 		index += 1
 	}
 	flush(renderer, text[plain_start:])
+	if italic_close >= 0 {
+		strings.write_string(b, "</em>")
+	}
 	if bold_open {
 		strings.write_string(b, "</strong>")
 	}
@@ -605,6 +745,12 @@ site_render_inline :: proc(renderer: ^Site_Renderer, text: string) {
 // to a file of the repository, or code.
 site_write_code_span :: proc(renderer: ^Site_Renderer, code: string) {
 	b := &renderer.builder
+	if renderer.site == nil {
+		strings.write_string(b, "<code>")
+		site_escape(b, code)
+		strings.write_string(b, "</code>")
+		return
+	}
 	if target, named := site_code_link(renderer.site, code); named && !renderer.in_heading {
 		fmt.sbprintf(b, "<a class=\"reference\" href=\"%s\"><code>", site_page_link(renderer.site, renderer.page, target))
 		site_escape(b, code)
@@ -621,7 +767,7 @@ site_write_code_span :: proc(renderer: ^Site_Renderer, code: string) {
 	}
 	// A name of a declaration of the sources, or a fragment of Odin
 	// (docs/SITE.md, "The declarations of the sources").
-	if !renderer.in_heading && site_declaration_code_span(renderer.site, b, renderer.page, renderer.source, code, site_renderer_context_folders(renderer)) {
+	if !renderer.in_heading && site_declaration_code_span(renderer.site, b, renderer.page, site_renderer_place(renderer), code, site_renderer_context_folders(renderer)) {
 		return
 	}
 	strings.write_string(b, "<code>")
@@ -750,7 +896,7 @@ site_term_at :: proc(text: string, index: int, name: string) -> (length: int, fo
 // the page of the glossary.
 site_write_with_terms :: proc(renderer: ^Site_Renderer, text: string) {
 	b := &renderer.builder
-	if renderer.glossary || renderer.in_heading || len(renderer.site.terms) == 0 {
+	if renderer.glossary || renderer.in_heading || renderer.comment || renderer.site == nil || len(renderer.site.terms) == 0 {
 		site_escape(b, text)
 		return
 	}
