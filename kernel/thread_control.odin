@@ -515,10 +515,15 @@ thread_placement_read :: proc "contextless" (thread: ^Thread) -> (placement: op.
 // its home. So when the new set does not have the home:
 // - a thread in the list of its home moves to the list of a processor of
 //   the set, in this section, under the run locks of the two processors,
-//   taken in the order of the processors. The move is the one that the
-//   balance makes (queue_pick): the strategy of the two queues moves the
-//   place of the thread, or, during a change of strategy, its fields are
-//   cleared. Nothing that the thread owes is forgiven;
+//   taken in the order of the processors. It leaves the old list as a
+//   thread that a Stop takes out of it, and enters the new one as a woken
+//   thread: its strategy keeps what it owes, also when its budget has no
+//   time in this period and the average of its queue does not count it
+//   (strategy_leaves_list). The move of the balance takes the average
+//   with the thread, which is right only for a thread whose budget has
+//   time: the balance takes no other. During a change of strategy the
+//   fields of the thread are cleared. Nothing that the thread owes is
+//   forgiven;
 // - a thread that waits, or that a stop holds, is in no list: it gets the
 //   new home, and the wake or the Resume puts it in that queue. What it
 //   keeps for its strategy is a value relative to its queue, which has
@@ -527,11 +532,20 @@ thread_placement_read :: proc "contextless" (thread: ^Thread) -> (placement: op.
 //   out of there. It moves when it leaves that processor (schedule), at
 //   the end of its turn at the latest.
 //
-// The write sends no interrupt and ends the turn of no other thread: the
-// thread that runs on a processor when an interrupt arrives can be a
-// thread of another program, which would pay for it. When the calling
+// The write ends the turn of no other thread, and sends no interrupt to a
+// processor that runs a thread: the thread that runs there when an
+// interrupt arrives can be a thread of another program, which would pay
+// for it. It wakes only an idle processor, for a thread that it left in a
+// list (below). When the calling
 // thread wrote its own set and its processor is not in it, its own turn
 // ends at the end of this kernel entry (is_caller).
+//
+// A write that gives a processor to a thread that stays in the list of its
+// home makes the processors look at that list (kick): an idle processor
+// that the set has now takes the thread. Without it that processor stays
+// idle until another wake, because the end of a turn wakes no processor.
+// Only the holder of the machine widens a set, so no program commands
+// these wakes.
 //
 // A pick by another processor can change the home between the read of the
 // home and the take of the locks: then the locks are freed and the choice
@@ -544,9 +558,10 @@ thread_placement_write :: proc "contextless" (thread: ^Thread, written: op.Threa
 	}
 	after: op.Thread_Placement
 	after, refusal, most = op.thread_placement_after_write(written, held, every_processor, by_machine)
-	entered := false
+	entered, widened_in_list := false, false
 	target: u32
 	for {
+		entered, widened_in_list = false, false
 		home := intrinsics.atomic_load(&thread.home)
 		target = refusal == .None ? placement_home(after.processors, home) : home
 		first, second := min(home, target), max(home, target)
@@ -572,13 +587,13 @@ thread_placement_write :: proc "contextless" (thread: ^Thread, written: op.Threa
 				same_strategy := from.strategy == to.strategy
 				if thread.queued {
 					if same_strategy {
-						queue_strategy_move(from, home, to, target, thread)
+						strategy_leaves_list(from, home, thread)
 					} else {
 						strategy_clear(thread)
 					}
 					queue_remove(thread)
 					intrinsics.atomic_store(&thread.home, target)
-					queue_ready(thread, .Back)
+					queue_ready(thread, .Woken)
 					entered = true
 				} else {
 					if !same_strategy {
@@ -586,6 +601,8 @@ thread_placement_write :: proc "contextless" (thread: ^Thread, written: op.Threa
 					}
 					intrinsics.atomic_store(&thread.home, target)
 				}
+			} else if thread.queued && after.processors &~ held.processors != 0 {
+				widened_in_list = true
 			}
 		}
 		if second != first {
@@ -599,9 +616,11 @@ thread_placement_write :: proc "contextless" (thread: ^Thread, written: op.Threa
 	if status != .Ok {
 		return status, refusal, most
 	}
-	if entered {
-		// The thread is in the list of another processor: that processor,
-		// or an idle one of its set, looks at it.
+	if entered || widened_in_list {
+		// The thread is in the list of another processor, or its set got
+		// a processor while it stays in its list: the processor of that
+		// list, or an idle one of its set, looks at it. For a thread
+		// that stays, the target is its home.
 		kick(target, thread)
 	}
 	if cpu := processor_self(); is_caller && after.processors & (u64(1) << cpu.index) == 0 {

@@ -1215,7 +1215,12 @@ PLACEMENT_PROCESSOR_CAPACITY :: 64
 // - A write through the machine handle with **Schedule** and **Inspect**
 //   gives the two sets, and it alone widens a set. 0 is the default of
 //   each: every processor for the limit, the limit for the set. The part
-//   of the set that is outside the new limit is dropped.
+//   of the set that is outside the new limit is dropped. As a write of a
+//   `Thread_Schedule` through the machine handle, it always gives each
+//   value: the set 0 is the whole limit, not the set that the thread has,
+//   so it undoes a narrowing that the program of the thread made. A
+//   holder that keeps the set reads the placement first and writes the
+//   set that it read.
 //
 // For each writer, the bits of processors that the machine does not have
 // are dropped, so a writer can give all ones. A set that then has no

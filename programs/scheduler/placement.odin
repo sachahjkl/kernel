@@ -173,6 +173,7 @@ placement_refusals :: proc "contextless" (processors: u64) -> bool {
 	spinner := spinner_threads[0].handle
 	narrowed := system.thread_placement_write(machine, numbers[0], {processors = 0b01})
 	unchanged := narrowed == .Ok && placement_is(spinner, 0, 0b01, every)
+	rights_changed_nothing := narrowed == .Ok
 	error: errors.Error_Record
 	// The program side: a wider set, and a set with no processor of the
 	// machine.
@@ -212,16 +213,21 @@ placement_refusals :: proc "contextless" (processors: u64) -> bool {
 		reads = placement_is(copy, 0, 0b01, every)
 		system.close(copy)
 	}
-	unchanged &&= placement_is(spinner, 0, 0b01, every)
+	rights_changed_nothing &&= placement_is(spinner, 0, 0b01, every)
 	// The spinner ends: its machine number names no thread.
 	spinners_stop(0, 1)
 	_, ended_read := system.thread_placement_read(machine, numbers[0])
 	ended_write := system.thread_placement_write(machine, numbers[0], {})
-	as_it_must := wider == .Bad_Operation && nowhere == .Bad_Operation && program_records && no_limit == .Bad_Operation && outside_limit == .Bad_Operation && machine_records
-	as_it_must &&= no_schedule == .No_Right && no_inspect == .No_Right && blind_write == .No_Right && no_control == .No_Right && reads && unchanged
-	as_it_must &&= ended_read == .Bad_State && ended_write == .Bad_State
-	system.log("scheduler: refused writes of a placement, on a spinner that the machine handle keeps on the processor 0: through its thread handle a wider set ", op.STATUS_NAMES[wider], " and a set of a processor that the machine does not have ", op.STATUS_NAMES[nowhere], ", the error record has the refused set and the set that it had to stay inside: ", u64(program_records), "; through the machine handle a limit with no processor of the machine ", op.STATUS_NAMES[no_limit], " and a set outside its limit ", op.STATUS_NAMES[outside_limit], ", with their error records: ", u64(machine_records), "; the machine handle with no right Schedule ", op.STATUS_NAMES[no_schedule], "; a read and a write through the machine handle with Schedule and no Inspect ", op.STATUS_NAMES[no_inspect], " and ", op.STATUS_NAMES[blind_write], "; a thread handle with Inspect and no Control ", op.STATUS_NAMES[no_control], ", and it reads: ", u64(reads), "; after each refusal the placement was the one of before: ", u64(unchanged), "; a read and a write by the machine number of a thread that ended ", op.STATUS_NAMES[ended_read], " and ", op.STATUS_NAMES[ended_write], verdict_of(as_it_must))
-	return as_it_must
+	sets_right := wider == .Bad_Operation && nowhere == .Bad_Operation && program_records && no_limit == .Bad_Operation && outside_limit == .Bad_Operation && machine_records && unchanged
+	rights_right := no_schedule == .No_Right && no_inspect == .No_Right && blind_write == .No_Right && no_control == .No_Right && reads && rights_changed_nothing
+	rights_right &&= ended_read == .Bad_State && ended_write == .Bad_State
+	// Two lines: one line of the log holds 512 bytes.
+	system.log("scheduler: refused sets of a placement, on a spinner that the machine handle keeps on the processor 0: through its thread handle a wider set ", op.STATUS_NAMES[wider], " and a processor that the machine does not have ", op.STATUS_NAMES[nowhere], ", with their error records: ", u64(program_records), "; through the machine handle a limit of no processor of the machine ", op.STATUS_NAMES[no_limit], " and a set outside its limit ", op.STATUS_NAMES[outside_limit], ", with their error records: ", u64(machine_records), "; the placement stayed: ", u64(unchanged), verdict_of(sets_right))
+	system.log("scheduler: the rights of a placement: the machine handle with no right Schedule ", op.STATUS_NAMES[no_schedule], "; a read and a write through the machine handle with Schedule and no Inspect ", op.STATUS_NAMES[no_inspect], " and ", op.STATUS_NAMES[blind_write], "; a thread handle with Inspect and no Control ", op.STATUS_NAMES[no_control], ", and it reads: ", u64(reads), "; the placement stayed: ", u64(rights_changed_nothing), "; a read and a write by the machine number of a thread that ended ", op.STATUS_NAMES[ended_read], " and ", op.STATUS_NAMES[ended_write], verdict_of(rights_right))
+	return sets_right && rights_right
+}
+
+// 3. The limit.	return as_it_must
 }
 
 // 3. The limit. The first thread of the program gets a limit through the
@@ -285,7 +291,8 @@ placement_limits :: proc "contextless" (processors: u64) -> bool {
 		wrong += u64(!narrow_kept || !placement_is(0, number, limit, limit))
 	}
 	rounds_right := accepted == PLACEMENT_LIMIT_ROUNDS && refused == 2 * PLACEMENT_LIMIT_ROUNDS && machine_widened == PLACEMENT_LIMIT_ROUNDS && wrong == 0
-	system.log("scheduler: the limit of the processors 0 to ", processors / 2 - 1, " written through the machine handle: the thread has that set: ", u64(limited), "; its own write of each processor ", op.STATUS_NAMES[widen], ", the error record has the set of the thread: ", u64(record_right), "; its own write of a wider limit changed nothing: ", u64(kept), "; ", u64(PLACEMENT_LIMIT_ROUNDS), " rounds of its own writes of the processor 0, of the set of the limit and of each processor, then the limit again through the machine handle: ", accepted, " of its own accepted, ", refused, " refused, ", machine_widened, " widened by the machine handle, a wrong set or limit ", wrong, " times", verdict_of(first_right && rounds_right))
+	system.log("scheduler: the limit of the processors 0 to ", processors / 2 - 1, " written through the machine handle: the thread has that set: ", u64(limited), "; its own write of each processor ", op.STATUS_NAMES[widen], ", the error record has the set of the thread: ", u64(record_right), "; its own write of a wider limit changed nothing: ", u64(kept), verdict_of(first_right))
+	system.log("scheduler: under that limit, ", u64(PLACEMENT_LIMIT_ROUNDS), " rounds of the own writes of the thread, of the processor 0, of the set of the limit and of each processor, then the limit again through the machine handle: ", accepted, " of its own accepted, ", refused, " refused, ", machine_widened, " widened by the machine handle, a wrong set or limit ", wrong, " times", verdict_of(rounds_right))
 
 	// A new thread has the limit as its set and as its limit, and its
 	// first queue is the queue of a processor of the limit.
@@ -333,7 +340,7 @@ placement_wait_run :: proc "c" (parameter: rawptr) -> ! {
 
 // set_without gives each processor of the machine but one.
 set_without :: proc "contextless" (every: u64, processor: u32) -> u64 {
-	return every & ~(u64(1) << processor)
+	return every &~ (u64(1) << processor)
 }
 
 // waiting_placed: a thread that waits gets a set without its home. The
@@ -467,10 +474,12 @@ placement_states :: proc "contextless" (processors: u64) -> bool {
 		running_found, running_settled, running_outside = listed_or_running_placed(every, count, &numbers, false)
 	}
 	spinners_stop(0, count)
-	as_it_must := waiting_moved && waiting_settled && waiting_outside == 0
-	as_it_must &&= started && held_moved && held_settled && held_outside == 0
-	as_it_must &&= listed_found && listed_settled && listed_outside == 0 && running_found && running_settled && running_outside == 0
-	system.log("scheduler: a set without the home of a thread, written through the machine handle: a thread that waits has a home of the set in the next report: ", u64(waiting_moved), ", and after its wake it ran inside the set: ", u64(waiting_settled), ", outside in ", waiting_outside, " reports; a spinner that a Stop holds has a home of the set in the next report: ", u64(held_moved), ", and after the Resume it ran inside the set: ", u64(held_settled), ", outside in ", held_outside, " reports; a spinner in a list ran inside the set: ", u64(listed_settled), ", outside in ", listed_outside, " reports after the first one inside; a spinner on a processor ran inside the set: ", u64(running_settled), ", outside in ", running_outside, " reports after the first one inside", verdict_of(as_it_must))
+	off_right := waiting_moved && waiting_settled && waiting_outside == 0
+	off_right &&= started && held_moved && held_settled && held_outside == 0
+	on_right := started && listed_found && listed_settled && listed_outside == 0 && running_found && running_settled && running_outside == 0
+	as_it_must := off_right && on_right
+	system.log("scheduler: a set without the home of a thread, written through the machine handle: a thread that waits has a home of the set in the next report: ", u64(waiting_moved), ", and after its wake it ran inside the set: ", u64(waiting_settled), ", outside in ", waiting_outside, " reports; a spinner that a Stop holds has a home of the set in the next report: ", u64(held_moved), ", and after the Resume it ran inside the set: ", u64(held_settled), ", outside in ", held_outside, " reports", verdict_of(off_right))
+	system.log("scheduler: a set without the home of a spinner, written through the machine handle: a spinner in a list ran inside the set: ", u64(listed_settled), ", outside in ", listed_outside, " reports after the first one inside; a spinner on a processor ran inside the set: ", u64(running_settled), ", outside in ", running_outside, " reports after the first one inside", verdict_of(on_right))
 	return as_it_must
 }
 
@@ -487,7 +496,7 @@ placement_apart :: proc "contextless" (processors: u64) -> bool {
 	}
 	every := every_processor(processors)
 	lower := every_processor(processors / 2)
-	sets := [2]u64{lower, every & ~lower}
+	sets := [2]u64{lower, every &~ lower}
 	count := 2 * APART_GROUP
 	started := self_machine_number != 0
 	for group in 0 ..< 2 {
@@ -536,19 +545,34 @@ placement_apart :: proc "contextless" (processors: u64) -> bool {
 // make it the busiest: spinners that only the processor 0 can run, or
 // threads of a budget with no processor time, which never run. Two
 // spinners are in the queue of the processor 1; then they get each
-// processor back. The first thread stays on the other processors, so its
-// wakes never name the queue of the processor 1. A processor that looks
-// for a thread finds none that it can take in the busiest queue; it must
-// then take the spinner that waits in the queue of the processor 1. The
-// condition is one report that shows the two spinners on two processors;
-// the bound only ends a hang.
+// processor but the processor 0. A processor that looks for a thread
+// finds none that it can take in the busiest queue; it must then take the
+// spinner that waits in the queue of the processor 1. The condition is one
+// report that shows the two spinners on two processors; the bound only
+// ends a hang.
+//
+// The case must fail when the balance tries the busiest queue only, so no
+// thread of this program names the queue of the processor 1 to another
+// processor:
+// - each other processor runs a spinner of its own (a pacer), so none is
+//   idle when the two spinners get their processors: that write wakes no
+//   idle processor with the queue of the processor 1 as a hint;
+// - the two spinners do not get the processor 0, which can be idle;
+// - the first thread stays on the processors of the pacers, so its wakes
+//   name those queues only.
+// A pacer ends a turn at each time slice, and its processor then looks
+// for a thread with no hint: this is the pick that must pass the busiest
+// queue. So the case needs no wake of the first thread. A thread of
+// another program that wakes with the processor 1 as its home can still
+// give that hint: the case cannot exclude it.
 placement_balance_case :: proc "contextless" (processors: u64, by_budget: bool) -> bool {
 	every := every_processor(processors)
-	away := every & ~u64(0b11) // Not the processors 0 and 1.
+	away := every &~ u64(0b11) // Not the processors 0 and 1.
+	pacers := int(processors) - 2 // One for each processor of `away`.
 	numbers: [SPINNER_LIMIT]u64
 	blocked: [BLOCKERS]system.Thread
 	budget: system.Handle
-	first := 0 // The first of the two spinners.
+	first := 0 // The first of the two spinners; the pacers come after them.
 	prepared := true
 	if by_budget {
 		// The new threads enter the queue of the processor that creates
@@ -564,37 +588,46 @@ placement_balance_case :: proc "contextless" (processors: u64, by_budget: bool) 
 			}
 		}
 		prepared &&= system.thread_placement_write(machine, self_machine_number, {processors = away}) == .Ok
-		prepared &&= spinners_start(0, 2, full_weight) && spinner_machine_numbers(0, 2, &numbers)
 	} else {
 		first = BLOCKERS
 		prepared = system.thread_placement_write(machine, self_machine_number, {processors = away}) == .Ok
-		prepared &&= spinners_start(0, BLOCKERS + 2, full_weight) && spinner_machine_numbers(0, BLOCKERS + 2, &numbers)
-		for index in 0 ..< BLOCKERS {
-			prepared &&= system.thread_placement_write(machine, numbers[index], {processors = 0b01}) == .Ok
+	}
+	count := first + 2 + pacers
+	prepared &&= spinners_start(0, count, full_weight) && spinner_machine_numbers(0, count, &numbers)
+	// The spinners that only the processor 0 can run, and one pacer on
+	// each processor of `away`.
+	for index in 0 ..< count {
+		set := u64(0b01)
+		if index >= first + 2 {
+			set = u64(1) << u64(index - first)
+		} else if index >= first {
+			continue
 		}
-		for index in 0 ..< BLOCKERS {
-			if prepared {
-				settled, _ := placement_settles(intrinsics.atomic_load(&spinners[index].number) - 1, 0b01, false)
-				prepared &&= settled
-			}
+		if prepared {
+			prepared = system.thread_placement_write(machine, numbers[index], {processors = set}) == .Ok
+		}
+		if prepared {
+			prepared, _ = placement_settles(intrinsics.atomic_load(&spinners[index].number) - 1, set, false)
 		}
 	}
-	// The two spinners: in the queue of the processor 1, then free.
+	// The two spinners: in the queue of the processor 1, then on each
+	// processor but the processor 0.
 	pair_numbers: [2]u32
 	for side in 0 ..< 2 {
 		if prepared {
 			pair_numbers[side] = intrinsics.atomic_load(&spinners[first + side].number) - 1
-			prepared &&= system.thread_placement_write(machine, numbers[first + side], {processors = 0b10}) == .Ok
+			prepared = system.thread_placement_write(machine, numbers[first + side], {processors = 0b10}) == .Ok
 		}
 	}
 	for side in 0 ..< 2 {
 		if prepared {
-			settled, _ := placement_settles(pair_numbers[side], 0b10, false)
-			prepared &&= settled
+			prepared, _ = placement_settles(pair_numbers[side], 0b10, false)
 		}
 	}
 	for side in 0 ..< 2 {
-		prepared &&= system.thread_placement_write(machine, numbers[first + side], {}) == .Ok
+		if prepared {
+			prepared = system.thread_placement_write(machine, numbers[first + side], {processors = every &~ u64(0b01)}) == .Ok
+		}
 	}
 	apart := false
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
@@ -613,7 +646,7 @@ placement_balance_case :: proc "contextless" (processors: u64, by_budget: bool) 
 		}
 		apart = on[0] != 0 && on[1] != 0 && on[0] != on[1]
 	}
-	spinners_stop(0, by_budget ? 2 : BLOCKERS + 2)
+	spinners_stop(0, count)
 	for thread in blocked {
 		if thread.handle != 0 {
 			system.thread_end(thread)
@@ -625,21 +658,98 @@ placement_balance_case :: proc "contextless" (processors: u64, by_budget: bool) 
 	restored := system.thread_placement_write(machine, self_machine_number, {}) == .Ok
 	as_it_must := prepared && apart && restored
 	if by_budget {
-		system.log("scheduler: ", u64(BLOCKERS), " threads of a budget with no processor time, in the queue of the processor 0, make it the busiest; two spinners in the queue of the processor 1 got each processor back: a report showed the two on two processors at one time: ", u64(apart), verdict_of(as_it_must))
+		system.log("scheduler: ", u64(BLOCKERS), " threads of a budget with no processor time, in the queue of the processor 0, make it the busiest, and each processor from 2 runs a spinner of its own; two spinners of the queue of the processor 1 got the processors 1 to ", processors - 1, ": a report showed the two on two processors at one time: ", u64(apart), verdict_of(as_it_must))
 	} else {
-		system.log("scheduler: ", u64(BLOCKERS), " spinners that only the processor 0 can run make its queue the busiest; two spinners in the queue of the processor 1 got each processor back: a report showed the two on two processors at one time: ", u64(apart), verdict_of(as_it_must))
+		system.log("scheduler: ", u64(BLOCKERS), " spinners that only the processor 0 can run make its queue the busiest, and each processor from 2 runs a spinner of its own; two spinners of the queue of the processor 1 got the processors 1 to ", processors - 1, ": a report showed the two on two processors at one time: ", u64(apart), verdict_of(as_it_must))
 	}
 	return as_it_must
 }
 
 placement_balance :: proc "contextless" (processors: u64) -> bool {
-	if processors < 4 || BLOCKERS + 2 > SPINNER_LIMIT {
-		system.log("scheduler: the balance past a queue of threads that a processor cannot take is not checked on a machine with ", processors, " processors: the case needs two processors for the two queues and two more for the first thread")
+	if processors < 4 || BLOCKERS + processors > SPINNER_LIMIT {
+		system.log("scheduler: the balance past a queue of threads that a processor cannot take is not checked on a machine with ", processors, " processors: the case needs two processors for the two queues, two more for the first thread, and a spinner for each processor from 2, at most ", u64(SPINNER_LIMIT - BLOCKERS), " processors")
 		return true
 	}
 	with_placements := placement_balance_case(processors, false)
 	with_a_budget := placement_balance_case(processors, true)
 	return with_placements && with_a_budget
+}
+
+// 6b. A set that gets a processor while its thread is in a list. Two
+// spinners and the first thread are kept on the processor 0: one spinner
+// runs, the other is in the list. The wakes of the first thread name no
+// other processor. The machine handle gives the spinner of the list the
+// processor 1 too. That write makes the processors look at the list, so
+// the processor 1, when it is idle, takes the spinner: the condition is a
+// report that shows it on the processor 1. The end of a turn wakes no
+// processor, so without that look the spinner stays on the processor 0
+// until a thread of another program makes the processor 1 pick.
+//
+// The report only aims: the spinner that it shows in the list can run
+// when the write comes, and the write then wakes no processor. So a round
+// that does not see the spinner on the processor 1 in WIDENED_REPORTS
+// reports gives it the processor 0 alone again, and the next round aims
+// again. The rounds are a measure; the hang bound ends them.
+WIDENED_REPORTS :: 50
+
+placement_widened :: proc "contextless" (processors: u64) -> bool {
+	if processors < 2 {
+		system.log("scheduler: a set that gets an idle processor is not checked on a machine with one processor")
+		return true
+	}
+	numbers: [SPINNER_LIMIT]u64
+	prepared := system.thread_placement_write(machine, self_machine_number, {processors = 0b01}) == .Ok
+	prepared &&= spinners_start(0, 2, full_weight) && spinner_machine_numbers(0, 2, &numbers)
+	for index in 0 ..< 2 {
+		if prepared {
+			prepared = system.thread_placement_write(machine, numbers[index], {processors = 0b01}) == .Ok
+		}
+		if prepared {
+			prepared, _ = placement_settles(intrinsics.atomic_load(&spinners[index].number) - 1, 0b01, false)
+		}
+	}
+	reached := false
+	rounds: u64
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	for prepared && !reached && system.time() < deadline {
+		rounds += 1
+		chosen := -1
+		for chosen < 0 && system.time() < deadline {
+			for index in 0 ..< 2 {
+				item := thread_item(intrinsics.atomic_load(&spinners[index].number) - 1)
+				if chosen < 0 && item != nil && item.queued == 1 && item.processor == 0 {
+					chosen = index
+				}
+			}
+			if chosen < 0 {
+				system.sleep(system.time() + 1)
+			}
+		}
+		if chosen < 0 {
+			break
+		}
+		number := intrinsics.atomic_load(&spinners[chosen].number) - 1
+		prepared = system.thread_placement_write(machine, numbers[chosen], {processors = 0b11}) == .Ok
+		for seen := 0; prepared && !reached && seen < WIDENED_REPORTS; seen += 1 {
+			item := thread_item(number)
+			reached = item != nil && item.processor == 2
+			if !reached {
+				system.sleep(system.time() + 1)
+			}
+		}
+		if prepared && !reached {
+			prepared = system.thread_placement_write(machine, numbers[chosen], {processors = 0b01}) == .Ok
+			if prepared {
+				prepared, _ = placement_settles(number, 0b01, false)
+			}
+		}
+	}
+	spinners_stop(0, 2)
+	restored := system.thread_placement_write(machine, self_machine_number, {}) == .Ok
+	as_it_must := prepared && reached && restored
+	system.log("scheduler: two spinners and the first thread kept on the processor 0; the spinner of the list got the processor 1 too through the machine handle: a report showed it on the processor 1: ", u64(reached), verdict_of(as_it_must))
+	system.log("scheduler: the spinner was seen on the processor 1 in the round ", rounds, " (a measure)")
+	return as_it_must
 }
 
 // 7. Writes of placements through the machine handle while the strategy
@@ -744,6 +854,7 @@ placement_cases :: proc "contextless" (processors: u64) -> bool {
 	as_it_must = placement_states(processors) && as_it_must
 	as_it_must = placement_apart(processors) && as_it_must
 	as_it_must = placement_balance(processors) && as_it_must
+	as_it_must = placement_widened(processors) && as_it_must
 	as_it_must = placement_changes(processors) && as_it_must
 	every := every_processor(processors)
 	return placement_is(0, system.thread_record().number, every, every) && as_it_must

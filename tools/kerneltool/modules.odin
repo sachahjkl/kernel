@@ -233,7 +233,10 @@ files_with_suffix :: proc(folder, suffix: string) -> (paths: []string, ok: bool)
 // build has them (`check`, `test`, `screenshots`, `measure`, `run`); the
 // measure build has none (`measure without_checks`, `run without_checks`). The tool
 // passes the three defines in each build: the defaults of the source never
-// decide.
+// decide. The source of the check of the placement has it off, so a build
+// outside the tool has none. The defines are a part of the compile command,
+// which the key of the incremental build holds: a change of one builds the
+// kernel again.
 test_build_checks := true
 
 // module_compile_command gives the command of the compiler for a module,

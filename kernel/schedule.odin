@@ -67,8 +67,10 @@ thread_index :: #force_inline proc "contextless" (thread: ^Thread) -> u32 {
 }
 
 // The test build checks, at each entry of a thread in a list, that the
-// processor of the list is in the placement of the thread.
-TEST_BUILD_CHECKS_PLACEMENT :: #config(TEST_BUILD_CHECKS_PLACEMENT, true)
+// processor of the list is in the placement of the thread. A build that
+// does not ask for the check has none: the kernel tool asks for it in the
+// test build only.
+TEST_BUILD_CHECKS_PLACEMENT :: #config(TEST_BUILD_CHECKS_PLACEMENT, false)
 
 // machine_processors gives the set of the processors that run threads: one
 // bit for each. The count does not change after the start of the
@@ -395,18 +397,21 @@ thread_queue :: proc "contextless" (thread: ^Thread) {
 // tries the next busiest queue, while its load is above the own count.
 // With one try only, such a queue, when it is the busiest, would keep each
 // other processor away from the threads that wait in a third queue. Each
-// queue is tried one time in a pick: at most one pair of run locks for
-// each other processor, and each thread of the machine is in one list, so
-// one pick still scans each thread one time at most.
+// queue is tried one time in a pick, the queue of the hint too: at most
+// one pair of run locks for each other processor, and each thread of the
+// machine is in one list, so one pick still passes over each list one
+// time at most.
 schedule_pick :: proc "contextless" (cpu: ^Processor) -> u32 {
+	tried: u64
 	// The queue of a thread that woke this processor from idle (kick).
 	if hint := intrinsics.atomic_exchange(&cpu.look_first, 0); hint != 0 && hint - 1 != cpu.index && intrinsics.atomic_load(&run_queues[hint - 1].count) != 0 {
 		if index := queue_move(hint - 1, cpu); index != 0 {
 			return index
 		}
+		// That queue gave no thread: the balance does not try it again.
+		tried |= u64(1) << (hint - 1)
 	}
 	own := intrinsics.atomic_load(&run_queues[cpu.index].count)
-	tried: u64
 	for {
 		busiest, load := busiest_queue(cpu, tried)
 		if load <= own {
