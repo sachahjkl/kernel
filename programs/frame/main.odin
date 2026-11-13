@@ -120,6 +120,8 @@ start :: proc "contextless" (queues: system.Handle) {
 		fail("the device has no virtio 1 interface")
 	case .Features_Refused:
 		fail("the device refused the features")
+	case .Reset_Not_Done:
+		fail("the device did not finish its reset")
 	}
 	if offered & (1 << FEATURE_MAC) != 0 {
 		for index in 0 ..< 6 {

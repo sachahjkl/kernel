@@ -198,16 +198,38 @@ Start_Error :: enum {
 	None, // The device accepted the features.
 	No_Version_1, // The device has no virtio 1 interface.
 	Features_Refused, // The device did not accept the features.
+	Reset_Not_Done, // The device status was not 0 after RESET_READ_LIMIT reads: the device did not finish its reset.
+}
+
+// How many times `start` reads the device status after it asks for a
+// reset. A device that works gives 0 at the first read or a few reads
+// later. The bound counts reads, not time: the driver has no clock that
+// the device cannot stall, and a count ends on each machine.
+RESET_READ_LIMIT :: 1_000_000
+
+// reset_done reads the device status until it is 0, at most
+// RESET_READ_LIMIT times. false: the device still has a status after the
+// last read.
+reset_done :: proc "contextless" (device: ^Device) -> bool {
+	for _ in 0 ..< RESET_READ_LIMIT {
+		if status_read(device) == 0 {
+			return true
+		}
+		intrinsics.cpu_relax()
+	}
+	return false
 }
 
 // start resets the device and agrees on the features: the driver takes the
 // bits of `wanted` (the first word of the features) that the device offers,
 // and always the virtio 1 interface. offered is the first word of the
 // features of the device. The queues come next (queue_start), then ready.
+// A device that does not finish its reset gives Reset_Not_Done: start
+// writes nothing more to it, and the device service stops.
 start :: proc "contextless" (device: ^Device, wanted: u32) -> (offered: u32, error: Start_Error) {
 	status_write(device, 0)
-	for status_read(device) != 0 {
-		intrinsics.cpu_relax()
+	if !reset_done(device) {
+		return 0, .Reset_Not_Done
 	}
 	status_write(device, STATUS_ACKNOWLEDGE)
 	status_write(device, STATUS_ACKNOWLEDGE | STATUS_DRIVER)

@@ -61,6 +61,31 @@ trace_check :: proc(line: string, names: string) -> (found: string, ok: bool) {
 	return found, strings.has_prefix(found, names)
 }
 
+// The source file of the program fault, as its debug object names it.
+FAULT_SOURCE_FILE :: "programs/fault/main.odin"
+
+// source_lines_of_procedure gives the first and the last line (from 1) of a
+// procedure of the top level of an Odin source: the line that starts with
+// "<name> :: " and has "proc", to the first line after it that is "}".
+source_lines_of_procedure :: proc(source: string, name: string) -> (first_line: int, last_line: int, found: bool) {
+	start := strings.concatenate({name, " :: "}, context.temp_allocator)
+	number := 0
+	rest := source
+	for line in strings.split_lines_iterator(&rest) {
+		number += 1
+		if first_line == 0 {
+			if strings.has_prefix(line, start) && strings.contains(line, "proc") {
+				first_line = number
+			}
+			continue
+		}
+		if strings.trim_right(line, " \t\r") == "}" {
+			return first_line, number, true
+		}
+	}
+	return 0, 0, false
+}
+
 // test_debug_objects reads the debug object of the module fault, which the
 // build wrote, against the linked file of the module: the procedure
 // fault::three found by an address inside it, the line of its first
@@ -102,10 +127,16 @@ test_debug_objects :: proc() -> bool {
 			return fail("the offset %x is in %s + %x, not in fault::three + %x", offset, place.procedure, place.offset_in_procedure, offset - three.start)
 		}
 	}
-	// The source of three is lines 14 to 17 of programs/fault/main.odin.
+	// The lines of three come from the source itself: a line added above
+	// the procedure moves them, and the check moves with them.
+	source := read_file(FAULT_SOURCE_FILE) or_return
+	first_line, last_line, has_lines := source_lines_of_procedure(string(source), "three")
+	if !has_lines {
+		return fail("%s has no procedure three", FAULT_SOURCE_FILE)
+	}
 	first := debug_object.place_of(object, three.start)
-	if first.file != "programs/fault/main.odin" || first.line < 14 || first.line > 17 {
-		return fail("the first instruction of fault::three is at %s:%d, not in programs/fault/main.odin:14 to 17", first.file, first.line)
+	if first.file != FAULT_SOURCE_FILE || int(first.line) < first_line || int(first.line) > last_line {
+		return fail("the first instruction of fault::three is at %s:%d, not in %s:%d to %d", first.file, first.line, FAULT_SOURCE_FILE, first_line, last_line)
 	}
 	outside := debug_object.place_of(object, code_end + 0x1000)
 	if outside.procedure != "" || outside.file != "" {

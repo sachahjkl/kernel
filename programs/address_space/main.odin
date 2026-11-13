@@ -480,8 +480,8 @@ refuse :: proc "contextless" () {
 // The edge cases of the virtual memory: each one is a case where the
 // kernel did something wrong once, and that must stay right. Each one logs
 // a line and sets its result.
-EDGE_CASES :: 13
-edge_case_names := [EDGE_CASES]string{"a small object with no frame keeps the sums of the frames", "an unmap ends the protection of parts: the object is mapped again", "large pages at an address that the kernel chooses", "a table that names one mapping whole and in part is refused", "a decommit wakes a thread that waits on a word of the page", "a word in the second 4 KiB of a large page is its own word", "an object with parts of their own protection is not mapped again", "a small uncommitted object costs a page", "a part cannot get more than its mapping", "a page that is not committed stops with its own code", "a revocation of a large uncommitted mapping wakes its waiter", "an uncommitted object of 1 GiB ends with few pages walked", "a thread whose first instruction is not an address of a program is refused"}
+EDGE_CASES :: 14
+edge_case_names := [EDGE_CASES]string{"a small object with no frame keeps the sums of the frames", "an unmap ends the protection of parts: the object is mapped again", "large pages at an address that the kernel chooses", "a table that names one mapping whole and in part is refused", "a decommit wakes a thread that waits on a word of the page", "a word in the second 4 KiB of a large page is its own word", "an object with parts of their own protection is not mapped again", "a small uncommitted object costs a page", "a part cannot get more than its mapping", "a page that is not committed stops with its own code", "a revocation of a large uncommitted mapping wakes its waiter", "an uncommitted object of 1 GiB ends with few pages walked", "a thread whose first instruction is not an address of a program is refused", "a map with a flag that the kernel does not know is refused"}
 edge_case_results: [EDGE_CASES]bool
 
 Waiter :: struct #align (64) {
@@ -665,6 +665,19 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		_, of_the_kernel := system.call_with_error(nil, .Thread_Create, u64(system.own_budget()), 0xFFFF_FFFF_8000_0000, op.USER_END, 0)
 		_, stack_past_the_end := system.call_with_error(nil, .Thread_Create, u64(system.own_budget()), op.USER_END - 4096, 0x0000_9000_0000_0000, 0)
 		edge_case_results[12] = not_canonical == .Bad_Address && of_the_kernel == .Bad_Address && stack_past_the_end == .Bad_Address
+	}
+	{
+		// A bit of the flags with no meaning, alone and beside a flag that
+		// has one: each is refused with a record that names the flags, and
+		// the object is still mapped with the flags that the kernel knows.
+		memory, _ := system.memory_create(1)
+		alone_record, beside_record: errors.Error_Record
+		_, alone := system.call_with_error(&alone_record, .Memory_Map, u64(memory), 0, 0, 1 << 3, 0, 0)
+		_, beside := system.call_with_error(&beside_record, .Memory_Map, u64(memory), 0, 0, 1 << 63 | transmute(u64)op.Map_Flags{.Write}, 0, 0)
+		address, known := system.memory_map(memory, {.Write})
+		edge_case_results[13] = alone == .Bad_Operation && beside == .Bad_Operation && alone_record.kind == i64(errors.Kind.Bad_Flags) && alone_record.argument == 4 && beside_record.kind == i64(errors.Kind.Bad_Flags) && known == .Ok
+		system.memory_unmap(address)
+		system.close(memory)
 	}
 	for name, index in edge_case_names {
 		system.log("address_space: edge case: ", name, ": ", edge_case_results[index] ? "right" : "WRONG")
