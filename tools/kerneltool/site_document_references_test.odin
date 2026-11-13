@@ -363,7 +363,10 @@ site_document_pointers_of_the_repository :: proc(t: ^testing.T) {
 	}
 	glossary, glossary_ok := site_read_quiet(SITE_GLOSSARY_FILE)
 	testing.expect(t, glossary_ok)
-	site.terms = site_glossary_terms(glossary)
+	glossary_terms, glossary_problems := glossary_read(glossary)
+	testing.expectf(t, len(glossary_problems) == 0, "the glossary: %v", glossary_problems)
+	site.glossary = glossary_terms
+	site.terms = site_glossary_terms(site.glossary)
 	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
 	testing.expect(t, site_guides_add(&site))
 	problems := site_document_pointer_problems(&site)

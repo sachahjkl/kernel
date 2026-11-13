@@ -17,6 +17,7 @@ The owner asked for this rule on 2026-11-10 (D-047).
 ## Work
 
 - One term for one concept. Define a term in `docs/GLOSSARY.md` before its first use.
+- A term of the glossary is a heading of level 3 in its group: a short definition of one sentence that stands alone, then an explanation (what it is for, how it is used, what it is not, an example, a reference to its design), then "Do not use:" (`docs/SITE.md`, "The glossary").
 - Each step adds one capability to a system that works. Each step is a tested commit on `master`.
 - All automation is a command of `tools/kerneltool`. Run it with `nix develop -c kerneltool <command>`.
 - Keep the documentation up to date (owner, 2026-11-12): a change of the code changes, in the same commit, each document that describes it: the guide of its subject, the glossary, `README.md`, `docs/FIRST_MILESTONE.md`, the changelog fragment and the news entry when a person sees the change. A document that says what the code no longer does is a fault, as a failing test is.
