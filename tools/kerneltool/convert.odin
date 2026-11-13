@@ -55,7 +55,7 @@ Field_Description :: struct {
 	unsigned: bool, // An unsigned Integer.
 }
 
-// The description of a module: what its source says to a person, and its exports.
+// The description of a module: what its source says to a reader, and its exports.
 Module_Description :: struct {
 	about:    string, // One line: the first sentence of the comment of the package.
 	text:     string, // The documentation text that the module carries: the comment of the package, with no Markdown mark.

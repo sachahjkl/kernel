@@ -223,7 +223,7 @@ draw_portrait :: proc "contextless" (canvas: graphics.Canvas, turn: f32) {
 	depth_left, depth_right := EYE_DISTANCE + HALF * side, EYE_DISTANCE - HALF * side
 	left := CENTER_X - HALF * facing * EYE_DISTANCE / depth_left
 	right := CENTER_X + HALF * facing * EYE_DISTANCE / depth_right
-	flipped := left > right // The person sees the back: the portrait is mirrored.
+	flipped := left > right // The eye sees the back: the portrait is mirrored.
 	if flipped {
 		left, right = right, left
 		depth_left, depth_right = depth_right, depth_left

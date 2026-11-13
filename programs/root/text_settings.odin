@@ -9,7 +9,7 @@ import op "contract:operation"
 import "support:graphics"
 import "support:system"
 
-// The text of the system and the settings of the person (docs/FONTS.md):
+// The text of the system and the settings of the system (docs/FONTS.md):
 // this service creates the settings page, checks the hashes and the format
 // of the glyph caches of the boot image once, draws the boot display with the
 // default one, and maps the page and the caches read-only into each

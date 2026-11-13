@@ -97,8 +97,8 @@ line_runs_of_each_kind :: proc(t: ^testing.T) {
 	expect_cover(t, text, runs[:count])
 }
 
-// A name that the console does not know is marked only after the person
-// typed a byte after it; a name that it knows has its kind at once.
+// A name that the console does not know is marked only after a byte is
+// typed after it; a name that it knows has its kind at once.
 @(test)
 line_runs_of_a_name_being_typed :: proc(t: ^testing.T) {
 	runs: [terminal.CODE_RUN_LIMIT]terminal.Code_Run
@@ -128,7 +128,7 @@ line_runs_of_a_name_being_typed :: proc(t: ^testing.T) {
 	expect_runs(t, "foo", runs[:count], []Expected_Run{{"foo", .Unknown}})
 }
 
-// A text with no end quote is a text that the person still types: its own
+// A text with no end quote is a text that is still being typed: its own
 // kind, which the terminal draws as a text.
 @(test)
 line_runs_of_an_unfinished_text :: proc(t: ^testing.T) {

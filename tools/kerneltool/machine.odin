@@ -14,7 +14,7 @@ import "core:sync"
 import "core:time"
 
 // The machine test: the tool starts the machine under QEMU, and it acts as
-// the person. It presses keys and moves the mouse through the QEMU monitor,
+// the input. It presses keys and moves the mouse through the QEMU monitor,
 // it reads the log of the kernel, and it saves pictures of the screen.
 
 SCREENSHOT_FOLDER :: BUILD_FOLDER + "/screenshots"
@@ -219,9 +219,9 @@ scenario_fails := [?]Step {
 }
 
 // Persistence: three machines with one data disk. The first one starts
-// from a new disk: the person types a note in `notes` and counts 1000 (1000
+// from a new disk: the scenario types a note in `notes` and counts 1000 (1000
 // commits), then stops the machine. The second one finds the note and the
-// count; the person counts again, and the tool ends QEMU in the middle of
+// count; the scenario counts again, and the tool ends QEMU in the middle of
 // the commits, with no stop of the machine. The third one finds a store
 // that the checks accept, and a count of one commit: its three blocks agree.
 scenario_persist_first := [?]Step {
@@ -385,7 +385,7 @@ scenario_persist_cut := [?]Step {
 // The network: a machine of its own. The network service starts when `net`
 // starts, with the frame service of the network device. The peer of the
 // tool (peer.odin) is the gateway and the echo server. `net` shows each
-// case, then the measures. The person revokes the grant of the network:
+// case, then the measures. The scenario revokes the grant of the network:
 // the next datagram is refused. Then the endpoint ends with its program,
 // and each page is free or paid.
 TEST_OUTPUT_NETWORK :: BUILD_FOLDER + "/test_output_network.txt"
@@ -421,7 +421,7 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "net: kernel entries for each datagram: "},
 	{kind = .Wait, text = "net: the measures are done"},
 	{kind = .Shot, text = "network"},
-	// The grant is a record of the root service: the person sees it and
+	// The grant is a record of the root service: the scenario lists it and
 	// revokes it. The network service ends the grant of the endpoint.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "grants(\"net\")"},
@@ -506,10 +506,10 @@ scenario_network := [?]Step {
 	{kind = .Remote_Case, text = "silence"},
 	{kind = .Wait, text = ": the idle end held its bound: "},
 	{kind = .Remote_Case, text = "silence ends"},
-	// The person sees the grant, and revokes it: the services refuse what
+	// The scenario lists the grant, and revokes it: the services refuse what
 	// they give only to a caller that acts for the principal.
 	// The developer tool serves its tables to a caller that acts for the
-	// person: the remote service, until the revocation below.
+	// principal: the remote service, until the revocation below.
 	{kind = .Launch, text = "inspect"},
 	{kind = .Wait, text = "inspect: ok, "},
 	{kind = .Call, text = "inspect.mappings(\"remote\")", expected = " rows of Mapping"},
@@ -522,7 +522,7 @@ scenario_network := [?]Step {
 	{kind = .Call, text = "inspect.threads(\"remote\")", outcome = .Failed, expected = "error: inspect.threads: the caller has no grant for this: to act for the principal (-1)"},
 	{kind = .Call, text = "inspect.modules(\"remote\")", outcome = .Failed, expected = "error: inspect.modules: the caller has no grant for this: to act for the principal (-1)"},
 	{kind = .Call, text = "monitor.programs()", outcome = .Failed, expected = "error: monitor.programs: the caller has no grant for this: to act for the principal (-1)"},
-	// The place of the pointer is a fact of the screen of the person: the
+	// The place of the pointer is a fact of the screen: the
 	// tool moves the pointer with no confirmation again.
 	{kind = .Call, text = "compositor.pointer()", outcome = .Failed, pointer = true, expected = "error: compositor.pointer: the caller has no grant for this: to act for the principal (-1)"},
 	// The window of inspect covers the windows under it: it closes now.
@@ -534,8 +534,8 @@ scenario_network := [?]Step {
 	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
 	{kind = .Front, text = "remote"},
 	{kind = .Shot, text = "remote"},
-	// The desktop: the person closes remote and manual, the launcher starts
-	// two programs, and the person places four windows. The title bar of
+	// The desktop: the scenario closes remote and manual, the launcher starts
+	// two programs, and the scenario places four windows. The title bar of
 	// the window in front goes from blue to a darker blue; the other title
 	// bars are quiet.
 	{kind = .Close, text = "remote"},
@@ -1702,7 +1702,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "terminal: flood stopped with code 0 after "},
 	{kind = .Click, x = 940, y = 400}, // A part of the window that the console does not cover.
 	{kind = .Shot, text = "terminal_stopped"},
-	// The person closes the window: the terminal stops.
+	// The scenario closes the window: the terminal stops.
 	{kind = .Close, text = "flood"},
 	{kind = .Wait, text = "root: terminal stopped"},
 	// The block service: the root service gives one virtio disk to one
@@ -1760,7 +1760,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] 20"},
 	{kind = .Type, text = "storage.stores()"},
 	{kind = .Wait, text = "[console] console: 1 objects, 0 trees, 0 versions, 3 of 3 blocks, 0 shared, 1 connection"},
-	// The person sees the grant and revokes it: the store stays on the disk,
+	// The scenario lists the grant and revokes it: the store stays on the disk,
 	// and the console cannot reach it.
 	{kind = .Type, text = "grants(\"console\")"},
 	{kind = .Wait, text = "[console] console has: log, machine, image, store, acts_for_principal"},
@@ -1774,7 +1774,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] console lost: store"},
 	{kind = .Shot, text = "storage"},
 	// Versions: notes commits each key, and the storage service
-	// keeps the state before each commit. The person steps back through the
+	// keeps the state before each commit. The scenario steps back through the
 	// versions of the note and restores one; nothing is lost.
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
@@ -1794,7 +1794,7 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "notes: restored the version of generation {generation+20}: \"versio\", in the commit of generation {generation+23} in "},
 	// The exports of the versions, from the host: the remote service acts
-	// for the person, so it names the store of notes.
+	// for the principal, so it names the store of notes.
 	// A place on the store of notes: the first place of the service, 1.
 	{kind = .Call, text = "storage.open_store(\"notes\")", expected = "1"},
 	{kind = .Call, text = "storage.versions(1, \"note\")", expected = "9 rows of Version"},
@@ -1995,7 +1995,7 @@ scenario := [?]Step {
 	{kind = .Point, x = 400, y = 260, text = "text"}, // The input line of the launcher.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the launcher is closed by the key super"},
-	// The settings of the person: the font, the order of the stripes, the
+	// The settings of the system: the font, the order of the stripes, the
 	// pointer theme and the grid fit change while the programs run; each
 	// window draws again, with no code of its own for it. Each change is
 	// kept in the private store of settings.
@@ -2063,10 +2063,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "root: interface_through_module stopped"},
 	{kind = .Front, text = "console"},
 	// The line editor of the console. The console writes a log line only
-	// when the person asks (Tab, a take): the lines that the scenario types
+	// when the input asks (Tab, a take): the lines that the scenario types
 	// before this place add no record to the log.
 	// Fuzzy completion: "mcnt" holds the letters of monitor.count in their
-	// order. The list opens while the person types; Escape closes it, Tab
+	// order. The list opens while the line is typed; Escape closes it, Tab
 	// opens it again, and Enter takes the first name, with its '('.
 	{kind = .Type, text = "clear()"},
 	{kind = .Keys, text = "mcnt"},
@@ -2229,7 +2229,7 @@ scenario_measure_scheduler := [?]Step {
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
-// The film of the terminal: the program flood writes lines, the person
+// The film of the terminal: the program flood writes lines, the scenario
 // holds the view, moves in the lines, then stops the lines with a key and
 // starts them again.
 @(rodata)
@@ -2362,7 +2362,7 @@ key_send :: proc(machine: ^Machine, name: string) -> bool {
 	}
 	before, read := key_records_read(machine)
 	if !read {
-		// The person revoked the grant of remote, or remote stopped: the
+		// The scenario revoked the grant of remote, or remote stopped: the
 		// wait with no confirmation.
 		monitor_send(machine, "sendkey ", name, " 20")
 		time.sleep(key_pause_without_confirmation())
@@ -2481,7 +2481,7 @@ window_width :: proc(machine: ^Machine, title: string) -> (width: int, ok: bool)
 }
 
 // window_place gives the place of the last window with a title. The
-// compositor writes it when it makes the window, and when a person puts the
+// compositor writes it when it makes the window, and when the pointer puts the
 // window down: "compositor: surface title 480x320 at 276,232" and
 // "compositor: window title moved to 60,742".
 window_place :: proc(machine: ^Machine, title: string) -> (x, y: int, ok: bool) {
@@ -2517,8 +2517,8 @@ window_place :: proc(machine: ^Machine, title: string) -> (x, y: int, ok: bool) 
 
 // window_of_compositor gives the place and the outer width of the window
 // with a title, from compositor.windows(): the table of the compositor
-// itself. The tool reads it once it has the grant person (a step Call with
-// pointer); before that step, the places come from the log.
+// itself. The tool reads it once it has the grant `acts_for_principal` (a
+// step Call with pointer); before that step, the places come from the log.
 window_of_compositor :: proc(machine: ^Machine, title: string) -> (x, y, width: int, ok: bool) {
 	table := table_call(&machine.client, "compositor.windows()") or_return
 	for row in 0 ..< len(table.rows) / table.size {
@@ -3301,7 +3301,8 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			result := call_run(&machine.client, step.text)
 			if step.pointer {
 				// A result: the tool confirms each place from now on. A
-				// refusal (the grant person was revoked): the blind way again.
+				// refusal (the grant `acts_for_principal` was revoked): the blind way
+				// again.
 				machine.confirm = result.outcome == .Result
 				test_passed_print("the tool %s the place of the pointer through compositor.pointer() from now on", machine.confirm ? "reads" : "no longer reads")
 			}

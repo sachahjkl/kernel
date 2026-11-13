@@ -29,7 +29,7 @@ import "support:sentence"
 //
 // `kerneltool run` starts the peer with the socket CALL_SOCKET_RUN_NAME,
 // and `kerneltool call` finds it by the same rule; it names the public key
-// of `remote` that the person reads in its window. The machine test gives
+// of `remote` that the developer reads in its window. The machine test gives
 // the peer a socket of its own and the key on the log (step Remote_Key),
 // and the step Call uses the same code.
 

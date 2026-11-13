@@ -234,7 +234,7 @@ site_author_of_the_site :: proc(t: ^testing.T) {
 	testing.expect(t, strings.has_prefix(site_account_address(), "https://github.com/"))
 	testing.expect(t, strings.has_prefix(SITE_REPOSITORY_ADDRESS, strings.concatenate({site_account_address(), "/"}, context.temp_allocator)))
 
-	// With an address: the person, and the nodes that name it.
+	// With an address: the author, and the nodes that name it.
 	site := metadata_test_site(TEST_ADDRESS)
 	written := metadata_test_written(&site)
 	author_reference :: "{\"@id\":\"" + TEST_ADDRESS + "/#author\"}"
@@ -248,7 +248,7 @@ site_author_of_the_site :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(site_check_metadata(TEST_ADDRESS, site.pages[:], written, site_sitemap(&site), site.picture_sizes)), 0)
 	testing.expect(t, strings.contains(site_releases_feed(&site), "<author><name>Ada Example</name><uri>"))
 
-	// With no holder: no person, no field that names one, and the feed
+	// With no holder: no author, no field that names one, and the feed
 	// names the system.
 	site.author = ""
 	without_author := metadata_test_written(&site)

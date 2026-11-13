@@ -13,8 +13,8 @@
 //     no system management mode, for the machines of the measure
 //   OVMF_FULL_CODE, OVMF_FULL_VARS: the firmware with Secure Boot (and system
 //     management mode), for the machines of Secure Boot
-//   SYSTEM_SIGNING_KEY (not set by the shell): the private key of the person
-//     who owns the machine, which signs the system description; with none,
+//   SYSTEM_SIGNING_KEY (not set by the shell): the private key of the
+//     principal that signs the system description; with none,
 //     the test signing key of resources/keys (system_description.odin)
 //   FONT_SOURCE: the BDF file of the font, for the command "font"
 //   POINTER_THEME_SOURCE: the folder of the Xcursor theme of the owner (docs/POINTERS.md)
@@ -517,7 +517,7 @@ run_machine :: proc(args: []string) -> int {
 	if !peer_start(&peer, CALL_SOCKET_RUN_NAME) {
 		return EXIT_FAILURE
 	}
-	// The person names the key of each start of remote in `kerneltool
+	// The developer names the key of each start of remote in `kerneltool
 	// call`: this peer takes it.
 	peer.remote.keys_from_calls = true
 	fmt.printfln("kerneltool: the peer takes the calls of `kerneltool call` at %s (only this user reaches it)", peer.call_socket)
@@ -1005,7 +1005,7 @@ network_device_of :: proc(host_port, listener_port, peer_port, machine_port: int
 // network_device_problem refuses a network device that forwards a UDP port
 // of the host to the port of `remote`. QEMU user networking gives each
 // forwarded datagram the address 10.0.2.2, the one address that the grant
-// of `remote` admits: such a forward opens the calls as the person to
+// of `remote` admits: such a forward opens the calls as the principal to
 // whoever reaches the port of the host (docs/QUIC.md, section 7). A
 // forward is "hostfwd=[tcp|udp]:[address]:port-[address]:port"; with no
 // protocol it is TCP.

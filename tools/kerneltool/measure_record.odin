@@ -264,7 +264,7 @@ measure_record_format :: proc(record: Measure_Record) -> string {
 }
 
 // measure_record_parse reads a record in its form. The file is a file of
-// the repository that a person can change: each line is checked.
+// the repository that a developer can change: each line is checked.
 measure_record_parse :: proc(text: string) -> (record: Measure_Record, problem: string) {
 	lines := site_lines(text)
 	for len(lines) > 0 && lines[len(lines) - 1] == "" {

@@ -355,7 +355,7 @@ mark_animations_picture_write :: proc() -> bool {
 	return true
 }
 
-// The script. It changes nothing for a person who asks for reduced motion,
+// The script. It changes nothing for a reader who asks for reduced motion,
 // and nothing in a hidden tab. The still picture stays in the page: a
 // browser with no script shows it, and the script puts a canvas of the same
 // size in its place only while it plays.

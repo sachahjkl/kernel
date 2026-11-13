@@ -170,7 +170,7 @@ run_logo :: proc(args: []string) -> int {
 		}
 		fmt.printfln("kerneltool: wrote %s (%d by %d pixels, %d bytes)", picture.path, picture.size, picture.size, len(file))
 	}
-	// Every frame of the animations, for a person to look at; in the build
+	// Every frame of the animations, for a developer to look at; in the build
 	// folder, not in the repository (site_mark_animation.odin).
 	if !mark_animations_picture_write() {
 		return EXIT_FAILURE

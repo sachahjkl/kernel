@@ -1,7 +1,7 @@
 // The news of the system (docs/GLOSSARY.md, "News entry"; docs/SITE.md,
 // "The news"). The changelog is a technical list for each release; a news
 // entry is a dated report in prose, for a reader who is not a developer of
-// the system, of one thing that a person can now see or use. Each entry is
+// the system, of one thing that this reader can now see or use. Each entry is
 // one file of news/, named by its date and its subject, never moved and
 // never merged with another, as a fragment of the changelog is one file.
 //
@@ -47,10 +47,10 @@ NEWS_KEYS :: [6]string{"title", "date", "release", "picture", "kind", "guide"}
 
 // What an entry reports. The kind is the colored mark of its card.
 News_Kind :: enum {
-	Shown, // A person can now see or use a new thing in the running system.
+	Shown, // A new thing can now be seen or used in the running system.
 	Measured, // A number about a thing that exists is measured, with its conditions.
-	Decided, // The owner chose a thing that a person sees: a name, a mark, a font.
-	Fixed, // A thing that a person saw fail now works.
+	Decided, // A choice of a thing that is seen: a name, a mark, a font.
+	Fixed, // A thing that failed in view now works.
 }
 
 news_kind_names := [News_Kind]string {
@@ -269,7 +269,7 @@ news_parse :: proc(file_name: string, content: string) -> (entry: News_Entry, pr
 }
 
 // news_text gives the content of a new entry file: the head with the date,
-// and no title and no text, so that `news check` fails until a person
+// and no title and no text, so that `news check` fails until a developer
 // writes them.
 news_text :: proc(date: string) -> string {
 	return fmt.tprintf("title: \ndate: %s\nrelease: %s\npicture: %s\nkind: %s\nguide: %s\n\n", date, NEWS_NEXT_RELEASE, NEWS_NONE, news_kind_names[.Shown], NEWS_NONE)

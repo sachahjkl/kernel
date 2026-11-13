@@ -437,7 +437,7 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 		// the part with no kind in the color of the name. On the chosen row
 		// each part is white: no color of a kind keeps its contrast on the
 		// blue (docs/CONSOLE.md, section 7). A matched character is in the
-		// accent over its kind: the match is what the person typed. No tone
+		// accent over its kind: the match is the typed text. No tone
 		// but white keeps its contrast on the chosen blue, so there a matched
 		// character is the reverse: the chosen blue on a white cell.
 		colored := row.code.count != 0
@@ -518,8 +518,8 @@ view_make :: proc "contextless" () {
 		top = total > u64(rows) ? total - u64(rows) : 0
 	}
 	view.count, view.oldest, view.records, view.bytes, view.status = count, oldest, records_read, bytes_written, status_line
-	// The person holds lines that the terminal does not have now: the view
-	// keeps its cells.
+	// The held view shows lines that the terminal does not have now: the
+	// view keeps its cells.
 	view.gone = !request.follow && top == view.top && top < oldest
 	if view.gone {
 		view.list_columns = 0

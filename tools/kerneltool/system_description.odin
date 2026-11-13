@@ -75,7 +75,7 @@ Signed_Image :: struct {
 // signed_by_file_path gives the file beside a boot volume that says which
 // key signed its system description. A volume that the test signing key
 // signed must not be installed on a real machine: the file says so, and a
-// person sees it beside the volume before a copy.
+// developer sees it beside the volume before a copy.
 signed_by_file_path :: proc(volume_path: string) -> string {
 	return strings.concatenate({volume_path, ".signed_by"}, context.temp_allocator)
 }
