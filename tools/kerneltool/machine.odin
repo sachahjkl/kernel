@@ -42,8 +42,7 @@ PROGRESS_CASE_HANG_BOUND_SECONDS :: 660
 // of every service at once, the part of a machine test that a loaded host
 // slows the most.
 BOOT_HANG_BOUND :: 180 * time.Second
-KEY_PAUSE :: 45 * time.Millisecond
-MOUSE_PAUSE :: 25 * time.Millisecond
+// The most pixels of one relative move of the virtual mouse, on each axis.
 MOUSE_STEP :: 40
 // The exit status of QEMU when the kernel stops the machine with code 0.
 MACHINE_STOP_OK :: 1
@@ -2376,7 +2375,13 @@ Machine :: struct {
 	call_socket: string, // The socket where the peer receives the calls of the tool.
 	peer:        ^Peer,
 	confirm:     bool, // The tool reads compositor.pointer() before each press: see pointer_confirm.
-	keys_confirmed: int, // Keys that the tool sent only after the compositor had the key before (key_send).
+	keys_confirmed: int, // Keys whose records the compositor received before the tool went on (keys_send).
+	key_batches_confirmed: int, // The sends of keys that ended with that count of the compositor.
+	qmp:         Qmp, // The connection to the machine protocol of QEMU: the keys, the pointer, the pictures.
+	log_watch:   Log_Watch, // The wait for a change of the log (log_watch_linux.odin).
+	device_bytes: int, // The bytes that the tool sent to the virtual keyboard and mouse since the system had read them all.
+	pointer_packets: int, // The packets of the virtual mouse that the tool sent.
+	picture_jobs: [dynamic]^Picture_Job, // The pictures that worker threads turn into PNG files.
 	confirmations: [dynamic]time.Duration, // The time of each confirmation of a place.
 	corrected:   int, // The places that needed a correction.
 	record_next: i64, // The number of the log record where the next Record step searches.
@@ -2387,6 +2392,7 @@ Machine :: struct {
 	forward:     Forward, // QEMU user networking: the port of hostfwd and the listener of guestfwd.
 	started_at:  time.Tick, // When QEMU started: the first Wait says how long the boot took.
 	started_unix: i64, // When QEMU started, in seconds since 1970: no date that the machine prints is before it.
+	times:       Machine_Step_Times, // The times of the step that runs (test_times.odin).
 }
 
 monitor_send :: proc(machine: ^Machine, parts: ..string) {
@@ -2431,131 +2437,6 @@ key_name :: proc(character: u8) -> string {
 		return "slash"
 	}
 	return ""
-}
-
-// key_records_read gives the count of the key records that the compositor
-// received, through the remote service.
-key_records_read :: proc(machine: ^Machine) -> (count: i64, ok: bool) {
-	values := record_fields(&machine.client, "compositor.pointer()", {"keys"}) or_return
-	return values[0], true
-}
-
-// key_pause_without_confirmation gives the wait after a key when the tool
-// cannot ask the compositor if the key arrived (a scenario with no remote).
-// On a host with more runnable work than processors, the machine runs that
-// much later: the wait grows with the load of the host for each processor,
-// so that the machine reads each key before the next one fills its
-// keyboard (measured at a load of 60 on 16 processors with the fixed wait:
-// `connect("server")` arrived as `connect("`).
-key_pause_without_confirmation :: proc() -> time.Duration {
-	load, parsed := strconv.parse_f64(load_of_the_host())
-	if !parsed {
-		return KEY_PAUSE
-	}
-	late := max(load / f64(max(os.get_processor_core_count(), 1)), 1)
-	return time.Duration(f64(KEY_PAUSE) * min(late * late, 40))
-}
-
-// key_send presses and releases one key of the QEMU monitor ("a",
-// "shift-a", "ret"). When the tool can call the compositor (machine.confirm),
-// it waits until the compositor received the records of that key: a press
-// and a release for each part of the name. A loaded host runs the machine
-// late: the keyboard of the machine holds few scancodes, and a key sent
-// before the machine read the last ones is lost (measured: "start("fetch")"
-// arrived as "start("ETCH")": the release of shift and the f were lost).
-// With the wait, the tool never sends a key before the last one arrived.
-// Before remote runs, the tool waits a fixed time, as before.
-key_send :: proc(machine: ^Machine, name: string) -> bool {
-	if !machine.confirm {
-		monitor_send(machine, "sendkey ", name, " 20")
-		time.sleep(key_pause_without_confirmation())
-		return true
-	}
-	before, read := key_records_read(machine)
-	if !read {
-		// The scenario revoked the grant of remote, or remote stopped: the
-		// wait with no confirmation.
-		monitor_send(machine, "sendkey ", name, " 20")
-		time.sleep(key_pause_without_confirmation())
-		return true
-	}
-	wanted := before + 2 * i64(strings.count(name, "-") + 1)
-	monitor_send(machine, "sendkey ", name, " 20")
-	start := time.tick_now()
-	for time.tick_since(start) < HANG_BOUND {
-		time.sleep(5 * time.Millisecond)
-		now, ok := key_records_read(machine)
-		if !ok {
-			time.sleep(KEY_PAUSE)
-			return true
-		}
-		if now >= wanted {
-			machine.keys_confirmed += 1
-			return true
-		}
-	}
-	return false
-}
-
-// POINTER_TRIES: the reads of the place before the tool says that the
-// pointer is not where a step wants it.
-POINTER_TRIES :: 6
-
-// pointer_confirm reads the place of the pointer from the compositor, through
-// the remote service, and moves it again until it is (x, y): a loaded host
-// can lose a move of the QEMU monitor, and the press then lands elsewhere.
-// Before remote runs, the tool moves the pointer with no confirmation.
-pointer_confirm :: proc(machine: ^Machine, x, y: int) -> bool {
-	if !machine.confirm {
-		return true
-	}
-	start := time.tick_now()
-	found_x, found_y: i64
-	for try in 0 ..< POINTER_TRIES {
-		values, ok := record_fields(&machine.client, "compositor.pointer()", {"x", "y"})
-		if ok {
-			found_x, found_y = values[0], values[1]
-			if found_x == i64(x) && found_y == i64(y) {
-				machine.x, machine.y = x, y
-				append(&machine.confirmations, time.tick_since(start))
-				if try > 0 {
-					machine.corrected += 1
-				}
-				return true
-			}
-			// The pointer is where the compositor says: move from there.
-			machine.x, machine.y = int(found_x), int(found_y)
-			pointer_move_blind(machine, x, y)
-		}
-		time.sleep(MOUSE_PAUSE)
-	}
-	fmt.eprintfln("kerneltool: test failed: the pointer is at %d,%d after %d tries, not at %d,%d", found_x, found_y, POINTER_TRIES, x, y)
-	return false
-}
-
-// pointer_move moves the pointer to (x, y), and confirms the place when the
-// tool can read it.
-pointer_move :: proc(machine: ^Machine, x, y: int) -> bool {
-	pointer_move_blind(machine, x, y)
-	return pointer_confirm(machine, x, y)
-}
-
-// pointer_move_blind moves the pointer from the place that the tool
-// believes, with relative moves of the QEMU monitor.
-pointer_move_blind :: proc(machine: ^Machine, x, y: int) {
-	for machine.x != x || machine.y != y {
-		step_x := clamp(x - machine.x, -MOUSE_STEP, MOUSE_STEP)
-		step_y := clamp(y - machine.y, -MOUSE_STEP, MOUSE_STEP)
-		monitor_send(machine, fmt.tprintf("mouse_move %d %d", step_x, step_y))
-		machine.x += step_x
-		machine.y += step_y
-		time.sleep(MOUSE_PAUSE)
-	}
-}
-
-pointer_button :: proc(machine: ^Machine, down: bool) {
-	monitor_send(machine, down ? "mouse_button 1" : "mouse_button 0")
-	time.sleep(4 * MOUSE_PAUSE)
 }
 
 // The text of a Click step that presses a button of the bar: the tool
@@ -2707,7 +2588,9 @@ log_read :: proc(machine: ^Machine) -> string {
 	if err != nil {
 		return ""
 	}
-	return string(log[:strings.last_index_byte(string(log), '\n') + 1])
+	text := string(log[:strings.last_index_byte(string(log), '\n') + 1])
+	test_times_first_line_note(machine, len(text))
+	return text
 }
 
 // windows_line gives the line of the last window with a title in the menu
@@ -2720,7 +2603,7 @@ windows_line :: proc(machine: ^Machine, title: string, from: int) -> (line: int,
 		text := log_read(machine)
 		at := len(text) > from ? strings.index(text[from:], MARK) : -1
 		if at < 0 {
-			time.sleep(50 * time.Millisecond)
+			log_change_wait(machine)
 			continue
 		}
 		text = text[from + at + len(MARK):]
@@ -2736,6 +2619,8 @@ windows_line :: proc(machine: ^Machine, title: string, from: int) -> (line: int,
 }
 
 log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := HANG_BOUND) -> bool {
+	wait_started := time.tick_now()
+	defer test_times_wait_note(machine, wait_started)
 	start := time.now()
 	for time.since(start) < limit {
 		log := log_read(machine)
@@ -2747,7 +2632,7 @@ log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := H
 				return true
 			}
 		}
-		time.sleep(50 * time.Millisecond)
+		log_change_wait(machine)
 	}
 	return false
 }
@@ -2757,6 +2642,8 @@ log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := H
 // text_found when text came first. It does not move the place of the log:
 // the Wait that follows finds text there at once.
 log_wait_or_failure :: proc(machine: ^Machine, text, failure: string, limit: time.Duration) -> (failure_line: string, text_found: bool) {
+	wait_started := time.tick_now()
+	defer test_times_wait_note(machine, wait_started)
 	start := time.now()
 	for time.since(start) < limit {
 		log := log_read(machine)
@@ -2773,7 +2660,7 @@ log_wait_or_failure :: proc(machine: ^Machine, text, failure: string, limit: tim
 				return "", true
 			}
 		}
-		time.sleep(50 * time.Millisecond)
+		log_change_wait(machine)
 	}
 	return "", false
 }
@@ -2791,56 +2678,10 @@ log_last_line :: proc(machine: ^Machine, text: string) -> string {
 	return strings.trim_right(end < 0 ? rest : rest[:end], "\r")
 }
 
-// screen_save saves the screen of the machine as a PNG file.
-screen_save :: proc(machine: ^Machine, name: string) -> bool {
-	time.sleep(400 * time.Millisecond) // The compositor shows the last change.
-	_ = os.remove(SCREEN_DUMP)
-	monitor_send(machine, "screendump ", SCREEN_DUMP)
-	for dump_start := time.tick_now(); time.tick_since(dump_start) < HANG_BOUND; {
-		time.sleep(100 * time.Millisecond)
-		dump, err := os.read_entire_file(SCREEN_DUMP, context.temp_allocator)
-		if err != nil {
-			continue
-		}
-		// "P6", width, height, 255, one space character, then the bytes.
-		position := 0
-		fields: [4]string
-		for &field in fields {
-			for position < len(dump) && (dump[position] == ' ' || dump[position] == '\n') {
-				position += 1
-			}
-			start := position
-			for position < len(dump) && dump[position] != ' ' && dump[position] != '\n' {
-				position += 1
-			}
-			field = string(dump[start:position])
-		}
-		position += 1
-		width, _ := strconv.parse_int(fields[1])
-		height, _ := strconv.parse_int(fields[2])
-		if fields[0] != "P6" || width <= 0 || height <= 0 || len(dump) - position < width * height * 3 {
-			continue
-		}
-		path := join(SCREENSHOT_FOLDER, "/", name, ".png")
-		file, encode_error := png_encode(width, height, 3, dump[position:][:width * height * 3])
-		if encode_error != nil {
-			fmt.eprintfln("kerneltool: cannot encode %s: %v", path, encode_error)
-			return false
-		}
-		if write_error := os.write_entire_file(path, file); write_error != nil {
-			fmt.eprintfln("kerneltool: cannot write %s: %v", path, write_error)
-			return false
-		}
-		fmt.printfln("kerneltool: screen saved: %s (%dx%d, %d bytes)", path, width, height, len(file))
-		return true
-	}
-	fmt.eprintln("kerneltool: QEMU did not save the screen")
-	return false
-}
-
 // machine_test runs a scenario on a boot volume. It passes when each step
 // passes and QEMU ends with the status exit_status.
 machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual) -> bool {
+	machine_test_started := time.tick_now()
 	// The software TPM runs before QEMU and ends after it, with a folder of
 	// its own for each machine.
 	tpm: Tpm_Process
@@ -2869,6 +2710,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		return false
 	}
 	_ = os.remove(output)
+	_ = os.remove(qmp_socket_of(output))
 	monitor_read, monitor_write, pipe_err := os.pipe()
 	if pipe_err != nil {
 		fmt.eprintfln("kerneltool: cannot create a pipe: %v", pipe_err)
@@ -2890,17 +2732,25 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		forward   = forward,
 		disk_server = disk_server,
 	}
-	passed := scenario_run(&machine, steps)
+	// The keys, the moves of the pointer and the pictures go through the
+	// machine protocol of QEMU: QEMU listens when it started.
+	passed := qmp_open(&machine.qmp, qmp_socket_of(output)) && scenario_run(&machine, steps)
+	scenario_ended := time.tick_now()
 	if !passed && firmware != .Usual {
 		// While QEMU still runs: what the firmware shows and wrote.
 		firmware_failure_report(&machine, output)
+	}
+	// Each picture has its PNG file before the test ends: a picture that
+	// is not written fails the test.
+	if !pictures_join(&machine) {
+		passed = false
 	}
 	if len(machine.confirmations) > 0 {
 		slice.sort(machine.confirmations[:])
 		test_passed_print("the tool confirmed %d places of the pointer through compositor.pointer(), %d after a correction; one confirmation took %d us at least, %d us in the middle", len(machine.confirmations), machine.corrected, i64(machine.confirmations[0] / time.Microsecond), i64(machine.confirmations[len(machine.confirmations) / 2] / time.Microsecond))
 	}
 	if machine.keys_confirmed > 0 {
-		test_passed_print("the tool sent %d keys, each one after the compositor had received the key before it", machine.keys_confirmed)
+		test_passed_print("the tool sent %d keys in %d sends, and went on after each send only when the compositor had received each record of its keys", machine.keys_confirmed, machine.key_batches_confirmed)
 	}
 	if machine.client_open {
 		call_client_close(&machine.client)
@@ -2925,6 +2775,9 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	}
 	os.close(monitor_write)
 	os.close(monitor_read)
+	qmp_close(&machine.qmp)
+	log_watch_close(&machine.log_watch)
+	delete(machine.picture_jobs)
 	peer_stop(&peer)
 	if passed {
 		passed = peer_check(&peer)
@@ -2947,6 +2800,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 			fmt.eprintln("   ", line)
 		}
 	}
+	test_times_machine_end(&machine, passed, machine_test_started, machine.started_at, scenario_ended)
 	return passed
 }
 
@@ -3002,6 +2856,10 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 	generation_base: i64 = -1 // The number that the last step Generation read; -1: none.
 	for given_step, index in steps {
 		step := given_step
+		// The time of the step, for a step that passes and for one that fails.
+		step_started := time.tick_now()
+		test_times_step_start(machine)
+		defer test_times_step_end(machine, index, given_step, step_started)
 		if index > 0 && remote_starts_or_ends(steps[index - 1]) && machine.peer != nil && machine.peer.remote != nil {
 			// The step before started or closed `remote`: its key of the
 			// start before is forgotten, and the tool no longer reads the
@@ -3087,25 +2945,23 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 			test_passed_print("the stack trace after \"%s\" names the functions %s", step.text, found)
 		case .Type, .Keys:
-			for i in 0 ..< len(step.text) {
-				name := key_name(step.text[i])
-				if name == "" {
-					fmt.eprintfln("kerneltool: step %d: no key for '%c'", index + 1, step.text[i])
-					return false
-				}
-				if !key_send(machine, name) {
-					fmt.eprintfln("kerneltool: test failed: step %d: the machine did not take the key %s of \"%s\"", index + 1, name, step.text)
-					return false
-				}
+			// The keys of the line, and its Enter, go as one list.
+			names, unknown := key_names_of_a_text(step.text)
+			if unknown >= 0 {
+				fmt.eprintfln("kerneltool: step %d: no key for '%c'", index + 1, step.text[unknown])
+				return false
 			}
+			keys := make([dynamic]string, 0, len(names) + 1, context.temp_allocator)
+			append(&keys, ..names)
 			if step.kind == .Type {
-				if !key_send(machine, "ret") {
-					fmt.eprintfln("kerneltool: test failed: step %d: the machine did not take the key ret of \"%s\"", index + 1, step.text)
-					return false
-				}
+				append(&keys, "ret")
+			}
+			if !keys_send(machine, keys[:], fmt.tprintf("\"%s\"", step.text)) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not take the keys of \"%s\"", index + 1, step.text)
+				return false
 			}
 		case .Key:
-			if !key_send(machine, step.text) {
+			if !keys_send(machine, []string{step.text}, fmt.tprintf("the key %s", step.text)) {
 				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not take the key %s", index + 1, step.text)
 				return false
 			}
@@ -3140,7 +2996,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				if shape == step.text {
 					break
 				}
-				time.sleep(50 * time.Millisecond)
+				time.sleep(CONDITION_POLL_PERIOD)
 			}
 			if shape != step.text {
 				fmt.eprintfln("kerneltool: test failed: step %d: the pointer at %d,%d has the shape \"%s\", not \"%s\"", index + 1, x, y, shape, step.text)
@@ -3178,7 +3034,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				found: bool
 				for start := time.now(); !found && time.since(start) < HANG_BOUND; {
 					if x, y, found = window_place(machine, step.text); !found {
-						time.sleep(50 * time.Millisecond)
+						log_change_wait(machine)
 					}
 				}
 				if !found {
@@ -3217,9 +3073,9 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			if !machine.pointer_known {
 				// The pointer starts at an unknown place: push it to the corner.
 				machine.pointer_known = true
-				for _ in 0 ..< 40 {
-					monitor_send(machine, "mouse_move -100 -100")
-					time.sleep(MOUSE_PAUSE)
+				if !pointer_corner_push(machine) {
+					fmt.eprintfln("kerneltool: test failed: step %d: the pointer did not go to the corner of the screen", index + 1)
+					return false
 				}
 			}
 			if step.kind == .Launch {
@@ -3228,8 +3084,8 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("kerneltool: test failed: step %d: the pointer did not reach its place", index + 1)
 					return false
 				}
-				pointer_button(machine, true)
-				pointer_button(machine, false)
+				pointer_button(machine, true) or_return
+				pointer_button(machine, false) or_return
 				// The compositor writes that the menu is open: a press that
 				// the machine did not receive is a failure of this step, with
 				// its cause, and not of a later one.
@@ -3237,7 +3093,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				for start := time.now(); !open && time.since(start) < HANG_BOUND; {
 					text := log_read(machine)
 					if open = len(text) > before && strings.contains(text[before:], "compositor: the menu of the programs is open"); !open {
-						time.sleep(50 * time.Millisecond)
+						log_change_wait(machine)
 					}
 				}
 				if !open {
@@ -3251,8 +3107,8 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("kerneltool: test failed: step %d: the pointer did not reach its place", index + 1)
 					return false
 				}
-				pointer_button(machine, true)
-				pointer_button(machine, false)
+				pointer_button(machine, true) or_return
+				pointer_button(machine, false) or_return
 				line, found := windows_line(machine, step.text, before)
 				if !found {
 					fmt.eprintfln("kerneltool: test failed: step %d: the menu of the windows does not have %s", index + 1, step.text)
@@ -3264,14 +3120,14 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("kerneltool: test failed: step %d: the pointer did not reach its place", index + 1)
 				return false
 			}
-			pointer_button(machine, true)
+			pointer_button(machine, true) or_return
 			if step.kind == .Drag {
 				if !pointer_move(machine, step.to_x, step.to_y) {
 					fmt.eprintfln("kerneltool: test failed: step %d: the pointer did not reach its place", index + 1)
 					return false
 				}
 			}
-			pointer_button(machine, false)
+			pointer_button(machine, false) or_return
 			if step.kind == .Front {
 				// The compositor writes that the window is in front.
 				mark := strings.concatenate({"compositor: window ", step.text, " in front"}, context.temp_allocator)
@@ -3279,7 +3135,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				for start := time.now(); !arrived && time.since(start) < HANG_BOUND; {
 					text := log_read(machine)
 					if arrived = len(text) > before && strings.contains(text[before:], mark); !arrived {
-						time.sleep(50 * time.Millisecond)
+						log_change_wait(machine)
 					}
 				}
 				if !arrived {
@@ -3294,7 +3150,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				for start := time.now(); !arrived && time.since(start) < HANG_BOUND; {
 					x, y, found := window_place(machine, moved_title)
 					if arrived = found && x == moved_x && y == moved_y; !arrived {
-						time.sleep(50 * time.Millisecond)
+						log_change_wait(machine)
 					}
 				}
 				if !arrived {
@@ -3351,7 +3207,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					row = last + 1
 				}
 				if !found && rows == 0 {
-					time.sleep(50 * time.Millisecond)
+					time.sleep(CONDITION_POLL_PERIOD)
 				}
 			}
 			if !found {
