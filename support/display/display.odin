@@ -348,8 +348,46 @@ glyph_cache_valid: [settings.Grid_Fit]bool
 // write the bytes of a cache, nor point this program at other bytes. The
 // settings page, which the program `settings` writes, gives choices only.
 text_settings_open :: proc "contextless" (ctx: ^system.Context) {
-	if .Settings_Page not_in fixed_addresses.ranges_mapped(&ctx.values) || settings_page != nil {
+	problems, loaded := text_settings_load(ctx)
+	if !loaded {
 		return
+	}
+	for problem, grid_fit in problems.cells {
+		switch {
+		case problem.kind == .None:
+		case problem.kind == .Not_Mapped:
+			system.log_in("programs", .Warning, "display: no glyph cache with the grid fit ", settings.descriptions[.Grid_Fit].value_names[grid_fit], ": that text is Spleen 8x16")
+		case problems.cells_of_another_font[grid_fit]:
+			system.log_in("programs", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ": that text is Spleen 8x16")
+		case:
+			system.log_in("programs", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ", limit ", problem.limit, ": that text is Spleen 8x16")
+		}
+	}
+	if problems.bold.kind != .None && problems.bold.kind != .Not_Mapped {
+		system.log_in("programs", .Warning, "display: the bold glyph cache is refused: ", glyph_cache.problem_sentences[problems.bold.kind], ": the titles are the regular weight")
+	}
+}
+
+// What text_settings_load refused: the problem of each glyph cache of the
+// font of the cells, and of the bold weight. A record of zeros: no problem.
+Text_Settings_Problems :: struct {
+	cells:                 [settings.Grid_Fit]glyph_cache.Problem, // The cache of each grid fit.
+	cells_of_another_font: [settings.Grid_Fit]bool, // The cache is valid, and cannot draw cells (graphics.cell_cache_problem).
+	bold:                  glyph_cache.Problem, // The cache of the bold weight. Not_Mapped: the program has none.
+}
+
+// text_settings_load does the work of text_settings_open and writes no
+// line: the problems are values. loaded is false when the program has no
+// settings page, or when the settings were loaded before: nothing was done.
+//
+// Why it is apart: the drawing module loads the text settings of the
+// program that runs it, into its own data, and the program has already
+// written the lines. The module must also hold no table of sentences: a
+// table of texts has addresses that the loader writes
+// (docs/MODULE_CONTRACT.md, "A library as a module").
+text_settings_load :: proc "contextless" (ctx: ^system.Context) -> (problems: Text_Settings_Problems, loaded: bool) {
+	if .Settings_Page not_in fixed_addresses.ranges_mapped(&ctx.values) || settings_page != nil {
+		return {}, false
 	}
 	settings_page = (^settings.Page)(uintptr(settings.PAGE_ADDRESS))
 	places := [settings.Grid_Fit]settings.Glyph_Cache {
@@ -357,33 +395,26 @@ text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 		.Off = .Without_Grid_Fit,
 	}
 	for cache, grid_fit in places {
-		problem: glyph_cache.Problem
-		glyph_caches[grid_fit], problem = settings.glyph_cache_open(&ctx.values, cache)
-		if problem.kind == .Not_Mapped {
-			system.log_in("programs", .Warning, "display: no glyph cache with the grid fit ", settings.descriptions[.Grid_Fit].value_names[grid_fit], ": that text is Spleen 8x16")
-			continue
-		}
-		if problem.kind != .None {
-			system.log_in("programs", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ", limit ", problem.limit, ": that text is Spleen 8x16")
+		glyph_caches[grid_fit], problems.cells[grid_fit] = settings.glyph_cache_open(&ctx.values, cache)
+		if problems.cells[grid_fit].kind != .None {
 			continue
 		}
 		if refused := graphics.cell_cache_problem(&glyph_caches[grid_fit]); refused.kind != .None {
-			system.log_in("programs", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[refused.kind], ": that text is Spleen 8x16")
+			problems.cells[grid_fit] = refused
+			problems.cells_of_another_font[grid_fit] = true
 			continue
 		}
 		glyph_cache_valid[grid_fit] = true
 	}
 	// The bold weight of the titles: a text in the regular weight when it
 	// is absent or refused.
-	if bold, problem := settings.glyph_cache_open(&ctx.values, .Bold); problem.kind != .Not_Mapped {
-		if problem.kind == .None {
-			problem = graphics.text_bold_cache_use(bold)
-		}
-		if problem.kind != .None {
-			system.log_in("programs", .Warning, "display: the bold glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ": the titles are the regular weight")
-		}
+	bold: glyph_cache.Cache
+	bold, problems.bold = settings.glyph_cache_open(&ctx.values, .Bold)
+	if problems.bold.kind == .None {
+		problems.bold = graphics.text_bold_cache_use(bold)
 	}
 	text_settings_apply()
+	return problems, true
 }
 
 // Interface_Font: the two glyph caches of the interface font (docs/FONTS.md,

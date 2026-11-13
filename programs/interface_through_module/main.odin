@@ -3,9 +3,14 @@
 // exports of the module interface_module, which it imports (each call
 // passes the draw table and the text table of this program as table
 // parameters, with no copy), and with the package support/interface
-// compiled in. It compares the two draw tables, measures the two builds,
-// and draws its window through the module: the damage by difference and
-// the execution of the records into its pixels are exports too.
+// compiled in. It compares the two draw tables and measures the two builds.
+// It draws its window through the drawing module, which it imports too:
+// the damage by difference and the draw of the records into its pixels are
+// the two exports of that module. Then it draws one frame two times, with
+// the package compiled in and through the drawing module, into two
+// canvases of its own, and compares their bytes: the package draws with
+// the text settings that this program loaded, the module with those that
+// the module loaded.
 //
 // **What it is for.** It shows that one code module can be a library in
 // another program with no loss: the [interface package](term:interface-package)
@@ -20,12 +25,14 @@
 // of the damage and the drawing through the module and the size of its
 // code, the case of a draw table of 16 places that is too small, then
 // `interface_through_module: ok, the two draw tables are equal`, or
-// `wrong: the two draw tables differ`.
+// `wrong: the two draw tables differ`, then the line of the two canvases,
+// which ends with `the same bytes: as it must`.
 //
 // **Its grant**: **Image**: it reads the size of the code of
 // `interface_module` in the boot image.
 package interface_through_module
 
+import "contract:errors"
 import "support:display"
 import "support:graphics"
 import "support:interface"
@@ -52,6 +59,8 @@ Damage_Rectangle :: struct {
 }
 Canvas_Shape :: struct {
 	width, height, stride: i64,
+	fill_background:       i64,
+	background:            i64,
 }
 
 Drawn :: system.Table_To_Append(interface.Draw_Record)
@@ -63,8 +72,9 @@ foreign _ {
 	draw_label_value_line :: proc "c" (drawn: ^Drawn, text: ^system.Bytes_To_Append, line: ^Label_Value, label: ^string, value: ^string) -> i64 ---
 	draw_table_band :: proc "c" (drawn: ^Drawn, area: ^Area, index: i64) -> i64 ---
 	draw_bar :: proc "c" (drawn: ^Drawn, bar: ^Bar_Value) -> i64 ---
-	damage_by_difference :: proc "c" (before: ^system.Table_To_Read(interface.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle) -> i64 ---
-	execute_in_rectangles :: proc "c" (now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, rectangles: ^system.Table_To_Read(Damage_Rectangle), pixels: ^system.Bytes_To_Change, shape: ^Canvas_Shape) -> i64 ---
+	// The two exports of the drawing module.
+	damage_of_draw_table_7 :: proc "c" (before: ^system.Table_To_Read(interface.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle, error: ^errors.Error_Record) -> i64 ---
+	execute_draw_table_7 :: proc "c" (now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, rectangles: ^system.Table_To_Read(Damage_Rectangle), pixels: ^system.Bytes_To_Change, shape: ^Canvas_Shape, error: ^errors.Error_Record) -> i64 ---
 }
 
 WIDTH :: 816
@@ -286,13 +296,18 @@ present :: proc "contextless" (window: ^display.Window) {
 		before_table := system.Table_To_Read(interface.Draw_Record){records = &records_before[0], count = before_count, capacity = before_count}
 		before_bytes := system.Bytes_To_Read{bytes = &text_before[0], count = before_text_count, capacity = before_text_count}
 		buffer := rectangles[:]
-		count = min(damage_by_difference(&before_table, &before_bytes, &now_table, &now_text, &buffer), interface.DAMAGE_CAPACITY)
+		count = min(damage_of_draw_table_7(&before_table, &before_bytes, &now_table, &now_text, &buffer, nil), interface.DAMAGE_CAPACITY)
+		if count < 0 {
+			// The module refused the tables: the whole frame.
+			rectangles[0] = {0, 0, WIDTH, HEIGHT}
+			count = 1
+		}
 	}
 	canvas := window.canvas
 	pixels := system.Bytes_To_Change{bytes = ([^]u8)(canvas.pixels), count = u64(canvas.stride * canvas.height * 4), capacity = u64(canvas.stride * canvas.height * 4)}
-	shape := Canvas_Shape{i64(canvas.width), i64(canvas.height), i64(canvas.stride)}
+	shape := Canvas_Shape{width = i64(canvas.width), height = i64(canvas.height), stride = i64(canvas.stride), fill_background = 1, background = i64(graphics.COLOR_BACKGROUND)}
 	damage := system.Table_To_Read(Damage_Rectangle){records = &rectangles[0], count = u64(count), capacity = u64(count)}
-	execute_in_rectangles(&now_table, &now_text, &damage, &pixels, &shape)
+	execute_draw_table_7(&now_table, &now_text, &damage, &pixels, &shape, nil)
 	shown.draw_time = system.nanoseconds() - start
 	if count > 0 {
 		left, top, right, bottom := rectangles[0].left, rectangles[0].top, rectangles[0].right, rectangles[0].bottom
@@ -305,6 +320,42 @@ present :: proc "contextless" (window: ^display.Window) {
 	copy(text_before[:kept_bytes], text_now[:kept_bytes])
 	before_count, before_text_count = kept_records, kept_bytes
 	drawn_before = true
+}
+
+// The two canvases of the proof of the same pixels: the top left part of
+// the frame, which holds the title, a sentence, the heads of the table and
+// its two lines with their bars.
+PROOF_WIDTH :: 320
+PROOF_HEIGHT :: 144
+package_pixels, module_pixels: [PROOF_WIDTH * PROOF_HEIGHT]graphics.Color
+
+// canvases_compare draws one draw table two times: with the package
+// compiled in, as a window drew a whole frame before the drawing module
+// (the clear, then the execution), and through the export of the drawing
+// module. It gives the count of the pixels that differ. The package draws
+// with the text state of this program, the module with its own: the two
+// are loaded from the same context by two copies of the code, and equal
+// bytes say that they chose the same fonts. compared is false when the
+// module refused the call: refused has its record.
+canvases_compare :: proc "contextless" (table: ^interface.Draw_Table, refused: ^errors.Error_Record) -> (different: u64, compared: bool) {
+	package_canvas := graphics.Canvas{pixels = raw_data(package_pixels[:]), width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_WIDTH}
+	graphics.clear(package_canvas, graphics.COLOR_BACKGROUND)
+	interface.execute(table, package_canvas)
+	records := system.Table_To_Read(interface.Draw_Record){records = raw_data(table.records), count = u64(table.record_count), capacity = u64(len(table.records))}
+	bytes := system.Bytes_To_Read{bytes = raw_data(table.text), count = u64(table.text_count), capacity = u64(len(table.text))}
+	whole := [1]Damage_Rectangle{{0, 0, PROOF_WIDTH, PROOF_HEIGHT}}
+	places := system.Table_To_Read(Damage_Rectangle){records = &whole[0], count = 1, capacity = 1}
+	pixels := system.Bytes_To_Change{bytes = ([^]u8)(raw_data(module_pixels[:])), count = size_of(module_pixels), capacity = size_of(module_pixels)}
+	shape := Canvas_Shape{width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_WIDTH, fill_background = 1, background = i64(graphics.COLOR_BACKGROUND)}
+	if execute_draw_table_7(&records, &bytes, &places, &pixels, &shape, refused) < 0 {
+		return 0, false
+	}
+	for index in 0 ..< len(package_pixels) {
+		if package_pixels[index] != module_pixels[index] {
+			different += 1
+		}
+	}
+	return different, true
 }
 
 BUILDS :: 200
@@ -367,6 +418,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("interface_through_module: ok, the two draw tables are equal")
 	} else {
 		system.log("interface_through_module: wrong: the two draw tables differ")
+	}
+	// The proof of the same pixels in the machine: the frame of the package,
+	// drawn by the package and by the drawing module.
+	text_records: u64
+	for record in package_table.records[:package_table.record_count] {
+		if interface.is_text_kind(record.kind) {
+			text_records += 1
+		}
+	}
+	refused: errors.Error_Record
+	if different, compared := canvases_compare(&package_table, &refused); !compared {
+		system.log("interface_through_module: the drawing module refused the frame, with the error kind ", u64(refused.kind), " of the argument ", u64(refused.argument), ": WRONG")
+	} else if different == 0 && text_records > 0 {
+		system.log("interface_through_module: one frame drawn by the package compiled in and by the drawing module: ", u64(PROOF_WIDTH * PROOF_HEIGHT), " pixels, ", text_records, " text records, the same bytes: as it must")
+	} else {
+		system.log("interface_through_module: one frame drawn by the package compiled in and by the drawing module: ", different, " of ", u64(PROOF_WIDTH * PROOF_HEIGHT), " pixels differ, ", text_records, " text records: WRONG")
 	}
 	for {
 		display.wait(&window)

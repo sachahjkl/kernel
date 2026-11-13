@@ -26,7 +26,7 @@ The facts come from two research notes, with sources:
 | "1. The module file" | The header, the loader tables and the description tables |
 | "2. Loading" | How the loader maps a module and its imports, and the error of a load |
 | "3. Static is dynamic" | Why one module serves both forms of link |
-| "4. The call form" | The registers of a direct call, the isolated call through a ring, records, handles, tables and bytes as parameters, a call from the host, and the replacement of an import |
+| "4. The call form" | The registers of a direct call, the isolated call through a ring, records, handles, tables and bytes as parameters, a call from the host, the replacement of an import, a library as a module, and the check of the declarations of an importer |
 | "5. The types" | The types that a description knows, and their layout |
 | "6. The context" | The record that a program receives at its start |
 | "7. How to build modules with existing tools" | The compiler and the linker |
@@ -403,7 +403,8 @@ The program `tables` measures `sample.sum_values` (it reads 8 bytes of each reco
 - A direct call costs what the loop costs: no copy.
 - An isolated call costs a wake of the other program and its answer, 3 to 12 us under this load; the copy of 40 KiB into the call region adds about 2 us.
 - (iii) adds the lend of the handle, its proof, the map and the unmap, and the revocation: about 6 us more than (ii) at 64 and 1024 rows. It wins only when the table does not fit in the call region: then it is the one way, and 2.5 MiB cost 76 us, 50 us more than the direct call.
-- **The interface package as a module** (`programs/interface_through_module`): one frame of 31 draw records and 448 bytes of text in 25 element calls, 523 ns through the module against 283 ns with the package compiled in: about 10 ns more for each element call (an import slot and a frame of the package made over the two tables at each call). The damage and the drawing of the window through the module: 9.7 us (the third frame, its damage only). The two draw tables are equal, record for record and byte for byte.
+- **The elements of the interface package as a module** (`programs/interface_through_module`, QEMU with KVM, one run, the least of 200 builds): one frame of 31 draw records in 25 element calls, 6 556 ns through `interface_module` against 4 055 ns with the package compiled in: about 100 ns more for each element call (an import slot, a frame of the package made on the stack of the export at each call, and the copy of its records to the tables of the caller). The two draw tables are equal, record for record and byte for byte.
+- **The drawing of a window as a module** (`modules/drawing`; section "A library as a module"): two calls for a frame, each with tables and the pixels of the caller by address. The program prints the time of the damage and of the draw through the module on its log, and compares one frame drawn by the package and by the module, byte for byte.
 
 ### A call from the host
 
@@ -461,6 +462,55 @@ A module names each import by its hash. The party that starts a program can give
 - **A view in the window of the manual** (designed, not built): the key Tab shows the table of all the modules (`overview()`); a second view would draw the rows of `edges()` for one program with `support/interface`: one column for each depth, a rectangle for each module in the color of its kind, a line from the importer to the module that it imports, with a line at an angle only where a column is skipped, and the name of the module that a replacement changed beside the line. The rows are the facts; the window adds no fact.
 - **Where the identity is kept**: the kernel keeps it, as it keeps the name of a program: the fault report and `Inspect` are in the kernel, and the loader of a program is in the program that started it, or in the program itself. A cycle of imports is possible with a replacement, and the loader refuses it.
 - **Measured** (program `imports`, QEMU with KVM, in the machine test, the least of 5 runs): a call through an import slot, 1 000 000 calls: 3.5 ns to calendar, 2.7 ns to calendar_fixed in its place (the two are the same instruction; the bodies of the two exports differ). The bind of agenda: 372 ns with a direct import, 891 ns with the check of the replacement (one slot). The load of agenda and its import: 117 us and 154 us, with the hash of each file. Over five runs, the bind took 216 to 377 ns and 857 to 904 ns.
+
+### A library as a module
+
+A library module (`GLOSSARY.md`) is a module that holds code that many programs import, in place of a package that each program compiles into its own file. It is a module as each other: its exports have descriptions, the loader binds it as each import, and the check of a replacement compares its exports. There is no second kind of import. The first one is the drawing module, `modules/drawing` (`INTERFACE.md`, section 7).
+
+**The form of its exports: a coarse border.**
+
+- An export does a whole piece of work on tables of the caller: "find the damage of this frame", "draw this draw table into these pixels". A direct call passes the address of each table place, and copies nothing (section "Tables and bytes as parameters", form (i)).
+- An export is not one small step that a caller repeats many times for one result. Such a step needs an adapter on each side of the border, and the adapter costs more than the call: one element of the interface through the adapter of `interface_module` costs about 100 ns more than the element compiled in, and a call through an import slot costs 2.4 ns (`INTERFACE.md`, section 7).
+- A parameter that the description cannot carry (a record that holds an address, a slice by value, a procedure value, a seventh parameter) is a sign that the border is in the wrong place, not a reason for a second call form. The description stays the one form: the same export serves a direct call, a call host and a service (P12, P19).
+- The version of a record whose values have a meaning that the description does not hold (a kind of draw record) is in the name of each export that reads it: `execute_draw_table_7`. Another version is another name, so a replacement with another version fails the check by name.
+
+**What stays compiled into each program, and why.**
+
+| Code | Why it stays |
+|---|---|
+| The elements, the layout and the input of the interface package | 30 to 200 calls for a frame, a `^Frame` of three addresses, state of the program |
+| `support/system`, `contract/ring`, the small wrappers of a kernel entry | A few instructions around a ring or a kernel entry; the loader cannot be loaded by itself |
+| `contract/module`, `contract/isolated`, `contract/blake3` in a starter | They are the loader and the call machinery |
+| A state of the program that is small and hot (the random generator) | A call for each use costs more than the code |
+| All that the root service, the boot program and the call host use | They import nothing: the kernel starts the root service with no loader for imports, the boot program is not a module, and the call host loads the module of a call. Each of them is a bundle of the packages, with no table of what it holds yet (section 3, "Provenance") |
+
+**The data of a library module (property 14).**
+
+- The caller supplies each table and each buffer. The module allocates nothing, and keeps no address of the caller after a call.
+- The module can keep a cache of a fixed size in its own writable data. The loader gives each program its own copy of each writable segment (rule 3 of "Closed rules"), so the cache is data of one program with no new mechanism. The drawing module keeps the text settings of the program and the blend tables there: 29 KiB.
+- A module has no code that runs at its load. It fills its cache at its first call, from the context of the program at `CONTEXT_ADDRESS`.
+- **No segment that is read-only after the load.** A library module has no table of addresses (a table of texts, a table of procedures) and no import. Reason: the segments with no Write are shared code at each address; a segment that is read-only after the load holds addresses that the loader wrote for one base, so a starter keeps one prepared module of it for each address (`GLOSSARY.md`, "Prepared module"). A library module is at another address in each importer, after the module of the program. With such a segment, 40 importers take 40 places of the table of prepared modules of the root service, which has 64, and the next program does not start. The kernel tool refuses the conversion of a library module with such a segment (the field `library` of the module table).
+
+**What changes for a program that imports it.**
+
+- **Its hash.** The import table of the program holds the hash of the file of the library. So a change of the library changes the hash of each importer, and the build converts each importer again (it compiles none: `TOOLS.md`, "The incremental build"). What stays the same is the code of the program. The one way to change the library and keep the hash of a program is a replacement.
+- **Its start.** The loader loads the module of the program, then each import. A program that starts a child with `system.program_start` gives the child a load source that holds the library, else the load of the child fails at the stage Find.
+- **Its faults.** The library runs in the address space of the importer: a fault in it stops the importer, as a fault in a package did. The debug object of the library names the procedure and the line (section "Debug information"): the kernel names the module of the instruction by its module record, and each module of the boot image has its debug object in the debug image.
+- **The module graph.** Each importer has an edge to the library: `manual.edges()`, and the module graph of the site, say which programs run which drawing code.
+
+**A replacement of a library module.** The mechanism is the one of section "Replacement of an import": the root service holds the table, and a program with the role Replace asks for a record. Nothing of it changes for a library. One fact does change: a replacement of a module that 23 programs import puts the code of the replacement into each of them at its next start, with all the memory and all the handles of each. The check of the loader proves the description of each export, and nothing of the behaviour of the code. So the role Replace reaches almost every program with a window. A replacement of a library module is for a test until the replacement table carries a signature of a principal (section "Replacement of an import", "What the check cannot prove").
+
+### The declaration of an import is checked
+
+A source names an export of an import in a `foreign` block. The compiler trusts the types of that declaration, and the linked file holds the name of the symbol and no type. Without a check, a declaration with one parameter too few builds with no error, and the call passes wrong registers.
+
+- **Where**: the conversion of the importer (`tools/kerneltool/import_declarations.odin`). It is the one step that has both sides: the sources that the compiler read for the module (the list that the compiler wrote), and the module file of each import with its descriptions. The build key of the conversion holds the key of the compile step and the file of each import, so a change of either side runs the check again.
+- **What it reads**: each procedure of each `foreign` block of those sources, also inside a `when`, with the rules that read the description of an export (section 5, "From the Odin source to the type").
+- **What it compares** with the description of the export of that name: the count of the parameters, the type of each, the direction of each Table and Bytes, the rights of each Handle, the layout of each record (its size; the offset, the type, the size and the sign of each field), the result, and the error record. The names of the parameters, of the records and of the fields are for a reader: they can differ.
+- **What it leaves**: a `foreign` procedure that no import exports is a procedure of an assembly file of the module.
+- **A failure** stops the build with the file, the line and the first difference: "the declaration of execute_draw_table_7 does not agree with the export of drawing: it has 4 parameters, the export has 5". A module that has an import and no declaration of it also stops the build: the check read the wrong sources.
+- **A second reader**: the host test `each_declaration_of_the_repository_agrees_with_its_export` makes the same comparison against the descriptions that the tool reads from the source of each import, with no build.
+- **What it does not prove**: the meaning of a value. A declaration and an export that agree on each type can still disagree on what a field means; the version in the name of an export is the answer for a record with versions.
 
 ### Memory
 
@@ -650,7 +700,7 @@ This reuses the compiler, the linker and the debugger formats.
 | 3. Assemble | `nasm -f elf64` | One object for `runtime/memory.asm`, one for each `.asm` file of the source folder, and for a module of the boot image one for each `.asm` file of `support/system` |
 | 4. Describe | The tool (`describe_package`) | The exports and their descriptions, from the source; a version script that makes only the exports visible |
 | 5. Link | `ld.lld -shared -nostdlib -Bsymbolic --gc-sections --build-id=none -z now -z relro` | One ELF file, `linked.elf` |
-| 6. Convert | The tool (`convert`) | The module, `build/modules/<name>.module`, with the hashes of its imports in its import table |
+| 6. Convert | The tool (`import_declarations_check`, then `convert`) | The check of each declaration of an import against the description of its export (section "The declaration of an import is checked"); then the module, `build/modules/<name>.module`, with the hashes of its imports in its import table. A library module with a segment that is read-only after the load is refused (section "A library as a module") |
 | 7. Write the debug object | The tool | `build/modules/<name>.debug` (section "Debug information") |
 
 Why each choice:

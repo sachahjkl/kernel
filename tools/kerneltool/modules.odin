@@ -56,10 +56,24 @@ Module_Build :: struct {
 	imports: []string,
 	kernel:  bool,
 	image:   bool,
-	// Settings of the compiler for this module only (-define). Only a
-	// kernel for one machine of the test has one.
+	// Settings of the compiler for this module only (-define): a kernel
+	// for one machine of the test, and each program that draws its window
+	// through the drawing module (DRAWING_THROUGH_MODULE).
 	defines: []string,
+	// A library module (docs/MODULE_CONTRACT.md, "A library as a module"):
+	// many programs import it, each at another address. The conversion
+	// refuses a segment that is read-only after the load: with none, the
+	// module is one shared copy at each address, and takes one place in the
+	// table of prepared modules of a starter, not one for each importer.
+	library: bool,
 }
+
+// The drawing module, and the setting of a program that draws its window
+// through it (support/interface, window_drawing.odin). A module with the
+// setting imports the module: a host test checks it
+// (import_declarations_test.odin).
+DRAWING_MODULE :: "drawing"
+DRAWING_THROUGH_MODULE :: "DRAWING_THROUGH_MODULE=true"
 
 module_builds := [?]Module_Build {
 	{name = "test_callee", source = "modules/test_callee"},
@@ -74,27 +88,29 @@ module_builds := [?]Module_Build {
 	{name = "input", source = "programs/input", image = true},
 	{name = "compositor", source = "programs/compositor", image = true},
 	{name = "console", source = "programs/console", image = true},
-	{name = "monitor", source = "programs/monitor", image = true},
+	// The drawing of a window, for each program below that imports it.
+	{name = DRAWING_MODULE, source = "modules/drawing", image = true, library = true},
+	{name = "monitor", source = "programs/monitor", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "plasma", source = "programs/plasma", image = true},
 	{name = "life", source = "programs/life", image = true},
 	{name = "paint", source = "programs/paint", image = true},
 	{name = "fault", source = "programs/fault", image = true},
 	{name = "temple", source = "programs/temple", image = true},
 	{name = "node", source = "programs/node", image = true},
-	{name = "rings", source = "programs/rings", image = true},
+	{name = "rings", source = "programs/rings", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "threads", source = "programs/threads", image = true},
 	{name = "workers", source = "programs/workers", image = true},
-	{name = "rights", source = "programs/rights", image = true},
-	{name = "origin", source = "programs/origin", image = true},
-	{name = "limits", source = "programs/limits", image = true},
-	{name = "budget", source = "programs/budget", image = true},
-	{name = "flow", source = "programs/flow", image = true},
-	{name = "crowd", source = "programs/crowd", image = true},
+	{name = "rights", source = "programs/rights", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "origin", source = "programs/origin", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "limits", source = "programs/limits", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "budget", source = "programs/budget", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "flow", source = "programs/flow", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "crowd", source = "programs/crowd", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "tally", source = "programs/tally", image = true},
-	{name = "manual", source = "programs/manual", image = true},
-	{name = "clock", source = "programs/clock", image = true},
-	{name = "randomness", source = "programs/randomness", image = true},
-	{name = "extended_state", source = "programs/extended_state", image = true},
+	{name = "manual", source = "programs/manual", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "clock", source = "programs/clock", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "randomness", source = "programs/randomness", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "extended_state", source = "programs/extended_state", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "return_fault", source = "programs/return_fault", image = true},
 	{name = "fault_ring", source = "programs/fault_ring", image = true},
 	{name = "debugged", source = "programs/debugged", image = true},
@@ -106,34 +122,34 @@ module_builds := [?]Module_Build {
 	{name = "processors", source = "programs/processors", image = true},
 	{name = "boot", source = "programs/boot", image = true},
 	{name = "pages", source = "programs/pages", image = true},
-	{name = "frames", source = "programs/frames", image = true},
+	{name = "frames", source = "programs/frames", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "twin", source = "programs/twin", image = true},
-	{name = "locks", source = "programs/locks", image = true},
+	{name = "locks", source = "programs/locks", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "shortage", source = "programs/shortage", image = true},
-	{name = "scheduler", source = "programs/scheduler", image = true},
+	{name = "scheduler", source = "programs/scheduler", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "address_space", source = "programs/address_space", image = true},
 	{name = "locker", source = "programs/locker", image = true},
 	{name = "log", source = "programs/log", image = true},
 	{name = "block", source = "programs/block", image = true},
 	{name = "frame", source = "programs/frame", image = true},
 	{name = "network", source = "programs/network", image = true},
-	{name = "net", source = "programs/net", image = true},
+	{name = "net", source = "programs/net", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "server", source = "programs/server", image = true},
 	{name = "fetch", source = "programs/fetch", image = true},
-	{name = "inspect", source = "programs/inspect", image = true},
-	{name = "disk", source = "programs/disk", image = true},
+	{name = "inspect", source = "programs/inspect", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "disk", source = "programs/disk", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "storage", source = "programs/storage", image = true},
-	{name = "notes", source = "programs/notes", image = true},
+	{name = "notes", source = "programs/notes", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "hierarchy", source = "programs/hierarchy", image = true},
 	{name = "ranges", source = "programs/ranges", image = true},
 	{name = "host", source = "programs/host", image = true},
 	{name = "probe", source = "modules/probe", image = true},
 	{name = "math", source = "modules/math", image = true},
 	{name = "cryptography", source = "modules/cryptography", image = true},
-	{name = "cryptography_vectors", source = "programs/cryptography_vectors", imports = {"cryptography"}, image = true},
-	{name = "quic_echo", source = "programs/quic_echo", imports = {"cryptography"}, image = true},
-	{name = "remote", source = "programs/remote", imports = {"cryptography"}, image = true},
-	{name = "unlock", source = "programs/unlock", imports = {"cryptography"}, image = true},
+	{name = "cryptography_vectors", source = "programs/cryptography_vectors", imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "quic_echo", source = "programs/quic_echo", imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "remote", source = "programs/remote", imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "unlock", source = "programs/unlock", imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "sample", source = "modules/sample", image = true},
 	{name = "hostile_exports", source = "modules/hostile_exports", image = true},
 	{name = "calendar", source = "modules/calendar", image = true},
@@ -147,7 +163,9 @@ module_builds := [?]Module_Build {
 	{name = "interface_elements", source = "programs/interface_elements", image = true},
 	{name = "tables", source = "programs/tables", image = true},
 	{name = "interface_module", source = "modules/interface_module", image = true},
-	{name = "interface_through_module", source = "programs/interface_through_module", imports = {"interface_module"}, image = true},
+	// It compares the package compiled in with the two modules, so it has
+	// no setting: its window layer is its own code.
+	{name = "interface_through_module", source = "programs/interface_through_module", imports = {"interface_module", DRAWING_MODULE}, image = true},
 	{name = "text_shaping", source = "modules/text_shaping", image = true},
 	{name = "vector_glyphs", source = "programs/vector_glyphs", image = true},
 	{name = "interface_font", source = "programs/interface_font", image = true},
@@ -173,6 +191,7 @@ build_modules :: proc() -> bool {
 	// One process for each module, several at once (parallel_build.odin).
 	// A module whose inputs are the same is kept (incremental_build.odin).
 	build_modules_in_parallel() or_return
+	library_modules_measure_print()
 	// The steps below run at each build: each one reads outputs of the
 	// modules or files of the repository, and its time is in the measure of
 	// the build.
@@ -209,6 +228,38 @@ build_modules :: proc() -> bool {
 	}
 	build_measure_step("the four boot images", step_started)
 	return images_built
+}
+
+// library_modules_measure_print prints, for each library module of the
+// table, the size of its file, then the size of the file of each module
+// that imports it and their sum: a measure, to compare with the build
+// before a program became an importer. It checks nothing, and a file that
+// cannot be read only ends the line of its library.
+library_modules_measure_print :: proc() {
+	for library in module_builds {
+		if !library.library {
+			continue
+		}
+		file, readable := read_file(module_path(library.name))
+		if !readable {
+			continue
+		}
+		line := strings.builder_make(context.temp_allocator)
+		sum, count := 0, 0
+		for build in module_builds {
+			if !slice.contains(build.imports, library.name) {
+				continue
+			}
+			importer, importer_readable := read_file(module_path(build.name))
+			if !importer_readable {
+				return
+			}
+			fmt.sbprintf(&line, "%s%s %d", count == 0 ? "" : ", ", build.name, len(importer))
+			sum += len(importer)
+			count += 1
+		}
+		fmt.printfln("kerneltool: measure: the library module %s has %d bytes; the files of the %d modules that import it have %d bytes in all: %s", library.name, len(file), count, sum, strings.to_string(line))
+	}
 }
 
 // files_with_suffix gives the paths of the files of a folder that end with suffix.
@@ -445,8 +496,15 @@ module_convert :: proc(build: Module_Build) -> bool {
 	for name in build.imports {
 		append(&imports, Import_File{name = name, file = read_file(module_path(name)) or_return})
 	}
+	// The linked file holds the name of each imported export and no type:
+	// the declarations of the sources are compared with the descriptions
+	// here, where both are at hand (import_declarations.odin).
+	import_declarations_check(build, imports[:]) or_return
 	file := convert(build.name, elf, description, imports[:]) or_return
 	defer delete(file)
+	if build.library {
+		module_is_a_library_check(build.name, file) or_return
+	}
 	if err := os.write_entire_file(module_path(build.name), file); err != nil {
 		fmt.eprintfln("kerneltool: cannot write %s: %v", module_path(build.name), err)
 		return false

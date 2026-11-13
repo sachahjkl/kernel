@@ -18,9 +18,11 @@
 // gives a larger table. The result is -1 for a table over 2^40 records or
 // bytes, or for one element over 64 records or 4096 bytes of text.
 //
-// **What it does not prove**: a module draws records, not pixels, except in
-// `execute_in_rectangles`; the compositor and the window of a program are
-// not in this module.
+// **What it does not hold**: the damage of a frame and the draw of its
+// records into pixels. They are the two exports of the drawing module
+// (`modules/drawing`), which each program with a window imports. This
+// module keeps the elements only: it shows what one element call through a
+// border costs, and why the elements stay compiled into each program.
 package interface_module
 
 import "base:intrinsics"
@@ -58,21 +60,6 @@ Bar_Value :: struct {
 	value:   i64,
 	maximum: i64,
 	color:   i64,
-}
-
-// A damage rectangle: right and bottom are not in it.
-Damage_Rectangle :: struct {
-	left:   i64,
-	top:    i64,
-	right:  i64,
-	bottom: i64,
-}
-
-// The shape of the pixels of a canvas: 4 bytes for each pixel.
-Canvas_Shape :: struct {
-	width:  i64,
-	height: i64,
-	stride: i64, // Pixels from one line to the next.
 }
 
 Draw_Records_To_Append :: system.Table_To_Append(interface.Draw_Record)
@@ -271,57 +258,4 @@ draw_bar :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), bar
 	}
 	interface.bar(&element.frame, {int(bar.x), int(bar.y), int(bar.width), int(bar.height)}, u64(max(bar.value, 0)), u64(max(bar.maximum, 0)), graphics.Color(bar.color))
 	return element_frame_append_to_caller(&element, drawn, nil)
-}
-
-// draw_table_to_read_of makes a draw table of the package over a Read
-// table and its text. ok is false when a count passes TABLE_LIMIT. The
-// module does not check the text range of each record here: the records
-// are in memory that the caller can change during the call, so a check
-// here and a read later in the package would read two values. The package
-// checks each range where it reads it, on its one copy of the record
-// (support/interface, difference.odin and execute.odin).
-@(private)
-draw_table_to_read_of :: proc "contextless" (records: ^system.Table_To_Read(interface.Draw_Record), text: ^system.Bytes_To_Read) -> (table: interface.Draw_Table, ok: bool) {
-	if records.count > TABLE_LIMIT || text.count > TABLE_LIMIT {
-		return {}, false
-	}
-	return {records = records.records[:records.count], record_count = int(records.count), text = text.bytes[:text.count], text_count = int(text.count), interface_font = interface_font_of_program()}, true
-}
-
-// damage_by_difference gives the rectangles of the surface that differ between the draw table before and the draw table now. The result is a Table of at most 8 rectangles, or -1 for a table over 2^40 records or bytes. A text record that names bytes past its text table differs from each record: its rectangle is damaged.
-@(export, link_name = "damage_by_difference")
-damage_by_difference :: proc "c" (before: ^system.Table_To_Read(interface.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle) -> i64 {
-	before_table, before_ok := draw_table_to_read_of(before, before_text)
-	now_table, now_ok := draw_table_to_read_of(now, now_text)
-	if !before_ok || !now_ok {
-		return -1
-	}
-	damage: interface.Damage
-	interface.damage_by_difference(&before_table, &now_table, &damage)
-	for rectangle, index in damage.rectangles[:damage.count] {
-		if index < len(result) {
-			result[index] = {i64(rectangle.left), i64(rectangle.top), i64(rectangle.right), i64(rectangle.bottom)}
-		}
-	}
-	return i64(damage.count)
-}
-
-// execute_in_rectangles draws the records of a draw table into the pixels of a canvas, in each rectangle, cut to it. The pixels are the memory of the caller: no copy in a direct call. The result is the count of rectangles, or -1 for a canvas shape that the pixels do not hold. A text record that names bytes past its text table draws nothing.
-@(export, link_name = "execute_in_rectangles")
-execute_in_rectangles :: proc "c" (now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, rectangles: ^system.Table_To_Read(Damage_Rectangle), pixels: ^system.Bytes_To_Change, shape: ^Canvas_Shape) -> i64 {
-	// No product wraps, also for a stride near 2^62 that a hostile caller
-	// gives: the stride is compared with the pixels of one line that the
-	// bytes hold.
-	if shape.width <= 0 || shape.height <= 0 || shape.stride < shape.width || u64(shape.stride) > pixels.count / 4 / u64(shape.height) {
-		return -1
-	}
-	table, ok := draw_table_to_read_of(now, now_text)
-	if !ok || rectangles.count > TABLE_LIMIT {
-		return -1
-	}
-	canvas := graphics.Canvas{pixels = ([^]graphics.Color)(pixels.bytes), width = int(shape.width), height = int(shape.height), stride = int(shape.stride)}
-	for rectangle in system.table_records(rectangles) {
-		interface.execute_in_rectangle(&table, canvas, {int(rectangle.left), int(rectangle.top), int(rectangle.right), int(rectangle.bottom)})
-	}
-	return i64(rectangles.count)
 }
