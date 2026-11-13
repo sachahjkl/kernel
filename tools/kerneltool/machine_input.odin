@@ -12,8 +12,8 @@ import "core:time"
 // The keys and the moves of the pointer go to the virtual keyboard and the
 // virtual mouse of QEMU, several in one command, and the tool then waits
 // for a condition: the system read each byte of the devices, or the
-// compositor received each record. One wait of this file is a fixed time:
-// the one before a picture, which its constant explains.
+// compositor received each record. A picture waits until the screen is
+// settled (screen_settle.odin). No wait of this file is a fixed time.
 
 // The period of the poll of a condition that the tool reads through QEMU
 // or through the remote service: the time between two reads, never the
@@ -22,12 +22,6 @@ CONDITION_POLL_PERIOD :: time.Millisecond
 // The period of the poll of the log of the machine when no change of the
 // file woke the wait (log_watch_linux.odin).
 LOG_POLL_PERIOD :: 50 * time.Millisecond
-// The time before a picture of the screen, for the program whose window
-// the picture shows: the program draws after the line of the log that the
-// step before waited for, and nothing that the tool reads says when its
-// last picture is on the screen
-// (docs/TOOLS.md, "How the tool sends input and waits").
-PICTURE_SETTLE_PAUSE :: 400 * time.Millisecond
 
 // log_change_wait ends when the log of the machine changed, or after
 // LOG_POLL_PERIOD: the caller reads the log again.
@@ -318,57 +312,119 @@ picture_job_run :: proc(job: ^Picture_Job) {
 	job.bytes = len(file)
 }
 
-// screen_save saves the screen of the machine as a PNG file. QEMU writes
-// the picture in a file and replies when the file is whole; a worker
-// thread then makes the PNG file, and pictures_join gives its result.
-screen_save :: proc(machine: ^Machine, name: string) -> bool {
-	picture_started := time.tick_now()
-	time.sleep(PICTURE_SETTLE_PAUSE)
+// One picture of the screen as QEMU wrote it.
+Screen_Dump :: struct {
+	file:   []u8, // The file, in memory of the tool that the caller frees.
+	pixels: []u8, // The pixels, in file: 3 bytes each, line after line.
+	width:  int,
+	height: int,
+}
+
+// screen_dump_read asks QEMU for a picture of the screen and reads its
+// file. QEMU replies when the file is whole.
+screen_dump_read :: proc(machine: ^Machine) -> (dump: Screen_Dump, ok: bool) {
 	dump_started := time.tick_now()
 	_ = os.remove(SCREEN_DUMP)
 	if _, dumped := qmp_command(&machine.qmp, qmp_screendump_command(SCREEN_DUMP)); !dumped {
 		fmt.eprintln("kerneltool: QEMU did not save the screen")
-		return false
+		return {}, false
 	}
 	read_started := time.tick_now()
+	machine.picture_time.dump += time.tick_diff(dump_started, read_started)
+	defer machine.picture_time.read += time.tick_since(read_started)
 	// Not in the temporary allocator: the worker reads the bytes after the
 	// scenario freed it.
-	dump, read_error := os.read_entire_file(SCREEN_DUMP, context.allocator)
+	file, read_error := os.read_entire_file(SCREEN_DUMP, context.allocator)
 	if read_error != nil {
 		fmt.eprintfln("kerneltool: cannot read %s: %v", SCREEN_DUMP, read_error)
-		return false
+		return {}, false
 	}
 	// "P6", width, height, 255, one space character, then the bytes.
 	position := 0
 	fields: [4]string
 	for &field in fields {
-		for position < len(dump) && (dump[position] == ' ' || dump[position] == '\n') {
+		for position < len(file) && (file[position] == ' ' || file[position] == '\n') {
 			position += 1
 		}
 		start := position
-		for position < len(dump) && dump[position] != ' ' && dump[position] != '\n' {
+		for position < len(file) && file[position] != ' ' && file[position] != '\n' {
 			position += 1
 		}
-		field = string(dump[start:position])
+		field = string(file[start:position])
 	}
 	position += 1
 	width, _ := strconv.parse_int(fields[1])
 	height, _ := strconv.parse_int(fields[2])
-	if fields[0] != "P6" || width <= 0 || height <= 0 || len(dump) - position < width * height * 3 {
-		fmt.eprintfln("kerneltool: QEMU wrote %s, which is not a whole picture of the screen (%d bytes)", SCREEN_DUMP, len(dump))
-		delete(dump)
-		return false
+	if fields[0] != "P6" || width <= 0 || height <= 0 || len(file) - position < width * height * 3 {
+		fmt.eprintfln("kerneltool: QEMU wrote %s, which is not a whole picture of the screen (%d bytes)", SCREEN_DUMP, len(file))
+		delete(file)
+		return {}, false
 	}
+	return {file = file, pixels = file[position:][:width * height * 3], width = width, height = height}, true
+}
+
+// screen_dump_settled gives a picture of a settled screen. When the tool
+// can call the compositor, it waits until the programs and the compositor
+// say that the screen is settled, then takes one picture. Else it takes
+// pictures until two in a row are the same outside the windows that draw
+// with no end: the screen did not change during the time of one picture.
+// The bound only ends a hang; the message names what kept changing.
+screen_dump_settled :: proc(machine: ^Machine, name: string) -> (dump: Screen_Dump, ok: bool) {
+	if machine.confirm {
+		switch screen_settle_wait_by_calls(machine, name) {
+		case .Settled:
+			return screen_dump_read(machine)
+		case .Hang:
+			return {}, false
+		case .Not_Readable:
+		}
+	}
+	left_out := windows_left_out(machine)
+	before := screen_dump_read(machine) or_return
+	x, y: int
+	for start := time.tick_now(); time.tick_since(start) < HANG_BOUND; {
+		after, read := screen_dump_read(machine)
+		if !read {
+			delete(before.file)
+			return {}, false
+		}
+		differ := before.width != after.width || before.height != after.height
+		if !differ {
+			x, y, differ = pictures_differ_outside(before.pixels, after.pixels, after.width, after.height, left_out)
+		}
+		delete(before.file)
+		if !differ {
+			machine.pictures_settled_by_pictures += 1
+			return after, true
+		}
+		before = after
+	}
+	delete(before.file)
+	fmt.eprintfln("kerneltool: test failed: the screen did not settle within %v before the picture %s: two pictures in a row still differ, the last time at %d,%d, outside the windows that draw with no end", HANG_BOUND, name, x, y)
+	return {}, false
+}
+
+// screen_save saves the screen of the machine as a PNG file, when the
+// screen is settled (screen_dump_settled). A worker thread makes the PNG
+// file, and pictures_join gives its result.
+screen_save :: proc(machine: ^Machine, name: string) -> bool {
+	picture_started := time.tick_now()
+	machine.picture_time = {}
+	dump := screen_dump_settled(machine, name) or_return
 	job := new(Picture_Job)
 	job^ = {
 		path       = fmt.aprintf("%s/%s.png", SCREENSHOT_FOLDER, name),
-		width      = width,
-		height     = height,
-		file       = dump,
-		pixels     = dump[position:][:width * height * 3],
+		width      = dump.width,
+		height     = dump.height,
+		file       = dump.file,
+		pixels     = dump.pixels,
 		step_place = len(test_times.steps),
 	}
-	test_times_picture_note(machine, {settle = time.tick_diff(picture_started, dump_started), dump = time.tick_diff(dump_started, read_started), read = time.tick_since(read_started)})
+	// The wait for a settled screen is the time of the step that is in no
+	// picture of QEMU and in no read of its file.
+	picture_time := machine.picture_time
+	picture_time.settle = time.tick_since(picture_started) - picture_time.dump - picture_time.read
+	test_times_picture_note(machine, picture_time)
 	job.worker = thread.create_and_start_with_poly_data(job, picture_job_run)
 	append(&machine.picture_jobs, job)
 	return true

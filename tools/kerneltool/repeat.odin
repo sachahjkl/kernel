@@ -40,7 +40,7 @@ module_build_outputs :: proc(build: Module_Build) -> [4]Build_Output {
 }
 
 // The outputs of the boot program: the program, and the object that Odin made.
-BOOT_PROGRAM_OUTPUTS :: [2]Build_Output{{kind = "boot program", path = BOOT_PROGRAM}, {kind = "object", path = BOOT_OBJECT_FOLDER + "/boot.obj"}}
+BOOT_PROGRAM_OUTPUTS :: [2]Build_Output{{kind = "boot program", path = BOOT_PROGRAM}, {kind = "object", path = BOOT_PROGRAM_OBJECT}}
 
 // One output over several builds: each distinct content, in the order of its
 // first build, and the count of builds that gave it.
@@ -239,7 +239,7 @@ repeat_all :: proc(count: int) -> int {
 		append(&all, Distinct_Results{owner = "boot", output = output})
 	}
 	for number in 1 ..= count {
-		if !build_modules() || !build_boot_program("boot.image", BOOT_VOLUME, 0) {
+		if !build_modules() || !main_boot_volume_build() {
 			return EXIT_FAILURE
 		}
 		for &result in all {
@@ -308,7 +308,7 @@ outputs_same_after_second_build :: proc() -> bool {
 	for path in theme_paths {
 		append(&all, Distinct_Results{owner = "pointers", output = {kind = "pointer theme file", path = path}})
 	}
-	// The last build of `test` made the boot program of BOOT_VOLUME.
+	// The build of `test` made the boot program of the main boot volume.
 	for output in BOOT_PROGRAM_OUTPUTS {
 		append(&all, Distinct_Results{owner = "boot", output = output})
 	}
@@ -316,7 +316,7 @@ outputs_same_after_second_build :: proc() -> bool {
 		record_build_output(&result, 1) or_return
 	}
 	build_modules() or_return
-	build_boot_program("boot.image", BOOT_VOLUME, 0) or_return
+	main_boot_volume_build() or_return
 	different := 0
 	for &result in all {
 		record_build_output(&result, 2) or_return

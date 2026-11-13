@@ -1,13 +1,15 @@
-// A measure of one ring: the ring is the base interface of the kernel and
-// the one way that programs communicate.
+// A check and a measure of one ring: the ring is the base interface of the
+// kernel and the one way that programs communicate.
 //
 // One thread writes records in a ring as fast as it can. A second thread
 // reads them. No queue operation enters the kernel: a thread enters the
-// kernel only to wait, and to wake the other thread. The program counts
-// the records of one second, and asks the kernel how many times the
-// program entered it.
+// kernel only to wait, and to wake the other thread. The check sends a
+// fixed count of records and counts the records that did not arrive in
+// order. In a [measure run](term:measure-run) the threads go on for one
+// second, and the program writes the records in one second. In the two
+// runs it asks the kernel how many times the program entered it.
 //
-// It measures four rings: two capacities, and two ways to wait. A thread
+// It runs four rings: two capacities, and two ways to wait. A thread
 // that waits at once enters the kernel each time the queue is full or
 // empty. A thread that first reads the counters for a short time
 // (system.wait_spin) finds most of the time that the other thread
@@ -19,11 +21,12 @@
 // how rarely a thread must wait.
 //
 // **What a reader sees.** Start it from the menu of the programs, or with
-// `start("flow")` in the console. The window shows the four measures: the
-// records in one second, and the kernel entries for one million records.
-// The log gets one line for each measure (`flow: capacity 32, wait at
-// once: <rate> records in one second, ...`), then `flow: ok, 4 measures, 0
-// records lost`, or `flow: wrong: ...`.
+// `start("flow")` in the console. The window shows the four rings: the
+// records read in order, and the kernel entries for one million records.
+// The log gets one line for each ring (`flow: capacity 32, wait at once:
+// 200000 records read in order, 0 lost, ...`), then `flow: ok, 4 rings, 0
+// records lost`, or `flow: wrong: ...`. In a measure run (`kerneltool
+// measure flow`) the window and the lines have the records in one second.
 //
 // **Its grant**: **Inspect**: the machine handle reads the kernel entries
 // of this program, which the measure counts.
@@ -45,7 +48,8 @@ records_now, records_before: [512]interface.Draw_Record
 text_now, text_before: [8192]u8
 drawing: interface.Window_Drawing
 
-DURATION :: 1000 // Milliseconds of one measure.
+DURATION :: 1000 // Milliseconds of one measure, in a measure run.
+RECORDS_CHECKED :: 200_000 // The records that the writer sends in the check.
 RECORD :: 1
 END :: 2
 
@@ -54,7 +58,7 @@ BAR_WIDTH :: 220
 RATE_X :: 232
 ENTRIES_X :: RATE_X + BAR_WIDTH + 110
 WIDTH :: ENTRIES_X + BAR_WIDTH + 96
-HEIGHT :: 12 + 3 * LINE + len(measures) * LINE + LINE + 12
+HEIGHT :: 12 + 3 * LINE + len(measures) * LINE + 2 * LINE + 12
 
 COLOR_RATE :: 0x58D878
 COLOR_ENTRIES :: 0xE0A040
@@ -63,7 +67,8 @@ Measure :: struct {
 	capacity: u32,
 	spin:     bool,
 	done:     bool,
-	rate:     u64, // Records in one second.
+	received: u64, // The records that the reader read.
+	rate:     u64, // Records in one second: a measure run only.
 	entries:  u64, // Kernel entries of the program for one million records.
 	lost:     u64, // Records that did not arrive in order.
 }
@@ -74,6 +79,7 @@ measures: [4]Measure
 queue: ring.Ring
 spin: bool
 stop: u32 // 1: the writer writes its last record.
+records_wanted: u64 // The records that the writer sends before its last one; 0: it goes on until stop.
 received: u64
 lost: u64
 
@@ -98,7 +104,7 @@ wait :: proc "contextless" (side: ^ring.Queue, for_room: bool) {
 write_records :: proc "c" (parameter: rawptr) -> ! {
 	side := &queue.commands
 	sequence: u64
-	for intrinsics.atomic_load_explicit(&stop, .Relaxed) == 0 {
+	for intrinsics.atomic_load_explicit(&stop, .Relaxed) == 0 && (records_wanted == 0 || sequence < records_wanted) {
 		if system.send(side, ring.Record{kind = RECORD, values = {0 = sequence}}) {
 			sequence += 1
 		} else {
@@ -139,13 +145,18 @@ entries :: proc "contextless" () -> u64 {
 	return report.entries
 }
 
+// run sends records through one ring. The check ends when the writer
+// sent RECORDS_CHECKED records and the reader read the last one; a measure
+// run stops the writer after DURATION, and has the rate.
 run :: proc "contextless" (measure: ^Measure) -> bool {
+	measured := system.measure_run()
 	memory, mapped, status := system.ring_create(measure.capacity)
 	if status != .Ok {
 		return false
 	}
 	defer system.close(memory)
 	queue, spin, stop, received, lost = mapped, measure.spin, 0, 0, 0
+	records_wanted = measured ? 0 : RECORDS_CHECKED
 	defer system.ring_close(&queue)
 	before := entries()
 	start := system.time()
@@ -154,17 +165,25 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 	if reader_status != .Ok || writer_status != .Ok {
 		return false
 	}
-	end := system.sleep(start + DURATION)
-	intrinsics.atomic_store(&stop, 1)
+	end := start
+	if measured {
+		end = system.sleep(start + DURATION)
+		intrinsics.atomic_store(&stop, 1)
+	}
 	system.thread_wait(writer)
 	system.thread_wait(reader)
 	after := entries()
-	measure.rate = received * 1000 / max(end - start, 1)
+	measure.received = received
 	measure.entries = (after - before) * 1_000_000 / max(received, 1)
 	measure.lost = lost
 	measure.done = true
-	system.log("flow: capacity ", u64(measure.capacity), measure.spin ? ", read the counters then wait: " : ", wait at once: ", measure.rate, " records in one second, ", measure.entries, " kernel entries for one million records, ", lost, " lost")
-	return received != 0
+	if measured {
+		measure.rate = received * 1000 / max(end - start, 1)
+		system.log("flow: capacity ", u64(measure.capacity), measure.spin ? ", read the counters then wait: " : ", wait at once: ", measure.rate, " records in one second, ", measure.entries, " kernel entries for one million records, ", lost, " lost")
+		return received != 0
+	}
+	system.log("flow: capacity ", u64(measure.capacity), measure.spin ? ", read the counters then wait: " : ", wait at once: ", received, " records read in order, ", lost, " lost, ", measure.entries, " kernel entries for one million records")
+	return received == RECORDS_CHECKED
 }
 
 bar :: proc "contextless" (table: ^interface.Draw_Table, x, y: int, value, most: u64, color: graphics.Color) {
@@ -180,17 +199,18 @@ draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
 	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+	measured := system.measure_run()
 	most_rate, most_entries: u64
 	for measure in measures {
-		most_rate, most_entries = max(most_rate, measure.rate), max(most_entries, measure.entries)
+		most_rate, most_entries = max(most_rate, measured ? measure.rate : measure.received), max(most_entries, measure.entries)
 	}
 	y := 12
-	interface.draw_text(table, 12, y, "one thread writes records in a ring, one thread reads them, for one second.", graphics.COLOR_DIM)
+	interface.draw_text(table, 12, y, measured ? "one thread writes records in a ring, one thread reads them, for one second." : "one thread writes 200000 records in a ring, one thread reads them.", graphics.COLOR_DIM)
 	y += LINE
 	interface.draw_text(table, 12, y, "a queue operation does not enter the kernel. a wait does.", graphics.COLOR_DIM)
 	y += LINE + LINE / 2
 	interface.draw_text(table, 12, y, "capacity  before a wait", graphics.COLOR_DIM)
-	interface.draw_text(table, RATE_X, y, "records in one second", graphics.COLOR_DIM)
+	interface.draw_text(table, RATE_X, y, measured ? "records in one second" : "records read in order", graphics.COLOR_DIM)
 	interface.draw_text(table, ENTRIES_X, y, "kernel entries, one million records", graphics.COLOR_DIM)
 	y += LINE
 	for measure, index in measures {
@@ -200,19 +220,23 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.draw_unsigned(table, 12, y, u64(measure.capacity), graphics.COLOR_TEXT)
 		interface.draw_text(table, 92, y, measure.spin ? "read counters" : "nothing", graphics.COLOR_TEXT)
 		if measure.done {
-			bar(table, RATE_X, y, measure.rate, most_rate, measure.lost == 0 ? COLOR_RATE : graphics.COLOR_FAILED)
+			bar(table, RATE_X, y, measured ? measure.rate : measure.received - measure.lost, most_rate, measure.lost == 0 ? COLOR_RATE : graphics.COLOR_FAILED)
 			bar(table, ENTRIES_X, y, measure.entries, most_entries, COLOR_ENTRIES)
 		} else {
 			interface.draw_text(table, RATE_X, y, "...", graphics.COLOR_DIM)
 		}
 		y += LINE
 	}
+	if !measured {
+		interface.draw_text(table, 12, y + LINE / 2, "the records in one second are a measure: run `kerneltool measure flow`.", graphics.COLOR_DIM)
+	}
 	interface.window_frame_end(&drawing, &frame, window)
 }
 
-// entry finds its own slot with the machine handle, runs the four measures
-// (`run`), and writes the summary line. A measure is wrong when a record is
-// lost or when the program found no slot. The program then keeps its
+// entry finds its own slot with the machine handle, runs the four rings
+// (`run`), and writes the summary line. A ring is wrong when a record is
+// lost, when the check did not read each record, or when the program found
+// no slot. The program then keeps its
 // window open until it is stopped; with no window, it stops with the code
 // 1.
 @(export, link_name = "entry")
@@ -245,7 +269,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if wrong || total_lost != 0 {
 		system.log("flow: wrong: ", total_lost, " records lost")
 	} else {
-		system.log("flow: ok, ", u64(len(measures)), " measures, 0 records lost")
+		system.log("flow: ok, ", u64(len(measures)), " rings, 0 records lost")
 	}
 	for {
 		draw(&window)

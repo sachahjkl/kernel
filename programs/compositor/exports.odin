@@ -44,6 +44,16 @@ Window :: struct {
 	order:    i64, // 0: the front window; 1: the one under it; ...
 	focus:    i64, // 1: the window has the focus: the front one.
 	keyboard: i64, // 1: the keys go to the window: the one with the focus, while the launcher is closed.
+	presents: i64, // The Present records that the program of the window sent since it created its surface.
+	waits:    i64, // 1: a Present of the program changed a part of the screen, and no frame drew it yet.
+}
+
+// What the screen shows against what the compositor received: screen().
+Screen :: struct {
+	frames:   i64, // The frames that the compositor drew since the start.
+	presents: i64, // The Present records of all the programs since the start.
+	damage:   i64, // The damage rectangles that wait for the next frame.
+	desktop:  i64, // 1: a change of the desktop itself waits for the next frame: the pointer, the bar, a menu, the launcher, a window that appeared, moved or closed.
 }
 
 ERROR_ACTS_FOR_PRINCIPAL :: -1
@@ -132,6 +142,11 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 // - `focus`: 1 for the window in front.
 // - `keyboard`: 1 when the keys go to the window: the window in front,
 //   while the launcher is closed.
+// - `presents`: the `Present` records that the program of the window sent
+//   since it created its surface.
+// - `waits`: 1 while a `Present` of the program changed a part of the
+//   screen and no frame drew it yet. 0: the screen shows the last picture
+//   that the program sent before the call.
 //
 // Only a program that created its surface has a window. If the table of
 // the caller has fewer places than windows, the rows of the windows at the
@@ -163,8 +178,53 @@ windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
 			order    = i64(row),
 			focus    = row == 0 ? 1 : 0,
 			keyboard = row == 0 && !launcher_open ? 1 : 0,
+			presents = i64(client.presents),
+			waits    = client.present_waits ? 1 : 0,
 		}
 		copy(result[row].title[:len(result[row].title) - 1], system.name_of(client.title[:]))
 	}
 	return i64(order_count)
+}
+
+// screen gives the frames that the compositor drew, the Present records that it received, the damage rectangles that wait for the next frame, and whether a change of the desktop itself waits, as one row. The result is 1, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+//
+// **What it is for.** A caller that takes a picture of the screen from
+// outside, as the machine test does through the remote service, reads if
+// the screen shows what the compositor received. The compositor draws a
+// frame at most once in 16 ms: between a change and its frame, the screen
+// shows the picture before.
+//
+// **The row** (`Screen`):
+//
+// - `frames`: the frames drawn since the start.
+// - `presents`: the `Present` records of all the programs since the start.
+// - `damage`: the damage rectangles that wait for the next frame, of the
+//   desktop and of the programs.
+// - `desktop`: 1 while a change of the desktop itself waits for the next
+//   frame: the pointer, the bar, a menu, the launcher, a window that
+//   appeared, moved or closed. The `Present` of a program is not in it:
+//   `windows()` gives it for each window, in `waits`.
+//
+// The row counts each record that a program sent before the call: the
+// compositor reads the ring of each window before it answers. It does not
+// say that a program sent its last picture: a program that still computes
+// has sent nothing yet. The state of the threads of the program says that
+// (`monitor.programs()`).
+//
+// **Grant**: the caller must **act for the principal**; else the error
+// kind `No_Grant`, with the result -1.
+//
+// ```
+// connect("compositor")
+// compositor.screen()
+// ```
+@(export, link_name = "screen")
+screen_state :: proc "c" (result: ^[]Screen, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	if len(result^) > 0 {
+		result[0] = {frames = i64(frames), presents = i64(presents), damage = i64(damage_count), desktop = desktop_change_waits ? 1 : 0}
+	}
+	return 1
 }

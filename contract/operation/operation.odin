@@ -3009,11 +3009,24 @@ CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE :: 19
 CONTEXT_VALUE_FIXED_RANGES_MAPPED :: 20
 // The value 21: the size in bytes of the debug image, which the starter
 // mapped at the fixed range Debug_Image (contract:fixed_addresses) when its
-// bit of the value 20 is set. The values 22 and 23 have no role.
+// bit of the value 20 is set. The value 23 has no role.
 //
 // A program that prints a stop report (the console) reads the names of the
 // procedures there; with no debug image, a report names offsets only.
 CONTEXT_VALUE_DEBUG_IMAGE_SIZE :: 21
+// The value 22: the machine runs for a measure (1), or not (0). See
+// [measure run](term:measure-run).
+//
+// The root service writes 1 in the context of each program that it starts
+// when the boot image holds the resource `measure_run`: the tool puts it
+// in the boot image of `kerneltool measure` only. A program that starts a
+// child copies the value.
+//
+// A program that measures a rate over a duration (reads in one second,
+// records in one second) does so only when the value is 1
+// (`system.measure_run`). With 0 it runs its checks, which end after a
+// count of work, and writes no rate.
+CONTEXT_VALUE_MEASURE_RUN :: 22
 // The handle 15: the budget that pays for the program, with the rights
 // **Give**, **Read** and **Spend**. Each page and each object that the
 // program makes is paid from it; `Memory_Create` and `Program_Create` name

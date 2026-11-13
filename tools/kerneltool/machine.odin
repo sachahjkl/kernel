@@ -1185,30 +1185,29 @@ scenario := [?]Step {
 	{kind = .Type, text = "stop(\"limits\")"},
 	{kind = .Wait, text = "root: limits stopped"},
 
-	// One ring between two threads: the records of one second, and the
+	// One ring between two threads: 200000 records in order, and the
 	// kernel entries that they cost, for two capacities and two ways to wait.
 	{kind = .Launch, text = "flow"},
 	{kind = .Wait, text = "flow: capacity 32, wait at once: ", any_order = true},
 	{kind = .Wait, text = "flow: capacity 1024, read the counters then wait: "},
-	{kind = .Wait, text = "flow: ok, 4 measures, 0 records lost"},
+	{kind = .Wait, text = "flow: ok, 4 rings, 0 records lost"},
 	{kind = .Shot, text = "flow"},
 
 	// One queue for several writers and several readers, with no lock; one
-	// event starts the threads of each measure.
+	// event starts the threads of each run.
 	{kind = .Launch, text = "crowd"},
 	{kind = .Wait, text = "crowd: shared queue, 1 writers, 1 readers: ", any_order = true},
 	{kind = .Wait, text = "crowd: shared queue, 2 writers, 2 readers: "},
 	{kind = .Wait, text = "crowd: shared queue, 3 writers, 1 readers: "},
 	{kind = .Wait, text = "crowd: shared queue, 1 writers, 3 readers: "},
 	{kind = .Wait, text = "crowd: queue with a lock, 2 writers, 2 readers: "},
-	{kind = .Wait, text = "crowd: ok, 5 measures, each record written is read one time, each event started all the threads"},
+	{kind = .Wait, text = "crowd: ok, 5 runs, each record written is read one time, each event started all the threads"},
 	{kind = .Shot, text = "crowd"},
 
 	// The time is in a page that each program reads: no kernel entry.
 	{kind = .Launch, text = "clock"},
-	{kind = .Wait, text = "clock: the time page: "},
-	{kind = .Wait, text = " reads in one second, 0 kernel entries for one million reads"},
-	{kind = .Wait, text = "clock: a kernel entry: "},
+	{kind = .Wait, text = "clock: the check of the time page: 1000000 reads, 0 kernel entries"},
+	{kind = .Wait, text = "clock: the check of a kernel entry: 100000 reads, "},
 	{kind = .Wait, text = "clock: the time page and the cycle counter: in "},
 	{kind = .Wait, text = "clock: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page"},
 	{kind = .Shot, text = "clock"},
@@ -1225,8 +1224,8 @@ scenario := [?]Step {
 	// objects, with 1, 2 and 4 at one time; two threads that wake each
 	// other. The program checks the counts, not the speed.
 	{kind = .Launch, text = "locks"},
-	{kind = .Wait, text = "locks: kernel entries in one second, each locker on its own objects: "},
-	{kind = .Wait, text = "locks: pages on first use in one second, each locker in its own memory: "},
+	{kind = .Wait, text = "locks: kernel entries, each locker on its own objects: 1 locker 16384, 2 lockers 32768, 4 lockers 65536"},
+	{kind = .Wait, text = "locks: pages on first use, each locker in its own memory: 1 locker 2048, 2 lockers 4096, 4 lockers 8192"},
 	{kind = .Wait, text = "locks: word wait, two threads wake each other: "},
 	{kind = .Wait, text = "locks: frames: "},
 	{kind = .Wait, text = "locks: frame caches after the measures (frames now, batches taken, batches given, drains): processor 0: "},
@@ -1277,7 +1276,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "scheduler: one Strategy_Set, with its kernel entry: "},
 	{kind = .Wait, text = "scheduler: stress: 100 changes of strategy while "},
 	{kind = .Wait, text = "scheduler: writes of a schedule through the machine handle while the strategy changed 100 times: none was refused, each of the 8 spinners ran after them and has the schedule written last: as it must"},
-	{kind = .Wait, text = "scheduler: ok, no spinner starved under 3 strategies, EEVDF woke "},
+	{kind = .Wait, text = "scheduler: ok, no spinner starved under 3 strategies, a wake ended "},
 	{kind = .Wait, text = "scheduler: the window took "},
 	{kind = .Shot, text = "scheduler"},
 	{kind = .Key, text = "1"},
@@ -1831,7 +1830,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "disk: write, 1 block in each request, 1 in flight: "},
 	{kind = .Wait, text = "disk: write, 1 block in each request, 32 in flight: "},
 	{kind = .Wait, text = "disk: read, 16 blocks in each request, 8 in flight: "},
-	{kind = .Record, program = "disk", level = "info", text = "disk: ok, 5 measures, 0 errors, write then read back: 0 wrong"},
+	{kind = .Record, program = "disk", level = "info", text = "disk: ok, 5 runs, 0 errors, write then read back: 0 wrong"},
 	{kind = .Wait, text = "disk: a read of 2 blocks from the last block: block.Read: the argument first reaches 8193 blocks, past the end: there are 8192 blocks"},
 	{kind = .Shot, text = "disk"},
 	// The client stops: its block service stops, and the device stops
@@ -2348,7 +2347,9 @@ scenario_measure_scheduler := [?]Step {
 	{kind = .Wait, text = "compositor: first frame", any_order = true},
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Launch, text = "scheduler"},
+	{kind = .Wait, text = "scheduler: EEVDF: two threads that wake each other, a spinner on each processor: "},
 	{kind = .Wait, text = "scheduler: stress: 100 changes of strategy while "},
+	{kind = .Wait, text = "scheduler: EEVDF woke "},
 	{kind = .Wait, text = "scheduler: the window took "},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},
@@ -2398,6 +2399,9 @@ Machine :: struct {
 	device_bytes: int, // The bytes that the tool sent to the virtual keyboard and mouse since the system had read them all.
 	pointer_packets: int, // The packets of the virtual mouse that the tool sent.
 	picture_jobs: [dynamic]^Picture_Job, // The pictures that worker threads turn into PNG files.
+	picture_time: Picture_Time, // The times of the picture that the tool takes now: each picture of QEMU and each read of its file.
+	pictures_settled_by_calls: int, // The pictures that the tool took when the programs and the compositor said that the screen was settled (screen_settle.odin).
+	pictures_settled_by_pictures: int, // The pictures that the tool took when two pictures in a row were the same.
 	confirmations: [dynamic]time.Duration, // The time of each confirmation of a place.
 	corrected:   int, // The places that needed a correction.
 	record_next: i64, // The number of the log record where the next Record step searches.
@@ -2760,6 +2764,9 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	// is not written fails the test.
 	if !pictures_join(&machine) {
 		passed = false
+	}
+	if machine.pictures_settled_by_calls + machine.pictures_settled_by_pictures > 0 {
+		test_passed_print("the tool took %d pictures when the programs were in a wait and the compositor had drawn each picture that it received, and %d when two pictures in a row were the same", machine.pictures_settled_by_calls, machine.pictures_settled_by_pictures)
 	}
 	if len(machine.confirmations) > 0 {
 		slice.sort(machine.confirmations[:])
@@ -3236,25 +3243,39 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 		case .Agree:
-			// The program list of the monitor, and the reports of inspect.
-			monitor, has_monitor := table_call(&machine.client, "monitor.programs()")
-			mapped, threads_count := -1, -1
-			if has_monitor {
-				for row in 0 ..< len(monitor.rows) / monitor.size {
-					if table_value(&monitor, row, "name") == step.text {
-						mapped, _ = strconv.parse_int(table_value(&monitor, row, "mapped"))
-						threads_count, _ = strconv.parse_int(table_value(&monitor, row, "threads"))
+			// The program list of the monitor, and the reports of inspect. The
+			// monitor reads the programs of the machine at its own rhythm: a
+			// program that just started is in its list at its next read. So
+			// the step asks again until the two agree; the bound only ends a
+			// hang.
+			monitor, mappings, threads: Call_Table
+			has_monitor, has_mappings, has_threads: bool
+			mapped, threads_count, pages: int
+			agree_started := time.now()
+			for {
+				monitor, has_monitor = table_call(&machine.client, "monitor.programs()")
+				mapped, threads_count = -1, -1
+				if has_monitor {
+					for row in 0 ..< len(monitor.rows) / monitor.size {
+						if table_value(&monitor, row, "name") == step.text {
+							mapped, _ = strconv.parse_int(table_value(&monitor, row, "mapped"))
+							threads_count, _ = strconv.parse_int(table_value(&monitor, row, "threads"))
+						}
 					}
 				}
-			}
-			mappings, has_mappings := table_call(&machine.client, fmt.tprintf("inspect.mappings(%q)", step.text))
-			threads, has_threads := table_call(&machine.client, fmt.tprintf("inspect.threads(%q)", step.text))
-			pages := 0
-			if has_mappings {
-				for row in 0 ..< len(mappings.rows) / mappings.size {
-					value, _ := strconv.parse_int(table_value(&mappings, row, "pages"))
-					pages += value
+				mappings, has_mappings = table_call(&machine.client, fmt.tprintf("inspect.mappings(%q)", step.text))
+				threads, has_threads = table_call(&machine.client, fmt.tprintf("inspect.threads(%q)", step.text))
+				pages = 0
+				if has_mappings {
+					for row in 0 ..< len(mappings.rows) / mappings.size {
+						value, _ := strconv.parse_int(table_value(&mappings, row, "pages"))
+						pages += value
+					}
 				}
+				if (has_monitor && has_mappings && has_threads && mapped >= 0 && pages == mapped && int(threads.total) == threads_count) || time.since(agree_started) > HANG_BOUND {
+					break
+				}
+				time.sleep(CONDITION_POLL_PERIOD)
 			}
 			if !has_monitor || !has_mappings || !has_threads || mapped < 0 || pages != mapped || int(threads.total) != threads_count {
 				fmt.eprintfln("kerneltool: test failed: step %d: %s: monitor.programs() gives %d mapped pages and %d threads, inspect gives %d pages in %d mappings and %d threads", index + 1, step.text, mapped, threads_count, pages, mappings.total, threads.total)
@@ -3405,15 +3426,19 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 		case .Peer_Quic:
 			passed, result := peer_quic_case(machine.peer, step.text)
-			// The counts of the server after the case: quic_echo writes them
-			// once in a second when they change.
-			time.sleep(1500 * time.Millisecond)
+			// The last counts of the server that the log has, for the
+			// message: quic_echo writes them once in a second when they
+			// change, so they can be older than the case. No step reads them
+			// here: a step Wait reads a count that the scenario needs. No
+			// time passes between two cases: a case that needs the budgets
+			// of the server to be full again waits for that itself
+			// (peer_quic.odin, peer_quic_connect_again).
 			counts := log_last_line(machine, "quic_echo: accepted ")
 			if !passed {
-				fmt.eprintfln("kerneltool: test failed: step %d: the QUIC case \"%s\" of the peer: %s; the last counts of the server: %s", index + 1, step.text, result, counts)
+				fmt.eprintfln("kerneltool: test failed: step %d: the QUIC case \"%s\" of the peer: %s; the last counts of the server in the log: %s", index + 1, step.text, result, counts)
 				return false
 			}
-			test_passed_print("the QUIC case \"%s\" of the peer: %s; the last counts of the server: %s", step.text, result, counts)
+			test_passed_print("the QUIC case \"%s\" of the peer: %s; the last counts of the server in the log: %s", step.text, result, counts)
 		case .Peer_Start:
 			peer_case_started = peer_case_start_from_the_tool(machine.peer, step.text)
 			fmt.printfln("kerneltool: the TCP case \"%s\" of the peer runs; the next steps run with it", step.text)
@@ -3549,7 +3574,7 @@ measure_windows :: proc() -> bool {
 	// A copy outside the temporary allocator: the scenario frees it.
 	load_before := strings.clone(load_of_the_host())
 	defer delete(load_before)
-	if !machine_test(steps[:], BOOT_VOLUME, TEST_OUTPUT_MEASURE_WINDOWS, MACHINE_STOP_OK, TEST_DATA_DISK) {
+	if !machine_test(steps[:], BOOT_VOLUME_MEASURE, TEST_OUTPUT_MEASURE_WINDOWS, MACHINE_STOP_OK, TEST_DATA_DISK) {
 		return false
 	}
 	load_after := load_of_the_host()

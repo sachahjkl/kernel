@@ -96,9 +96,11 @@ scenario_non_maskable_interrupt := [?]Step {
 	{kind = .Wait, text = "kernel: ok"},
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Launch, text = "locks"},
-	// The first measure ended: the lockers go on with the faults and the
-	// wakes of the next measures, several seconds of kernel entries.
-	{kind = .Wait, text = "locks: kernel entries in one second, each locker on its own objects: "},
+	// The first check ended: the lockers go on with the faults and the
+	// wakes of the next checks. In a test the checks are short (a count of
+	// work, not a duration), so the interrupt can also come after the last
+	// one: the report of the interrupt is the same.
+	{kind = .Wait, text = "locks: kernel entries, each locker on its own objects: "},
 	{kind = .Monitor, text = "nmi"},
 	{kind = .Wait, text = "non-maskable interrupt vector 2 ", fails_on = "a fault inside the report of a fault of the kernel"},
 }

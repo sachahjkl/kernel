@@ -32,7 +32,11 @@ scenario_quic := [?]Step {
 	// The close of the client goes outside the loss, 3 times
 	// (PEER_QUIC_CLOSE_COPIES): the server ends the record by the close.
 	{kind = .Wait, text = " ended (closed by the client, the code 0000000000000000 of the application, the frame type 0000000000000000, the reason of the client \"\"): in 1048576 bytes, out 1048576 bytes"},
-	// 8 clients at once, from one address: 2 in the handshake at once.
+	// 8 clients at once, from one address: 2 in the handshake at once. The
+	// server checks 4 Initials of one address at once, then one in each
+	// second, and drops the others with no answer: a client whose
+	// handshake ends at its deadline starts a new connection, so the case
+	// ends whatever the cases before it left of that budget.
 	{kind = .Peer_Quic, text = "crowd"},
 	// A client that pins another key: it refuses the server.
 	{kind = .Peer_Quic, text = "wrong key"},

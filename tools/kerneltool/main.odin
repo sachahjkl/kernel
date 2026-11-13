@@ -47,10 +47,14 @@ CONTRACT_LIBRARY :: "-collection:contract=contract"
 SUPPORT_LIBRARY :: "-collection:support=support"
 CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "datagram", "date", "errors", "fixed_addresses", "frame", "glyph_cache", "isolated", "module", "operation", "pointer_pictures", "release", "remote", "ring", "settings", "store", "cut_mark", "system_description", "debug_object", "value_kinds"}
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
-BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/BOOTX64.EFI"
+// The boot program of the main boot volume, and its object: each boot
+// volume has its own object folder (boot_volumes.odin).
+BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/" + MAIN_BOOT_VOLUME_NAME + "/" + BOOT_PROGRAM_FILE_NAME
+BOOT_PROGRAM_OBJECT :: BOOT_OBJECT_FOLDER + "/" + MAIN_BOOT_VOLUME_NAME + "/" + BOOT_PROGRAM_OBJECT_FILE_NAME
 BOOT_VOLUME :: BUILD_FOLDER + "/boot_volume.img"
 BOOT_VOLUME_FAILS :: BUILD_FOLDER + "/boot_volume_fails.img"
 BOOT_VOLUME_SHORTAGE :: BUILD_FOLDER + "/boot_volume_shortage.img"
+BOOT_VOLUME_MEASURE :: BUILD_FOLDER + "/boot_volume_measure.img" // The boot image of a measure run: `kerneltool measure`.
 BOOT_VOLUME_WITHOUT_RETURN_CHECK :: BUILD_FOLDER + "/boot_volume_without_return_check.img" // The kernel kernel_without_return_check: one machine of `test return_fault` only.
 TEST_OUTPUT_SHORTAGE :: BUILD_FOLDER + "/test_output_shortage.txt"
 BOOT_VOLUME_SELF_TEST :: BUILD_FOLDER + "/boot_volume_self_test_%d.img"
@@ -136,36 +140,47 @@ COMMANDS :: [?]Command {
 	//   of the processors when it is absent.
 	//
 	// The build is incremental: a module whose inputs are the same as at
-	// its last build is kept, and so are the boot volumes. The command
-	// prints the count of the modules that it kept, and the measure of its
-	// time (docs/TOOLS.md, "The incremental build").
+	// its last build is kept, and so is each boot volume. The command
+	// prints the count of the modules and of the boot volumes that it kept,
+	// and the measure of its time (docs/TOOLS.md, "The incremental build").
 	//
 	// Each module is built in its own process (the command `module`). The
 	// command then builds the main boot volume, and the volumes that the tests
 	// need: a start that must fail, a shortage of frames, the volumes that the
 	// trusted boot must refuse (a changed module, a wrong signature, no
 	// system description), the volumes of Secure Boot, and one volume for each
-	// test of the kernel on itself. `run`, `test` and `measure` run it first:
-	// run it alone to check that the system compiles.
+	// test of the kernel on itself. The volumes that must be built are built
+	// at the same time, each in its own process (the command `volume`).
+	// `run`, `test` and `measure` build first, with only the boot volumes
+	// that they boot: run `build` alone to check that the whole system
+	// compiles.
 	//
 	// ```
 	// nix develop -c kerneltool build 8
 	// ```
-	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one process for each module, as many at once as the processors, or `build <processes>`; a module whose inputs are the same is kept; `build whole`: ignore the build records and build all", run = run_build},
+	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one process for each module, as many at once as the processors, or `build <processes>`; a module or a boot volume whose inputs are the same is kept; `build whole`: ignore the build records and build all", run = run_build},
 	// Builds one module of the table of modules in this process, with the
 	// options of one build.
 	//
 	// - `name`: a module of the table (`module_builds`).
 	// - `with_checks` or `without_checks`: the checks of the kernel (the order
 	//   of the locks, the frames).
-	// - `measure_run` or `usual_run`: the build of the measures, or the usual
-	//   one.
 	// - `with_debug_information` or `without_debug_information`: the debug
 	//   object beside the module.
 	//
 	// The parallel build of `build` runs this command once for each module.
 	// Run it by hand to see the errors of one module alone.
-	{name = "module", about = "module <name> with_checks|without_checks measure_run|usual_run with_debug_information|without_debug_information: build one module of the table, and its debug object with the debug information (the parallel build runs this command)", run = run_module},
+	{name = "module", about = "module <name> with_checks|without_checks with_debug_information|without_debug_information: build one module of the table, and its debug object with the debug information (the parallel build runs this command)", run = run_module},
+	// Builds one boot volume in this process: its boot image with the system
+	// description, its boot program, and the volume file.
+	//
+	// - `name`: `main`, or the end of the name of the volume file:
+	//   `shortage` for `build/boot_volume_shortage.img`.
+	//
+	// The build runs this command once for each boot volume that it must
+	// build, several at once. Run it by hand, after a build, to see the
+	// errors of one volume alone.
+	{name = "volume", about = "volume <name>: build one boot volume, after a build wrote the modules and the boot images (the build runs this command for each volume that it must build)", run = run_volume},
 	// Runs the machine tests: it builds, starts each test machine under QEMU,
 	// plays its scenario, and checks its log.
 	//
@@ -182,6 +197,10 @@ COMMANDS :: [?]Command {
 	// principals, the hierarchy, the ranges, the loss of power), then the
 	// tests of the loader on the host. It ends with "kerneltool: all tests
 	// passed".
+	//
+	// The build of the whole run builds every boot volume. The build of one
+	// part builds only the boot volumes that the part boots
+	// (docs/TOOLS.md, "The incremental build").
 	//
 	// - `part` (optional): one part only, for the work on it: `main`,
 	//   `network`, `power`, `principals`, `tcp`, `quic`, `quic-real`, `random`,
@@ -218,15 +237,22 @@ COMMANDS :: [?]Command {
 	// - `compress`: no machine; it compresses each PNG file of
 	//   `docs/screenshots` and `resources` whose data is stored with no
 	//   compression, and prints the bytes before and after.
-	{name = "screenshots", about = "test and the second build, then write the measure record " + MEASURE_RECORD_FILE + " and copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER + "; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
+	{name = "screenshots", about = "test, the second build and the measure runs, then write the measure record " + MEASURE_RECORD_FILE + " and copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER + "; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
 	// Runs a machine that measures, with no other load: the numbers that it
 	// prints are measures, never conditions of the test.
+	//
+	// Each machine is a measure run: its boot image holds the resource
+	// `measure_run`, and a program then measures its rates over a duration.
+	// The modules are those of the test.
 	//
 	// - no argument: the program `locks` on a machine where only the desktop
 	//   runs: the kernel entries in one second with 1, 2 and 4 lockers, in
 	//   `build/test_output_measure.txt`.
 	// - `scheduler N`: N machines that run the program `scheduler` alone, in
 	//   `build/test_output_scheduler_<n>.txt`.
+	// - `clock`, `crowd`, `disk`, `flow`, `limits`: the program alone, in
+	//   `build/test_output_measure_<program>.txt`; the command prints its
+	//   lines.
 	// - `windows`: each window of the interface package, alone, and a table of
 	//   the time of its pictures.
 	// - `address_space`, `shortage`: the machine of one measure.
@@ -235,7 +261,7 @@ COMMANDS :: [?]Command {
 	//
 	// The tool checks no speed: a program checks its counts, and the numbers
 	// are printed for a reader (docs/TOOLS.md, "The bounds of the tests").
-	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
+	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure clock|crowd|disk|flow|limits`: the program alone, and its lines; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
 	// Builds, starts a machine that types in the terminal, and films it: the
 	// pictures of the screen become a film with ffmpeg, which must be on the
 	// path. The film is for the development log, not a test.
@@ -405,11 +431,10 @@ usage :: proc() {
 	}
 }
 
-// run_build builds the modules, the boot images, and then the boot program,
-// which contains the kernel module and a boot image. It builds a second
-// boot program for the test of a start that fails. A module whose inputs
-// are the same is kept, and so are the boot volumes
-// (incremental_build.odin); `build whole` keeps nothing.
+// run_build is the command `build`: the modules, the boot images, and
+// every boot volume. A module whose inputs are the same is kept, and so is
+// each boot volume (incremental_build.odin, boot_volumes.odin); `build
+// whole` keeps nothing.
 run_build :: proc(args: []string) -> int {
 	// `build [whole] [processes]`: a whole build, and the count of module
 	// processes at once.
@@ -422,155 +447,33 @@ run_build :: proc(args: []string) -> int {
 		fmt.eprintln("kerneltool: build [whole] [processes]")
 		return EXIT_USAGE
 	}
+	return build_system(nil)
+}
+
+// build_system builds the modules, the boot images, and then the boot
+// volumes that the caller boots: needed_volumes names them by their paths,
+// and nil is every volume. A volume that the caller does not name is not
+// built and not checked: no machine of this process starts from it
+// (machine_command).
+build_system :: proc(needed_volumes: []string) -> int {
 	build_measure_start()
 	if !build_modules() {
 		return EXIT_FAILURE
 	}
 	volumes_started := time.tick_now()
-	if kept, reason := boot_volumes_are_kept(); kept {
-		build_measure.volumes_kept = true
-		fmt.println("kerneltool: the boot volumes are kept: their inputs are the same, and each file has its recorded hash")
-	} else {
-		if !build_whole {
-			fmt.printfln("kerneltool: the boot volumes are built: %s", reason)
-		}
-		boot_volume_outputs_forget()
-		if !build_boot_volumes() {
-			return EXIT_FAILURE
-		}
-		record_started := time.tick_now()
-		recorded := boot_volumes_record_write()
-		build_measure_step("the build record of the boot volumes, with the hash of each volume", record_started)
-		if !recorded && build_inputs.usable && os.get_env(SIGNING_KEY_VARIABLE, context.temp_allocator) == "" {
-			fmt.println("kerneltool: no build record for the boot volumes: the compiler gave no list of its files, or an input changed during the build; the next build builds them again")
-		}
+	if !boot_volumes_build(needed_volumes) {
+		return EXIT_FAILURE
 	}
 	build_measure_step("the boot volumes, in all", volumes_started)
 	build_measure_print()
 	return 0
 }
 
-// build_boot_volumes builds the boot program of each boot volume, and the
-// variable store of Secure Boot. BOOT_VOLUME is the last one: its boot
-// program stays in the folder of the boot objects.
-build_boot_volumes :: proc() -> bool {
-	if !build_boot_program("boot_fails.image", BOOT_VOLUME_FAILS, 0) || !build_boot_program("boot_shortage.image", BOOT_VOLUME_SHORTAGE, 0) || !build_boot_program("boot.image", BOOT_VOLUME_WITHOUT_RETURN_CHECK, 0, "kernel_without_return_check") {
-		return false
-	}
-	// The volumes of the trusted boot that the boot program must refuse, and
-	// another system that it must accept and measure.
-	if !build_boot_program("boot.image", BOOT_VOLUME_CHANGED_MODULE, 0, change = {module_changed_after_description = CHANGED_MODULE}) || !build_boot_program("boot.image", BOOT_VOLUME_WRONG_SIGNATURE, 0, change = {signature_changed = true}) || !build_boot_program("boot.image", BOOT_VOLUME_OTHER_SYSTEM, 0, change = {module_changed_before_description = OTHER_SYSTEM_MODULE}) {
-		return false
-	}
-	if !build_boot_program("boot.image", BOOT_VOLUME_CHANGED_KERNEL, 0, change = {kernel_changed_after_description = true}) || !build_boot_program("boot.image", BOOT_VOLUME_WITHOUT_DESCRIPTION, 0, change = {description_left_out = true}) || !build_boot_program("boot.image", BOOT_VOLUME_STATED_HASH, 0, change = {stated_hash_changed_module = CHANGED_MODULE}) {
-		return false
-	}
-	// Secure Boot: the boot program signed with the firmware signing key, the
-	// same with one byte changed, and the variable store that enrols the
-	// certificate.
-	if !build_boot_program("boot.image", BOOT_VOLUME_SECURE_BOOT, 0, firmware_signature = .Signed) || !build_boot_program("boot.image", BOOT_VOLUME_SECURE_BOOT_CHANGED, 0, firmware_signature = .Signed_Then_Changed) || !secure_boot_variables_write() {
-		return false
-	}
-	boot_volume_output_note(SECURE_BOOT_VARIABLES)
-	// One boot program for each test of the kernel on itself.
-	for test in self_tests {
-		if !build_boot_program("boot.image", self_test_file(BOOT_VOLUME_SELF_TEST, test.number), test.number) {
-			return false
-		}
-	}
-	return build_boot_program("boot.image", BOOT_VOLUME, 0)
-}
-
-// build_boot_program builds the boot program with a boot image and a kernel
-// module of the build folder, and writes a boot volume with it. BOOT_PROGRAM
-// is the last one. The boot image of the volume is a copy of the image of
-// the build with its system description and its description signature
-// (system_description.odin); change makes a volume for a test of a failure.
-build_boot_program :: proc(image: string, volume_path: string, self_test: int, kernel := "kernel", change: Image_Change = {}, firmware_signature: Firmware_Signature = .None) -> bool {
-	step_started := time.tick_now()
-	signed_image := signed_image_path(volume_path)
-	signed := boot_image_signed_write(strings.concatenate({BUILD_FOLDER, "/", image}, context.temp_allocator), kernel, signed_image, change) or_return
-	build_measure.volume_signed_images += time.tick_since(step_started)
-	step_started = time.tick_now()
-	reset_folder(BOOT_OBJECT_FOLDER) or_return
-	run(
-		{
-			"odin",
-			"build",
-			"boot",
-			"-target:freestanding_amd64_win64",
-			"-build-mode:obj",
-			"-no-entry-point",
-			"-default-to-nil-allocator",
-			"-disable-red-zone",
-			"-o:speed",
-			"-vet",
-			"-source-code-locations:filename", // No path of the folder of the build in the program.
-			// The list of the files that the compiler read: the inputs of the
-			// build key of the boot volumes (incremental_build.odin).
-			"-export-dependencies:json",
-			"-export-dependencies-file:" + BOOT_DEPENDENCY_FILE,
-			CONTRACT_LIBRARY,
-			SUPPORT_LIBRARY,
-			strings.concatenate({"-define:BOOT_IMAGE=../", signed_image}, context.temp_allocator),
-			"-define:SYSTEM_PUBLIC_KEY=../" + SYSTEM_PUBLIC_KEY_FILE,
-			fmt.tprintf("-define:SELF_TEST=%d", self_test),
-			strings.concatenate({"-define:KERNEL_MODULE=../", signed.kernel_module_path}, context.temp_allocator),
-			"-out:" + BOOT_OBJECT_FOLDER + "/boot.obj",
-		},
-	) or_return
-	build_measure.volume_compiles += time.tick_since(step_started)
-	step_started = time.tick_now()
-	run({"nasm", "-f", "win64", "-o", BOOT_OBJECT_FOLDER + "/jump.obj", "boot/jump.asm"}) or_return
-	run({"nasm", "-f", "win64", "-DWIN64", "-o", BOOT_OBJECT_FOLDER + "/memory.obj", RUNTIME_MEMORY}) or_return
-	objects := files_with_suffix(BOOT_OBJECT_FOLDER, ".obj") or_return
-	link := make([dynamic]string, context.temp_allocator)
-	append(&link, "lld-link", "/subsystem:efi_application", "/entry:efi_main", "/nodefaultlib", "/out:" + BOOT_PROGRAM)
-	append(&link, ..objects)
-	run(link[:]) or_return
-	program_path := BOOT_PROGRAM
-	if firmware_signature != .None {
-		boot_program_sign(firmware_signature) or_return
-		program_path = BOOT_PROGRAM_SIGNED
-	}
-	build_measure.volume_links += time.tick_since(step_started)
-	step_started = time.tick_now()
-	program := read_file(program_path) or_return
-	// The debug image is a file of its own beside the boot program: the boot
-	// program and the boot image are the same bytes with and without it.
-	debug_image := read_file(DEBUG_IMAGE) or_return
-	volume, fits := volume_encode({{path = BOOT_PROGRAM_PATH, data = program}, {path = DEBUG_IMAGE_VOLUME_PATH, data = debug_image}}, context.temp_allocator)
-	if !fits {
-		fmt.eprintln("kerneltool: the boot program and the debug image do not fit in the boot volume")
-		return false
-	}
-	if write_err := os.write_entire_file(volume_path, volume); write_err != nil {
-		fmt.eprintfln("kerneltool: cannot write %s: %v", volume_path, write_err)
-		return false
-	}
-	// Beside the volume: which key signed it. A volume that the test keys
-	// signed is for a test machine only.
-	signed_by := signed.signed_by_test_key ? "the TEST signing key, whose private key is published: do not install this volume on a real machine\n" : "the signing key of SYSTEM_SIGNING_KEY\n"
-	if write_err := os.write_entire_file(signed_by_file_path(volume_path), signed_by); write_err != nil {
-		fmt.eprintfln("kerneltool: cannot write %s: %v", signed_by_file_path(volume_path), write_err)
-		return false
-	}
-	build_measure.volume_writes += time.tick_since(step_started)
-	build_measure.volumes_built += 1
-	// What a machine test reads of this volume, and what the checks of two
-	// builds compare: the build record of the boot volumes holds the hash of
-	// each one.
-	for output in ([]string{volume_path, signed_image, signed_by_file_path(volume_path), signed.kernel_module_path, SYSTEM_PUBLIC_KEY_FILE, BOOT_PROGRAM, BOOT_OBJECT_FOLDER + "/boot.obj"}) {
-		boot_volume_output_note(output)
-	}
-	return true
-}
-
 run_machine :: proc(args: []string) -> int {
 	if len(args) >= 1 && args[0] == "without_checks" {
 		test_build_checks = false
 	}
-	if code := run_build(nil); code != 0 {
+	if code := build_system(boot_volumes_of_command("run")); code != 0 {
 		return code
 	}
 	if !disk_prepare(DATA_DISK, DATA_DISK_SIZE, false) {
@@ -623,6 +526,21 @@ test_arguments_problem :: proc(args: []string) -> string {
 	return fmt.tprintf("test does not know the part `%s`; the parts: %s, and `trusted_boot tpm`; with no argument, the whole test", given, known)
 }
 
+// The machines of the parts `main`, `network` and `shortage`: one procedure
+// for each part, so that the table of the boot volumes of the parts names
+// it (boot_volumes.odin).
+main_tests_run :: proc() -> bool {
+	return machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK)
+}
+
+network_tests_run :: proc() -> bool {
+	return machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK)
+}
+
+shortage_tests_run :: proc() -> bool {
+	return machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK)
+}
+
 // run_test runs the machine test (machine.odin), then the host load test.
 run_test :: proc(args: []string) -> int {
 	if problem := test_arguments_problem(args); problem != "" {
@@ -632,7 +550,8 @@ run_test :: proc(args: []string) -> int {
 	// The times of the test are measures: the report never changes the result.
 	test_started := time.tick_now()
 	defer test_times_report(test_started)
-	build_code := run_build(nil)
+	// One part boots only its own boot volumes: the build builds those.
+	build_code := build_system(boot_volumes_of_test(args))
 	test_times_build_end(test_started)
 	if build_code != 0 {
 		return build_code
@@ -662,10 +581,10 @@ run_test :: proc(args: []string) -> int {
 		return power_loss_run() && power_loss_settings_run() && power_loss_ranges_run() ? 0 : EXIT_FAILURE
 	}
 	if len(args) == 1 && args[0] == "main" {
-		return machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
+		return main_tests_run() ? 0 : EXIT_FAILURE
 	}
 	if len(args) == 1 && args[0] == "network" {
-		return machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
+		return network_tests_run() ? 0 : EXIT_FAILURE
 	}
 	// `test crypto`: the machine of the module cryptography only.
 	if len(args) == 1 && args[0] == "crypto" {
@@ -677,7 +596,7 @@ run_test :: proc(args: []string) -> int {
 	}
 	// `test shortage`: the machine of the shortage of frames only.
 	if len(args) == 1 && args[0] == "shortage" {
-		return machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
+		return shortage_tests_run() ? 0 : EXIT_FAILURE
 	}
 	// `test fault_ring`: the machine of the fault ring only.
 	if len(args) == 1 && args[0] == "fault_ring" {
@@ -760,6 +679,11 @@ run_screenshots :: proc(args: []string) -> int {
 	if !outputs_same_after_second_build() {
 		return EXIT_FAILURE
 	}
+	// The rates of the record come from measure runs: the test measures
+	// none (measure_runs.odin).
+	if !measure_runs_of_the_record() {
+		return EXIT_FAILURE
+	}
 	if !measure_record_write(run_facts) {
 		return EXIT_FAILURE
 	}
@@ -789,18 +713,22 @@ TEST_OUTPUT_MEASURE :: BUILD_FOLDER + "/test_output_measure.txt"
 // run_measure runs the measures of the program `locks` on a machine where
 // only the desktop runs: the numbers have no load of the other programs of
 // the test. The program checks its counts; the tool does not check a speed.
+// The machine is a measure run: its boot image holds the resource
+// `measure_run`, so each program measures its rates over a duration
+// (measure_runs.odin). `measure <program>`: one program of
+// `measure_programs`, alone, and its lines.
 // `measure scheduler N`: N machines that run only the program scheduler
 // with the desktop; the numbers are in build/test_output_scheduler_<n>.txt.
 run_measure :: proc(args: []string) -> int {
 	args := args
-	if len(args) == 1 && args[0] == "windows" {
-		measure_run = true
-	}
 	if len(args) >= 1 && args[0] == "without_checks" {
 		test_build_checks = false
 		args = args[1:]
 	}
-	if code := run_build(nil); code != 0 {
+	// `measure shortage` boots the volume of the shortage of frames; each
+	// other form boots the volume of a measure run.
+	shortage := len(args) >= 1 && args[0] == "shortage"
+	if code := build_system(boot_volumes_of_command(shortage ? MEASURE_SHORTAGE_COMMAND : MEASURE_COMMAND)); code != 0 {
 		return code
 	}
 	if !make_folder(SCREENSHOT_FOLDER) || !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) {
@@ -810,10 +738,16 @@ run_measure :: proc(args: []string) -> int {
 		return measure_windows() ? 0 : EXIT_FAILURE
 	}
 	if len(args) >= 1 && args[0] == "address_space" {
-		return machine_test(scenario_measure_address_space[:], BOOT_VOLUME, TEST_OUTPUT_MEASURE, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
+		return machine_test(scenario_measure_address_space[:], BOOT_VOLUME_MEASURE, TEST_OUTPUT_MEASURE, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
 	}
-	if len(args) >= 1 && args[0] == "shortage" {
-		return machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
+	// `measure <program>`: one program that measures itself, alone.
+	if len(args) == 1 {
+		if program, found := measure_program_find(args[0]); found {
+			return measure_program_run(program) ? 0 : EXIT_FAILURE
+		}
+	}
+	if shortage {
+		return shortage_tests_run() ? 0 : EXIT_FAILURE
 	}
 	if len(args) >= 1 && args[0] == "scheduler" {
 		count := 1
@@ -831,13 +765,17 @@ run_measure :: proc(args: []string) -> int {
 			// Not in the temporary allocator: the scenario frees it after each step.
 			output := fmt.aprintf("%s/test_output_scheduler_%d.txt", BUILD_FOLDER, run)
 			defer delete(output)
-			if !machine_test(scenario_measure_scheduler[:], BOOT_VOLUME, output, MACHINE_STOP_OK, TEST_DATA_DISK) {
+			if !machine_test(scenario_measure_scheduler[:], BOOT_VOLUME_MEASURE, output, MACHINE_STOP_OK, TEST_DATA_DISK) {
 				return EXIT_FAILURE
 			}
 		}
 		return 0
 	}
-	if !machine_test(scenario_measure[:], BOOT_VOLUME, TEST_OUTPUT_MEASURE, MACHINE_STOP_OK, TEST_DATA_DISK) {
+	if len(args) != 0 {
+		fmt.eprintln("kerneltool: measure [without_checks] [scheduler <count> | windows | address_space | shortage | clock | crowd | disk | flow | limits]")
+		return EXIT_USAGE
+	}
+	if !machine_test(scenario_measure[:], BOOT_VOLUME_MEASURE, TEST_OUTPUT_MEASURE, MACHINE_STOP_OK, TEST_DATA_DISK) {
 		return EXIT_FAILURE
 	}
 	return 0
@@ -849,7 +787,7 @@ TEST_OUTPUT_FILM :: BUILD_FOLDER + "/test_output_film.txt"
 // run_film films the terminal. The film is for the development log: it is
 // not a test.
 run_film :: proc(args: []string) -> int {
-	if code := run_build(nil); code != 0 {
+	if code := build_system(boot_volumes_of_command("film")); code != 0 {
 		return code
 	}
 	if !reset_folder(FILM_FOLDER) || !make_folder(SCREENSHOT_FOLDER) {
@@ -966,6 +904,14 @@ processor_models := [Processor_Model]string {
 // has a port, to QEMU user networking with its TCP (web_host.odin).
 // processor gives the processor of the machine (Processor_Model).
 machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual) -> (command: []string, ok: bool) {
+	// A machine starts only from a boot volume that this process built or
+	// kept: a volume that the command did not ask for can be the volume of
+	// older sources, and a test on it proves nothing. The variable store of
+	// Secure Boot is an output of the build of one volume.
+	if !boot_volume_is_ready(volume) || (firmware == .With_Secure_Boot && !boot_volume_is_ready(BOOT_VOLUME_SECURE_BOOT)) {
+		fmt.eprintfln("kerneltool: the boot volume %s, or the variable store of Secure Boot, was not built or kept by the build of this command: add it to the volumes of the command (boot_volumes.odin)", volume)
+		return nil, false
+	}
 	if !disk_prepare(SCRATCH_DISK, SCRATCH_DISK_SIZE, false) {
 		return nil, false
 	}

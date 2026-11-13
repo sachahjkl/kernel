@@ -5656,7 +5656,7 @@ Do not use: CI run, test suite, full test.
 
 An incremental build is a build that keeps each output of an earlier build whose inputs are the same, and builds only the others.
 
-It rests on the rule of the reproducible build: the same inputs give the same bytes, so the output of an earlier build with the same inputs is the output of this build. `kerneltool build` keeps a module when its build record has the build key of its inputs as they are now and each output has its recorded hash; it keeps the boot volumes by the same rule. The tool builds in every case of doubt: no record, a damaged record, an input or an output that changed or is gone. It prints the count of the modules that it kept.
+It rests on the rule of the reproducible build: the same inputs give the same bytes, so the output of an earlier build with the same inputs is the output of this build. `kerneltool build` keeps a module when its build record has the build key of its inputs as they are now and each output has its recorded hash; it keeps each boot volume by the same rule, and builds only the boot volumes that the command boots. The tool builds in every case of doubt: no record, a damaged record, an input or an output that changed or is gone. It prints the count of the modules that it kept.
 
 It is not a cache of the compiler and holds no second copy of an output: the kept output is the file of the build folder itself.
 
@@ -5666,9 +5666,9 @@ Do not use: build cache, cached build, partial build.
 
 ### Build key
 
-A build key is one BLAKE3 hash over the inputs of the build of one thing (a module, or the boot volumes), in a fixed order.
+A build key is one BLAKE3 hash over the inputs of the build of one thing (a module, or one boot volume), in a fixed order.
 
-The inputs of a module: each source file that the compiler lists, with the files of `#load`; every other file of the folder of each of these packages; its assembly files; the module file of each import; the commands of the compiler and of `llc` with each flag; the programs of the build; and the sources of the tool. Two builds with the same key had the same inputs. A key is complete only when each input can be read; the tool never records and never compares a key that is not complete.
+The inputs of a module: each source file that the compiler lists, with the files of `#load`; every other file of the folder of each of these packages; its assembly files; the module file of each import; the commands of the compiler and of `llc` with each flag; the programs of the build; and the sources of the tool. The inputs of a boot volume: the boot image and the kernel that its boot program holds, the debug image, the public key of the system, the sources of the boot program, the commands with each flag, and the tool. Two builds with the same key had the same inputs. A key is complete only when each input can be read; the tool never records and never compares a key that is not complete.
 
 It is not the hash of a module, which names the output, and it is not a signing key.
 
@@ -5680,7 +5680,7 @@ Do not use: cache key, fingerprint, input hash (for the whole key).
 
 A build record is the small text file that the tool writes after it built one thing: its build key, the hash of each output, and the list of the files that the compiler read.
 
-A module has `build/modules/<name>.build_record`; the boot volumes have `build/boot_volumes.build_record`. At the next build, the tool computes the build key again from the files of the recorded list as they are now, and keeps the outputs when the key is the same and each output has its recorded hash. A record that is absent or damaged is no record: the tool builds, with no error. The tool writes no record when it cannot prove that the hash and the compiler read the same bytes of each input.
+A module has `build/modules/<name>.build_record`; a boot volume has `build/boot/<name>.build_record`. At the next build, the tool computes the build key again from the files of the recorded list as they are now, and keeps the outputs when the key is the same and each output has its recorded hash. A record that is absent or damaged is no record: the tool builds, with no error. The tool writes no record when it cannot prove that the hash and the compiler read the same bytes of each input.
 
 It is not the measure record and not the line of the reproducible build that the site quotes.
 
@@ -5707,6 +5707,30 @@ The site workflow runs no machine test, so the pass that commits the pictures al
 The design: `docs/SITE.md`, "The measure record".
 
 Do not use: benchmark results, metrics file, numbers cache.
+
+### Measure run
+
+A measure run is a machine whose boot image holds the resource `measure_run`, in which each program measures its rates over a duration.
+
+A rate (records in one second, reads in one second) needs a duration. In a test, a program runs its checks only: each one ends after a count of work, and the program writes no rate. In a measure run, the root service writes 1 in the value 22 of the context of each program that it starts (`CONTEXT_VALUE_MEASURE_RUN`); a program reads it with `system.measure_run()`, runs the same work for a fixed duration, and writes its rates. The modules of a measure run are the modules of the test, byte for byte: only the boot image has one resource more. `kerneltool measure` starts a measure run; `kerneltool test` never does.
+
+It is not the measure build, which is a build of the kernel with no check. A measure run can use the test build or the measure build. Example: `kerneltool measure clock` prints "clock: the time page: N reads in one second, 0 kernel entries for one million reads".
+
+The design: `docs/TOOLS.md`, "A check by count, a measure by time".
+
+Do not use: benchmark mode, benchmark run, performance mode.
+
+### Settled screen
+
+A settled screen is a screen that shows the last picture of each window: each program sent the picture of its last change, and the compositor drew each picture that it received.
+
+The machine test takes a picture only of a settled screen. When it can call the compositor, it reads the state of the programs from `monitor.programs()` before and after it reads `compositor.windows()` and `compositor.screen()`: a program that is in a wait in the two reads, with the same count of kernel entries, did not run between them, and a window with no picture that waits for a frame is on the screen as its program sent it. When it cannot call, it takes pictures until two in a row are the same. A window that draws with no end has no last picture, and the condition leaves it out.
+
+It is not a fixed time before a picture: the hang bound ends a wait for a screen that never settles, as a failure that names the window.
+
+The design: `docs/TOOLS.md`, "When the tool takes a picture".
+
+Do not use: idle screen, stable frame, quiescent.
 
 ### Hang bound
 

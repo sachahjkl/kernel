@@ -1,9 +1,12 @@
-// A measure of the block service (contract/block), on a disk of its own:
-// the disk of the measures, that holds no data of a program.
+// A check and a measure of the block service (contract/block), on a disk
+// of its own: the disk of the measures, that holds no data of a program.
 //
-// The program reads and writes blocks for one second in each measure: one
-// block in each request, with one request in flight and then with 32. It
-// counts the blocks and the kernel entries of the two programs for each
+// The program reads and writes blocks in five runs: one block in each
+// request, with one request in flight and then with 32. The check sends a
+// fixed count of requests in each run, and no request must fail. In a
+// [measure run](term:measure-run) each run goes on for one second, and
+// the program writes the blocks in one second. In the two it
+// counts the kernel entries of the two programs for each
 // request: its own entries (the system library counts them) and those of
 // the block service (the command Statistics). Then it writes a pattern,
 // flushes, reads it back and compares.
@@ -18,19 +21,21 @@
 //
 // **What a reader sees.** Start it from the menu of the programs, or with
 // `start("disk")` in the console. The window has one row for each of the
-// five measures: a read or a write, the blocks in each request, the
-// requests in flight, a bar of the blocks in one second, and a bar of the
-// kernel entries of this program and of the block service for 100
-// requests. Its lines in the log:
+// five runs: a read or a write, the blocks in each request, the
+// requests in flight, a bar of the requests that the check sent, and a bar
+// of the kernel entries of this program and of the block service for 100
+// requests. In a measure run (`kerneltool measure disk`) the first bar is
+// the blocks in one second. Its lines in the log:
 //
 // - `disk: ok, the disk has <count> blocks, 64 blocks in one request at
 //   most`;
-// - one line for each measure: `disk: read, 1 block in each request, 32 in
-//   flight: <rate> blocks in one second, ...`;
+// - one line for each run: `disk: read, 1 block in each request, 32 in
+//   flight: 256 requests, ...`; in a measure run: `... 32 in flight: <rate>
+//   blocks in one second, ...`;
 // - `disk: a read of 2 blocks from the last block: ...`, the error record of
 //   a read past the end of the disk, which the program checks field by
 //   field;
-// - `disk: ok, 5 measures, 0 errors, write then read back: 0 wrong`, or
+// - `disk: ok, 5 runs, 0 errors, write then read back: 0 wrong`, or
 //   `disk: wrong: ...`.
 //
 // **Its grant**: **Scratch_Disk**: a block service of the
@@ -57,7 +62,8 @@ records_now, records_before: [512]interface.Draw_Record
 text_now, text_before: [8192]u8
 drawing: interface.Window_Drawing
 
-DURATION :: 1000 // Milliseconds of one measure.
+DURATION :: 1000 // Milliseconds of one measure, in a measure run.
+REQUESTS_CHECKED :: 256 // The requests of one run of the check.
 REGION_PAGES :: 256 // The data region: 1 MiB.
 MEASURE_BLOCKS :: 4096 // The blocks that the measures use, from block 0: 16 MiB.
 
@@ -66,7 +72,7 @@ BAR_WIDTH :: 200
 RATE_X :: 300
 ENTRIES_X :: RATE_X + BAR_WIDTH + 90
 WIDTH :: ENTRIES_X + BAR_WIDTH + 70
-HEIGHT :: 12 + 4 * LINE + len(measures) * LINE + 2 * LINE + 12
+HEIGHT :: 12 + 4 * LINE + len(measures) * LINE + 3 * LINE + 12
 
 COLOR_RATE :: 0x58D878
 COLOR_ENTRIES :: 0xE0A040
@@ -76,7 +82,8 @@ Measure :: struct {
 	depth:   u32, // Requests in flight.
 	blocks:  u64, // Blocks in each request.
 	done:    bool,
-	rate:    u64, // Blocks in one second.
+	requests: u64, // The requests that the run sent and that were answered.
+	rate:    u64, // Blocks in one second: a measure run only.
 	client:  u64, // Kernel entries of this program for 100 requests.
 	service: u64, // Kernel entries of the block service for 100 requests.
 	errors:  u64,
@@ -138,12 +145,14 @@ service_entries :: proc "contextless" () -> u64 {
 	return call(.Statistics).values[2]
 }
 
-// run does one measure for one second: it keeps `measure.depth` requests
-// in flight, each of `measure.blocks` blocks, at places that walk the first
-// 4096 blocks of the disk. It writes the rate, the kernel entries of the
-// two programs for 100 requests, and the failed requests into the record,
-// and one line on the log.
+// run keeps `measure.depth` requests in flight, each of `measure.blocks`
+// blocks, at places that walk the first 4096 blocks of the disk. The check
+// ends after REQUESTS_CHECKED answers; a measure run goes on for one
+// second, and has the rate. It writes the kernel entries of the two
+// programs for 100 requests and the failed requests into the record, and
+// one line on the log.
 run :: proc "contextless" (measure: ^Measure) {
+	measured := system.measure_run()
 	command := measure.write ? block.Command.Write : block.Command.Read
 	next: u64 // The number of the next request.
 	issue :: proc "contextless" (command: block.Command, measure: ^Measure, next: ^u64) {
@@ -165,7 +174,7 @@ run :: proc "contextless" (measure: ^Measure) {
 			measure.errors += 1
 		}
 		done += 1
-		if system.time() - start >= DURATION {
+		if (measured ? system.time() - start >= DURATION : done >= REQUESTS_CHECKED) {
 			break
 		}
 		issue(command, measure, &next)
@@ -179,10 +188,15 @@ run :: proc "contextless" (measure: ^Measure) {
 	elapsed := max(system.time() - start, 1)
 	client := system.kernel_entries() - client_before
 	service := service_entries() - service_before
-	measure.rate = done * measure.blocks * 1000 / elapsed
+	measure.requests = done
 	measure.client = client * 100 / max(done, 1)
 	measure.service = service * 100 / max(done, 1)
 	measure.done = true
+	if !measured {
+		system.log("disk: ", measure.write ? "write" : "read", ", ", measure.blocks, measure.blocks == 1 ? " block" : " blocks", " in each request, ", u64(measure.depth), " in flight: ", done, " requests, kernel entries for 100 requests: ", measure.client, " of this program, ", measure.service, " of the block service, ", measure.errors, " errors")
+		return
+	}
+	measure.rate = done * measure.blocks * 1000 / elapsed
 	system.log("disk: ", measure.write ? "write" : "read", ", ", measure.blocks, measure.blocks == 1 ? " block" : " blocks", " in each request, ", u64(measure.depth), " in flight: ", measure.rate, " blocks in one second, kernel entries for 100 requests: ", measure.client, " of this program, ", measure.service, " of the block service, ", measure.errors, " errors")
 }
 
@@ -246,9 +260,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
 	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+	measured := system.measure_run()
 	most_rate, most_entries: u64
 	for measure in measures {
-		most_rate, most_entries = max(most_rate, measure.rate), max(most_entries, measure.client + measure.service)
+		most_rate, most_entries = max(most_rate, measured ? measure.rate : measure.requests), max(most_entries, measure.client + measure.service)
 	}
 	y := 12
 	interface.draw_text(table, 12, y, "the block service: a virtio disk, a ring, the data in shared memory.", graphics.COLOR_DIM)
@@ -264,7 +279,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.draw_text(table, 60 + 8 * (digits + 1), y, "blocks of 4096 bytes", graphics.COLOR_DIM)
 	y += LINE + LINE / 2
 	interface.draw_text(table, 12, y, "request         in flight", graphics.COLOR_DIM)
-	interface.draw_text(table, RATE_X, y, "blocks in one second", graphics.COLOR_DIM)
+	interface.draw_text(table, RATE_X, y, measured ? "blocks in one second" : "requests answered", graphics.COLOR_DIM)
 	interface.draw_text(table, ENTRIES_X, y, "kernel entries, 100 requests", graphics.COLOR_DIM)
 	y += LINE
 	for measure, index in measures {
@@ -276,7 +291,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.draw_text(table, 92, y, measure.blocks == 1 ? "block" : "blocks", graphics.COLOR_DIM)
 		interface.draw_unsigned(table, 156, y, u64(measure.depth), graphics.COLOR_TEXT)
 		if measure.done {
-			bar(table, RATE_X, y, measure.rate, most_rate, measure.errors == 0 ? COLOR_RATE : graphics.COLOR_FAILED)
+			bar(table, RATE_X, y, measured ? measure.rate : measure.requests - measure.errors, most_rate, measure.errors == 0 ? COLOR_RATE : graphics.COLOR_FAILED)
 			bar(table, ENTRIES_X, y, measure.client + measure.service, most_entries, COLOR_ENTRIES)
 		} else {
 			interface.draw_text(table, RATE_X, y, "...", graphics.COLOR_DIM)
@@ -287,10 +302,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 	if checked {
 		interface.draw_text(table, 12, y, wrong == 0 ? "write, flush, read back: 128 blocks, 0 wrong" : "write, flush, read back: WRONG", wrong == 0 ? COLOR_RATE : graphics.COLOR_FAILED)
 	}
+	if !measured {
+		interface.draw_text(table, 12, y + LINE, "the blocks in one second are a measure: run `kerneltool measure disk`.", graphics.COLOR_DIM)
+	}
 	interface.window_frame_end(&drawing, &frame, window)
 }
 
-// entry runs the measures once, shows them, then keeps the window open
+// entry runs the five runs once, shows them, then keeps the window open
 // until the program is stopped.
 //
 // **What it does**, in order:
@@ -301,7 +319,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 //    and sends `Attach`. The block service maps the ring when it starts; the
 //    program tries again each millisecond, until the hang bound.
 // 3. It asks `Info` for the size of the disk.
-// 4. It runs each of the five measures for one second (`run`).
+// 4. It runs each of the five runs (`run`): a count of requests, or one
+//    second in a measure run.
 // 5. It writes a pattern, flushes, reads it back and compares (`check`).
 // 6. It reads 2 blocks from the last block of the disk, and checks the
 //    error record of the refusal: kind `Out_Of_Range`, argument 1, value
@@ -370,7 +389,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	past_right := block.Status(past.kind) == .Out_Of_Range && errors.Kind(past_error.kind) == .Out_Of_Range && past_error.argument == 1 && u64(past_error.value) == disk_blocks + 1 && u64(past_error.limit) == disk_blocks
 	system.log("disk: a read of 2 blocks from the last block: ", past_right ? "" : "WRONG: ", refusal_text(text[:], past))
 	if error_count == 0 && wrong == 0 {
-		system.log("disk: ok, ", u64(len(measures)), " measures, 0 errors, write then read back: 0 wrong")
+		system.log("disk: ok, ", u64(len(measures)), " runs, 0 errors, write then read back: 0 wrong")
 	} else {
 		system.log("disk: wrong: ", error_count, " errors, ", wrong, " wrong bytes")
 	}
