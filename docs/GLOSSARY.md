@@ -450,28 +450,73 @@ Do not use: SIMD version, kernel (for this), fast path, intrinsics version.
 
 ### Debug object
 
-The file of the names of the procedures of one module and of the source lines of its code: a procedure table, a file table, a line table and strings, in fixed records (`contract/debug_object`). It names its module by the hash of the module file; the module names nothing, so its bytes are the same with and without it. The kernel tool writes it from the DWARF of the linked file; the system reads no DWARF (`MODULE_CONTRACT.md`, "Debug information")
+A debug object is the file that names the procedures and the source lines of the code of one module, so that a reader can turn an address of the module into a name and a line.
 
-Do not use: symbol file, PDB, dSYM, debug info (for the file), symbols
+A module names only its exports. A stop report with only the module and an offset ("fault + 0x1478") tells a reader little. The debug object fills that gap: with it, the same frame reads "fault::three + 0x8 in fault (programs/fault/main.odin:15)". It is a separate file, `build/modules/<name>.debug`, in the format `contract/debug_object`.
+
+The file has five parts, all numbers little-endian:
+
+- a header of 64 bytes: the magic `DEBUGOBJ`, the version, the BLAKE3 hash of the module file, and the count of each table;
+- the procedure table;
+- the file table: the path of each source file from the root of the repository (`programs/fault/main.odin`), or with the library of the compiler as a prefix (`base:runtime/print.odin`); the file 0 is "no file";
+- the line table;
+- the strings: the bytes of the names and of the paths.
+
+The kernel tool writes the debug object at the build, from the linked ELF file of the module: the procedure table from its symbol table, the line table from the line program of its DWARF. The system itself reads no DWARF. A parser of DWARF is a large parser of hostile input; the tool runs it once on its own output, and a program reads only sorted tables of fixed records, with a binary search and no allocator. `debug_object.check` refuses every other form before the first lookup, and `debug_object.place_of` gives the procedure, the offset in it, the file and the line of an offset.
+
+The debug object names its module by the hash of the module file. The module names nothing: its bytes are the same with and without its debug object, and `kerneltool check` proves it by a third build with no `-debug`. The hash proves only that the tool wrote the object for that module, not that the names are true. A reader shows the names; no decision of the system uses them.
+
+A debug object is not a symbol file of the debugger of a host. It has no local variables, no types, no places of variables: a debugger of the host reads those in the DWARF of `build/modules/<name>/linked.elf`.
+
+The design: `docs/MODULE_CONTRACT.md`, "Debug information".
+
+Do not use: symbol file, PDB, dSYM, debug info (for the file), symbols.
 
 ### Procedure table
 
-The table of a debug object that gives, for each procedure of the module, its start and its size in the memory of the module and its name with its package (`fault::three`), by their start
+The procedure table is the table of a debug object that gives, for each procedure of the module, its start, its size and its name with its package.
 
-Do not use: symbol table, function table
+A record has 16 bytes: the offset of the first instruction in the memory of the module, the size in bytes, and the name in the strings of the object (`fault::three`), with the count of the bytes of its package (`fault`). The records are sorted by their start and never overlap, so a reader finds the procedure that holds an offset with one binary search. A name with no package is an export or a procedure of an assembler file. A name holds only visible ASCII characters (0x21 to 0x7E): a hostile name cannot change or forge a line of the log or of a terminal.
+
+The tool fills the table from the function symbols of the symbol table of the linked file. Code that the compiler inlined has the name of the procedure that holds it. A module has at most 2^20 procedures; the console module of today has about 210.
+
+It is not the Functions table of the module metadata: that table describes the exports only, for callers; the procedure table names every procedure, for a reader of a stop report.
+
+The design: `docs/MODULE_CONTRACT.md`, "The debug object".
+
+Do not use: symbol table, function table.
 
 ### Line table
 
-The table of a debug object that gives, for each range of the code of the module, the source file and the line, by their offset. A row with no file says that the code after it has no line
+The line table is the table of a debug object that gives, for each range of the code of a module, the source file and the line that the code comes from.
 
-Do not use: line program (the form of DWARF that the tool reads), line info
+A row has 8 bytes: an offset in the memory of the module, then one word with the file in its high 12 bits and the line in its low 20 bits. The code from the offset of a row up to the offset of the next row comes from that line. The rows are sorted by their offset, so a reader finds the line of an instruction with one binary search. A row with the file 0 says that the code after it has no source line: the end of a procedure, or the padding between two procedures. The last row always has the file 0.
+
+The tool writes the table from the line program of `.debug_line` (DWARF 2 to 5) of the linked file. The optimizer gives the line 0 to an instruction that it merged from two lines; the tool writes no row for it, and the instruction takes the line of the row before it. Two rows in a row with the same file and line are one row. The rows are most of the bytes of a debug object, which is why the file and the line share one word.
+
+Example: the machine test checks that the stack of `fault` names the lines 15 and 20 of `programs/fault/main.odin`. For a return address, the reader looks up the byte before it, so the line is that of the call.
+
+The design: `docs/MODULE_CONTRACT.md`, "The debug object".
+
+Do not use: line program (the form of DWARF that the tool reads), line info.
 
 ### Debug image
 
-The debug objects of the modules of a build in one file, in the form of a boot image. The tool writes it on the boot volume beside the boot program (`DEBUG/OBJECTS.IMG`), the boot program reads it, and the root service maps it read-only into each program with its grant. It is not in the boot image
+The debug image is one file that holds the debug object of each module of a build, in the form of a boot image, so that the programs of a machine can name the procedures and lines of every module.
 
-Do not use: symbol server, debug archive
+The kernel tool writes it as `build/debug.image`: a header, one entry for each object (the name of the module, the hash of the object, its offset and its size), and each object on a page. It copies it to the boot volume as `DEBUG/OBJECTS.IMG`, beside the boot program.
 
+The path of the image through the start:
+
+1. The boot program reads the file, if the volume has it, after its last allocation that can stop the start, and does not verify it: no code comes from it. A file that is absent, empty, over 32 MiB or that fails to read gives a start with no names.
+2. The kernel checks the range of pages, reads none of its bytes, and gives it to the root service as a memory object with Read. A refused range is one line of the log, never a stop.
+3. The root service maps it read-only at the fixed range `Debug_Image` in each program with the grant `Debug_Image`: today `console`, `inspect` and `errors`. A program finds it with `system.debug_image_of`, and the object of a module with `system.debug_object_of`.
+
+The debug image is not part of the boot image. So the boot image, the system description and the measures of the trusted boot are the same bytes with and without it, and a change of a debug object changes no signature and no measure. Its pages are memory of the boot: no budget pays for them, and they stay taken for the whole run of the machine.
+
+The design: `docs/MODULE_CONTRACT.md`, "Where the debug objects are".
+
+Do not use: symbol server, debug archive.
 
 ## Running code
 
@@ -695,9 +740,18 @@ Do not use: red zone, canary.
 
 ### Interrupt stack
 
-An interrupt stack is a stack of one processor that the processor loads itself for one exception, from the task state, at any privilege.
+An interrupt stack is a stack of one processor that the processor itself loads for one kind of exception, at any privilege, from the task state.
 
-The double fault, the debug exception, the non-maskable interrupt and the machine check each have one, between guard pages. These exceptions can come when the kernel stack is full, or when the stack pointer is still the one of a program: a known good stack is then the one safe place.
+Some exceptions can come when no stack is safe: the kernel stack is full (a double fault after a stack overflow), or the stack pointer is still the one that a program chose (a debug trap or an NMI at the first instruction of a kernel entry). If the processor pushed its frame there, the kernel would write where a program decided, or fault again. So the gate of each such exception names an interrupt stack in the task state, and the processor switches to it on each such exception, also when it already runs at privilege 0.
+
+Each processor has four, besides its kernel stack, each between guard pages:
+
+- the double fault: 4 pages;
+- the debug exception, the non-maskable interrupt and the machine check: 2 pages each.
+
+The stub of a debug trap from a program moves the frame to the top of the kernel stack before any compiled code, because the handling can switch threads and the next trap reuses the interrupt stack. An NMI, a machine check and a double fault stay on their stacks: they stop the machine.
+
+The design: `docs/ARCHITECTURE.md`, "The return to a program".
 
 Do not use: IST, exception stack, NMI stack.
 
@@ -1001,9 +1055,13 @@ Do not use: lock statistics, contention counter.
 
 ### Thread area
 
-A thread area is the memory that the kernel makes for one thread in its program: the thread record, the kernel ring of the thread, and one page with no memory.
+A thread area is the memory that the kernel makes for one thread in the address space of its program: the thread record, the kernel ring of the thread, and one page with no memory.
 
-The areas are at fixed addresses from `THREAD_AREA_BASE`, 4 pages each. The budget pays for each area with the thread. A page fault in a thread area is never given to a fault handler.
+Each thread needs a place where the kernel and the program share its state with no call: the thread record, which the program reads, and the kernel ring, through which the thread sends its kernel operations. The areas are at fixed addresses from `THREAD_AREA_BASE`, `THREAD_AREA_PAGES` (4) pages each, one for each of the at most 32 threads of a program, so a thread finds its own area from its number. The last page has no memory: a write past the ring faults.
+
+The budget pays for each area with its thread, and the area ends with the thread. A page fault in a thread area is never given to a fault handler: it is a fault of the program, and the kernel stops it.
+
+The design: `docs/ARCHITECTURE.md`, "Kernel systems".
 
 ### Kernel event
 
@@ -1345,11 +1403,19 @@ Do not use: siginfo, fault message.
 
 ### Thread control
 
-Thread control is the operation `Thread_Control`: stop a thread, read and write its registers and its extended state, and resume it.
+Thread control is the kernel operation `Thread_Control`: it stops a thread, reads and writes its registers and its extended state, and resumes it.
 
-A debugger, a collector that reads the roots of each thread, a sampling profiler and the program that runs a guest need it. A program acts on its own threads by number. A thread of another program needs a thread handle with the right of the command: Inspect for each command, and Write too for a write, because a write lets its holder choose the code that the thread runs. Control, the right to end a thread, gives none of these.
+No other operation stops a thread without ending it, or gives its registers. A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the program that runs a guest need both. One operation with a command (`op.Thread_Control_Command`) keeps the count of kernel operations low: `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`.
 
-A write is copied once, checked whole, and refused whole if one field is wrong: a thread never gets a frame that the processor refuses.
+Who can act on a thread:
+
+- a program acts on its own threads, by number or by handle;
+- a thread of another program needs a thread handle that the program received with `Handle_Give`, with **Inspect** for each command, and **Inspect** and **Write** for a write, because a write lets its holder choose the code that the thread runs;
+- **Control**, the right to end a thread, gives none of these: a handle given so that another program can end a thread does not become a grant to read it.
+
+The four commands of the registers need a held thread, else `Bad_State`. A write is copied once into the kernel, checked whole, and refused whole if one field is wrong (`Bad_Operation`, with the refused field in the error record): a thread never gets a frame that the processor refuses.
+
+It is not ptrace: no program becomes the parent or the tracer of another, no signal exists, and the rights of a handle decide everything.
 
 The design: `docs/ARCHITECTURE.md`, "The control of a thread".
 
@@ -1359,23 +1425,35 @@ Do not use: ptrace, debug API, SuspendThread, thread_suspend (for this).
 
 The stop count of a thread is the count of the stops of thread control that hold it: each `Stop` adds 1, each `Resume` takes 1, and the thread runs only at 0.
 
-Two holders that each stop a thread each resume it. The count does not change the wait of the thread: a thread in a word wait stays in it.
+A stop is a count, not a state, so two holders that each stop a thread each resume it, and neither releases the hold of the other. `Resume` at 0 gives `Bad_State`, and the count has a limit (`THREAD_STOP_COUNT_LIMIT`). When `Stop` returns, the thread runs no instruction: a thread on another processor left it, after an interrupt that the stop sent. The count does not change the wait of the thread: a thread in a word wait stays in it, and its wait ends as before, but the thread does not run until its count is 0.
+
+The design: `docs/ARCHITECTURE.md`, "The control of a thread".
 
 Do not use: suspend count, freeze.
 
 ### Held thread
 
-A held thread is a thread whose stop count is above 0, or that waits for an answer of the fault ring, and that no processor runs.
+A held thread is a thread that no processor runs and that stays off every processor: its stop count is above 0, or it waits for an answer of the fault ring.
 
-Only a held thread has complete registers in the kernel: the frame of its last entry and its saved extended state. So thread control reads and writes the registers of a held thread only.
+Only a held thread has complete registers in the kernel: the frame of its last kernel entry, and the extended state that the switch of threads saved. A thread that runs has its registers in a processor, where no other thread can read them. So thread control reads and writes the registers of a held thread only, and gives `Bad_State` for any other. A thread that waits for the answer of its fault handler is held too: the handler reads its registers, corrects them and answers.
+
+The design: `docs/ARCHITECTURE.md`, "The control of a thread".
 
 Do not use: stopped thread, suspended thread (for this).
 
 ### Register image
 
-A register image is the general registers, the instruction address, the flags and the two selectors of a held thread (`op.Thread_Registers`, 176 bytes), as thread control reads and writes them.
+A register image is the general registers, the instruction address, the flags and the two selectors of a held thread, as thread control reads and writes them (`op.Thread_Registers`, 176 bytes).
 
-A write that a thread of a program cannot hold changes nothing: a code selector of the kernel, an instruction address in the kernel half, flags of privilege. The error record names the refused field.
+It holds the 16 general registers, `rip`, `rflags`, `cs`, `ss`, and `in_kernel_entry`: 1 when the last kernel entry of the thread is a `syscall` that has not returned yet. The names are the names of the registers of the processor. A write that a thread of a program cannot hold changes nothing:
+
+- `cs` and `ss` must be the selectors of a program (0x23 and 0x1B), never those of the kernel;
+- `rip` must be below `USER_END`, in the half of a program;
+- `rflags` must have interrupts on, and no privilege, nested task or virtual-8086 bit.
+
+The error record names the refused field and value. The extended state (vector registers) has its own commands and its own area.
+
+The design: `docs/ARCHITECTURE.md`, "The control of a thread".
 
 Do not use: register context, CONTEXT, user_regs_struct.
 
@@ -2808,163 +2886,351 @@ Do not use: file dialog, powerbox.
 
 ### Font
 
-A set of glyphs of one design, with the measures that place them. The system has two: the vector font of the glyph cache (the default) and Spleen 8x16 (the fallback) (`docs/FONTS.md`).
+A font is a set of glyphs of one design, with the measures that place them side by side.
+
+The system draws all its text from fonts, and a program never reads a font file at run time. The kernel tool reads each font file at the build, subsets it to the characters 32 to 126, and draws it into a glyph cache: the program reads the cache only. So a parser of font files, which reads hostile input, runs once on the host and never in a program.
+
+The system has three fonts:
+
+- **Paper Mono**, the monospace font of the cells: the console, the terminal, values, hashes, code. Its SemiBold is the bold weight of the titles in the font of the cells. It is the default of the setting `font` (`vector`).
+- **B612**, the interface font: titles, labels, buttons, menus, the bar. It is proportional, with a Regular and a Bold weight.
+- **Spleen 8x16**, a bitmap font: the fallback when a program has no valid glyph cache, and the other value of the setting `font` (`spleen`). The boot program draws in it, because it holds no glyph cache.
+
+The default vector font is one line of the tool, `DEFAULT_VECTOR_FONT`. A font here is one file of one weight: "Paper Mono SemiBold" is a font of its own, with its own cache.
+
+The design: `docs/FONTS.md`, "6. The font file".
 
 Do not use: typeface (for this), font face.
 
 ### Glyph
 
-The form of one character in one font.
+A glyph is the form of one character in one font.
+
+The character is the number (the byte 0x30 is the character `0`); the glyph is the drawing of it. One character can have several glyphs in one font: Paper Mono has a plain zero (glyph 294) and a slashed zero (glyph 304), and a font feature chooses between them. A glyph has an outline and an advance; in a glyph cache it is a box of words of coverage.
+
+The system draws glyphs for the characters 32 to 126 only. A byte outside that range draws nothing in a text of cells, and is placed as `?` by text shaping, so that the reader sees that the font does not draw it.
+
+The design: `docs/FONTS.md`, "5. The glyph cache".
 
 Do not use: character (for the form), symbol.
 
 ### Outline
 
-The closed contours of line segments and quadratic curves that bound a glyph, in units of its font (TrueType `glyf`).
+An outline is the set of closed contours of line segments and quadratic curves that bound a glyph, in units of its font.
+
+The outline is what a TrueType font stores in its table `glyf`: points in units of the font (1000 to one em for Paper Mono, 2000 for B612), each on or off the curve. The renderer of `support/vector_font` cuts each quadratic curve into 1 to 16 segments, each at most 1/8 of a pixel from the curve, scales the points to the grid, applies the grid fit, and accumulates the coverage of each pixel in fixed point, with no floating point. The sum of the coverage of a closed outline is exactly the area of the polygon of its cut points.
+
+Only the kernel tool reads outlines: it draws them once into a glyph cache at the build. A glyph made of glyphs (`i` and `j` in Paper Mono) is made a simple outline in the subset. Outlines of CFF (cubic curves) are not read.
+
+The design: `docs/FONTS.md`, "4. Fixed point".
 
 Do not use: path, vector shape, Bézier.
 
 ### Coverage
 
-The part of a pixel, or of a third of a pixel, that a glyph covers: 0 to 255.
+Coverage is the part of a pixel, or of a third of a pixel, that a glyph covers, from 0 (none) to 255 (all).
+
+The renderer computes the coverage of each third of each pixel from the outline. The glyph cache keeps, for each pixel, one word 0xGGRRGGBB: the coverage of the red, green and blue subpixel band after the filter, and in the high byte the coverage of the whole pixel for grayscale. The blend then mixes the color of the text with the pixel under it, channel by channel, in linear light: coverage 0 keeps the pixel, 255 gives the color of the text.
+
+Coverage is not an alpha of a picture. An alpha is one value for the whole pixel and is premultiplied in the pictures of the system; coverage has one value for each band, and it is the result of the geometry of the outline, not a property of a color.
+
+The design: `docs/FONTS.md`, "3. Subpixel bands".
 
 Do not use: alpha (for this), opacity, mask.
 
 ### Subpixel band
 
-One of the three color stripes of a pixel of the screen, red, green and blue, side by side; the vector font has a coverage for each one.
+A subpixel band is one of the three color stripes of a pixel of the screen, red, green and blue side by side, for which the vector font has a coverage of its own.
+
+A screen pixel is three narrow stripes. If the renderer gives each stripe its own coverage, an edge of a glyph can sit on a third of a pixel, and a stem looks sharp at small sizes. The renderer draws the outline three times wider than the cell, then spreads each third over its neighbours with the weights 8, 77, 86, 77, 8 of 256, so that a side of a stem does not show one color alone.
+
+The order of the stripes is the setting `subpixel_order`: `rgb` (the default), `bgr` (red and blue swapped at the blend) or `none` (grayscale, the high byte of each word). The system cannot read the order of the panel. Enlarged, a screenshot shows orange and blue edges on each letter: that is the bands at work, not a fault.
+
+The design: `docs/FONTS.md`, "3. Subpixel bands".
 
 Do not use: subpixel, ClearType, LCD stripe.
 
 ### Grid fit
 
-The move of the baseline, the x-height and the cap height of a font onto whole pixels, so that the tops of the letters are sharp. The system has no other hinting.
+Grid fit is the move of the baseline, the x-height and the cap height of a font onto whole pixels, so that the tops of the letters are sharp.
+
+At 13 to 14 pixels to the em, the tops of the lowercase letters and of the capitals fall between two rows, and a row of half coverage under each top makes the text soft. The grid fit puts the baseline on a whole pixel, moves the x-height and the cap height to the nearest whole pixel, and scales the points between them to fit (`vector_font.place_y`). So the horizontal stems of `n`, `e`, `t`, `E`, `H` are sharp. The vertical stems need no fit: the subpixel bands place them in thirds of a pixel.
+
+The system has no other hinting: no interpreter of TrueType instructions, and no fit of each stem. The grid fit is the setting `grid_fit` (`on`, the default, or `off`); the boot image carries the two glyph caches of the default font, with and without it, and the header flag `FLAG_GRID_FIT` says which one a cache is.
+
+The design: `docs/FONTS.md`, "Grid fit (the hinting of this system)".
 
 Do not use: hinting (alone), autohint.
 
 ### Glyph cache
 
-The glyphs of one font already drawn, for each character 32 to 126 and each scale of the grid: words of coverage, in one file (`contract/glyph_cache`). The kernel tool makes it at build time; it is a resource of the boot image.
+A glyph cache is a file that holds the glyphs of one font already drawn, as words of coverage, for each character 32 to 126 at each scale of the grid.
+
+A glyph cache moves all the work of a font out of the programs. The kernel tool builds it at the build (`vector_font.glyph_cache_build`) and puts it in the boot image as a resource. The root service checks its hash once at the start, and maps it read-only at a fixed range in each program with a surface, each terminal and the compositor. A program validates it once (`glyph_cache.validate`: about 7 µs), then each draw reads the words of a glyph with no other check. A glyph from the cache costs about 109 ns at scale 1 over a flat color on the host.
+
+The format is `contract/glyph_cache`, version 2: a header of 128 bytes, an entry for each scale (1, 2, 3), an entry of 12 bytes for each glyph at each position and scale, the advance of each character, the pairs of each scale, then the words. A glyph keeps only its rows with ink. All zero is valid: a program with no cache draws Spleen 8x16.
+
+The cache has a fixed capacity and holds every glyph that the grid can draw, so it never fills on demand and never evicts. It is not an atlas of a GPU and not a cache that a program fills: no program writes it, and its address and its size never come from another program.
+
+The design: `docs/FONTS.md`, "5. The glyph cache", and "Who can write a cache".
 
 Do not use: atlas, texture cache, glyph bitmap.
 
 ### Proportional cache
 
-A glyph cache with `FLAG_PROPORTIONAL`: each character has its own advance, each glyph is the box of its ink at each subpixel position, and the cache has the pair adjustments. A cache with no such flag is monospace: one position, each glyph inside its cell, no pair (`contract/glyph_cache`, `validate`).
+A proportional cache is a glyph cache of a proportional font: each character has its own advance, each glyph is the box of its ink at each subpixel position, and the cache holds the pair adjustments.
+
+The header flag `FLAG_PROPORTIONAL` marks it. One format serves both kinds of font, and the flag says which rules `validate` applies:
+
+| | A monospace cache (Paper Mono) | A proportional cache (B612) |
+|---|---|---|
+| Positions of each scale | 1 | 3 at scale 1, 1 at the scales 2 and 3 |
+| A glyph | its full cell | the box of its ink, `left` can be negative |
+| The advance | the width of the cell | the advance of the font, in 1/64 of a pixel |
+| Pairs | none | sorted pairs, in 1/64 of a pixel |
+
+A text of cells refuses a proportional cache (`graphics.cell_cache_problem`, the problem `Proportional`): its glyphs pass their cells, and the damage of a grid of text cells would leave stale pixels. The two caches of B612 are the resources `interface_glyph_cache` and `interface_glyph_cache_bold`; `display.interface_font_open` validates them and requires the flag.
+
+The design: `docs/FONTS.md`, "12.4 The glyph cache with subpixel positions".
 
 Do not use: proportional font cache.
 
 ### Setting
 
-One choice of the person that changes how the system works for each program: the font, the order of the subpixel bands. The program `settings` changes it.
+A setting is one choice of the principal of the machine that changes how each program draws: the font, the order of the subpixel bands, the pointer theme or the grid fit.
+
+A setting is one value of the settings page, with 0 as its default:
+
+- `font`: `vector` (Paper Mono) or `spleen`;
+- `subpixel_order`: `rgb`, `bgr` or `none`;
+- `pointer_theme`: `owner` or `system`;
+- `grid_fit`: `on` or `off`.
+
+The program `settings` is the one writer. It shows each setting as a row of buttons, and it exports `settings.set(name, value)` and `settings.get(name)`, so the console and `kerneltool call` change a setting too. A caller that does not act for the principal gets `No_Grant`. A change takes effect while programs run: the compositor sees it, draws its screen again and sends `Settings_Changed` to each window. The values survive a stop: `settings` keeps them as one record in its private store, and its boot pass writes them on the page at the start.
+
+A setting is not a configuration file of one program: one value applies to every program with a surface. The scheduling strategy is not a setting: the right `Schedule` belongs to the program `scheduler`.
+
+The design: `docs/FONTS.md`, "7. The setting".
 
 Do not use: preference, option, configuration.
 
 ### Settings page
 
-The one page of the settings of the person (`contract/settings`): the root service creates it; the program `settings` writes it; each program with a surface reads it.
+The settings page is the one page of memory that holds the current value of each setting, which each program with a surface reads.
+
+The root service creates the page at the start. The program `settings` receives it with Write; each program with a surface, each terminal and the compositor receive it read-only at a fixed address, with its address in the value 13 of their context. The page holds the choices only: a change count and one value for each setting. It holds no address, no size and no hash of a glyph cache, because a writer that chose them could point every later program at memory that it controls.
+
+A write makes the change count odd while it lasts; a reader reads again until it sees one even count (`settings.read`), and after 64 reads takes the defaults. The compositor waits on the change count as a word wait. A value that the page does not know reads as 0: the worst that a writer can do to another program is to change a look.
+
+It is not a registry and not a file: it is shared memory with one writer, and its record in the private store of `settings` is the copy that survives a stop.
+
+The design: `docs/FONTS.md`, "7. The setting", and "Who can write a cache".
 
 Do not use: registry, config file, dconf.
 
 ### Monospace font
 
-A font whose characters all have one advance, so that a text is a row of equal cells: Paper Mono, and Spleen 8x16. The font of the terminal, the console, and each text that a person compares character by character (`docs/FONTS.md`, section 12.6).
+A monospace font is a font whose characters all have one advance, so that a text is a row of equal cells.
+
+The system has two: Paper Mono (an advance of 606 units, which the grid maps to 8 pixels at scale 1) and Spleen 8x16. The font of the cells is monospace because the grid of the system is cells of 8 x 16 pixels: the terminal fills one cell and draws one character, and a glyph never leaves its cell.
+
+A text stays monospace when it is a grid of cells (the terminal, the console, `Text_Grid` records), or when a reader compares it character by character or copies it: hashes, addresses, names of exports, code, the text of a log record, the columns of a table whose values align by character. A text that names or explains is in the interface font.
+
+The design: `docs/FONTS.md`, "12.6 Which text stays monospace".
 
 Do not use: fixed-width font (for this), terminal font.
 
 ### Interface font
 
-The proportional font of the titles, the labels, the buttons, the menus and the bar: B612 (designed, not built; `docs/FONTS.md`, section 12).
+The interface font is the proportional font of the titles, the labels, the buttons, the menus and the bar: B612.
+
+B612 has an em of 2000 units and 19 different advances in ASCII. At scale 1 its cap height is 10 rows of the grid. Its digits are all 1300 units wide, so a column of numbers aligns in it too. Its Bold weight has scale 1 only, for titles.
+
+A program uses it through `support/interface`: an element that names or explains draws an `Interface_Text` record, and the table measures and draws it with text shaping and a proportional cache. The compositor draws the bar, the menus, the title bars and the launcher in it, and the root service draws the titles of the boot display in it. If the caches are absent or refused, or if the setting `font` is `spleen`, each element draws in the font of the cells with the same rules.
+
+The design: `docs/FONTS.md`, "12. The interface font and the text shaping module".
 
 Do not use: UI font, system font (for this), sans.
 
 ### Interface text
 
-A text that a table draws in the interface font: the draw record `Interface_Text` (version 7), whose rectangle holds its ink margin and whose origin is at a third of a pixel. A text of the font of the cells is the record `Text`.
+An interface text is a text that a draw table draws in the interface font: the draw record `Interface_Text`.
+
+The record came with version 7 of the draw records. Its rectangle is the measured box of the text widened by the ink margin on each side, so the damage of the record covers every pixel of its ink. Its origin is at `x` plus the margin plus `text_origin_thirds` thirds of a pixel (0, 1 or 2), so a label can start between two pixels. When the table runs the record, it shapes the text and draws its placed glyphs with `graphics.text_proportional`.
+
+A text in the font of the cells is the record `Text`. If the table has no interface font, an `Interface_Text` record is drawn in the font of the cells, cut to its rectangle: the font in use decides.
+
+The design: `docs/FONTS.md`, "12.5 What changes in `support/interface`".
 
 Do not use: proportional text record.
 
 ### Font in use
 
-The font that draws a text of a table: the interface font when the table has it, the setting is the vector font and the text has at most 256 bytes; else the font of the cells. A text is measured in its font in use (`interface.font_in_use`).
+The font in use is the font that actually draws a text of a draw table: the interface font when the table can draw it, else the font of the cells.
+
+A text asks for the interface font, but three things make it fall back: the table has no interface font (an isolated call: the call host maps no glyph cache), the setting `font` is `spleen`, or the text is longer than 256 bytes (`INTERFACE_TEXT_LIMIT`). `interface.font_in_use` decides, and both the measure and the draw call it. So a text is always measured in the font that draws it, and an element never passes its box in either font.
+
+The design: `docs/FONTS.md`, "12.5 What changes in `support/interface`".
 
 Do not use: effective font.
 
 ### Advance
 
-The distance from the origin of a glyph to the origin of the next one, before any pair adjustment.
+The advance of a glyph is the distance from its origin to the origin of the next glyph, before any pair adjustment.
+
+In a monospace font the advance is one constant: 8 pixels at scale 1. In a proportional font each character has its own: in B612, the space is 700 units, `i` 600, `M` 1800. The glyph cache keeps the advance of each character at each scale in 1/64 of a pixel, rounded to the nearest integer: `A` in B612 is 1300 units, so 555/64 of a pixel at scale 1.
+
+The advance is not the width of the ink: a glyph can have ink before its origin or past its advance (`j` in B612 starts 61 units left of its origin). The ink margin covers that difference.
+
+The design: `docs/FONTS.md`, "12.4 The glyph cache with subpixel positions".
 
 Do not use: width (for this), pitch.
 
 ### Pair adjustment
 
-The change of the advance that a font gives for one pair of glyphs that follow each other (`kern` format 0, or a pair lookup of `GPOS`).
+A pair adjustment is the change of the advance that a font gives for one pair of glyphs that follow each other.
+
+Some pairs look too far apart with their advances alone: `T` before `o` leaves a gap under the bar of the T. The font then states a negative adjustment for that pair. B612 has 232 pairs of ASCII characters in Regular and 239 in Bold, from -1.33 to +0.67 pixel at scale 1: "To", "LT" and "Ty" are -100 units, "LV" -150. "AV" has no pair in B612.
+
+The tool reads the pairs from the table `kern` (format 0) and writes them, sorted, in 1/64 of a pixel, into the proportional cache. Text shaping adds the rounded advance and the rounded adjustment: "T" before "o" is 512 - 43 = 469/64 of a pixel. A monospace cache has no pairs.
+
+The design: `docs/FONTS.md`, "12.1 What B612 has, read in its files".
 
 Do not use: kerning pair (for this).
 
 ### Font feature
 
-A named choice of glyph forms that a font offers in its table `GSUB`, by a tag of four letters: `zero` (the slashed zero), `ss01` (a stylistic set), `numr` (numerators).
+A font feature is a named choice of glyph forms that a font offers in its table `GSUB`, by a tag of four letters.
+
+Examples: `zero` (the slashed zero), `ss01` (a stylistic set), `numr` (numerators). A feature leads to one or more lookups, and each lookup changes glyphs. The system uses one feature today, `zero` of Paper Mono, and it uses it at the build: the tool reads the feature with `vector_font.single_substitution` and draws its glyph for the character `0` in the subset. The subset then holds no `GSUB`, and no program reads features at run time.
+
+The reader of `GSUB` (`support/vector_font/substitution.odin`) reads hostile input with bounds: 16 features of one tag, 64 lookups, 64 subtables.
+
+The design: `docs/FONTS.md`, "Paper Mono, the font of the system".
 
 Do not use: OpenType feature (for this), font option.
 
 ### Single substitution
 
-A lookup of the table `GSUB` that puts one glyph in the place of another (lookup type 1): the feature `zero` of Paper Mono puts the glyph 304 in the place of the glyph 294 of the character 0.
+A single substitution is a lookup of the table `GSUB` that puts one glyph in the place of another (lookup type 1).
+
+It is the simplest lookup: a coverage table lists the glyphs that it changes, and a delta or a list gives the substitute of each one. The feature `zero` of Paper Mono is one: the lookup 158 puts the glyph 304 (`zero.zero`) in the place of the glyph 294 of the character `0`. The reader also takes a lookup of type 7 (an extension) that holds a type 1, and checks that the substitute is a glyph of the font.
+
+The system reads no other kind of lookup: no ligature, no contextual form.
+
+The design: `docs/FONTS.md`, "Paper Mono, the font of the system".
 
 Do not use: glyph swap, alternate.
 
 ### Slashed zero
 
-A zero with a stroke at an angle inside it, so that it does not look like the capital O. The character 0 of the system is the slashed zero of Paper Mono (`docs/FONTS.md`, section 6).
+The slashed zero is a zero with a stroke at an angle inside it, so that it does not look like the capital O.
+
+The plain zero of Paper Mono has the same contours as its capital O, and a reader of a hash or an address cannot tell `0` from `O`. So the character `0` of the system is the slashed zero of Paper Mono: the kernel tool reads the font feature `zero` and draws its substitute for `0` in the subset. Each picture of the system with a 0 shows it. JetBrains Mono, the reference font of the tests of the renderer, keeps its own zero, so the golden hashes of the renderer did not change.
+
+The design: `docs/FONTS.md`, "Paper Mono, the font of the system".
 
 Do not use: crossed zero, zero with a slash.
 
 ### Text shaping
 
-The step that turns the characters of a text into placed glyphs with a font: here the advances and the pair adjustments only; no ligature, no other script (`docs/FONTS.md`, section 12.3).
+Text shaping is the step that turns the characters of a text into placed glyphs, with the advances and the pair adjustments of one font.
+
+A proportional text needs it: the x of each glyph is the sum of the advances and adjustments before it. The package `support/text_shaping` does it for a direct call, and the module `text_shaping` exports the same work:
+
+- `shape_text`: the advances, the pairs and the text in, the placed glyphs out (an Append table), with the count of placed glyphs as the result;
+- `measure_texts`: many text ranges of one table of bytes in one call, each with its width written in it.
+
+The module holds no font and no state: the caller passes the spacing of one scale of its glyph cache. Every input is hostile: each advance, pair, byte and range is read once and kept in its limits at that read, so a caller that changes its tables during the call gets wrong numbers, never a read outside a table.
+
+Text shaping here does advances and pairs only: no ligature, no other script, no line break. The contract (characters in, placed glyphs out, with a cluster number) takes a full shaper later.
+
+The design: `docs/FONTS.md`, "12.3 The text shaping module".
 
 Do not use: layout (for this), typesetting.
 
 ### Placed glyph
 
-A record of 16 bytes that text shaping gives for one character: the glyph, its x from the origin of the run and its advance, in 1/64 of a pixel.
+A placed glyph is a record of 16 bytes that text shaping gives for one character: the glyph, its x from the origin of the run, and its advance.
+
+The fields of `text_shaping.Placed_Glyph`:
+
+- `glyph`: the index of the character in the glyph cache (the character minus 32);
+- `x`: the origin of the glyph from the origin of the text, in 1/64 of a pixel;
+- `advance`: its advance with the pair adjustment that follows it, in 1/64 of a pixel;
+- `cluster`: 0 today; a shaper with ligatures will give there the first byte of the characters of a glyph.
+
+`graphics.text_proportional` draws a table of placed glyphs: it rounds each x to the nearest subpixel position. The x keeps the exact sum, so the rounding of one glyph never moves the next one.
+
+The design: `docs/FONTS.md`, "12.3 The text shaping module".
 
 Do not use: positioned glyph, glyph run entry.
 
 ### Ink margin
 
-How far the ink of a text of a proportional font can pass the box that its measure gives, on each side: 2 pixels at scale 1 for B612 (`graphics.PROPORTIONAL_INK_MARGIN`). The damage of a text widens its measured box by it.
+The ink margin is how far the ink of a text of a proportional font can pass the box that its measure gives, on each side: 2 pixels at scale 1 for B612.
+
+A measure gives the sum of the advances, but ink can start left of the first origin (`j`) and pass the last advance (`K` in Bold), and the subpixel filter spreads it by two thirds of a pixel. The damage of an `Interface_Text` record is its measured box widened by `graphics.PROPORTIONAL_INK_MARGIN`, so the damage covers every pixel of ink and a frame drawn in its damage equals a whole frame. The host test `the_ink_lies_inside_the_measured_box` draws 200 texts and counts the pixels outside the box and its margin.
+
+The margin is a bound measured for B612. Another interface font needs its own.
+
+The design: `docs/FONTS.md`, "12.8 The parts, each one working".
 
 Do not use: bleed, overhang (for this).
 
 ### Subpixel position
 
-The fraction of a pixel where a glyph starts. The glyph cache of a proportional font keeps each glyph at three: 0, 1/3 and 2/3 of a pixel.
+A subpixel position is the fraction of a pixel where a glyph starts: 0, 1/3 or 2/3 of a pixel in the glyph cache of a proportional font.
+
+A glyph of a proportional font rarely starts on a whole pixel. With subpixel bands, the finest step that the screen shows is one third of a pixel, so a proportional cache keeps each glyph at scale 1 drawn at three positions. The draw rounds the x of each placed glyph to the nearest third (`glyph_cache.position_of`): the error is at most 1/6 of a pixel and does not add up along a text. At the scales 2 and 3, the cache keeps one position: there a glyph is at most half a pixel from its place in a glyph of 26 to 40 pixels.
+
+A monospace cache has one position: each glyph starts on its cell.
+
+The design: `docs/FONTS.md`, "12.4 The glyph cache with subpixel positions".
 
 Do not use: subpixel offset, bucket.
 
 ### Spacing
 
-The advances of the characters 32 to 126 and the pair adjustments of one font at one scale, in 1/64 of a pixel: the two tables that text shaping reads, from a glyph cache (`support/text_shaping`, `Spacing`).
+The spacing is the two tables that text shaping reads for one font at one scale: the advances of the characters 32 to 126 and the pair adjustments, in 1/64 of a pixel.
+
+`text_shaping.spacing_of` takes them from a validated glyph cache: 95 advances and the sorted pairs (`glyph_cache.Pair_Entry`). The caller then passes them to `shape_text` or `measure_texts` as tables. So the module of text shaping holds no font, and an isolated call receives the spacing in its call region like the text.
+
+The design: `docs/FONTS.md`, "12.3 The text shaping module".
 
 Do not use: metrics (for this), kerning data.
 
 ### Text range
 
-A record that names one text in a table of bytes by its first byte and its count, with its width, which the measure writes (`text_shaping.Text_Range`).
+A text range is a record that names one text in a table of bytes by its first byte and its count, with its width, which the measure writes.
+
+`text_shaping.Text_Range` has 16 bytes: `start`, `count` (at most `TEXT_LIMIT`) and `width` in 1/64 of a pixel. A window passes all its labels as one table of bytes and one table of ranges to `measure_texts`, which writes the width of each range: one call measures a whole frame (the direction Change of a table parameter). `interface.texts_measure` measures the lines of a list this way.
+
+The design: `docs/FONTS.md`, "12.3 The text shaping module".
 
 Do not use: span (for this), slice.
 
 ### Boot pass
 
-The start of the program `settings` that the root service makes at boot, with no window: it reads the settings kept in its private store, writes the settings page, and stops.
+The boot pass is the start of the program `settings` that the root service makes at the start of the machine, with no window, to put the kept settings on the settings page.
+
+The settings survive a stop as one record of 48 bytes (`Kept_Settings`) in the private store of `settings`. The root service cannot read the store itself, so it starts `settings` with the value 1 at `VALUE_BOOT_PASS` of its context. The program reads the record, writes the page, wakes the compositor and stops. A record of another version, or none, gives the defaults. The log has one line, for example `settings: the boot pass: ...; in N us`. The boot pass takes about 23 ms in the machine test with a new disk.
+
+Until the boot pass ends, the boot display and the first frames use the defaults. Then the compositor sees the change of the page and each window draws again.
+
+The design: `docs/FONTS.md`, "7. The setting".
 
 Do not use: init script, startup hook.
 
 ### Blend table
 
-The results of the blend in linear light of one text color over one pixel color, for each coverage of each channel, kept in the memory of a program (`graphics.Blend_Tables`).
+A blend table is the results of the blend in linear light of one text color over one pixel color, for each coverage of each channel, kept in the memory of a program.
+
+The blend of a partial pixel costs two squares, a sum, a shift and a load of a square root for each channel. But for one text color over one background color, each channel of the result depends on its coverage only: 3 x 256 values. A program keeps 8 such tables (`graphics.Blend_Tables`, 24 KiB), replaced in turn, and fills a value on first use with the formula of the reference blend. A row of a glyph whose two end pixels have one color uses the table of that color: three loads and a store for each pixel. Any other row takes the SSE2 or the scalar form.
+
+The result is the same bytes as the reference blend: the host test `fast_blend_is_the_reference` finds 0 pixels that differ. A glyph from the cache over a flat color costs 109 ns with the tables against 181 ns with the reference, on the host.
+
+The design: `docs/FONTS.md`, "Where the time goes, and the fast blend".
 
 Do not use: lookup table (alone), LUT.
 
@@ -2972,43 +3238,117 @@ Do not use: lookup table (alone), LUT.
 
 ### Random seed
 
-32 bytes from which a random generator starts. The starter of a program writes the seed of the program in its context values 9 to 12; the root service gathers its own (`docs/RANDOMNESS.md`).
+A random seed is the 32 bytes from which a random generator starts.
+
+Each program needs unpredictable bytes (keys, nonces, the secret of the TCP sequence numbers), and the kernel gives none. So each program receives a seed at its start: its starter writes 32 bytes of its own random stream in the context values 9 to 12 (`op.CONTEXT_VALUE_SEED`), and the strength of the seed of the system in the value 16. The program reads it once with `random.generator_from_context`, which erases it in the context. `system.program_start` refuses a start whose seed is 32 zero bytes, so a starter cannot forget it.
+
+The root service has no starter. It gathers the seed of the system from the sources of the processor at its start, before it starts any program, and writes an entropy report. Every other seed descends from that one through the streams of the starters.
+
+A starter knows the seed of its child: a child has no secret from its starter, which already chooses its code and its grants. Two programs of one starter do not know the streams of each other.
+
+The design: `docs/RANDOMNESS.md`, "1. Where a program gets random bytes".
 
 Do not use: entropy (for this), salt.
 
 ### Random generator
 
-The record of fixed size in the memory of a program that gives it random bytes: ChaCha20 with fast key erasure (`support/random`). A draw makes no kernel entry and no call.
+A random generator is a record of fixed size in the memory of a program that gives it random bytes, with no kernel entry and no call.
+
+The generator is `random.Generator` in `support/random`: ChaCha20 with fast key erasure. Each refill runs ChaCha20 with the key of the generator for 13 blocks (832 bytes): the first 32 bytes become the next key, and the other 800 are served in order. The key that made a refill is overwritten at once, and each byte is erased when it is served, so a copy of the state after a draw does not give the bytes before it. The stack below the draw is erased after each refill too.
+
+A program uses it in three ways:
+
+- `random.fill` draws bytes with no requirement;
+- `random.fill_for_a_key(generator, output, least_strength, error)` draws bytes for a secret only if the seed strength is at least `least_strength`, else gives `Seed_Too_Weak` and writes no byte;
+- `random.seed_for_a_child` gives the seed of a child program or of a second thread.
+
+One generator belongs to one thread: two draws that overlap would give the same bytes, so the second one stops the program with "random: two threads drew from one generator at once ...". A zero generator is not seeded, and a draw from it stops the program. 4 MiB take 12 to 39 ms in the program `randomness`.
+
+It is not a kernel device and not a service: a kernel entry or a call for each draw is a cost on a hot path (QUIC draws for each handshake), and a shared pool is one shared state for all programs.
+
+The design: `docs/RANDOMNESS.md`, "2. The generator".
 
 Do not use: RNG, PRNG, CSPRNG (for this), /dev/urandom.
 
 ### Entropy report
 
-What the root service found when it gathered the seed of the system: the sources (rdseed, rdrand, the cycle counter), their good and refused values, and the seed strength.
+The entropy report is the record of what the root service found when it gathered the seed of the system: which sources it read, how many of their values it took and refused, and the seed strength.
+
+`random.Entropy_Report` holds, for `rdseed` and `rdrand`, whether the processor has it and its good and refused values (a value with the carry clear, all ones, or equal to one before it is refused), and for the cycle counter its samples and the count of distinct low bytes of their deltas: a sign of life, not a measure. The root service writes it on the log, never the seed:
+
+```
+root: the random seed of the system, strength entropy (rdseed): rdseed present, N good values, N refused; rdrand present, N good, N refused; the cycle counter, N samples, N distinct low bytes
+```
+
+It also gives the facts to the program `randomness` in its context values 0 to 7, which shows them in its window.
+
+The report says what the sources gave. It does not estimate the entropy of the bytes: the system does not test the output of `rdseed` or `rdrand` for quality.
+
+The design: `docs/RANDOMNESS.md`, "3. The seed of the system, and what is claimed".
 
 Do not use: entropy estimate.
 
 ### Seed strength
 
-The strongest source that gave all its values to the seed of the system: entropy (rdseed), processor (rdrand), or weak (the cycle counter only, counted as 0 bits).
+The seed strength is the strongest source that gave all its values to the seed of the system: `entropy` (rdseed), `processor` (rdrand) or `weak` (the cycle counter only).
+
+The strength is what the system claims about its seed, and no more:
+
+| Strength | Source | Claim |
+|---|---|---|
+| `entropy` (3) | `rdseed` | the entropy source of the processor, by its specification |
+| `processor` (2) | `rdrand` | the generator of the processor, which the processor reseeds |
+| `weak` (1) | the cycle counter | 0 bits: the system does not measure the jitter |
+
+Each program knows the strength of its seed: the starter writes it in the context value 16, and `random.seed_strength(generator)` gives it. A child has the strength of its starter, because its seed comes from that stream. A program states the least strength that it accepts with `random.fill_for_a_key`: QUIC and TLS ask for `processor`, so on a machine with no `rdrand` and no `rdseed` a handshake does not start, and the caller gets the error `Seed_Too_Weak`. The system never refuses for the program: each program still starts and draws.
+
+`kerneltool test random` runs a machine with no `rdrand` and no `rdseed`: its log and its window say "weak (the cycle counter only)" in the color of a failure.
+
+The design: `docs/RANDOMNESS.md`, "3. The seed of the system, and what is claimed".
 
 Do not use: security level.
 
 ### Cryptography module
 
-The module `cryptography`: the primitives that the system took from Odin's `core:crypto`, as exports with the memory of the caller and error records (`docs/CRYPTOGRAPHY.md`).
+The cryptography module is the module `cryptography`: the cryptographic primitives that the system took from Odin's `core:crypto`, as exports that use the memory of the caller and give error records.
+
+The system does not write cryptography from nothing: it takes proven code and changes only its shell. The arithmetic and the constant-time code stay as they are; `kerneltool cryptography-origin` proves that each file is its origin with listed changes. The module `modules/cryptography` then gives the system forms:
+
+- AEAD seal and open with ChaCha20-Poly1305 and AES-128-GCM;
+- SHA-256, HMAC-SHA-256, HKDF extract and expand;
+- X25519, and Ed25519 (public key, sign, verify);
+- Argon2id, which `unlock` uses to derive the key of a passphrase;
+- the two masks of QUIC header protection.
+
+The caller supplies each byte, and the module reads each byte of the caller once: an input that the code of the origin reads two times is first copied into the module, so another thread cannot change it between two reads. Each export erases its copies of a key and the 16 KiB of stack below it, so a thread that calls it needs 24 KiB of stack. A failure is an error record: a tag or a signature that does not verify is `Not_Authentic`. The exports draw no random byte: the caller passes each key and nonce.
+
+A program imports it by hash, as `agenda` imports `calendar`, and the console can call it. One call through an import slot costs 4 to 12 ns. The boot program links the Ed25519 code directly, because no loader runs before the kernel.
+
+The design: `docs/CRYPTOGRAPHY.md`, "6. The module `cryptography`".
 
 Do not use: crypto library, libcrypto.
 
 ### Not authentic
 
-The error kind of a sealed text whose tag, or of a message whose signature, does not verify. The call gives no byte.
+Not authentic is the error kind of a sealed text whose tag does not verify, or of a message whose signature does not verify.
+
+`Not_Authentic` (`contract/errors`) tells a caller that the bytes are forged, damaged or from another key, and it is the one answer: the call says nothing about which byte was wrong. An open that gives it leaves no byte of the text in the result (it erases what it wrote), and its count is negative, so a caller cannot take a failed open for a success. `ed25519_verify` gives it for a signature that does not verify, and the boot program stops on it for the description signature.
+
+A point of small order given to `x25519` is `Bad_Value`, not `Not_Authentic`: it is a point that shares no secret, not a forged text.
+
+The design: `docs/CRYPTOGRAPHY.md`, "6. The module `cryptography`".
 
 Do not use: MAC failure, bad tag.
 
 ### Compatibility layer
 
-The packages of `support/cryptography` that give the code taken from Odin the helpers of its origin, over the primitives of this system (`docs/CRYPTOGRAPHY.md`).
+The compatibility layer is the packages of `support/cryptography` that give the code taken from Odin the helpers that it expects from its origin, over the primitives of this system.
+
+The code of `core:crypto` imports helpers of the library of Odin: `zero_explicit`, `compare_constant_time`, little-endian loads, `rotate_left32`, `add_u64`, the `zero` of `core:mem`. The system does not change that code. It changes only the import lines, so that they name `compatibility_crypto`, `compatibility_endian`, `compatibility_bits`, `compatibility_bytes` and `compatibility_memory`, each imported under the name of its origin as alias. Those packages implement the helpers with the primitives of the system: the compatibility `zero_explicit` calls `erase_secret_bytes` of `runtime/memory.asm`, which the compiler cannot remove.
+
+The files of the layer are listed in `system_files.manifest` with their hashes, so a change of one of them fails `kerneltool check` until its new hash is written and reviewed.
+
+The design: `docs/CRYPTOGRAPHY.md`, "3. The layout".
 
 Do not use: shim, polyfill.
 
@@ -3016,225 +3356,456 @@ Do not use: shim, polyfill.
 
 ### Connection identifier
 
-The bytes (0 to 20) by which a QUIC endpoint names a connection in each packet, independent of the addresses (RFC 9000, section 5.1). Each side chooses the identifiers that the other side sends to it.
+A connection identifier is the 0 to 20 bytes by which a QUIC endpoint names a connection in each packet, independent of the addresses.
+
+UDP gives no connection: a datagram has only addresses and ports, and those can change on the path. So each QUIC packet carries a Destination Connection ID, and the receiver finds its connection by it. Each side chooses the identifiers that the other side sends to it. A client of this system chooses 8 bytes; the OpenSSL client chooses 0 bytes, and the server then sends it packets with an empty identifier.
+
+The identifier also seeds the Initial keys: they come from the Destination Connection ID of the first Initial packet of the client. A server of this system (`quic.Server`) finds the connection record by the identifier and the remote together: the same identifier from another address or port is dropped, because the server sends `disable_active_migration`. `header_read` refuses an identifier over 20 bytes for every version.
+
+The design: `docs/QUIC.md`, "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)".
 
 Do not use: connection ID (in prose), CID.
 
 ### Packet protection
 
-The AEAD that encrypts the payload of a QUIC packet and authenticates its header, with the key and the iv of one direction of one encryption level (RFC 9001, section 5.3).
+Packet protection is the AEAD that encrypts the payload of a QUIC packet and authenticates its header, with the key and the iv of one direction of one encryption level.
+
+Each QUIC packet is sealed on its own. The nonce is the iv with the packet number in its last 8 bytes; the additional data is the header without header protection. Initial packets use AES-128-GCM, as RFC 9001 asks; after the handshake this system prefers ChaCha20-Poly1305, whose portable code is 4.6 times faster than the portable AES here. The seal and the open are exports of the cryptography module (`packet_seal`, `packet_payload_open` in `support/quic`).
+
+`quic.datagram_take` copies each datagram once into private memory of the program; the header reading, the removal of header protection and the open in place work on that copy only. A tag that does not verify gives `Not_Authentic`, and the frames are erased. Reserved bits that are not 0 are checked only after the open, so a packet that is not authentic cannot close a connection.
+
+It is not the record layer of TLS over TCP: QUIC carries the handshake in CRYPTO frames and protects whole packets.
+
+The design: `docs/QUIC.md`, "3. Packet protection (the first layer, built)".
 
 Do not use: encryption (for this), record protection.
 
 ### Header protection
 
-The mask that hides the low bits of the first byte and the packet number of a QUIC packet, made from a sample of the protected payload (RFC 9001, section 5.4).
+Header protection is the mask that hides the low bits of the first byte and the packet number of a QUIC packet, made from a sample of the protected payload.
+
+Without it, an observer reads the packet numbers and the key phase of every packet. The mask is 5 bytes, from AES or ChaCha20 over a 16-byte sample taken 4 bytes after the start of the packet number. The cryptography module exports the two masks (`header_protection_mask_with_aes_128`, `header_protection_mask_with_chacha20`), and `support/quic` applies them: 4 bits of the first byte of a long header, 5 of a short one, and the packet number.
+
+The receiver removes it first (`header_protection_remove`), with the header protection key only, which does not change at a key update: it then reads the key phase and chooses the keys for the open.
+
+A peer chooses the sample, so it chooses the counter of ChaCha20 in the mask: a correction of the ChaCha20 code of the origin lets the last block (`ff ff ff ff`) through instead of stopping the program.
+
+The design: `docs/QUIC.md`, "3. Packet protection (the first layer, built)".
 
 Do not use: header encryption.
 
 ### Encryption level
 
-One of the sets of keys of a QUIC connection: Initial (from the connection identifier), Handshake, 0-RTT and 1-RTT (from TLS). Each packet type uses one level.
+An encryption level is one of the sets of keys of a QUIC connection: Initial, Handshake or Application.
+
+The handshake moves through the levels, and each packet type uses one level:
+
+| Level | Keys from | Carries |
+|---|---|---|
+| Initial | the connection identifier: any observer can compute them | the ClientHello and the ServerHello |
+| Handshake | the handshake secrets of TLS | the rest of the flight of the server, the Finished of the client |
+| Application (1-RTT) | the application traffic secrets of TLS | the streams |
+
+`quic.Encryption_Level` names the three; the CRYPTO frames of each level carry their own sequence of handshake bytes. Bytes of the handshake at a level that the side left, or of an earlier level that come later, fail the handshake with PROTOCOL_VIOLATION. The Initial keys go when the client sends its first Handshake packet; the Handshake keys go when the handshake is confirmed. This system has no 0-RTT level: it builds no session resumption.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 Do not use: epoch, key phase (for this).
 
 ### Packet number space
 
-The sequence of packet numbers that one encryption level uses (Initial, Handshake, application data); a packet number is unique in its space.
+A packet number space is the sequence of packet numbers that one encryption level uses: Initial, Handshake or application data.
+
+Each space has its own packet numbers, its own acknowledgements, its own set of received numbers and its own packets in flight. A packet number is unique in its space and never used again. An ACK frame acknowledges numbers of the space of its packet only. The packet number floor of a space refuses numbers that the set of received numbers forgot.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 Do not use: sequence number (for this).
 
 ### Initial packet
 
-The first packets of a QUIC connection, protected with keys that any observer can compute from the connection identifier: they carry the start of the TLS handshake.
+An Initial packet is one of the first packets of a QUIC connection, protected with keys that any observer can compute from the connection identifier, which carries the start of the TLS handshake.
+
+The keys of an Initial packet authenticate nothing: they come from a public value with a fixed salt of version 1. So anyone can make an authentic Initial. A server of this system therefore takes a client only after the client came back with the token of a Retry packet, and each authentic Initial that does not complete its handshake ends at the handshake deadline.
+
+A datagram with a client Initial is padded to 1200 bytes, and a server drops a client Initial in a smaller datagram or with a Destination Connection ID under 8 bytes: so a server never answers more than it received. The network service admits a new remote of a UDP listen grant only on a datagram of 1200 bytes at least.
+
+The design: `docs/QUIC.md`, "3. Packet protection (the first layer, built)".
 
 Do not use: handshake packet (for this).
 
 ### Raw public key
 
-A public key that a TLS peer sends in its Certificate message alone, with no certificate around it: the SubjectPublicKeyInfo of the key (RFC 7250). The other side trusts it when it is the key that its caller pinned.
+A raw public key is a public key that a TLS peer sends in its Certificate message alone, with no certificate around it.
+
+The server sends the SubjectPublicKeyInfo of its Ed25519 key: 12 fixed bytes and the 32 bytes of the key, 44 bytes in all. The client offers `server_certificate_type` with the one type RawPublicKey, and the server answers with that type. No other DER is read and no X.509 certificate is read: a parser of certificates is a large parser of hostile input, and the system has no certificate authority, no name and no date to check.
+
+The client trusts the key only when it is the pinned key, and CertificateVerify proves that the server holds its private key, over the transcript. `quic_echo` and `remote` make a new Ed25519 key at each start and write the public key on the log ("remote: the public key of this service: " and 64 hexadecimal digits). The OpenSSL client of the host speaks to `quic_echo` with `-enable_server_rpk`.
+
+The design: `docs/QUIC.md`, "4. TLS 1.3 for QUIC (the second layer, built)".
 
 Do not use: self-signed certificate (for this).
 
 ### Pinned key
 
-The one public key that the caller of a TLS client gives it as the key of the server: any other key is refused.
+The pinned key is the one public key that the caller of a TLS client gives it as the key of the server: the client refuses any other key.
+
+`Tls_Configuration.server_public_key` holds it. A server that presents another key fails the handshake with the alert bad_certificate, and `tls_start` refuses a client whose pinned key is 32 zero bytes (no key was pinned). The peer of the kernel tool pins the key that `remote` wrote on its log (the step Remote_Key), or the key that `kerneltool call <key> "..."` names. A pin belongs to one start of the server: each start makes a new key.
+
+A pinned key is not a trust anchor: it vouches for no other key and names no one. It proves only that the client speaks to the holder of that private key.
+
+The design: `docs/QUIC.md`, "4. TLS 1.3 for QUIC (the second layer, built)".
 
 Do not use: trust anchor, root certificate.
 
 ### Transcript
 
-The handshake messages of TLS, in order, whose hash the key schedule and the Finished messages use.
+The transcript is the handshake messages of TLS, in order, whose hash the key schedule and the Finished messages use.
+
+Each message of each side goes into the transcript as it comes. The key schedule hashes it at fixed points to derive the secrets, CertificateVerify signs its hash, and each Finished is an HMAC of it. So a change of one byte of one message by the path makes the two sides disagree and the handshake fail. The transcript holds 8192 bytes: a ClientHello of up to 4092 bytes and the flight of the server.
+
+The design: `docs/QUIC.md`, "4. TLS 1.3 for QUIC (the second layer, built)".
 
 Do not use: handshake hash (for the bytes).
 
 ### Key schedule
 
-The secrets of TLS 1.3, each one from the one before with HKDF and a transcript hash: early, handshake, master, and the traffic secrets of each side (RFC 8446, section 7.1).
+The key schedule is the chain of the secrets of TLS 1.3, each one derived from the one before with HKDF and a transcript hash: early, handshake, master, and the traffic secrets of each side.
+
+The X25519 shared secret enters at the handshake secret; the hash of the transcript at each point binds the secrets to the messages. QUIC takes its packet keys from the traffic secrets: `tls_packet_keys` gives the Handshake and the Application keys through `packet_keys_from_secret`, with the labels "quic key", "quic iv" and "quic hp". The code is `support/quic/tls_key_schedule.odin`, tested against the trace "Simple 1-RTT Handshake" of RFC 8448. The secrets of TLS are erased once the 1-RTT keys are installed.
+
+The design: `docs/QUIC.md`, "4. TLS 1.3 for QUIC (the second layer, built)".
 
 Do not use: key derivation (for the whole).
 
 ### Alert
 
-The reason of a failure of TLS, one byte (RFC 8446, section 6). QUIC sends it as the error code 0x100 + alert.
+An alert is the reason of a failure of TLS, as one byte.
+
+The handshake of this system writes the alert in `Tls_Handshake.alert` and in the `found` field of its error record. QUIC has no alert messages: it closes the connection with the error code 0x100 + alert. Examples: bad_certificate (42) for a key that is not the pinned key, unexpected_message for a message of the wrong type at its level, no_application_protocol for another ALPN.
+
+The design: `docs/QUIC.md`, "4. TLS 1.3 for QUIC (the second layer, built)".
 
 Do not use: TLS error (for this).
 
 ### Frame
 
-One unit of the payload of a QUIC packet: a type, then its fields (RFC 9000, section 19). A packet carries one frame or more.
+A frame is one unit of the payload of a QUIC packet: a type, then its fields.
+
+A packet carries one frame or more: STREAM frames with the data of a QUIC stream, ACK frames, CRYPTO frames with the bytes of the handshake, MAX_DATA and MAX_STREAMS for flow control, CONNECTION_CLOSE, and others. Each frame is read as hostile input, with each length checked first: a frame that is cut, a length past the packet or an unknown type is FRAME_ENCODING_ERROR, and a frame at a level where it may not go is PROTOCOL_VIOLATION. A packet of this system carries one STREAM frame at most.
+
+It is not the frame of the network device (an Ethernet frame), which the group "Devices" defines: a QUIC frame lives inside a protected packet inside a UDP datagram.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 Do not use: message (for this), chunk.
 
 ### Ack-eliciting packet
 
-A packet with a frame other than PADDING, ACK and CONNECTION_CLOSE: the peer must acknowledge it.
+An ack-eliciting packet is a packet with a frame other than PADDING, ACK and CONNECTION_CLOSE, which the peer must acknowledge.
+
+Only ack-eliciting packets count for loss detection, the probe timeout and the congestion window: a packet of ACK frames alone is never acknowledged and never sent again. In the 1-RTT space this side sends an ACK after 2 ack-eliciting packets or 25 ms. The first ack-eliciting packet sent after a receive moves the bound of the idle timeout.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 Do not use: reliable packet.
 
 ### Probe timeout
 
-The time after which a side that has no acknowledgement sends one or two probe packets, from the round-trip time and its variation (RFC 9002, section 6.2). It doubles at each timeout without an acknowledgement.
+The probe timeout is the time after which a side that received no acknowledgement sends one or two probe packets, computed from the round-trip time and its variation.
+
+The base probe timeout is the smoothed round trip, 4 times its variation (1 ms at least) and the max_ack_delay of the peer: about 28 to 45 ms on a fast network, about 1 s before any sample. A probe carries the data of the oldest packets in flight, or a PING, and goes past the congestion window. The timeout doubles at each probe that nothing answers.
+
+The idle timeout and the closing and draining states use the base value with no doubling (`probe_timeout_base`). Without that rule, the doubling of the probes moved the idle bound with no end, and a server kept the record of a vanished client for about 2 hours.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 Do not use: retransmission timeout, RTO (for this).
 
 ### Congestion window
 
-The most bytes of ack-eliciting packets that a side has in flight. This layer keeps it fixed at 12 000 bytes.
+The congestion window is the most bytes of ack-eliciting packets that a side has in flight at one time.
+
+It stops a sender from filling the path faster than the path drains. This layer keeps it fixed at 12 000 bytes (`CONGESTION_WINDOW`), the initial window of RFC 9002: it does not grow and does not shrink after a loss (no NewReno, no pacing). Probes go past it.
+
+It is not the flow control limit: the congestion window protects the path, and the flow control limit protects the buffers of the receiver.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 Do not use: send window (for this).
 
 ### QUIC stream
 
-One ordered flow of bytes in each direction inside a QUIC connection, named by a stream identifier (RFC 9000, section 2). A connection carries several at once; the bytes of one never wait for a loss of another.
+A QUIC stream is one ordered flow of bytes in each direction inside a QUIC connection, named by a stream identifier.
+
+A connection carries several streams at once, and the bytes of one never wait for a loss of another, which is what TCP cannot give. This system has bidirectional streams only, and only the client opens them. A stream ends when both directions ended: this side's last byte acknowledged (or its reset acknowledged), and the end of the peer read by the application. Its identifier then never names a stream again.
+
+A program uses `stream_open`, `stream_write`, `stream_read`, `stream_reset` and `stream_stop_sending`; each stream lives in a stream record. `remote` maps one call to one stream: the call request goes up the stream, the call answer comes back on it, and an error of one call resets its stream only.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 Do not use: channel (for this), substream.
 
 ### Stream record
 
-One `quic.Stream` in the table that the caller of a QUIC connection gives: the state and the buffers of one open QUIC stream. Their count bounds the streams that are open at one time.
+A stream record is one `quic.Stream` in the table that the caller of a QUIC connection gives: the state and the buffers of one open QUIC stream.
+
+The caller allocates the table, in its own memory, with the connection: a record has two buffers of 64 KiB and about 2 KiB of state, about 130 KiB. Their count bounds the streams that are open at one time, and a server gives the client a limit of streams equal to its records. When a stream ends, its record is free again and its buffers are written with zeros. A program must read each stream to its end: a stream that it never reads keeps its record for the life of the connection.
+
+`quic_echo` gives 4 stream records to each connection record; `remote` gives 8 (`remote.CALLS_AT_ONCE`).
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 Do not use: stream slot.
 
 ### Limit of streams
 
-The count of QUIC streams that one side allows the other to open since the start of the connection (MAX_STREAMS). A server of this system raises it by one each time a stream of the client ended.
+The limit of streams is the count of QUIC streams that one side allows the other to open since the start of the connection (MAX_STREAMS).
+
+It is a count since the start, not a count of open streams. A server of this system gives the client a limit equal to its stream records in the transport parameters, then raises it by one with a MAX_STREAMS frame each time a stream of the client ended. So the limit never promises a stream that has no record. A client that reaches the limit sends STREAMS_BLOCKED and waits; a frame for a stream past the limit is STREAM_LIMIT_ERROR, before any record is taken.
+
+Example: `remote` has 8 stream records; a host that opens a 9th stream waits for the MAX_STREAMS that comes when one of the 8 ends.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 Do not use: stream credit, concurrency limit (for this).
 
 ### Implicit open
 
-The open of a QUIC stream by a frame of the peer that names it, or a higher stream of the same kind, before the peer sent anything on it (RFC 9000, section 3.2).
+An implicit open is the open of a QUIC stream by a frame of the peer that names it, or names a higher stream of the same kind, before the peer sent anything on it.
+
+Streams of one kind open in order, so a frame for client stream 8 also opens the client streams 0 and 4 that are not open yet. The limit of streams bounds that count: a stream far ahead within the limit takes records that exist, and one past it is STREAM_LIMIT_ERROR. The program finds the streams that the peer opened by a walk of `connection.streams`.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 ### Flow control limit
 
-The largest offset of data that a side allows the peer to send, for one stream (MAX_STREAM_DATA) and for the connection (MAX_DATA). Data past it closes the connection with FLOW_CONTROL_ERROR.
+A flow control limit is the largest offset of data that a side allows the peer to send, for one stream (MAX_STREAM_DATA) or for the whole connection (MAX_DATA).
+
+It protects the buffers of the receiver: a side never receives more than it has room for. Here each stream has 64 KiB, moved forward when the application read half of it; the connection has the buffers of every stream record (256 KiB for 4), moved forward the same way. Data past a limit closes the connection with FLOW_CONTROL_ERROR; a final size that changes is FINAL_SIZE_ERROR. A reset counts its final size, and the bytes that the application never read give their room back to the connection.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 Do not use: receive window (for this).
 
 ### Anti-amplification limit
 
-A server that did not validate the address of a client sends at most 3 times the bytes that it received from it (RFC 9000, section 8.1).
+The anti-amplification limit is the rule that a server sends at most 3 times the bytes that it received from a client whose address it did not validate.
+
+An attacker can forge the source address of a datagram. Without the limit, one small forged datagram can make a server send a large answer to a victim. The limit is held twice:
+
+- by `support/quic` in the program, until the address validation of the connection; this side counts only the datagrams that it processed;
+- by the network service, which knows no QUIC: for each admitted remote of a UDP listen grant it counts the bytes in and out and refuses a Send past 3 times (the status `Amplification`), until the program sends the command `Validate`.
+
+A Retry packet (113 bytes at most) answers a datagram of 1200 bytes, so a reflection carries less than a tenth of what the attacker sent.
+
+The design: `docs/QUIC.md`, "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)".
 
 ### Address validation
 
-The proof that a client receives at its address: here, a Handshake packet of the client, which needs the keys of the server's flight.
+Address validation is the proof that a client receives datagrams at the address that it claims.
+
+Until it, a server holds the anti-amplification limit. A connection of this system validates the address of the client in two ways: a Handshake packet of the client, which needs the keys of the server's flight; or, at the server of several connections, an Initial that carries the retry token of that address. Each record of `quic.Server` is validated at its start, because a record needs a token. The program then sends `Validate` to the network service for that remote, which makes it a validated remote.
+
+The design: `docs/QUIC.md`, "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)".
 
 ### Handshake confirmed
 
-The point after which a side drops its Handshake keys: a server when the handshake completes, a client when HANDSHAKE_DONE comes (RFC 9001, section 4.1.2).
+Handshake confirmed is the point after which a side drops its Handshake keys: a server when its handshake completes, a client when HANDSHAKE_DONE comes.
+
+Before it, a side can still need the Handshake keys to send the flight again. After it, those keys are erased, and a Handshake packet is dropped. A server sends HANDSHAKE_DONE in its first 1-RTT packet after the Finished of the client; a server that receives one gets PROTOCOL_VIOLATION.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 Do not use: handshake done (for the state).
 
 ### Connection record
 
-One `quic.Connection` in a table of a server: all the state of one connection, about 214 KiB, in a mapping of the program.
+A connection record is one `quic.Connection` in memory of the program: all the state of one QUIC connection.
+
+The record holds the three packet number spaces, the keys, the handshake of TLS, the timers and the connection identifiers: no allocation and no kernel call happen behind it. Its streams are in a separate table of stream records. A record goes in global memory or in a mapping of the program, never on a stack: a stack of 256 KiB leaves too little room for the cryptography module and the 16 KiB that it erases. A server holds a table of records in one mapping; each time a record is taken it gets a new generation.
+
+`quic_echo` has 16 records of about 85 KiB with 4 stream records each, about 10.8 MiB in one mapping. Its log line "listening on the UDP port 4433" prints the real sizes.
+
+It is not a socket: the network service sees only datagrams of an endpoint, and the program holds the whole connection.
+
+The design: `docs/QUIC.md`, "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)".
 
 Do not use: session (for this), socket.
 
 ### Version Negotiation packet
 
-The packet with the version 0 that a server sends to a client whose long header names a version that the server does not speak: it lists the versions that the server speaks (RFC 9000, section 17.2.1).
+A Version Negotiation packet is the packet with the version 0 that a server sends to a client whose long header names a version that the server does not speak: it lists the versions that the server speaks.
+
+A server of this system speaks version 1 only. It answers a long header of another version in a datagram of 1200 bytes at least, with one packet of 51 bytes at most, and 16 in one second at most. The packet has no authentication; a client of this system speaks version 1 only and never needs one.
+
+The design: `docs/QUIC.md`, "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)".
 
 Do not use: version error.
 
 ### Retry token
 
-The value that a server gives in a Retry packet and that a client sends back in its next Initial: it proves that the client receives datagrams at its address. This system seals it with a key of the server, over the address and port of the client, its identifiers and a time.
+A retry token is the value that a server gives in a Retry packet and that the client sends back in its next Initial packet, to prove that it receives datagrams at its address.
+
+This system seals the token with ChaCha20-Poly1305, under a key of 32 bytes that the server makes at its start: it seals the original Destination Connection ID of the client, the identifier of the Retry and the time, with the remote address and port as additional data. The token has 62 bytes. It does not open for another address or port, after a change of one byte, after another start of the server, or more than 10 s after the Retry (`RETRY_TOKEN_LIFETIME`).
+
+A token takes a record once: the server keeps the counter of each token that took a record, 64 of them for 10 s. A replay can come only from the address and port of the client, within 10 s.
+
+It is not the token of NEW_TOKEN, which a server gives for a later connection: a client of this system keeps none. It is not a token of a token bucket.
+
+The design: `docs/QUIC.md`, "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)".
 
 Do not use: cookie (for this), address token (for the token of NEW_TOKEN).
 
 ### Validated remote
 
-An admitted remote of a UDP listen grant that the program marked with the command Validate, because it proved its address: the network service then sends to it with no limit of 3 times the bytes that came from it.
+A validated remote is an admitted remote of a UDP listen grant that the program marked with the command `Validate`, because it proved its address.
+
+The network service then sends to it with no limit of 3 times the bytes that came from it. `quic_echo` and `remote` validate a remote when its client came back with the token of a Retry. A record asks the program to validate its remote at each datagram until a `Validate` for its generation gives 1, because a `Validate` that came after a `Release` changes nothing.
+
+A program that validates every remote lifts the limit for each address that sent it a datagram: it can then send any volume to an address whose name came in one forged datagram, for 120 s. The principal revokes the grant of such a program.
+
+The design: `docs/QUIC.md`, "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)".
 
 Do not use: trusted remote, whitelisted address.
 
 ### Stateless reset
 
-A packet that ends a connection whose state a side lost, proven by a token that the side gave before (RFC 9000, section 10.3). Not built.
+A stateless reset is a packet that ends a connection whose state a side lost, proven by a token that the side gave before.
+
+It is not built. A server of this system that restarts forgets its connections, and their clients end at their idle timeout. A connection drops a datagram of this kind.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 Do not use: reset (for this).
 
 ### Handshake deadline
 
-The time after which a connection whose handshake did not complete ends: 10 s from the start of a client, or from the first authentic Initial at a server.
+The handshake deadline is the time after which a connection whose handshake did not complete ends: 10 s from the start of a client, or from the first authentic Initial at a server.
+
+Anyone can make an authentic Initial packet, so without a deadline a few packets could hold records of a server for the whole idle timeout. `HANDSHAKE_TIME_LIMIT` ends such a record whatever the idle timeout. A client has the same limit: a client that a server over a limit ignores ends at its own deadline. The deadline counts time of the machine: in `remote`, isolated calls count in it too.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 Do not use: handshake timeout (for the value).
 
 ### Packet number floor
 
-The packet number below which a side refuses each packet of a space, because its set of received numbers forgot those ranges.
+The packet number floor is the packet number below which a side refuses each packet of a space, because its set of received numbers forgot those ranges.
+
+The set of received packet numbers keeps 32 ranges. When it drops its lowest range, it can no longer tell whether a number below it came before, so it raises the floor to the end of that range (`packet_number_floor` of a space). A packet below the floor is refused before its open, so that no packet is processed two times.
+
+It is not a replay window of a fixed width: it moves only when the set loses a range.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 Do not use: replay window.
 
 ### Idle timeout
 
-The time with no packet of the peer after which a side ends a connection with no packet: the smaller of the two that the sides give, and 3 probe timeouts at least.
+The idle timeout is the time with no activity of the peer after which a side ends a QUIC connection with no packet: the smaller of the values that the two sides give, and 3 base probe timeouts at least.
+
+It frees the record of a peer that vanished. The activity that moves its bound is a packet received, processed and recorded, and the first ack-eliciting packet sent after it; a datagram that does not authenticate, or a replay, moves nothing. A server of this system always has one: `server_init` refuses an idle timeout of 0. `quic_echo` uses 30 s, and logs at each idle end whether the end held its bound:
+
+```
+the idle end held its bound
+```
+
+It is not a keep-alive: this side sends nothing to keep a connection open.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 Do not use: keep-alive.
 
 ### Closing state
 
-The state of a side that sent CONNECTION_CLOSE: it answers each packet with it, for 3 probe timeouts.
+The closing state is the state of a side that sent CONNECTION_CLOSE: for 3 base probe timeouts, it answers datagrams of the connection with its close.
+
+The close can be lost, so the side answers again when the peer sends more. A record of this system answers the 1st, 2nd, 4th, 8th... datagram, not each one, and does not open them: a third party that knows the identifier makes at most a few packets of about 50 bytes.
+
+The design: `docs/QUIC.md`, "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)".
 
 ### Draining state
 
-The state of a side that received CONNECTION_CLOSE: it sends nothing, for 3 probe timeouts.
+The draining state is the state of a side that received CONNECTION_CLOSE: it sends nothing for 3 base probe timeouts, then ends the connection.
+
+It lets the packets of the peer that are still on the path arrive and be dropped, with no answer.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 ### Transport parameters
 
-The values that each side of QUIC gives the other in the handshake of TLS: its limits, its timeouts, and the connection identifiers that it used (RFC 9000, section 18).
+The transport parameters are the values that each side of QUIC gives the other inside the TLS handshake: its limits, its timeouts and the connection identifiers that it used.
+
+They ride in the extension `quic_transport_parameters`, so the handshake authenticates them. Examples: the flow control limits, the limit of streams, the idle timeout, max_ack_delay, `disable_active_migration`, and `original_destination_connection_id` and `retry_source_connection_id` after a Retry. Each value of the peer is checked: a repeated parameter, a value out of its range, a parameter that only a server sends, or an identifier that is not the one of the packets gives TRANSPORT_PARAMETER_ERROR.
+
+They are not settings of the system: they belong to one connection.
+
+The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
 Do not use: settings.
 
 ### Retry packet
 
-A packet of a server that asks the client to send its Initial packet again with a token, to prove its address; its integrity tag uses a fixed key.
+A Retry packet is a packet of a server that asks the client to send its Initial packet again with a retry token, to prove its address.
+
+A server of this system answers each Initial with an unknown identifier and no token with a Retry, and keeps nothing: no record, no key, no open of the Initial. Its integrity tag is AES-128-GCM with a fixed key of version 1 over the Retry Pseudo-Packet: it proves to the client only that the Retry answers its own Initial. A client takes one Retry, before any Initial of the server, then derives its Initial keys from the identifier of the Retry and sends its ClientHello again with the token.
+
+A Retry has 113 bytes at most, and its budget of work is 20 000 in one second.
+
+The design: `docs/QUIC.md`, "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)".
 
 Do not use: redirect.
 
 ### Table of address budgets
 
-The table of a QUIC server that holds a budget of Initial checks for each address whose token opened. A place moves to a new address only when its bucket is full again, so the table gives at most the sum of its buckets.
+The table of address budgets is the table of a QUIC server that holds a budget of Initial checks for each address whose retry token opened.
+
+A host with one real address can take one Retry and then send many Initials with its valid token that do not open. Each costs about 30 µs of cryptography, so each address gets its own token bucket: 4 checks at once, then 1 in each second. The table has 1024 places (32 KiB in `quic.Server`). A new address takes a place only when the place holds no information: free, or its bucket full again. So the table gives at most the sum of its buckets: 4096 checks once, then 1024 in each second, half of the shared budget. When no place can move, the new address gets no check (`address_table_full` counts it).
+
+The design: `docs/QUIC.md`, "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)".
 
 Do not use: address cache.
 
 ### Budget of work
 
-The most pieces of one kind of work that a QUIC server does for datagrams of unknown identifiers (Retries, token checks, Initial checks), as a token bucket. Over it, a datagram is dropped before any cryptography. Not a budget of memory of the kernel.
+A budget of work is the most pieces of one kind of work that a QUIC server does for datagrams of unknown identifiers, as a token bucket.
+
+The work of a datagram of an unknown identifier is cryptography for a sender that nobody checked yet. The server has three shared budgets:
+
+| Work | Rate | Depth | Cost of one |
+|---|---|---|---|
+| Retries | 20 000 in one second | 2000 | about 10 µs |
+| Token checks | 30 000 in one second | 3000 | about 3 µs |
+| Initial checks with a valid token | 2000 in one second | 200 | about 30 µs |
+
+A datagram over a budget is dropped before any cryptography. When a flood spends every budget, the work of new identifiers takes about 350 ms of each second of one processor. The datagrams of known records have no budget and come first. A flood above a shared budget still stops new clients while it lasts: a forged Initial and the first Initial of a real client look the same until the Retry comes back.
+
+It is not a budget of the kernel: a budget of memory pays for kernel objects. A budget of work bounds time spent by one program.
+
+The design: `docs/QUIC.md`, "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)".
 
 Do not use: rate limit (for this), quota.
 
 ### Token bucket
 
-A count of units that grows by a rate in each second up to a depth, and from which each piece of work takes one unit: a burst takes the depth, then the rate. The tokens of a bucket are not the tokens of Retry.
+A token bucket is a count of units that grows by a rate in each second up to a depth, and from which each piece of work takes one unit.
+
+A burst takes the depth at once, then the rate: no boundary of a window lets a burst get the budget of two seconds in one millisecond, as a fixed window of one second did. `quic.Work_Bucket` counts millionths of a unit, so a rate per second adds its value in each microsecond, and a bucket that was never used starts full. The budgets of work and the table of address budgets are token buckets.
+
+The tokens of a bucket are units of work, not retry tokens.
+
+The design: `docs/QUIC.md`, "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)".
 
 Do not use: leaky bucket, fixed window.
 
 ### UDP relay
 
-The part of the peer of the tool that carries UDP datagrams between a program of the host, on a socket of the loopback, and the UDP port 4433 of the machine, as frames from 10.0.2.2 with a port for each client of the host.
+The UDP relay is the part of the peer of the kernel tool that carries UDP datagrams between a program of the host, on a socket of the loopback, and the UDP port 4433 of the machine.
+
+QEMU user networking with `restrict=on` drops each UDP datagram that the machine sends, so a UDP forward of the host cannot reach `quic_echo`. The relay replaces it: a datagram of a client of the host becomes a frame from 10.0.2.2 to 10.0.2.15 port 4433, from a port that the relay gives that client (42000 plus its place in a table of 16), and the answers go back the same way. A datagram over 1472 bytes is dropped and counted. `kerneltool test quic-real` uses it to run the OpenSSL QUIC client of the host against `quic_echo`.
+
+The design: `docs/QUIC.md`, "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)".
 
 Do not use: port forward, proxy, hostfwd (for this).
 
@@ -3248,341 +3819,726 @@ Do not use: vendor, owner, person, administrator.
 
 ### Signing key
 
-The Ed25519 key pair of the publisher of the system, that signs the system description (`docs/PROPERTIES.md`, "Trusted boot: UEFI program, Secure Boot, TPM"). The private key is a file outside the repository, which the environment variable `SYSTEM_SIGNING_KEY` names; the boot program holds the public key.
+The signing key is the Ed25519 key pair of the principal that signs the system: its private key signs the system description, and the boot program holds its public key.
+
+The signing key answers one question at each start: is this the system that its signer built, byte for byte? The build signs the system description, which names each module and resource by its hash; the boot program verifies the signature before the kernel starts, then compares each file with the description. A changed module, a module of another build, or a description changed without the private key stops the start.
+
+How a principal gets and uses one:
+
+1. `nix develop -c kerneltool key new <folder>`, with a folder outside the repository, writes `signing_key` (64 hexadecimal digits, readable by its owner only) and `signing_key.public`, then the firmware signing key beside them.
+2. `SYSTEM_SIGNING_KEY=<folder>/signing_key` before each build names the private key. The tool refuses a path inside the repository and a file that the group or the others can read.
+3. The build puts the public key in the boot program and signs the description of each boot volume. `kerneltool key show` prints the public key that the build uses.
+
+With no variable, the build signs with the test signing key. A lost key signs nothing new; a stolen key signs a system that the boot program accepts, and no list of revoked keys exists: make a new key and a new boot program at once.
+
+The signing key is not a key of the TPM: the TPM measures the description, seals keys and keeps the key of the machine, and it signs nothing at the start. It is not the platform key of Secure Boot: Secure Boot verifies the boot program with the firmware signing key, an RSA key.
+
+The design: `docs/TRUSTED_BOOT.md`, "5. The signing key".
 
 Do not use: owner key, master key, release key, platform key (PK is a term of Secure Boot).
 
 ### Test signing key
 
-The signing key of the tests: the key pair of RFC 8032, section 7.1, TEST 1, in `resources/keys`. Its private key is published, so a system that it signs is not trusted, and the boot display says so.
+The test signing key is the signing key of the tests: a key pair whose private key is published, so that a system that it signs is never trusted.
+
+The key pair is the one of RFC 8032, section 7.1, TEST 1, in `resources/keys/test_signing_key`. Each build with no `SYSTEM_SIGNING_KEY` uses it: the test builds and the pictures of the site do. Anyone can sign a system with it, so:
+
+- the trust record has the key kind `Test`;
+- the boot display shows "the TEST key: its private key is public" in red;
+- the root service writes a warning on the log;
+- the tool writes beside the boot volume a file `<volume>.signed_by` that says "do not install this volume on a real machine".
+
+The design: `docs/TRUSTED_BOOT.md`, "5. The signing key".
 
 Do not use: development key, demo key.
 
 ### Signed message
 
-The 64 bytes that the signing key signs for one system description: the label `system description signature 1`, with zero bytes to 32 bytes, then the BLAKE3 hash of the description.
+The signed message is the 64 bytes that the signing key signs for one system description: a fixed label padded with zero bytes to 32 bytes, then the BLAKE3 hash of the description.
+
+The label `system description signature 1` (`SIGNATURE_LABEL` of `contract/system_description`) binds the signature to this one use: a signature that the key makes for another purpose is never a valid description signature. The number in the label names the version of the form. `system_description.signed_message` builds the bytes. The measure puts the same 64 bytes in the event log of the firmware, so the log names the system by its BLAKE3 identity.
+
+The design: `docs/TRUSTED_BOOT.md`, "1. The claims".
 
 Do not use: payload, digest (for this).
 
 ### Description signature
 
-The Ed25519 signature, 64 bytes, of the signed message of a system description: the resource `system_description_signature` of the boot image.
+The description signature is the Ed25519 signature, 64 bytes, of the signed message of a system description.
+
+The boot image holds it as its last resource, `system_description_signature`, after the resource `system_description`. The description does not list these two resources, because a file cannot hold its own hash. At each start, before the kernel starts, the boot program verifies it with the public key that it holds, with the Ed25519 code of `support/cryptography/ed25519` linked into it. A signature that does not verify stops the start with the line:
+
+```
+boot program: the signature of the system description is wrong
+```
+
+It is not a certificate: it names no one and has no date. The boot program accepts each description that the key signed, an older one too: no counter refuses it yet.
+
+The design: `docs/TRUSTED_BOOT.md`, "3. The system description".
 
 Do not use: certificate, manifest signature.
 
 ### Trust record
 
-The record `boot_info.Boot_Trust` that the boot program writes: what verified the system description, with which public key, the BLAKE3 hash of the description, and the measure. The kernel copies it into the boot record; the root service and the boot display read it.
+The trust record is the record `boot_info.Boot_Trust` that the boot program writes to say what verified the system description, with which key, and what the TPM holds.
+
+Its fields:
+
+- `verifier`: `Boot_Program` (the firmware did not verify the boot program) or `Firmware_And_Boot_Program` (Secure Boot was on);
+- `key_kind` and `public_key`: the test signing key or another key, and the public key that verified the description signature;
+- `description_hash` and `entry_count`: the BLAKE3 hash and the entries of the system description;
+- `measure`, `measure_register`, `measure_value`, `measure_status`, `measure_tries`: `Measured`, `No_Tpm`, `Refused` or `Not_Read`, the register, its value read back, and the tries.
+
+The kernel copies it into the boot record. The root service takes the system description of the boot image only if its hash is `description_hash`, and puts the measure in the record of principal 0, the machine. The boot display draws its line "trust" from it: the key, what verified, and the measure.
+
+It is not an attestation: it is what the boot program says about itself, and a replaced boot program can write a false one. Only Secure Boot makes it come from a verified boot program.
+
+The design: `docs/TRUSTED_BOOT.md`, "4. What a failure shows".
 
 Do not use: attestation, security state.
 
 ### Measure
 
-The extension of a register of the TPM with the SHA-256 hash of the system description, which the firmware does at the request of the boot program, before the kernel starts (`docs/PROPERTIES.md`, "Trusted boot: UEFI program, Secure Boot, TPM").
+The measure is the extension of a register of the TPM with the SHA-256 hash of the system description, which the firmware does at the request of the boot program before the kernel starts.
+
+A TPM register can only be extended, never set: after a reset, PCR 11 then holds `SHA-256(32 zero bytes || SHA-256(description))`, and no code that runs later can set it back. So a key sealed to that value, or a remote party that reads it, can depend on which system started. The system seals no key to it and answers no remote party yet.
+
+The path: after its checks, the boot program calls `HashLogExtendEvent` of the TCG2 protocol of the firmware, with an event `EV_IPL` whose data is the signed message, then reads PCR 11 back and writes the value in the trust record. The boot program has no TPM driver. It tries 4 times, 0.5 s apart. If every try fails, the boot continues: the trust record says `Refused`, and the boot display says "TPM refused the measure" in red.
+
+The measure is as honest as the boot program that asks for it: a replaced boot program can extend PCR 11 with the hash of a correct description and start other code. The TPM measures and seals; it does not verify and does not sign the description.
+
+The design: `docs/TRUSTED_BOOT.md`, "6. The measure".
 
 Do not use: attestation (for this), seal, measurement log (for this).
 
 ### Measure register
 
-PCR 11 of the TPM: the register that holds the measure.
+The measure register is PCR 11 of the TPM: the register that holds the measure.
+
+The rules of the TCG for PC firmware leave PCR 8 to 15 to the operating system, and the conventions of Linux give PCR 11 to the whole system image that a boot stage measures before the kernel. The firmware of the test machine does not write it. `boot_info.MEASURE_REGISTER` is 11. The firmware extends it in each active bank; the trust record keeps the value of the SHA-256 bank, and `kerneltool` computes the same value from the description and compares.
+
+The system reads no other register: PCR 4 (where the firmware measures the boot program) and PCR 7 (the Secure Boot state) are read by nothing.
+
+The design: `docs/TRUSTED_BOOT.md`, "6. The measure".
 
 Do not use: slot, PCR (alone, for this register).
 
 ### Firmware signing key
 
-The RSA-2048 key and its X.509 certificate of the publisher of the system, that sign the boot program for Secure Boot. The firmware keeps the certificate in its variable `db`.
+The firmware signing key is the RSA-2048 key and its self-signed X.509 certificate with which the principal that signs the system signs the boot program for Secure Boot.
+
+UEFI Secure Boot verifies Authenticode signatures with RSA keys and X.509 certificates, and cannot verify Ed25519. So a second key closes the gap of the first: without Secure Boot, anyone who can write the boot volume can replace the boot program, its public key and its checks. `kerneltool key new` makes the pair with `openssl` beside the signing key (`firmware_signing_key.pem`, `firmware_signing_key.crt`). The build signs the boot program with `sbsign` and keeps the unsigned copy. The firmware keeps the certificate in its variable `db`, which a principal present at the machine enrols in the setup of the firmware.
+
+With Secure Boot on, the trust record says `Firmware_And_Boot_Program`. A machine whose `db` also holds the certificates of a vendor starts each boot program that the vendor signed.
+
+The design: `docs/TRUSTED_BOOT.md`, "7. Secure Boot".
 
 Do not use: db key (for the pair), Secure Boot key.
 
 ### Test firmware signing key
 
-The firmware signing key of the tests, in `resources/keys`. Its private key is published, so a boot program that it signed is not trusted.
+The test firmware signing key is the firmware signing key of the tests, whose private key is published, so that a boot program that it signed is never trusted.
+
+The pair is `resources/keys/test_firmware_signing_key.pem` and `.crt`; `kerneltool key test-firmware-new` wrote it once. The variable store of the test machines of Secure Boot has its certificate as PK, KEK and the one entry of `db`. `kerneltool test trusted_boot` checks with it that the signed boot program starts, and that a boot program with one byte changed, or unsigned, does not.
+
+The design: `docs/TRUSTED_BOOT.md`, "7. Secure Boot".
 
 Do not use: development certificate.
 
 ## Project
 
+The words of this group name how the project is run and published: the documents that hold its rules and its state, the units of the work, and the site, the changelog and the news that report it.
+
+### Property
+
+A property is one of the 21 fundamental concepts of the system, each with its rule, its reasons and its costs, in `docs/PROPERTIES.md`.
+
+The properties are the reference against which every proposal is measured: a proposal that contradicts one is named as such before any work on it, and only the owner of the project can change a property. Each property has a number and a title ("10. One code module", "17. Trusted boot: UEFI program, Secure Boot, TPM"), and a status in the summary table of the document. The status page of the site shows each property with its status, the evidence items and the gaps that name it.
+
+A comment in a source never names a property by its number: it states the reason in words, or points to the heading of a guide. `kerneltool check` refuses "(property 14)" and "(P20)" as a comment breach.
+
+The design: `docs/PROPERTIES.md`.
+
+Do not use: principle (for this), requirement, axiom.
+
+### Decision
+
+A decision is one entry of `docs/DECISIONS.md`: who decided what, when, and in which words, under an identifier `D-nnn` that never changes.
+
+The file is the record of the project, and the first document to read. Each entry gives the date, who decided (the owner of the project, the coordinator, or an agent), the decision, the exact words of the owner in their language, its state (in force, done, not done yet, replaced by another, open) and where it is carried out. A decision of the coordinator or of an agent holds until the owner reverses it. A new decision takes the next free identifier, at the end of its group, and the guide of its subject states the rule with no name, no role and no date.
+
+A guide and a comment never name a decision: they state the rule. The record of who chose it stays in `docs/DECISIONS.md`.
+
+The design: `docs/DECISIONS.md`, "How to read and write this file".
+
+Do not use: ADR, ruling, resolution.
+
+### Step
+
+A step is one tested commit on `master` that adds one capability to a system that works.
+
+The project grows in steps: each step leaves the system whole, built and tested, with its documents up to date in the same commit. `docs/REVIEWS.md` lists each step with its commit and its capability ("1, `7305ad2`, Isolated call"). The home of the site shows the count of steps. Several features can be written at once on branches; each merge still needs its build and the test of its own part.
+
+A step is not a stage of the start of the machine (the "Step of the start" of the group "Running code"), and not a step of a machine test, which waits for one line of the log.
+
+The design: `docs/REVIEWS.md`.
+
+Do not use: iteration, sprint, milestone (for this).
+
+### Choice
+
+A choice is a decision made during the implementation that the owner has not reviewed, numbered in the section "Choices made during the implementation" of `docs/FIRST_MILESTONE.md`.
+
+Writing code needs many small decisions that no property or decision settles: a format, an order, a limit. Each one is recorded as a numbered choice with its reason ("1. **Export numbers.** The kernel tool holds an ordered export list per module..."), so that the owner can read it and reverse it. A choice can change at any time.
+
+A comment never names a choice by its number; the site writes a pointer `choice <n>` of a guide as a link to its item.
+
+The design: `docs/FIRST_MILESTONE.md`, "Choices made during the implementation".
+
+Do not use: decision (for this: a decision is an entry of `docs/DECISIONS.md`), design note.
+
+### Review
+
+A review is a read of the work against the properties and the rule "no bad compromise", which lists each concession and what removes it.
+
+The project asks for one after each five steps; the record of each is in `docs/REVIEWS.md`. Kernel code also has an independent review before each merge: a fresh read of the change, often by a new agent session. A finding of a review has a label, and its correction refers to the finding in the record, never in a comment of the code.
+
+The design: `docs/REVIEWS.md`.
+
+Do not use: audit, code review (for the whole), retrospective.
+
+### Evidence item
+
+An evidence item is one numbered item of the section "Evidence" of `docs/FIRST_MILESTONE.md`: an action of the machine test that shows that a part of the system works.
+
+The machine test starts the machine under QEMU, acts as the input through the QEMU monitor (keys, pointer moves, clicks) and waits for a text of the log at each step. Each evidence item says what that scenario does and what it proves ("Start `fault`. The kernel stops it on a page fault. The other programs continue."). The status page shows, for each property, the evidence items that name it.
+
+The design: `docs/FIRST_MILESTONE.md`, "Evidence".
+
+Do not use: proof, test case (for this), demo.
+
+### Gap
+
+A gap is one item of the section "Gaps" of `docs/FIRST_MILESTONE.md`: a difference between the code and the documents, or a part that is not built, not run or not measured.
+
+The project states what is not done as plainly as what is done. A gap names the part, what is missing, and often who must act ("The coordinator fills the three numbers of the measure..."). The status page lists each gap with its number and its group, and shows under each property the gaps that name it. A document that says what the code no longer does is itself a fault, as a failing test is: it is corrected, not listed as a gap.
+
+The design: `docs/FIRST_MILESTONE.md`, "Gaps".
+
+Do not use: issue, bug (for this), todo, known limitation.
+
+### Working record
+
+A working record is a document of `docs/` that records the work, not the system: `HANDOFF.md`, `REVIEWS.md`, `SITE.md` and `FIRST_MILESTONE.md`.
+
+A guide explains how a part of the system is designed and why; a working record holds steps, choices, gaps, reviews and the state of the work. So the site publishes the guides and not the working records (`SITE_WORKING_RECORDS`): a link of a page to a working record names the file in the repository, and says so. `docs/DECISIONS.md` is the record of the decisions.
+
+The design: `docs/SITE.md`, "The pages".
+
+Do not use: internal document, notes.
+
 ### Changelog
 
-The file `CHANGELOG.md`: the releases of the system, newest first, in the format of Keep a Changelog 1.1.0. Each entry says what the system does since that release, for a reader of the system.
+The changelog is the file `CHANGELOG.md`: the releases of the system, newest first, each with the changes that a reader of the system notices.
+
+It follows the format of Keep a Changelog 1.1.0 and semantic version numbers. Each entry starts with a short bold summary, then says what the system does now, for a reader, not how the code changed. No one edits the file by hand: a branch adds a fragment for each change, and `kerneltool changelog release` moves the fragments into a new release. So two branches never change the same lines. The site shows the whole file at `releases/` and in the feed `releases.xml`.
+
+The changelog lists every change for a developer of the system; a news entry reports one thing for a reader who is not a developer.
+
+The design: `docs/SITE.md`, "The pages".
 
 Do not use: release notes (for the file), history, news.
 
 ### Release
 
-One section of the changelog: a release number, a date, and the entries of the changes, in the parts Added, Changed, Deprecated, Removed, Fixed and Security. The merge of step N on `master` is one release.
+A release is one section of the changelog: a release number, a date, and the entries of its changes, in the parts Added, Changed, Deprecated, Removed, Fixed and Security.
+
+A release marks a state of `master` that passed its checks. `kerneltool changelog release` makes it: it moves the fragments of `changelog.d/` into a new section `## [<number>] - <date>`, deletes them, and writes the release number in `contract/release`. Example: `## [0.91.0] - 2026-11-12`. On the site each release has the anchor `release-<number>` and links to each news entry that names it.
+
+It is not a version: a stored object of the system has versions. It is not a git tag, and not a build: many builds come between two releases.
+
+The design: `docs/SITE.md`, "The pages".
 
 Do not use: version (a stored object has versions), tag, build.
 
 ### Release number
 
-The number of a release, `<major>.<minor>.<patch>`: `0.N.0` for step N, `0.N.1` for a correction after it. `RELEASE_NUMBER` in `contract/release` is the newest one.
+The release number is the number of a release, in the form `<major>.<minor>.<patch>`.
+
+The project is before its first major release, so a release number is `0.N.0` for a release of new work and `0.N.1` for a correction after it. `RELEASE_NUMBER` in `contract/release` holds the newest one (today `"0.91.0"`); the foot of each page of the site and the page graph name it. The tool writes it; no one edits it by hand.
+
+The design: `docs/SITE.md`, "The pages".
 
 Do not use: version number, version.
 
 ### Fragment
 
-One file of `changelog.d/` with one change that is not in a release yet: its type and the text of its entry. `kerneltool changelog release` moves the fragments into a release.
+A fragment is one file of `changelog.d/` that holds one change that is not in a release yet: its type and the text of its entry.
+
+A branch adds one fragment for each change that a reader notices, in the same commit as the change: `kerneltool changelog new <type> <subject> - < text.md` writes `changelog.d/<yyyymmdd-hhmmss>-<subject>.md`. Line 1 is `type: <type>` (Added, Changed, Deprecated, Removed, Fixed or Security), line 2 is empty, then one paragraph:
+
+```
+type: Added
+
+**The thing**: what the system does now, for a reader, in one or two sentences.
+```
+
+A change with no effect that a reader notices (a document, a comment) has no fragment. `kerneltool changelog release` moves the fragments into a release and deletes them.
+
+The design: `changelog.d/README.md`.
 
 Do not use: changeset, news file, entry (for the file).
 
 ### News entry
 
-A dated report in prose, for a reader who is not a developer of the system, of one thing that a person can see or use, with its picture and its measured number: one file of `news/`, never moved or merged (`news/README.md`). The changelog lists every change for a developer; a news entry reports one thing for a person.
+A news entry is a dated report in prose, for a reader who is not a developer of the system, of one thing that the reader can see or use, with its picture.
+
+Each entry is one file of `news/`, `news/<yyyy-mm-dd>-<subject>.md`, never moved or merged: a head of six lines (`title`, `date`, `release`, `picture`, `kind`, `guide`), an empty line, then at most 1200 bytes of text. Its kind is one of four:
+
+- **Shown**: a new thing can now be seen or used in the running system;
+- **Measured**: a number about a thing that exists, with its conditions;
+- **Decided**: a choice that a reader sees, such as a name, a mark or a font;
+- **Fixed**: a thing that failed now works.
+
+`kerneltool news new <subject>` writes an empty entry, and `kerneltool news check` refuses it until a title and a text are written. The site shows each entry as a card on `news/`, the three newest on the home, and each in the feed `news.xml`. An entry states the fact; it never says who decided.
+
+The changelog lists every change for a developer; a news entry reports one thing, in a few sentences, and names the guide that explains it.
+
+The design: `docs/SITE.md`, "The news".
 
 Do not use: news item, post, announcement, blog post, changelog entry.
 
 ### Feed
 
-A file of the site in the Atom format (RFC 4287), for a program that follows a site: `news.xml` has the news entries and `releases.xml` the releases, newest first.
+A feed is a file of the site in the Atom format (RFC 4287), for a program that follows a site: `news.xml` has the news entries and `releases.xml` the releases, newest first.
+
+A feed reader subscribes to the address of the file and shows each new entry. Each page names both feeds in its head, so a browser finds them. The id of each entry is the address of its file in the repository on `master`, so it does not change when the site gets an address. With no site address the links of a feed are relative and it has no link `self`.
+
+The design: `docs/SITE.md`, "The news", and "The sitemap, robots.txt and the feeds".
 
 Do not use: RSS (for these files), stream, channel.
 
 ### Search index
 
-The file `search.json` of the site: one entry for each page, and for each row or section of a page that a person looks for (a module, an export, a term, a heading of a guide...), with its title, its page, its id, its kind and a short text. The search field of a page filters it with the fuzzy match of the console.
+The search index is the file `search.json` of the site: one entry for each page, and for each thing of a page that a reader looks for, with its title, its page, its anchor, its kind and a short text.
+
+The kinds are, in their order: page, module, program, export, operation, error kind, console command, term, guide section, property, news entry, release, gap, license row and type. Each entry comes from the same data as its page: a term has its short definition, an export its signature as the console prints it. The search field filters the index in the browser with the fuzzy match of the console, ported rule for rule, so the site needs no server for its search. The index has at most 4096 entries and 1 MiB; the command checks that each entry names a page and an id that exist.
+
+It is not the sitemap: the sitemap lists pages for a search engine; the search index lists things inside pages for the search field.
+
+The design: `docs/SITE.md`, "The index".
 
 Do not use: search database, catalog, sitemap.
 
 ### Search field
 
-The one field of a page of the site where a person types a search: in the site menu of each page, but on the docs home, where it is a large field in the page and the bar has none. One script, `search.js`, serves both places.
+The search field is the one field of a page of the site where a reader types a search.
+
+On each page it is in the site menu of the bar; on the docs home it is a large field in the page, and the bar has none. One script, `search.js`, serves both places: it loads the search index at the first key, and shows at most 8 rows in the look of the completion list of the console. `/` puts the focus in it; Up, Down, Enter and Escape work as in the console. The query is in the address as `?q=<query>`, so a search can be linked. With no script, the field is hidden and the site stays whole by its links.
+
+The design: `docs/SITE.md`, "The search".
 
 Do not use: search box, search bar, omnibox.
 
 ### Mark
 
-The picture that stands for the system: a heron on a grid of 24 by 24 square cells, each part filled with one gradient. `support/mark` holds it as data; `kerneltool logo` writes its files in `resources/logo` (`docs/DESIGN.md`, section 11).
+The mark is the picture that stands for the system: a heron on a grid of 24 by 24 square cells, each part filled with one gradient.
+
+`support/mark` holds it as data: the rows of the still heron, the colors of each part and the animations of the mark. Every picture of the mark comes from that one table: `kerneltool logo` writes the files of `resources/logo`, the site draws its own pictures and its icons, and the system draws it on the boot display. The squares follow the design of the system: rectangular forms, no rounded blob.
+
+The design: `docs/DESIGN.md`, "11. The mark".
 
 Do not use: logo, icon, emblem, mascot.
 
 ### Name of the mark
 
-The word "modus" in letters of square cells, 5 columns by 7 rows each, under the heron in the files of the mark that have a name.
+The name of the mark is the word "modus" drawn in letters of square cells, 5 columns by 7 rows each, under the heron.
+
+It is drawn from the same cells as the heron, so the files of the mark with a name keep one grid. The head of the home of the site shows it under the heron (`pictures/mark_home.png`, heron of 8 pixels a cell, name of 6), and the picture for other sites shows it too.
+
+The design: `docs/DESIGN.md`, "11. The mark".
 
 Do not use: wordmark, logotype.
 
 ### Still heron
 
-The heron of the mark with no animation: the 24 rows of `heron_rows` in `support/mark`. It is the frame 0 of each animation.
+The still heron is the heron of the mark with no animation: the 24 rows of `heron_rows` in `support/mark`.
+
+Each animation starts from it and ends on it, and it is the frame 0 of each one. A picture that does not move (a file of `resources/logo`, an icon, the boot display) shows it.
+
+The design: `docs/DESIGN.md`, "11. The mark".
 
 Do not use: rest pose, idle frame, base frame (a base frame is another thing: see Animation of the mark).
 
 ### Animation of the mark
 
-A short list of frames in which a few cells of the still heron change: a cell takes the letter of another part, or becomes empty. Each frame has a duration in milliseconds, and starts from the still heron or from an earlier frame of the same animation (its base frame). After its last frame the heron is still again. `support/mark/animation.odin`.
+An animation of the mark is a short list of frames in which a few cells of the still heron change.
+
+In a frame a cell takes the letter of another part, or becomes empty. Each frame has a duration in milliseconds, and starts from the still heron or from an earlier frame of the same animation, its base frame. After its last frame the heron is still again. The animations are data in `support/mark/animation.odin`, and the order of play chooses which one comes next. On the site, `mark_animation.js` plays them from the sprite sheet.
+
+The design: `docs/DESIGN.md`, "11. The mark".
 
 Do not use: idle animation, clip, tween.
 
 ### Order of play
 
-The fixed list of the steps of the animations of the mark: a still time, then one animation. It repeats. The weight of an animation is how many times it is in the order.
+The order of play is the fixed list of the steps of the animations of the mark: each step a still time, then one animation; the list repeats.
+
+The weight of an animation is how many times it is in the order (`animation_weight`). A fixed order makes each play the same, with no random choice: the same page shows the same heron at the same time after its load.
+
+The design: `docs/DESIGN.md`, "11. The mark".
 
 Do not use: playlist, random choice, schedule.
 
 ### Sprite sheet
 
-One PNG file of the site that holds each distinct frame of the animations of the mark side by side, from the left; the first sprite is the still heron.
+The sprite sheet is one PNG file of the site that holds each distinct frame of the animations of the mark side by side, from the left, with the still heron first.
+
+The script of the mark shows one sprite at a time by its place in the file, so the page loads one picture for all the animations. A frame that two animations share is in the file once.
+
+The design: `docs/SITE.md`, "The mark on the site".
 
 Do not use: atlas, film strip.
 
 ### Site
 
-The documentation of the system as static pages, their style sheet and their pictures, that `kerneltool site` writes in `build/site` from the files of the repository and the logs of the machine tests (`docs/SITE.md`). Its home is the one page that shows the system.
+The site is the documentation of the system as static pages, with their style sheet and their pictures, that `kerneltool site` writes in `build/site` from the files of the repository and the logs of the machine tests.
+
+Every fact of the site comes from a file: the guides from `docs/`, the reference tables from the sources, the numbers from the logs or the measure record, the news from `news/`. The command checks every page before it writes one, and stops on a fault with the page and the reason: a broken link, a missing alt text, two pages with one title, a document named as bare text. Each page is whole with no script and makes no request to another host. The site workflow publishes it at `https://modus.froment.software/`. Its home is the one page that shows the system: the mark, the tagline, the news, the stages of the start and the pictures of the machine.
+
+The design: `docs/SITE.md`, "The command".
 
 Do not use: website, homepage, landing page.
 
 ### Docs
 
-The section of the site that holds the guides and the reference, its two parts: the bar names it "Docs", and the addresses of its pages start with /docs/. Its first page is the docs home. The status page is not a part of it.
+The docs is the section of the site that holds the guides and the reference: the bar names it "Docs", and the addresses of its pages start with `/docs/`.
+
+Its first page is the docs home. The guides explain how each part of the system is designed and why; the reference lists what exists in this build, from the sources. The status page is not a part of it: it reports the state of the work.
+
+The word "Docs" names the section because "Documentation" is already the term for the text that a module carries.
+
+The design: `docs/SITE.md`, "The sections".
 
 Do not use: documentation (for this: Documentation is the text of a module), manual, help center.
 
 ### Docs home
 
-The first page of the docs, at the address /docs/ of the site: a large search field in the middle, the one search field of that page, the chart of what the search finds under it, then a card for the guides and a card for the reference with their counts. It has the presentation layout.
+The docs home is the first page of the docs, at `/docs/`: a large search field, the chart of what the search finds, then a card for the guides and a card for the reference.
+
+It is a door, not a list. Its search field is the one field of the page, and the bar has none. Under it, the chart shows one segment and one chip for each kind of the search index, with its count; while a text is in the field, the counts follow the matches, and a chip keeps the results to its kind. The card of the guides lists each guide with its one line of description; the card of the reference lists each reference table with its count. It has the presentation layout.
+
+The design: `docs/SITE.md`, "The docs home".
 
 Do not use: docs landing page, portal, hub.
 
 ### Guide
 
-A page of the site made from a document of `docs/`: how a part of the system is designed, and why.
+A guide is a page of the site made from a document of `docs/`: how a part of the system is designed, and why.
+
+Examples: `docs/ARCHITECTURE.md`, `docs/QUIC.md`, `docs/FONTS.md`. A guide states each rule with no name of a person or a role, no step, no choice and no date: that record is `docs/DECISIONS.md`. The working records are not guides and are not published. On the site a guide has the documentation layout, and its code spans link to the declarations and documents that they name.
+
+The design: `docs/SITE.md`, "The pages".
 
 Do not use: article, tutorial (for this).
 
 ### Reference table
 
-A page of the site that the tool generates from the code or the files that define a thing: what exists in this build, each row with its source.
+A reference table is a page of the site that the tool generates from the code or the files that define a thing: what exists in this build, each row with a link to its source line.
+
+The tables: the kernel operations, the context of a program, the error kinds, the grants of the root service, the fixed ranges, the commands of the console and of the tool, the types, the licenses, the numbers, the modules and the module graph. Each one reads one form of its source file; when a file loses that form, the command stops with the file and the line. A row with an id is a symbol.
+
+The design: `docs/SITE.md`, "The reference tables".
 
 Do not use: API docs, listing.
 
 ### Module page
 
-A reference table of the site for one module of `module_builds`: its documentation, its exports as the console prints them, its imports, and for a program its grants and its budget.
+A module page is the reference page of the site for one module of the build: its documentation, its exports, its imports and, for a program, its grants and its budget.
+
+The page `docs/reference/modules/<name>/` gives the documentation of the module (the comment before `package` in its source), its identity card, its source folder, its size in the boot image, its imports and the modules that import it, a figure of its neighbours in the module graph, and each export as a symbol with its signature as the console prints it (`write(name: Text, data: Text) -> Integer`). For a program it lists the grants and the budget that the root service gives it. The pages come from the same reader as the build: no module needs to be built.
+
+The design: `docs/SITE.md`, "The module pages".
 
 Do not use: API page, package page.
 
 ### Status page
 
-The page of the site that gives the state of each property in the words of `PROPERTIES.md`, the evidence items and the gaps of `FIRST_MILESTONE.md` that name it, then the gaps and the next steps. What is not done is on it as plainly as what is done.
+The status page is the page of the site that gives the state of each property, with its evidence items and its gaps, then all the gaps and the next steps.
+
+It writes no sentence of its own: each cell is a part of `docs/PROPERTIES.md` or of `docs/FIRST_MILESTONE.md`. An evidence item or a gap belongs to a property when its text names it. What is not done is on it as plainly as what is done. It is a section of the bar of its own, outside the docs.
+
+The design: `docs/SITE.md`, "The status page".
 
 Do not use: roadmap, progress page, "what runs today".
 
 ### Site address
 
-The absolute address where a host serves the site, as `https://<host>/<path>`: `SITE_ADDRESS`, or `kerneltool site --address` for one run. With no site address the pages have relative links only, and the site has no canonical address, no Open Graph, no page graph and no sitemap.
+The site address is the absolute address where a host serves the site, in the form `https://<host>/<path>`.
+
+`SITE_ADDRESS` holds it (`https://modus.froment.software/`), and `kerneltool site --address` sets another for one run. Some parts of a page must be absolute to be right for the program that reads them, so they exist only with a site address: the canonical address, Open Graph, the page graph and the sitemap. With no site address the pages have relative links only, and work from a folder of a disk.
+
+The design: `docs/SITE.md`, "What other sites read".
 
 Do not use: base URL, domain (for this), root.
 
 ### Canonical address
 
-The one absolute address of a page that the page names in its head (`<link rel="canonical">`): the site address and the folder of the page, with a final slash.
+The canonical address of a page is its one absolute address, which the page names in its head with `<link rel="canonical">`: the site address and the folder of the page, with a final slash.
+
+A page can be reached at several addresses (with `index.html`, through a redirect page); the canonical address tells a search engine which one is the page. Example: `https://modus.froment.software/docs/reference/licenses/`. The command checks that each page has its own and that no two pages share one.
+
+The design: `docs/SITE.md`, "What other sites read".
 
 Do not use: permalink, URL (for this).
 
 ### Redirect page
 
-A small file of the site at an old path of a page: the `.html` file from before each page became the `index.html` of its own folder (`reference/licenses.html`), or the folder from before the guides and the reference moved under the docs (`reference/licenses/`). A refresh straight to the address of today and one link, with no script. It is not a page of the site: it is in no sitemap, no index of the search and no feed.
+A redirect page is a small file of the site at an old address of a page, which sends the reader straight to the address of today.
+
+The addresses of the site changed twice, and the old ones were public: first `.html` files (`reference/licenses.html`), then folders before the move under the docs (`reference/licenses/`). A rule gives each old path from the path of today, and a redirect page is written at each one: a refresh with a delay of 0 and one visible link, with no script. It is not a page of the site: it is in no sitemap, no search index and no feed, and it never names another redirect page.
+
+The design: `docs/SITE.md`, "The redirect pages".
 
 Do not use: redirect, alias, forward (for this).
 
 ### Page graph
 
-The JSON-LD of one page: one `@graph` of schema.org nodes (the site, the system, its source code, the page, its breadcrumbs, and what the page is about), built from the data that the page shows, whose nodes name each other by their `@id`.
+The page graph is the JSON-LD of one page: one `@graph` of schema.org nodes, built from the data that the page shows, whose nodes name each other by their `@id`.
+
+It tells a search engine what the page is: the site with its search, the system as a `SoftwareApplication`, its source code, the page and its breadcrumbs, and what the page is about (a `TechArticle` for a guide, a `DefinedTermSet` for the glossary, a `Blog` for the news). No value is typed for the graph. It exists only with a site address, and the command parses each graph and checks that each `@id` that it names exists.
+
+The design: `docs/SITE.md`, "The page graph".
 
 Do not use: structured data (for this), schema, rich snippet.
 
 ### Sitemap
 
-The file `sitemap.xml` of the site: the canonical address of each page, for a search engine.
+The sitemap is the file `sitemap.xml` of the site: the canonical address of each page, for a search engine.
+
+It lists each page that the command writes, once, and no redirect page. A page has a `lastmod` only when the tool knows the date of its last change (the news and the releases): a wrong date teaches a search engine to ignore the field. `robots.txt` names it. Both exist only with a site address.
+
+The design: `docs/SITE.md`, "The sitemap, robots.txt and the feeds".
 
 Do not use: site index, page list.
 
 ### Site menu
 
-The menu of the bar of the site: one `details` element that holds the sections and the search field (on the docs home, the sections only). Under 720 pixels it is a square button with three lines; on a wide screen it is open and shows as the bar.
+The site menu is the menu of the bar of the site: one `details` element that holds the sections and the search field.
+
+One list of links serves every width, so a screen reader reads each section once. Under 720 pixels it is a square button with three lines, and the open menu lies over the page. On a wide screen it is open and its button hidden, so it reads as the bar. On the docs home it holds the sections only. With no script, the button still opens it.
+
+The design: `docs/SITE.md`, "The site menu".
 
 Do not use: burger menu, hamburger, drawer.
 
 ### Documentation layout
 
-The layout of each guide, reference page, module page, the status and the index pages of the guides, the reference and the modules: the documentation tree at the left of the window, the text in the middle, "On this page" at the right. The writer of a page states it. The home, the docs home, the news and the releases have the presentation layout: one centred column.
+The documentation layout is the layout of a page of the docs: the documentation tree at the left, the text in the middle, "On this page" at the right.
+
+Each guide, reference page, module page, the glossary, the status page and the index pages use it. The home, the docs home, the news and the releases have the presentation layout: one centred column of at most 1152 pixels. The writer of each page states its layout; the tool does not guess it from a path. Under 1100 pixels "On this page" folds above the text; under 720 pixels the tree moves into the site menu.
+
+The design: `docs/SITE.md`, "The two layouts".
 
 Do not use: docs theme, sidebar layout.
 
 ### Documentation tree
 
-The list of the documentation pages of one part of the docs, generated from the pages that exist: a link to the docs home at its top, then the guides, or the reference pages, the modules in their groups and the status. One `nav` on each documentation page, in the site menu: at the left of the window on a wide screen.
+The documentation tree is the list of the documentation pages of the docs, generated from the pages that exist, at the left of each documentation page.
+
+Its first link is the docs home. Then come the guides in their reading order, the reference pages, the modules in their groups (Kernel, Programs, Modules) and the status. It is one `nav` on each page, in the site menu on a narrow screen.
+
+The design: `docs/SITE.md`, "The two layouts".
 
 Do not use: sidebar, navigation tree, table of contents (for this).
 
 ### On this page
 
-The list of the headings and the symbols of one documentation page, each a link to its id: at the right of the text on a wide screen, a `details` above the text on a narrower one.
+"On this page" is the list of the headings and the symbols of one documentation page, each a link to its id.
+
+It lists the headings of levels 2 and 3, then each symbol in the order of the page: on a module page, each export. From 1100 pixels it is a column at the right of the text with its own scroll; on a narrower screen it is a `details` above the text.
+
+The design: `docs/SITE.md`, "The two layouts".
 
 Do not use: table of contents (for this), outline, minitoc.
 
 ### Symbol
 
-One documented thing of a reference page or a module page: a kernel operation, a command of the console or of the tool, an export of a module, or a row of a reference table with an id. A documented symbol shows its signature, the text of its source comment, its facts and its source line.
+A symbol is one documented thing of a reference page or a module page: a kernel operation, a command of the console or of the tool, an export of a module, or a row of a reference table with an id.
+
+A symbol shows its name as a heading with an id (`operation-<name>`, `export-<name>`), its signature in a block of code, the text of its source comment as Markdown, its facts (the statuses of an operation, the parameters and error record of an export) and a link to its source line. "On this page" lists it. The first sentence of the comment of an export is also its help in the console.
+
+It is not a symbol of an object file: a module exports by index, and a name is looked up only at build time. A declaration of the sources is in the declaration index, not a symbol.
+
+The design: `docs/SITE.md`, "The reference tables".
 
 Do not use: entry, item, API (for this).
 
 ### Value kind
 
-A value kind is what a technical value is, for a reader: a number, a size, a time, a handle, a value of the context, a grant, a status, a type, an operation, a command, a module, a file, a guide, a version, yes or no, a procedure, a constant or a global variable.
+A value kind is what a technical value is for a reader, such as a number, a size, a time, a handle, a status or a module, so that every place that shows the value can give it one look.
 
-One enumeration gives the kinds to the site and to the system (`contract/value_kinds`), and one table gives each kind its color in each color scheme (`support/graphics/value_colors.odin`). The site adds a class, a title and an icon to each kind (`site_value_kinds`); a log record keeps the kind of each value of its text (a value run). The writer of a table, a symbol or a line of the log states the kind of each value: no text is classified by its look.
+The kinds are one enumeration of the system, `value_kinds.Value_Kind` (`contract/value_kinds`): number, size, time, handle, value of the context, grant, status, type, operation, command, module, file, guide, version, yes or no, procedure, constant and global variable. One table gives each kind its color in each color scheme (`support/graphics/value_colors.odin`). The site adds a class `value-<name>`, a title and an icon to each kind; the system uses the same kinds in a log record, where each value run keeps the kind of its part of the text, so the log draws a size and a module name in their colors.
+
+The writer of a table, a symbol or a line of the log states the kind of each value: no text is classified by its look. A value is in the monospace font; a name or an explanation in the reading font.
+
+It is not a type of a language: `Size` and `Number` can both be an `int`. A value kind says what the value means to a reader.
+
+The design: `docs/SITE.md`, "The kinds of values".
 
 Do not use: value type, badge, chip, tag (for this).
 
 ### Declaration index
 
-The list that `kerneltool site` reads with the parser of Odin from the sources of the system (`kernel`, `boot`, `contract`, `support`, `modules`, `programs`): each procedure, type, constant and global variable declared at the top of a package, with its package, its file and line, its kind, its one line of Odin and the first sentence of its comment. A code span of a guide, a news entry or a source comment that names one of them links to it.
+The declaration index is the list of every top-level declaration of the sources of the system, which `kerneltool site` reads with the parser of Odin so that a code span can link to what it names.
+
+It reads each source file of `kernel`, `boot`, `contract`, `support`, `modules` and `programs` (not the tests and not the tool). For each procedure, type, constant and global variable it keeps its package, its file and line, its kind, its one line of Odin and the first sentence of its comment. A code span of a guide, a news entry, the glossary or a source comment whose whole text is a name (`blend_coverage_row`, `graphics.text_proportional`) then becomes a link with a declaration card. When several declarations share the name, the folder that the text around the span names chooses one.
+
+It is not a symbol table of an object file, and its entries are not symbols: a symbol is a documented thing of a reference page.
+
+The design: `docs/SITE.md`, "The declaration index".
 
 Do not use: symbol table, symbol index (a symbol is a documented thing of a reference page), ctags.
 
 ### Declaration card
 
-The short card of one declaration of the declaration index: its name, its kind and its package, its one line of Odin colored, the first sentence of its comment, its file and line. A page holds the card of each declaration that it links to once; the script opens it when the pointer rests on the link or the focus reaches it. With no script the link works and no card opens.
+A declaration card is the short card of one declaration of the declaration index, which opens over a link that names it.
+
+It shows the name, the kind and the package, the one line of Odin colored, the first sentence of the comment ("A procedure with no comment in its source." when there is none), and the file and line as a link. A page holds the card of each declaration that it links to once. The script opens it when the pointer rests 400 ms on the link or the focus reaches it; with no script the link works and no card opens.
+
+The design: `docs/SITE.md`, "The declarations of the sources".
 
 Do not use: tooltip, hover card (for this).
 
 ### Type card
 
-What the site states of one type: its kind, its size, its alignment, its fields with their offsets and the padding, or its members with their values, its base, where it is named, and its source line. The size, the alignment, the offsets and the values come from the compiler that builds the tool (`type_info_of`). The page of the types holds the whole card; a page that names the type holds a short card that its name opens.
+A type card is what the site states of one type of the contract: its kind, its size, its alignment, its fields with their offsets and the padding, or its members with their values, where it is named, and its source line.
+
+The size, the alignment, the offsets and the values come from the compiler that builds the tool (`type_info_of`), so they are the numbers of the build, not a reading of the text. The page of the types holds each whole card; a page that names a type holds a short card that its name opens. A reader of a record of a ring sees with it where each byte is.
+
+The design: `docs/SITE.md`, "The types".
 
 Do not use: tooltip, type info, hover card (for this).
 
 ### Identity card
 
-What the site states of one module: its name, its kind, its hash, its size, the counts of its exports, of its imports and of the modules that import it, its license, and the first sentence of its documentation. The page of the module shows it; the page of the module graph shows it for the node under the pointer or the focus.
+An identity card is what the site states of one module: its name, its kind, its hash, its size, the counts of its exports, its imports and the modules that import it, its license, and the first sentence of its documentation.
+
+It answers "what is this module?" in one box: the hash is its identity (64 hexadecimal digits), the counts place it in the module graph, and the license comes from the license rows of its source folder. The module page shows it after the documentation; the page of the module graph shows it for the node under the pointer or the focus.
+
+The design: `docs/SITE.md`, "The identity card".
 
 Do not use: tooltip, hover card, module info (for this).
 
 ### Document pointer
 
-A part of a source comment that names a document of `docs/` for a person who reads the code: its path, and the labels of a place in it, as `(docs/ARCHITECTURE.md, "Kernel systems")` or `docs/FONTS.md, section 12.4`.
+A document pointer is a part of a source comment that names a document of `docs/` and a place in it, for a reader of the code.
+
+Examples: `(docs/ARCHITECTURE.md, "Kernel systems")`, `docs/FONTS.md, section 12.4`. A pointer is how a comment stays short: the comment gives the reason in a few words and points to the guide for the rest. `kerneltool site` checks every pointer of every source file: a label that finds no heading stops the command. On a page, the site writes a document reference in its place.
+
+The design: `docs/SITE.md`, "The forms of a pointer".
 
 Do not use: doc link, citation (for this).
 
 ### Comment breach
 
-A comment of a source that names a property, a choice, a step, a review or a decision by its number, its label or its date, in place of the reason. `kerneltool check` fails on each one (`docs/TOOLS.md`, "The comments of the sources").
+A comment breach is a comment of a source that names a property, a choice, a step, a review, a finding or a decision by its number, its label or its date, in place of the reason.
+
+A number means nothing to a reader of the code, and it goes stale when the record changes. So a comment states the reason in plain words, or points to a heading of a guide. `kerneltool check` reads every comment of the sources and fails on each breach, with its file, its line and its form: "(property 14)", "(P20)", "choice 186", "D-047", "HANDOFF item 53".
+
+The design: `docs/TOOLS.md`, "The comments of the sources".
 
 Do not use: violation, lint error (for this).
 
 ### Document reference
 
-What a page of the site writes for a document pointer, and for a code span of a guide that names a document: a link with the title of the document and the text of the heading that the labels name, in the color and with the icon of the value kind Guide. A reference to a working record links to the file in the repository, and says so.
+A document reference is what a page of the site writes for a document pointer, or for a code span that names a document: a link with the title of the document and the text of the heading that the pointer names.
+
+Example: the pointer `(docs/ARCHITECTURE.md, "Kernel systems")` becomes the link "Architecture: Kernel systems", in the color and with the icon of the value kind Guide. A comment shows its references on one line "See:" after its text, so no reference breaks a sentence. A reference to a working record links to the file in the repository, and says so. The command prints the count of references and those whose labels found no heading.
+
+The design: `docs/SITE.md`, "The references to documents".
 
 Do not use: tag, badge, cross-reference (for this).
 
 ### Wire form
 
-One of the types of the call form of the module contract, a member of `Type` of `contract/module`: Integer, Text, Record, Handle, Table, Bytes. It says how a call carries a parameter or a result: one register, and what that register holds or points to.
+A wire form is one of the types of the call form of the module contract, a member of `Type` of `contract/module`: Integer, Text, Record, Handle, Table or Bytes.
+
+It says how a call carries a parameter or a result: in one register, and what that register holds or points to. An Integer is the value; a Text, a Record, a Table and Bytes are an address of memory of the caller with a header; a Handle is a handle number. Because each parameter has a wire form in the description of an export, one export serves a direct call, an isolated call and the console with no glue code.
+
+The design: `docs/MODULE_CONTRACT.md`, "5. The types".
 
 Do not use: marshalling type, ABI type.
 
 ### File version
 
-The first 8 bytes of the BLAKE3 hash of a file of the site that changes between builds (the style sheet, the scripts, the index of the search), in hexadecimal, as `?v=<version>` in each link to it: a proxy that keeps a file never serves an old one with a new page.
+A file version is the first 8 bytes of the BLAKE3 hash of a file of the site, in hexadecimal, added as `?v=<version>` to each link to that file.
+
+A proxy in front of the site keeps a file for hours. The style sheet, the scripts and the search index change between builds, so each link names their bytes: `style.css?v=<16 hexadecimal digits>`. A new build gives a new address, and no proxy serves an old file with a new page. The same bytes give the same address. A page itself cannot carry a version; the line "This page is from an older build: reload" covers that case.
+
+The design: `docs/SITE.md`, "The versions of the files".
 
 Do not use: cache buster, fingerprint, hash suffix.
 
 ### Site workflow
 
-The workflow of GitHub Actions `.github/workflows/site.yml`: at each push to `master` it builds the boot image and the site with `kerneltool`, then GitHub Pages serves the site.
+The site workflow is the workflow of GitHub Actions `.github/workflows/site.yml`, which builds the site at each push to `master` and gives it to GitHub Pages.
+
+It holds no logic: each step calls `kerneltool` or an action pinned by its version tag. It builds the boot image (`kerneltool build`) and the site (`kerneltool site`), then deploys `build/site`. A failed check of the site stops the run, and the site of the last run stays online. It runs no machine test: the numbers come from the measure record.
+
+The design: `docs/SITE.md`, "How the site is published".
 
 Do not use: pipeline, CI job, deploy script.
 
 ### Full check
 
-`kerneltool screenshots` and `nix flake check`, both passed: the machine tests, the second build and the pictures on the host, and the host tests and `kerneltool check` in the sandbox of Nix.
+A full check is `kerneltool screenshots` and `nix flake check`, both passed.
+
+`kerneltool screenshots` runs the machine tests, the second build and the pictures on the host, and writes the measure record. `nix flake check` runs the host tests and `kerneltool check` in the sandbox of Nix; it sees only the folders that `flake.nix` names. A full check runs once at the end of a batch of features, before the release and the publication of the site; each merge before it needs only its build and the test of its own part.
+
+The design: `docs/TOOLS.md`, "What each tool reads".
 
 Do not use: CI run, test suite, full test.
 
 ### Measure record
 
-The file `docs/measures/measures.txt`: the measured numbers of the last full check, each as the whole line of its log, with the facts of its run (its time, its commit, the state of its tree, its release, its host, the count of checks that passed) and the stages of the start. `kerneltool screenshots` writes it; the site reads it when the logs of `build/` are not newer (`docs/SITE.md`, "The measure record").
+The measure record is the file `docs/measures/measures.txt`: the measured numbers of the last full check, each as the whole line of its log, with the facts of its run.
+
+The site workflow runs no machine test, so the pass that commits the pictures also commits the numbers. `kerneltool screenshots` writes the record: one line `key value` for each fact (its time, its release, its commit, the state of its tree, its host, the count of checks that passed), then each number with its log, its line and its machine, and the stages of the start. The site reads it when the logs of `build/` are not newer. A number of speed is a measure: it is printed and recorded, and never makes a test fail.
+
+The design: `docs/SITE.md`, "The measure record".
 
 Do not use: benchmark results, metrics file, numbers cache.
 
 ### Hang bound
 
-The one time in a test: it ends a test that waits for ever, and checks nothing about speed. Generous and the same for each wait that has no reason of its own: 120 s for a step of a machine test, 60 s for the checks of a program (`docs/TOOLS.md`, "The bounds of the tests").
+The hang bound is the one time in a test: it ends a test that waits for ever, and checks nothing about speed.
+
+A test checks a condition: a value, a state, a line of the log. A time in it has one role, to end a hang, so it is generous and the same for each wait that has no reason of its own: `HANG_BOUND`, 120 s, for a step of a machine test, and `system.TEST_HANG_BOUND_MILLISECONDS`, 60 s, for the checks of a program, so that the program reports its own hang before the tool ends the machine. A bound of its own needs a named constant with its reason, and `kerneltool check` refuses a number in the field `seconds` of a step.
+
+It is not a timeout that a test asserts: no test fails because the host is slow. A duration is printed as a measure.
+
+The design: `docs/TOOLS.md`, "The bounds of the tests".
 
 Do not use: timeout (for a test), deadline (for a test), time limit.
 
 ### Stall
 
-A case that writes a count of its progress, and whose count did not grow for the hang bound. The test bounds a stall, not the whole run of such a case.
+A stall is a case that writes a count of its progress and whose count did not grow for the hang bound.
+
+A long case (the fault ring under load, for example) can take any time on a slow host and still be right. So the test bounds a stall, not the whole run: it ends the case when the count stays still for `system.TEST_HANG_BOUND_MILLISECONDS`, or after 600 s in all. The report names the step where the count stopped, which tells a lost wake from a slow host.
+
+The design: `docs/TOOLS.md`, "The bounds of the tests".
 
 Do not use: freeze, no progress timeout, watchdog.
 
 ### Tagline
 
-The one line under the name in the head of the home of the site: the first sentence of the first paragraph of `README.md`. The rest of that paragraph is a section lower on the home.
+The tagline is the one line under the name in the head of the home of the site: the first sentence of the first paragraph of `README.md`.
+
+The rest of that paragraph is a section "What it is" lower on the home, after the news, so the first screen of a phone holds the mark, the name, the tagline and the links. The description of the home in its head and in the page graph stays the whole paragraph, cut at 160 bytes. Like every description of the project, it says what the system does for its user, and names no technical part.
+
+The design: `docs/SITE.md`, "The pages".
 
 Do not use: slogan, subtitle, hero text.
 
