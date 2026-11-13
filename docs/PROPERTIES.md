@@ -449,7 +449,7 @@ The shared file system (property 8) is one case. This property lists the other c
 | # | Hole in current systems | Rule in this system |
 |---|---|---|
 | 1 | A program lists and inspects all other programs | A program sees no other program. It sees only the programs that it started |
-| 2 | A program debugs or reads the memory of another program of the same user | Debug access is a handle to one program. The principal grants it |
+| 2 | A program debugs or reads the memory of another program of the same user | Debug access is a handle to one program. The program that created a program holds it for that program: it built the address space of that program and can already write its memory. For each other program, the principal grants it (2026-11-13: the row said only "The principal grants it") |
 | 3 | Any program opens network connections to any host | No network at start. A grant names the hosts or the ports. Name resolution is a part of the grant |
 | 4 | Any program listens on the local machine, and local services trust local callers | No shared "localhost". Two programs talk only through a ring that someone gave to both |
 | 5 | Any program reads the clipboard | The clipboard belongs to the compositor. A program receives the content only at a paste action of the principal |
