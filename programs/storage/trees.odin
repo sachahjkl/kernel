@@ -3,8 +3,10 @@ package storage_service
 import "base:intrinsics"
 import "contract:blake3"
 import "contract:errors"
+import "contract:isolated"
 import format "contract:store"
 import "support:storage_mount"
+import block_tree "support:storage_object"
 import tree "support:storage_tree"
 import "support:system"
 
@@ -295,13 +297,36 @@ plan_trees_node_change :: proc "contextless" () -> i64 {
 	return dirty - i64(plan.pool.released_count)
 }
 
-// blocks_named gives the list and the blocks of data that the state of an
-// object names.
-blocks_named :: proc "contextless" (entry: ^Entry) -> u64 {
-	if entry.kind != .Object || entry.pointer.block == 0 {
+// state_blocks_of gives the blocks that a state of an object holds: its
+// object nodes and its blocks of data, from its root node. A root that is
+// wrong gives 0, as the open counts it.
+state_blocks_of :: proc "contextless" (root: Pointer, size: u64) -> u64 {
+	if root.block == 0 || size > format.OBJECT_SIZE_LIMIT || storage_mount.wrong_block(&opened, root.block) {
 		return 0
 	}
-	return 1 + blocks_of(entry.size)
+	blocks, outcome := block_tree.state_blocks(&object_source, {root = root, size = size}, &object_node)
+	switch outcome {
+	case .Device:
+		plan.device = true
+		return 0
+	case .Wrong:
+		return 0
+	case .Good:
+	}
+	return blocks
+}
+
+// current_blocks_change changes the count of the blocks of the current
+// objects of the store of the plan; a count that would go below 0 is a
+// fault of the engine.
+current_blocks_change :: proc "contextless" (added: u64, removed: u64) {
+	total := plan.store_block.current_blocks + added
+	if removed > total {
+		plan.count_fault = true
+		plan.store_block.current_blocks = 0
+		return
+	}
+	plan.store_block.current_blocks = total - removed
 }
 
 // ---------------------------------------------------------------------
@@ -481,9 +506,10 @@ minimum_refusal :: proc "contextless" (store: Store_Of, error: ^errors.Error_Rec
 // The changes.
 
 Change_Kind :: enum {
-	Write, // New bytes.
+	Write, // New bytes: the whole object.
 	Restore, // The state of a version.
 	Clone, // The state of another object.
+	Ranges, // The pending changes of a connection (ranges.odin).
 }
 
 // State_Of_Object is one state of an object: its current version or a
@@ -493,56 +519,72 @@ State_Of_Object :: struct {
 	size:       u64,
 	time:       u64,
 	date:       u64,
-	list:       Pointer,
+	root:       Pointer, // The root of its block tree.
 	hash:       [32]u8,
-	has_hash:   bool, // A version keeps no hash: a restore computes it from the bytes.
+	has_hash:   bool, // A version keeps no hash: a restore computes it from the values of its block tree.
 	current:    bool,
 }
 
 current_state :: proc "contextless" (entry: ^Entry) -> State_Of_Object {
-	return {generation = entry.generation, size = entry.size, time = entry.time, date = entry.date, list = entry.pointer, hash = entry.hash, has_hash = true, current = true}
+	return {generation = entry.generation, size = entry.size, time = entry.time, date = entry.date, root = entry.pointer, hash = entry.hash, has_hash = true, current = true}
 }
 
-// state_damaged says if a state of an object has a wrong block that the
-// service knows: its list, or a block of data that its list names.
-state_damaged :: proc "contextless" (list: Pointer, size: u64) -> bool {
-	if list.block == 0 {
-		return false
-	}
-	if storage_mount.wrong_block(&opened, list.block) {
-		return true
-	}
-	switch read_single(list, &plan.list_read) {
+tree_state :: proc "contextless" (state: State_Of_Object) -> block_tree.State {
+	return {root = state.root, size = state.size}
+}
+
+// The work of a commit on one object (support/storage_object): the copies
+// of its object nodes.
+object_work: block_tree.Work
+object_node: Object_Node // The room of a read of one block tree.
+object_nodes: [OBJECT_LEVEL_LIMIT]Object_Node // The room of a walk of one block tree.
+object_hash_room: block_tree.State_Room
+
+// The blocks of data of a write of a whole object: the data comes in the
+// call region, so it has at most the blocks of the call region.
+WHOLE_WRITE_BLOCKS :: isolated.REGION_PAGES * system.PAGE_SIZE / BLOCK_SIZE
+whole_blocks: [WHOLE_WRITE_BLOCKS]Block
+whole_changes: [WHOLE_WRITE_BLOCKS]block_tree.Change
+
+// work_failure_take gives the failure of the work on an object to the plan:
+// a commit with one is refused. A wrong block of the state before gives
+// damaged: true.
+work_failure_take :: proc "contextless" () -> (damaged: bool) {
+	switch object_work.failure {
+	case .None:
 	case .Device:
 		plan.device = true
-		return false
 	case .Wrong:
-		storage_mount.wrong_block_set(&opened, list.block)
 		return true
-	case .Good:
-	}
-	data := (^List)(&plan.list_read)
-	for pointer in data.data[:min(blocks_of(size), OBJECT_BLOCKS_LIMIT)] {
-		if storage_mount.wrong_block(&opened, pointer.block) {
-			return true
+	case .Full:
+		capacity_reached(block_tree.NODE_SLOT_CAPACITY)
+	case .Write:
+		// plan_write gave no block: it set the cause.
+		if !plan.full && !plan.capacity_reached {
+			plan.full = true
 		}
 	}
 	return false
 }
 
 // object_change makes one commit that changes one object of a tree: new
-// bytes, the state of one of its versions, or the state of another object
-// (a clone). The state before becomes a version. It gives the generation
-// of the commit, or an ERROR_ number with the error record. `name_argument`
-// is the argument of the name in the export.
-object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: Kept_Name, kind: Change_Kind, data: []u8, given_source: State_Of_Object, error: ^errors.Error_Record, name_argument: i64) -> i64 {
+// bytes, the state of one of its versions, the state of another object (a
+// clone), or the pending changes of a connection. Each one goes through
+// the block tree of the object: a write of the whole object is a cut, a
+// size and a change of each of its blocks; a block that keeps its bytes
+// keeps its block. The state before becomes a version. It gives the
+// generation of the commit, or an ERROR_ number with the error record.
+// `name_argument` is the argument of the name in the export.
+object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: Kept_Name, kind: Change_Kind, data: []u8, given_source: State_Of_Object, error: ^errors.Error_Record, name_argument: i64, pending: ^Pending_Object = nil, measure: ^Commit_Measure = nil) -> i64 {
 	count := blocks_of(u64(len(data)))
-	if kind == .Write && count > OBJECT_BLOCKS_LIMIT {
-		return errors.fail(error, ERROR_TOO_LARGE, .Too_Long, .Bytes, name_argument + 1, i64(len(data)), OBJECT_BLOCKS_LIMIT * BLOCK_SIZE)
+	if kind == .Write && count > WHOLE_WRITE_BLOCKS {
+		return errors.fail(error, ERROR_TOO_LARGE, .Too_Long, .Bytes, name_argument + 1, i64(len(data)), WHOLE_WRITE_BLOCKS * BLOCK_SIZE)
 	}
 	source := given_source
-	if kind == .Restore && !source.has_hash {
-		hash, outcome := state_hash(source)
+	if (kind == .Restore || kind == .Clone) && !source.has_hash {
+		// A version keeps no hash: its block tree gives it, from the values
+		// on the path of its last block.
+		hash, outcome := block_tree.state_hash(&object_source, tree_state(source), &object_hash_room)
 		switch outcome {
 		case .Device:
 			return errors.fail(error, ERROR_DISK, .Device)
@@ -552,7 +594,8 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 		}
 		source.hash = hash
 	}
-	store_index, refused := store_prepare(store, kind == .Write && len(path) == 0, error)
+	creates := kind == .Write || kind == .Ranges
+	store_index, refused := store_prepare(store, creates && len(path) == 0, error)
 	if store_index < 0 {
 		return refused
 	}
@@ -567,6 +610,15 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 	if found && plan.entries[index].before.kind != .Object {
 		plan_drop()
 		return errors.fail(error, ERROR_ABSENT, .Absent, .Objects, name_argument) // The name is a tree.
+	}
+	if kind == .Ranges {
+		// The pending changes start from the state that the first of them
+		// saw: another change of the object since then comes first.
+		base := found ? plan.entries[index].before.generation : 0
+		if base != pending.base_generation {
+			plan_drop()
+			return errors.fail(error, ERROR_PENDING, .Absent, .Pending, name_argument, 0, 0, 1)
+		}
 	}
 	if !found {
 		if kind == .Restore {
@@ -583,101 +635,95 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 	existed := old.kind == .Object
 	now := time_now()
 	next := Entry{kind = .Object, generation = root.generation + 1, time = now, date = date_now(), versions = old.versions}
+	damaged_before := existed && state_damaged(old.pointer)
+	old_blocks: u64
+	if existed {
+		old_blocks = state_blocks_of(old.pointer, old.size)
+	}
+	new_blocks: u64
 	switch kind {
-	case .Write:
-		next.size = u64(len(data))
-		next.hash = blake3.hash(nil) // An empty object; the hash of bytes comes from the copy below.
+	case .Write, .Ranges:
+		if kind == .Ranges && damaged_before {
+			// The pending changes read the state before: it is damaged.
+			plan_drop()
+			return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, name_argument)
+		}
+		changes: []block_tree.Change
+		cut, size: u64
+		if kind == .Write {
+			for block_index in 0 ..< count {
+				bytes := &whole_blocks[block_index]
+				part := data[block_index * BLOCK_SIZE:]
+				copy(bytes[:], part[:min(len(part), BLOCK_SIZE)])
+				if len(part) < BLOCK_SIZE {
+					intrinsics.mem_zero(raw_data(bytes[len(part):]), BLOCK_SIZE - len(part))
+				}
+				whole_changes[block_index] = {index = block_index, bytes = bytes}
+			}
+			changes = whole_changes[:count]
+			size, cut = u64(len(data)), u64(len(data))
+		} else {
+			changes = pending_changes(pending)
+			size, cut = pending.size, pending.cut
+		}
+		// A damaged state is not kept: the change replaces it whole.
+		before := block_tree.State{}
+		if existed && !damaged_before {
+			before = {root = old.pointer, size = old.size}
+		}
+		block_tree.work_begin(&object_work, &object_source, &object_counter, before, changes)
+		block_tree.work_cut(&object_work, cut)
+		block_tree.work_resize(&object_work, size)
+		for change_index in 0 ..< len(changes) {
+			block_tree.work_change(&object_work, change_index)
+		}
+		finished := block_tree.work_finish(&object_work)
+		if work_failure_take() {
+			plan_drop()
+			if existed {
+				storage_mount.damaged_under_set(&opened, old.pointer.block)
+			}
+			return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, name_argument)
+		}
+		if plan_refused() {
+			return plan_refusal(error)
+		}
+		next.size = size
+		next.pointer = finished.root
+		next.hash = finished.hash
+		new_blocks = finished.blocks
+		if !finished.root_new {
+			state_name(finished.root) // The new entry names a root of the state before.
+		}
+		if measure != nil {
+			work_measure := object_work.measure
+			measure^ = {object_blocks = i64(blocks_of(size)), held_blocks = i64(new_blocks), changed = i64(work_measure.changed), hashed_blocks = i64(work_measure.hashed_blocks), hashed_nodes = i64(work_measure.hashed_nodes), object_written = i64(work_measure.written)}
+		}
 	case .Restore, .Clone:
 		next.size = source.size
-		next.pointer = source.list
+		next.pointer = source.root
 		next.hash = source.hash
+		state_name(next.pointer)
+		new_blocks = state_blocks_of(source.root, source.size)
 	}
-	// The list of the new state is not written yet: its blocks are counted
-	// as the state will name them.
-	planned := next
-	if kind == .Write && count != 0 {
-		planned.pointer = {block = 1}
-	}
-	plan.store_block.current_blocks = plan.store_block.current_blocks + blocks_named(&planned) - blocks_named(&old)
+	current_blocks_change(new_blocks, old_blocks)
 	if !existed {
 		plan.store_block.objects += 1
 	}
 	if too_large, result := minimum_refusal(store, error, name_argument + 1); too_large {
 		return result
 	}
-	damaged_before := existed && state_damaged(old.pointer, old.size)
-	if kind == .Write && count != 0 {
-		// The old list names the old data: a block whose bytes did not change
-		// is named again, not written again.
-		old_list: ^List
-		if old.pointer.block != 0 && !damaged_before {
-			switch read_single(old.pointer, &plan.list_read) {
-			case .Good:
-				old_list = (^List)(&plan.list_read)
-			case .Wrong:
-				damaged_before = true
-			case .Device:
-				plan.device = true
-			}
-		}
-		new_list: List
-		old_count := min(blocks_of(old.size), OBJECT_BLOCKS_LIMIT)
-		for block_index in 0 ..< count {
-			bytes := &plan.data[block_index]
-			part := data[block_index * BLOCK_SIZE:]
-			copy(bytes[:], part[:min(len(part), BLOCK_SIZE)])
-			if len(part) < BLOCK_SIZE {
-				intrinsics.mem_zero(raw_data(bytes[len(part):]), BLOCK_SIZE - len(part))
-			}
-			check := check_of(bytes[:])
-			if old_list != nil && block_index < old_count && old_list.data[block_index].check == check && same_bytes(old_list.data[block_index], bytes) {
-				new_list.data[block_index] = old_list.data[block_index]
-				delta_add(new_list.data[block_index].block, 1)
-				continue
-			}
-			new_list.data[block_index] = plan_write(bytes)
-		}
-		intrinsics.mem_copy_non_overlapping(&plan.list, &new_list, BLOCK_SIZE)
-		next.pointer = plan_write(&plan.list)
-		// The hash of the copy: the caller can change the call region during
-		// the call, and the hash names the bytes that the blocks hold.
-		next.hash = blake3.hash(([^]u8)(&plan.data[0])[:len(data)])
-	} else if kind != .Write {
-		list_name(next.pointer)
-	}
 	item.entry = next
 	// The state before becomes a version. A damaged state (a block with a
-	// wrong check) is not kept: the change replaces it, and its blocks lose
+	// wrong check) is not kept: the change replaces it, and its root loses
 	// this name.
 	if existed && damaged_before {
-		list_release(old.pointer, old.size)
+		state_release(old.pointer, old.size)
 	} else if existed {
-		version_add(index, {generation = old.generation, size = old.size, time = old.time, date = old.date, list = old.pointer})
+		version_add(index, {generation = old.generation, size = old.size, time = old.time, date = old.date, root = old.pointer})
 		retention(index, now)
 	}
 	return commit_at_limit(store, error, name_argument + 1)
-}
-
-// state_hash computes the hash of the bytes of a state: a version keeps no
-// hash, and the entry of an object holds the hash of its current state.
-state_hash :: proc "contextless" (state: State_Of_Object) -> (hash: [32]u8, outcome: Read) {
-	if state.list.block == 0 {
-		return blake3.hash(nil), .Good
-	}
-	count := blocks_of(state.size)
-	if count > OBJECT_BLOCKS_LIMIT {
-		return {}, .Wrong
-	}
-	_, outcome = read_checked({state.list}, 0)
-	if outcome != .Good {
-		return {}, outcome
-	}
-	state_list := (^List)(raw_data(slot(0)))^
-	_, outcome = read_checked(state_list.data[:count], 1)
-	if outcome != .Good {
-		return {}, outcome
-	}
-	return blake3.hash(region[BLOCK_SIZE:][:state.size]), .Good
 }
 
 // entry_remove removes an entry in one commit. An object goes with its
@@ -715,10 +761,10 @@ entry_free :: proc "contextless" (index: int) {
 	plan_entry_remove(index)
 	switch old.kind {
 	case .Object:
-		list_release(old.pointer, old.size)
+		current_blocks_change(0, state_blocks_of(old.pointer, old.size))
+		state_release(old.pointer, old.size)
 		versions_release(index)
 		plan.store_block.objects -= 1
-		plan.store_block.current_blocks -= blocks_named(&old)
 	case .Tree:
 		if old.pointer.block == 0 {
 			plan.store_block.trees -= 1
@@ -789,6 +835,9 @@ entries_add :: proc "contextless" (store: Store_Of, path: []Entry_Name, rows: []
 	date := date_now()
 	for &row, number in added_rows[:count] {
 		value := Entry{kind = format.Entry_Kind(row.kind), generation = generation, time = now, date = date}
+		if value.kind == .Object {
+			value.hash = blake3.hash(nil) // The hash of an object of no byte.
+		}
 		key := added_names[number].key
 		if tree.put(&opened_tree.work, key[:], entry_bytes(&value), false) {
 			plan_drop()
@@ -1207,42 +1256,27 @@ object_locate :: proc "contextless" (store_name: string, path: []Entry_Name, nam
 	return store_index, value, 0
 }
 
-// state_bytes reads the bytes of one state of an object, checked, into
-// result. It gives the size, or ERROR_DISK, ERROR_DAMAGED. A wrong block
-// stays known: a write of the object does not keep the state as a version.
-state_bytes :: proc "contextless" (state: State_Of_Object, result: []u8, error: ^errors.Error_Record) -> i64 {
-	if state.list.block == 0 {
-		return 0
+// state_read reads the bytes from `offset` of one state of an object,
+// checked, into result, up to its size. It gives the count of bytes, or
+// ERROR_DISK, ERROR_DAMAGED. A wrong block stays known: the state is
+// damaged, and a write of the object does not keep it as a version.
+state_read :: proc "contextless" (state: State_Of_Object, offset: u64, result: []u8, error: ^errors.Error_Record, argument: i64) -> i64 {
+	if state_damaged(state.root) {
+		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, argument)
 	}
-	count := blocks_of(state.size)
-	outcome := Read.Wrong
-	if count <= OBJECT_BLOCKS_LIMIT {
-		_, outcome = read_checked({state.list}, 0)
-		if outcome == .Wrong {
-			storage_mount.wrong_block_set(&opened, state.list.block)
-		}
-		if outcome == .Good {
-			state_list := (^List)(raw_data(slot(0)))^
-			_, outcome = read_checked(state_list.data[:count], 1)
-			if outcome == .Wrong {
-				for pointer, index in state_list.data[:count] {
-					if check_of(slot(1 + u64(index))) != pointer.check {
-						storage_mount.wrong_block_set(&opened, pointer.block)
-					}
-				}
-			}
-		}
-	}
+	count, outcome := block_tree.range_read(&object_source, tree_state(state), offset, result, &read_room, &object_node)
 	switch outcome {
 	case .Device:
 		return errors.fail(error, ERROR_DISK, .Device)
 	case .Wrong:
-		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, 2)
+		storage_mount.damaged_under_set(&opened, state.root.block)
+		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, argument)
 	case .Good:
 	}
-	copy(result, region[BLOCK_SIZE:][:state.size])
-	return i64(state.size)
+	return i64(count)
 }
+
+read_room: Block // One block of data of a read.
 
 // The versions of one object, read for one call, the oldest first.
 listed: [format.VERSIONS_LIMIT]Version_Entry
@@ -1305,37 +1339,34 @@ state_at :: proc "contextless" (object: ^Entry, generation: i64, argument: i64, 
 	}
 	for entry in listed[:listed_count] {
 		if i64(entry.generation) == generation {
-			return {generation = entry.generation, size = entry.size, time = entry.time, date = entry.date, list = entry.list}, 0
+			return {generation = entry.generation, size = entry.size, time = entry.time, date = entry.date, root = entry.root}, 0
 		}
 	}
 	return {}, errors.fail(error, ERROR_NO_VERSION, .Absent, .Versions, argument, generation)
 }
 
-// same_bytes says if a block on the disk has these bytes.
-same_bytes :: proc "contextless" (pointer: Pointer, bytes: ^Block) -> bool {
-	_, state := read_checked({pointer}, 0)
-	if state != .Good {
-		return false
-	}
-	for byte, index in slot(0) {
-		if byte != bytes[index] {
-			return false
-		}
-	}
-	return true
-}
-
-// own_blocks gives the blocks that only one state holds: its list, when no
-// other state names it, and each of its blocks of data that no other list
-// names.
-own_blocks :: proc "contextless" (list: Pointer, size: u64, data: ^List) -> u64 {
-	if list.block == 0 || opened.references[list.block] != 1 {
+// own_blocks gives the blocks that only one state holds: its root, when no
+// other state names it, and under it each block that no other node names.
+own_blocks :: proc "contextless" (root: Pointer, size: u64) -> u64 {
+	if root.block == 0 || root.block >= DISK_BLOCKS_LIMIT || opened.references[root.block] != 1 || size > format.OBJECT_SIZE_LIMIT || state_damaged(root) {
 		return 0
 	}
+	return own_under({block = root.block, check = root.check}, format.object_levels(size))
+}
+
+own_under :: proc "contextless" (child: Object_Child, level: int) -> u64 {
+	if level == 0 {
+		return 1
+	}
+	node := &object_nodes[level - 1]
+	if read_single({block = child.block, check = child.check}, (^Block)(node)) != .Good {
+		return 1
+	}
 	count: u64 = 1
-	for pointer in data.data[:min(blocks_of(size), OBJECT_BLOCKS_LIMIT)] {
-		if pointer.block < DISK_BLOCKS_LIMIT && opened.references[pointer.block] == 1 {
-			count += 1
+	for item in node.children {
+		// The level below reads into its own node: this one stays.
+		if item.block != 0 && item.block < DISK_BLOCKS_LIMIT && opened.references[item.block] == 1 {
+			count += own_under(item, level - 1)
 		}
 	}
 	return count

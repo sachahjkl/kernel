@@ -670,9 +670,24 @@ object_damage :: proc(path: string, store_name: string, object_name: string) -> 
 		disk_block(file, entry.store.block, &block) or_return
 		object, found := tree_entry_find(file, block.tree, object_name) or_return
 		if found && object.kind == .Object && object.pointer.block != 0 {
-			list: store.List
-			disk_block(file, object.pointer.block, &list) or_return
-			number := list.data[0].block
+			// The first block of data: down the first child of each object
+			// node, or the root of an object of one block.
+			number := object.pointer.block
+			for level := store.object_levels(object.size); level >= 1 && number != 0; level -= 1 {
+				node: store.Object_Node
+				disk_block(file, number, &node) or_return
+				next: u64
+				for child in node.children {
+					if child.block != 0 {
+						next = child.block
+						break
+					}
+				}
+				number = next
+			}
+			if number == 0 {
+				break
+			}
 			at := i64(number * store.BLOCK_SIZE)
 			one: [1]u8
 			if count, err := os.read_at(file, one[:], at); err != nil || count != 1 {
@@ -1705,7 +1720,7 @@ scenario := [?]Step {
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: block stopped with code 0"},
 	// The storage service runs since the boot (the boot pass of settings
 	// needs it), with the block service of the data disk. The console has a
-	// private store of 4 blocks, by its name; it acts for the principal, so it
+	// private store of 3 blocks, by its name; it acts for the principal, so it
 	// also sees all the stores.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"storage\")"},
@@ -1717,9 +1732,10 @@ scenario := [?]Step {
 	{kind = .Generation, text = "[console] "},
 	{kind = .Type, text = "storage.read(0, \"greeting\")"},
 	{kind = .Wait, text = "[console] kept on the disk"},
-	// The limit of the store: one more object needs two more blocks.
+	// The limit of the store: one more object needs one more block: its one
+	// block of data.
 	{kind = .Type, text = "storage.write(0, \"second\", \"one block more\")"},
-	{kind = .Wait, text = "[console] error: storage.write: the call needs 6 blocks in all, with no earlier version kept; the limit is 4 blocks (-2)"},
+	{kind = .Wait, text = "[console] error: storage.write: the call needs 4 blocks in all, with no earlier version kept; the limit is 3 blocks (-2)"},
 	// A change of the object at the limit: the version of its state before
 	// does not fit, and the same commit thins it.
 	// Each line commits the line history after it: the base and 1 after
@@ -1727,7 +1743,7 @@ scenario := [?]Step {
 	// this write is the commit 4.
 	{kind = .Type, text = "storage.write(0, \"greeting\", \"changed at the limit\")"},
 	{kind = .Wait, text = "[console] {generation+4}"},
-	{kind = .Record, program = "storage", level = "info", text = "storage: the store console is at its limit of 4 blocks: the commit of generation {generation+4} thinned 1 version, the oldest of the store first", any_order = true},
+	{kind = .Record, program = "storage", level = "info", text = "storage: the store console is at its limit of 3 blocks: the commit of generation {generation+4} thinned 1 version, the oldest of the store first", any_order = true},
 	// An error of a service is a record: the console writes it as a sentence.
 	{kind = .Type, text = "storage.write(0, \"\", \"x\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the argument name is empty; it must have 1 to 64 bytes (-3)"},
@@ -1736,7 +1752,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "storage.size(0, \"greeting\")"},
 	{kind = .Wait, text = "[console] 20"},
 	{kind = .Type, text = "storage.stores()"},
-	{kind = .Wait, text = "[console] console: 1 objects, 0 trees, 0 versions, 4 of 4 blocks, 0 shared, 1 connection"},
+	{kind = .Wait, text = "[console] console: 1 objects, 0 trees, 0 versions, 3 of 3 blocks, 0 shared, 1 connection"},
 	// The person sees the grant and revokes it: the store stays on the disk,
 	// and the console cannot reach it.
 	{kind = .Type, text = "grants(\"console\")"},
@@ -1746,7 +1762,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "storage.write(0, \"greeting\", \"changed\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the caller has no grant for this: a private store (-1)"},
 	{kind = .Type, text = "storage.stores()"},
-	{kind = .Wait, text = "[console] console: 1 objects, 0 trees, 0 versions, 4 of 4 blocks, 0 shared, 0 connections"},
+	{kind = .Wait, text = "[console] console: 1 objects, 0 trees, 0 versions, 3 of 3 blocks, 0 shared, 0 connections"},
 	{kind = .Type, text = "grants(\"console\")"},
 	{kind = .Wait, text = "[console] console lost: store"},
 	{kind = .Shot, text = "storage"},

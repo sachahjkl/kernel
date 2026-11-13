@@ -13,6 +13,7 @@ import "core:strings"
 import "core:sync"
 import "core:time"
 import "support:storage_mount"
+import block_tree "support:storage_object"
 import tree "support:storage_tree"
 
 // The loss of power: a stop of the machine never shows a part of a commit.
@@ -42,10 +43,25 @@ SECTOR_SIZE :: 512
 TEST_POWER_LOSS_DISK :: BUILD_FOLDER + "/test_power_loss_disk.img"
 TEST_OUTPUT_POWER_LOSS :: BUILD_FOLDER + "/test_output_power_loss_%d.txt"
 
+// The bytes of an object that the search keeps whole. A larger object is
+// compared by the values of its blocks, and a version of it by its root:
+// the open checked each block under the root.
+CONTENTS_BYTES_LIMIT :: 1 << 20
+
+// One block of data of an object, as an image gives it: its place, its
+// check and its value (zero for the block of an object of one block).
+Stored_Block :: struct {
+	index: u64,
+	check: u64,
+	value: format.Block_Value,
+}
+
 // One version of an object, as an image gives it.
 Stored_Version :: struct {
 	generation: u64,
-	bytes:      []u8,
+	size:       u64,
+	root:       format.Pointer,
+	bytes:      []u8, // Its bytes, when it has at most CONTENTS_BYTES_LIMIT.
 	damaged:    bool,
 }
 
@@ -57,8 +73,11 @@ Stored_Object :: struct {
 	store:    string,
 	name:     string,
 	tree:     bool,
-	bytes:    []u8,
+	size:     u64,
+	bytes:    []u8, // Its bytes, when it has at most CONTENTS_BYTES_LIMIT.
+	blocks:   []Stored_Block, // Its blocks of data, in their order: a hole is no block.
 	damaged:  bool,
+	hash_wrong: bool, // The hash of its entry is not the hash that its block tree gives.
 	versions: []Stored_Version,
 	versions_damaged: bool,
 }
@@ -76,12 +95,14 @@ Image_Reader :: struct {
 	known:        ^Known_Checks,
 }
 
-// The checks of the blocks of the durable image, kept for the search: an
-// image of the search differs from it only in the blocks that a pending
-// write touched, and those are computed each time.
+// The checks and the values of the blocks of the durable image, kept for
+// the search: an image of the search differs from it only in the blocks
+// that a pending write touched, and those are computed each time.
 Known_Checks :: struct {
 	checks:  []u64, // 0: not computed yet.
 	touched: []bool, // A pending write touched the block.
+	values:  []format.Block_Value, // The value of a block of data at the place value_places gives.
+	value_places: []u64, // 1 + the place of the block in its object; 0: not computed yet.
 }
 
 image_check :: proc "contextless" (reader: ^storage_mount.Block_Reader, number: u64, bytes: []u8) -> u64 {
@@ -93,6 +114,18 @@ image_check :: proc "contextless" (reader: ^storage_mount.Block_Reader, number: 
 		known.checks[number] = format.check(bytes)
 	}
 	return known.checks[number]
+}
+
+image_value :: proc "contextless" (reader: ^storage_mount.Block_Reader, number: u64, index: u64, bytes: ^block_tree.Block) -> format.Block_Value {
+	known := (^Image_Reader)(reader).known
+	if known == nil || number >= u64(len(known.checks)) || known.touched[number] {
+		return block_tree.block_value(bytes, index)
+	}
+	if known.value_places[number] != index + 1 {
+		known.values[number] = block_tree.block_value(bytes, index)
+		known.value_places[number] = index + 1
+	}
+	return known.values[number]
 }
 
 image_read :: proc "contextless" (reader: ^storage_mount.Block_Reader, numbers: []u64, into: []u8) -> bool {
@@ -114,6 +147,7 @@ Contents_Walk :: struct {
 	state:     ^storage_mount.State,
 	reader:    Image_Reader,
 	source:    storage_mount.Reader_Source,
+	objects_source: storage_mount.Object_Source,
 	objects:   [dynamic]Stored_Object,
 	store:     string,
 	allocator: runtime.Allocator,
@@ -122,6 +156,11 @@ Contents_Walk :: struct {
 	path:      [format.NESTING_LIMIT]string,
 	nesting:   int,
 	bytes:     []u8,
+	collected: [dynamic]Stored_Block,
+	block:     block_tree.Block,
+	node:      format.Object_Node,
+	nodes:     [format.OBJECT_LEVEL_LIMIT]format.Object_Node,
+	hash_room: block_tree.State_Room,
 	failed:    bool,
 }
 
@@ -131,7 +170,7 @@ Contents_Walk :: struct {
 disk_contents :: proc(image: []u8, state: ^storage_mount.State, allocator := context.temp_allocator, known: ^Known_Checks = nil) -> (contents: Disk_Contents) {
 	walking := new(Contents_Walk)
 	defer free(walking)
-	walking.reader = Image_Reader{reader = {read = image_read, check = image_check}, image = image, known = known}
+	walking.reader = Image_Reader{reader = {read = image_read, check = image_check, value = image_value}, image = image, known = known}
 	contents.mount = storage_mount.mount(state, &walking.reader, u64(len(image)) / format.BLOCK_SIZE)
 	contents.objects = make([dynamic]Stored_Object, allocator)
 	if contents.mount.failed || contents.mount.needs_format {
@@ -139,10 +178,12 @@ disk_contents :: proc(image: []u8, state: ^storage_mount.State, allocator := con
 	}
 	walking.state = state
 	walking.source = storage_mount.reader_source(&walking.reader, state.disk_size)
+	walking.objects_source = storage_mount.object_source(&walking.reader, state.disk_size)
 	walking.objects = contents.objects
 	walking.allocator = allocator
 	walking.saved = context
-	walking.bytes = make([]u8, format.OBJECT_BLOCKS_LIMIT * format.BLOCK_SIZE, allocator)
+	walking.bytes = make([]u8, CONTENTS_BYTES_LIMIT, allocator)
+	walking.collected = make([dynamic]Stored_Block, context.temp_allocator)
 	for &store, store_index in state.root.stores {
 		if store.name[0] == 0 || state.store_damaged[store_index] {
 			continue
@@ -175,6 +216,25 @@ contents_walk_tree :: proc(walking: ^Contents_Walk, root: format.Pointer, nestin
 	walking.nesting = before
 }
 
+contents_collect :: proc "contextless" (data: rawptr, index: u64, pointer: format.Pointer, value: format.Block_Value) {
+	walking := (^Contents_Walk)(data)
+	context = walking.saved
+	append(&walking.collected, Stored_Block{index = index, check = pointer.check, value = value})
+}
+
+// contents_state_bytes reads the bytes of one state of an object, when it has at
+// most CONTENTS_BYTES_LIMIT: ok is false when a block is wrong.
+contents_state_bytes :: proc(walking: ^Contents_Walk, state: block_tree.State) -> (bytes: []u8, ok: bool) {
+	if state.size > CONTENTS_BYTES_LIMIT {
+		return nil, true
+	}
+	count, outcome := block_tree.range_read(&walking.objects_source.source, state, 0, walking.bytes[:state.size], &walking.block, &walking.node)
+	if outcome != .Good || count != state.size {
+		return nil, false
+	}
+	return slice.clone(walking.bytes[:state.size], walking.allocator), true
+}
+
 contents_visit :: proc "contextless" (one: ^tree.Walk, key: []u8, value: []u8) {
 	walking := (^Contents_Walk)(one.data)
 	context = walking.saved
@@ -200,11 +260,18 @@ contents_visit :: proc "contextless" (one: ^tree.Walk, key: []u8, value: []u8) {
 	}
 	state := walking.state
 	reader := &walking.reader
-	if storage_mount.list_bytes(state, reader, entry.pointer, entry.size, walking.bytes) {
-		item.bytes = slice.clone(walking.bytes[:entry.size], walking.allocator)
-	} else {
-		item.damaged = true
-	}
+	current := block_tree.State{root = entry.pointer, size = entry.size}
+	item.size = entry.size
+	bytes_ok: bool
+	item.bytes, bytes_ok = contents_state_bytes(walking, current)
+	clear(&walking.collected)
+	blocks_outcome := block_tree.walk_blocks(&walking.objects_source.source, current, contents_collect, walking, &walking.nodes)
+	item.blocks = slice.clone(walking.collected[:], walking.allocator)
+	item.damaged = !bytes_ok || blocks_outcome != .Good
+	// The hash of the entry: the hash that the block tree gives, from the
+	// path of its last block.
+	hash, hash_outcome := block_tree.state_hash(&walking.objects_source.source, current, &walking.hash_room)
+	item.hash_wrong = hash_outcome != .Good || hash != entry.hash
 	entries := make([]format.Version_Entry, format.VERSIONS_LIMIT, context.temp_allocator)
 	count, versions_ok := storage_mount.versions_read(state, reader, entry.versions, entries)
 	item.versions_damaged = !versions_ok
@@ -212,18 +279,18 @@ contents_visit :: proc "contextless" (one: ^tree.Walk, key: []u8, value: []u8) {
 	for &version, index in versions {
 		version_entry := entries[index]
 		version.generation = version_entry.generation
-		if storage_mount.list_bytes(state, reader, version_entry.list, version_entry.size, walking.bytes) {
-			version.bytes = slice.clone(walking.bytes[:version_entry.size], walking.allocator)
-		} else {
-			version.damaged = true
-		}
+		version.size = version_entry.size
+		version.root = version_entry.root
+		version_ok: bool
+		version.bytes, version_ok = contents_state_bytes(walking, {root = version_entry.root, size = version_entry.size})
+		version.damaged = !version_ok
 	}
 	item.versions = versions
 	append(&walking.objects, item)
 }
 
 // same_contents says if two images give the same commit: the generation,
-// and each object byte for byte.
+// and each object byte for byte, or block for block by their values.
 same_contents :: proc(a, b: ^Disk_Contents) -> bool {
 	if a.mount.generation != b.mount.generation || a.mount.needs_format != b.mount.needs_format || len(a.objects) != len(b.objects) {
 		return false
@@ -232,7 +299,7 @@ same_contents :: proc(a, b: ^Disk_Contents) -> bool {
 		found := false
 		for &other in b.objects {
 			if other.store == item.store && other.name == item.name {
-				found = other.tree == item.tree && !other.damaged && !item.damaged && slice.equal(other.bytes, item.bytes) && same_versions(item.versions, other.versions) && !item.versions_damaged && !other.versions_damaged
+				found = same_object(&item, &other)
 			}
 		}
 		if !found {
@@ -242,19 +309,43 @@ same_contents :: proc(a, b: ^Disk_Contents) -> bool {
 	return true
 }
 
-// same_versions says if two objects have the same versions, each one byte
-// for byte.
+// same_object says if two images give one object the same bytes and the
+// same versions.
+same_object :: proc(item, other: ^Stored_Object) -> bool {
+	if other.tree != item.tree || other.size != item.size || other.damaged || item.damaged || other.hash_wrong || item.hash_wrong {
+		return false
+	}
+	if !slice.equal(other.bytes, item.bytes) || !slice.equal(other.blocks, item.blocks) {
+		return false
+	}
+	return same_versions(item.versions, other.versions) && !item.versions_damaged && !other.versions_damaged
+}
+
+// same_versions says if two objects have the same versions: each one byte
+// for byte, or a large one by its root, under which the open checked each
+// block.
 same_versions :: proc(a, b: []Stored_Version) -> bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for &version, index in a {
 		other := &b[index]
-		if version.generation != other.generation || version.damaged || other.damaged || !slice.equal(version.bytes, other.bytes) {
+		if version.generation != other.generation || version.size != other.size || version.root != other.root || version.damaged || other.damaged || !slice.equal(version.bytes, other.bytes) {
 			return false
 		}
 	}
 	return true
+}
+
+// hashes_wrong counts the objects whose entry has another hash than the hash
+// that their block tree gives.
+hashes_wrong :: proc(contents: ^Disk_Contents) -> (count: int) {
+	for &item in contents.objects {
+		if !item.tree && item.hash_wrong {
+			count += 1
+		}
+	}
+	return count
 }
 
 // versions_thinned counts the versions of `before` that `after` no longer
@@ -340,9 +431,11 @@ crash_images_check :: proc(durable: []u8, pending: []Pending_Write, seed: u64) -
 	state := new(storage_mount.State)
 	defer free(state)
 	blocks := len(durable) / format.BLOCK_SIZE
-	known := Known_Checks{checks = make([]u64, blocks), touched = make([]bool, blocks)}
+	known := Known_Checks{checks = make([]u64, blocks), touched = make([]bool, blocks), values = make([]format.Block_Value, blocks), value_places = make([]u64, blocks)}
 	defer delete(known.checks)
 	defer delete(known.touched)
+	defer delete(known.values)
+	defer delete(known.value_places)
 	for write in pending {
 		for number := write.offset / format.BLOCK_SIZE; number * format.BLOCK_SIZE < write.offset + u64(len(write.bytes)) && number < u64(blocks); number += 1 {
 			known.touched[number] = true
@@ -393,6 +486,8 @@ crash_images_check :: proc(durable: []u8, pending: []Pending_Write, seed: u64) -
 			problem = fmt.tprintf("%d versions have a wrong block", contents.mount.damaged_versions)
 		case contents.mount.stores_with_wrong_count != 0:
 			problem = fmt.tprintf("%d stores have a wrong count of blocks", contents.mount.stores_with_wrong_count)
+		case hashes_wrong(&contents) != 0:
+			problem = fmt.tprintf("%d objects have another hash than the hash that their block tree gives", hashes_wrong(&contents))
 		case same_contents(&contents, before):
 			search.older_images += 1
 		case same_contents(&contents, after):
@@ -695,4 +790,103 @@ power_loss_settings_run :: proc() -> bool {
 		{kind = .Quit},
 	}
 	return machine_test(second[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_POWER_LOSS, 4), 0, TEST_POWER_LOSS_DISK)
+}
+
+// The range writes through a loss of power (docs/STORAGE.md, "Ranges"):
+// the program ranges makes its cases, then a loop of commits of 4 range
+// writes each, and the disk loses its power in the loop. The loss comes at
+// the write of a root, so the commit in flight is a commit of range writes:
+// each image that a loss can leave gives the durable commit or that commit,
+// never a mix, each object byte for byte or block for block. The second
+// machine starts on the hard image, and ranges reads back what its cases
+// left.
+scenario_power_loss_ranges := [?]Step {
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "start(\"ranges\")"},
+	{kind = .Wait, text = "ranges: a new store: the first run", any_order = true},
+	{kind = .Wait, text = "ranges: loop, 100 commits of 4 range writes, in "},
+	{kind = .Power_Loss},
+}
+
+// stored_object_of gives an object of the contents of an image, or nil.
+stored_object_of :: proc(contents: ^Disk_Contents, store: string, name: string) -> ^Stored_Object {
+	for &item in contents.objects {
+		if item.store == store && item.name == name {
+			return &item
+		}
+	}
+	return nil
+}
+
+power_loss_ranges_run :: proc() -> bool {
+	fresh := make([]u8, DATA_DISK_SIZE)
+	defer delete(fresh)
+	server: Network_Block_Device
+	if !disk_server_start(&server, fresh) {
+		return false
+	}
+	defer disk_server_free(&server)
+	address := fmt.tprintf("nbd://127.0.0.1:%d", server.port)
+	ran := machine_test(scenario_power_loss_ranges[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_POWER_LOSS, 5), 0, address, disk_server = &server)
+	disk_server_stop(&server)
+	if !ran {
+		return false
+	}
+	sync.mutex_lock(&server.lock)
+	pending := server.pending[:]
+	fmt.printfln("kerneltool: the loss of power during range commits (seed %d): the disk received %d writes, %d flushes and %d reads; %d writes came after the last flush", POWER_LOSS_SEED, server.writes, server.flushes, server.reads, len(pending))
+	search := crash_images_check(server.durable, pending, POWER_LOSS_SEED)
+	if search.wrong != 0 {
+		fmt.eprintfln("kerneltool: test failed: the range writes: %d of %d images of the disk after the loss of power are wrong; the first: %s", search.wrong, search.images, search.first_wrong)
+		sync.mutex_unlock(&server.lock)
+		return false
+	}
+	// The commit in flight changes the object of the loop: range writes were
+	// in flight.
+	state := new(storage_mount.State)
+	defer free(state)
+	durable := disk_contents(server.durable, state)
+	image := slice.clone(server.durable)
+	defer delete(image)
+	undo := make([dynamic]Undo, context.temp_allocator)
+	everything := make([dynamic]Image_Write, context.temp_allocator)
+	for index in 0 ..< len(pending) {
+		append(&everything, Image_Write{index = index})
+	}
+	image_apply(image, pending, everything[:], &undo)
+	in_flight := disk_contents(image, state)
+	loop_durable := stored_object_of(&durable, "ranges", "loop")
+	loop_in_flight := stored_object_of(&in_flight, "ranges", "loop")
+	if loop_durable == nil || loop_in_flight == nil || in_flight.mount.generation <= durable.mount.generation || same_object(loop_durable, loop_in_flight) {
+		fmt.eprintfln("kerneltool: test failed: the commit in flight at the loss of power is not a commit of range writes on the object loop (durable generation %d, in flight %d)", durable.mount.generation, in_flight.mount.generation)
+		sync.mutex_unlock(&server.lock)
+		return false
+	}
+	test_passed_print("the range writes: %d images of the disk after the loss of power in a loop of range commits, %d of them with a torn write: %d give the durable commit (generation %d), %d the commit of range writes in flight (generation %d, the object loop with %d blocks of data), none a mix", search.images, search.torn_images, search.older_images, durable.mount.generation, search.newer_images, in_flight.mount.generation, len(loop_in_flight.blocks))
+	hard, torn_root := hard_image(server.durable, pending)
+	defer delete(hard)
+	sync.mutex_unlock(&server.lock)
+	if err := os.write_entire_file(TEST_POWER_LOSS_DISK, hard); err != nil {
+		fmt.eprintfln("kerneltool: cannot write %s: %v", TEST_POWER_LOSS_DISK, err)
+		return false
+	}
+	// The steps live in memory of their own: the run of a scenario frees the
+	// temporary memory after each step.
+	second := make([dynamic]Step)
+	defer delete(second)
+	append(&second, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
+	if torn_root {
+		append(&second, Step{kind = .Wait, text = "has a wrong check: a write that a stop cut; the service uses the root before it", any_order = true})
+	}
+	append(&second, Step{kind = .Wait, text = fmt.aprintf("storage: ok, generation %d: ", durable.mount.generation), any_order = true})
+	append(&second, Step{kind = .Front, text = "console"})
+	append(&second, Step{kind = .Type, text = "start(\"ranges\")"})
+	append(&second, Step{kind = .Wait, text = "ranges: a store with 4 objects: the run after the remount"})
+	append(&second, Step{kind = .Wait, text = "ranges: after the remount: the sparse object of 8589934592 bytes reads its 3 blocks and its 1000 writes, byte for byte: as it must"})
+	append(&second, Step{kind = .Wait, text = "ranges: after the remount: the small object, the object of the cut and the object of the loop: as it must"})
+	append(&second, Step{kind = .Wait, text = "ranges: done, 0 wrong"})
+	append(&second, Step{kind = .Quit})
+	return machine_test(second[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_POWER_LOSS, 6), 0, TEST_POWER_LOSS_DISK)
 }

@@ -116,6 +116,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Store, .Principals}
 	case "hierarchy":
 		return {.Store} // The test of the trees of a store.
+	case "ranges":
+		return {.Store} // The test of the large objects of a store, written by ranges.
 	case "errors":
 		return {.Store, .Image, .Inspect, .Connect} // It makes errors in its store, loads modules and starts fault from the boot image, counts the locks, and asks for connections that the root service refuses (callable_of gives it none).
 	case "imports":
@@ -204,13 +206,15 @@ may_connect :: proc "contextless" (caller: string, service: string) -> bool {
 store_limit_of :: proc "contextless" (name: string) -> u64 {
 	switch name {
 	case "console":
-		return 4 // A small limit: the test reaches it.
+		return 3 // A small limit: the test reaches it.
 	case "errors":
 		return 2 // One object is over the limit.
 	case "notes":
 		return 4500 // The versions of a run of 1000 commits of the count (4 blocks each), then thinning at the limit.
 	case "hierarchy":
 		return 12000 // 100000 empty objects in 1110 trees: about 9500 nodes, and room for the copies of a commit.
+	case "ranges":
+		return 12000 // A commit of 1000 blocks spread over an object of 8 GiB holds about 2000 blocks, with its version; the loop of range commits about 4000.
 	}
 	return 64
 }
@@ -312,11 +316,13 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "block", "frame":
 		return {pages = 256, programs = 1, threads = 1}
 	case "storage":
-		// About 16 MB of tables: the count of names of each block of the
-		// disk, the changes of one commit, the leaves of one version index,
-		// the versions of one object for versions(), the nodes of the trees
-		// of one commit and of one read, and the walks of the trees.
-		return {pages = 6144, programs = 1, threads = 1}
+		// About 34 MB of tables: the count of names of each block of the
+		// disk, the changes of one commit (8 MB: each block of the disk), the
+		// leaves of one version index, the versions of one object for
+		// versions(), the nodes of the trees of one commit and of one read,
+		// the walks of the trees, the pending blocks of the ranges (4 MB),
+		// and the object nodes that one commit copies (7 MB).
+		return {pages = 10240, programs = 1, threads = 1}
 	case "disk":
 		return {pages = 2048, programs = 1, threads = 1}
 	case "imports":

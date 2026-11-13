@@ -112,6 +112,7 @@ Unit :: enum i64 {
 	Places      = 38, // The places of a connection to the storage service (docs/STORAGE.md): Absent, the number names no place of the connection, or the tree of the place was removed or renamed; Full, the table of places.
 	Trees       = 39, // Absent: the name names no tree. Bad_Value: a tree would move inside itself.
 	Changes     = 40, // No_Grant: a change of a store; the connection reads only.
+	Pending     = 41, // The pending changes of an object in the storage service (docs/STORAGE.md, "Ranges"). Full: limit the blocks that the service holds for them. Absent: the object has no pending change on this connection; found 1: another change of the object came first, and its pending changes are dropped.
 }
 
 // How a handle ended (Handle_Ended).
@@ -188,6 +189,7 @@ UNIT_NAMES := [Unit]string {
 	.Places      = "places of the connection",
 	.Trees       = "trees",
 	.Changes     = "a change of the store (the connection reads only)",
+	.Pending     = "pending changes of the object",
 }
 
 // A ring completion (contract/ring) has the status of the contract of its

@@ -110,6 +110,7 @@ module_builds := [?]Module_Build {
 	{name = "storage", source = "programs/storage", image = true},
 	{name = "notes", source = "programs/notes", image = true},
 	{name = "hierarchy", source = "programs/hierarchy", image = true},
+	{name = "ranges", source = "programs/ranges", image = true},
 	{name = "host", source = "programs/host", image = true},
 	{name = "probe", source = "modules/probe", image = true},
 	{name = "math", source = "modules/math", image = true},
