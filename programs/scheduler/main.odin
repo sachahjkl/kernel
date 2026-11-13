@@ -1487,7 +1487,14 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 
 	// The measures: one column for each strategy.
 	top := MARGIN + HEAD_HEIGHT + MARGIN
+	// The rows of the rates and of the late wakes have a number in a
+	// measure run only. Else the table has the rows that the check fills,
+	// and one line under them says where the other numbers come from.
+	measure_rows := system.measure_run()
 	height := MEASURES_HEIGHT
+	if !measure_rows {
+		height -= 3 * ROW
+	}
 	inside := card(frame, MARGIN, top, WIDTH - 2 * MARGIN, height, "MEASURES", "the same cases under each strategy, in this run")
 	for index in 0 ..< STRATEGY_COUNT {
 		x := LABEL_WIDTH + index * COLUMN_WIDTH
@@ -1501,19 +1508,13 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 		most_work = max(most_work, result.work)
 	}
 	y := 24
-	// A row of a rate or of a late wake has a number in a measure run
-	// only: else it says where the number comes from.
-	number_row :: proc "contextless" (area: interface.Area, y: int, label: string, values: [STRATEGY_COUNT]u64, most: u64, unit: string, measure_only := false) {
+	number_row :: proc "contextless" (area: interface.Area, y: int, label: string, values: [STRATEGY_COUNT]u64, most: u64, unit: string) {
 		write(area, 0, y, label, graphics.COLOR_DIM)
 		line: [48]u8
 		for index in 0 ..< STRATEGY_COUNT {
 			x := LABEL_WIDTH + index * COLUMN_WIDTH
 			if !results[index].measured {
 				write(area, x, y, "not measured yet", graphics.COLOR_DIM)
-				continue
-			}
-			if measure_only && !system.measure_run() {
-				write(area, x, y, "kerneltool measure", graphics.COLOR_DIM)
 				continue
 			}
 			write(area, x, y, system.format(line[:], values[index], unit), graphics.COLOR_TEXT)
@@ -1528,12 +1529,18 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 		}
 		return out
 	}
-	number_row(inside, y, "wakes in one second", values(proc "contextless" (result: ^Result) -> u64 {return result.wakes}), most_wakes, "", true)
-	y += ROW
-	number_row(inside, y, "late wake, middle", values(proc "contextless" (result: ^Result) -> u64 {return result.median}), most_worst, " us", true)
-	y += ROW
-	number_row(inside, y, "late wake, worst", values(proc "contextless" (result: ^Result) -> u64 {return result.worst}), most_worst, " us", true)
-	y += ROW
+	if measure_rows {
+		number_row(inside, y, "wakes in one second", values(proc "contextless" (result: ^Result) -> u64 {return result.wakes}), most_wakes, "")
+		y += ROW
+	}
+	if measure_rows {
+		number_row(inside, y, "late wake, middle", values(proc "contextless" (result: ^Result) -> u64 {return result.median}), most_worst, " us")
+		y += ROW
+	}
+	if measure_rows {
+		number_row(inside, y, "late wake, worst", values(proc "contextless" (result: ^Result) -> u64 {return result.worst}), most_worst, " us")
+		y += ROW
+	}
 	// The shares of the 8 spinners: one column each, the height is the share; the line is the equal part.
 	write(inside, 0, y, "8 spinners, one weight", graphics.COLOR_DIM)
 	write(inside, 0, y + 16, "share of each", graphics.COLOR_DIM)
@@ -1571,8 +1578,10 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 		write(inside, x + 152, y + 4, "least", graphics.COLOR_DIM)
 	}
 	y += CHART
-	number_row(inside, y, "work, millions in 1 s", values(proc "contextless" (result: ^Result) -> u64 {return result.work / 1_000_000}), most_work / 1_000_000, "", true)
-	y += ROW
+	if measure_rows {
+		number_row(inside, y, "work, millions in 1 s", values(proc "contextless" (result: ^Result) -> u64 {return result.work / 1_000_000}), most_work / 1_000_000, "")
+		y += ROW
+	}
 	number_row(inside, y, "turns ended by a wake", values(proc "contextless" (result: ^Result) -> u64 {return result.preemptions}), 0, "")
 	y += ROW
 	number_row(inside, y, "one pick", values(proc "contextless" (result: ^Result) -> u64 {return result.pick}), 0, " ns")
@@ -1580,6 +1589,10 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 		if results[index].measured && results[index].interrupt_preemption != 0 {
 			write(inside, LABEL_WIDTH + index * COLUMN_WIDTH + 96, y, system.format(line[:], "preempt ", results[index].interrupt_preemption, " ns"), graphics.COLOR_DIM)
 		}
+	}
+	if !measure_rows {
+		y += ROW
+		write(inside, 0, y, "wakes in one second, late wakes and work in one second are measures: run `kerneltool measure scheduler`", graphics.COLOR_DIM)
 	}
 
 	// The processors: the strategy of each queue and its counts.

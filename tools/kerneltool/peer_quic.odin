@@ -98,6 +98,7 @@ Peer_Quic :: struct {
 	silent:        bool, // The case "silent": at the end of its echo, the client sends nothing more and takes nothing, with no close.
 	silenced:      bool, // The client of the case "silent" went silent: until the next case, its datagrams are dropped both ways.
 	vanish_after_bytes: u64, // The bytes that the client of the vanish case had sent when it took the Retry.
+	connected_again: int, // The clients of the case that started a new connection after their handshake ended at its deadline.
 	flood_sent:    int,
 	flood_ended_at: time.Tick, // The last datagram of the flood went.
 	flood_answers: int, // Datagrams of the server to an address of the flood that are not a Retry: there must be none.
@@ -234,6 +235,7 @@ peer_quic_case_start :: proc(peer: ^Peer, state: ^Peer_Quic) -> bool {
 	state.retries_to, state.most_retries_to = {}, 0
 	state.last_answer_at = time.tick_now()
 	state.vanish_after_bytes = 0
+	state.connected_again = 0
 	state.failure = ""
 	state.client_count = 1
 	state.total = 1 << 20
@@ -490,6 +492,37 @@ peer_quic_flood :: proc(peer: ^Peer, state: ^Peer_Quic) {
 	}
 }
 
+// peer_quic_connect_again starts a new connection for each client of the
+// case whose handshake ended at its deadline, from a new port, as a client
+// program does. The server gives one address a budget of Initial checks (a
+// few at once, then one in each second) and drops an Initial over it with
+// no answer, so a client among several of one address can send each try
+// of its Initial while the budget is empty. Without a new connection, the
+// case would then depend on when the cases before it spent that budget.
+@(private = "file")
+peer_quic_connect_again :: proc(state: ^Peer_Quic) {
+	for index in 0 ..< state.client_count {
+		client := &state.clients[index]
+		if client.state != .Closed || !client.closed_by_handshake_timeout {
+			continue
+		}
+		state.ports[index] = state.next_port
+		state.next_port += 1
+		state.stream_identifiers[index], state.stream_opened[index] = {}, {}
+		state.written[index], state.read[index], state.finished[index] = {}, {}, {}
+		configuration := state.configuration
+		streams_of_client := state.client_streams[index * PEER_QUIC_STREAMS:][:PEER_QUIC_STREAMS]
+		error: errors.Error_Record
+		if !quic.connection_start_client(client, streams_of_client, &configuration, &state.cryptography, &state.generator, peer_quic_now(state), &error) {
+			if state.failure == "" {
+				state.failure = fmt.aprintf("client %d did not start a new connection after its handshake ended at its deadline", index)
+			}
+			return
+		}
+		state.connected_again += 1
+	}
+}
+
 // peer_quic_tick runs the case: it starts it, writes and checks the echo,
 // and ends the case. The clients of the last case move their datagrams at
 // each tick, also after their case ended: their CONNECTION_CLOSE goes to the
@@ -508,6 +541,11 @@ peer_quic_tick :: proc(peer: ^Peer) {
 	}
 	now := peer_quic_now(state)
 	if state.running {
+		// Not the client that must fail, and not the one that vanishes: the
+		// end of their handshake is what their case reads.
+		if !state.expect_failure && !state.vanish {
+			peer_quic_connect_again(state)
+		}
 		if state.name == "flood" {
 			peer_quic_flood(peer, state)
 		}
@@ -665,13 +703,22 @@ peer_quic_check :: proc(peer: ^Peer, state: ^Peer_Quic, wanted: int) {
 					peer_quic_close(peer, state, index)
 				}
 			}
-			state.result = fmt.aprintf("%d clients of %d streams, %d bytes each way on each stream, srtt %d us; %d datagrams lost, %d reordered, %d repeated; %d datagrams of a flood and %d spoofed Initials, %d Retries to it (the most bytes to one address %d), %d Version Negotiation packet", state.client_count, state.streams_per_client, state.total, client.smoothed_round_trip, state.dropped, state.reordered, state.repeated, min(state.flood_sent, PEER_QUIC_FLOOD), PEER_QUIC_SPOOFED, state.retry_answers, state.most_answer_bytes, state.negotiation_answers)
+			state.result = fmt.aprintf("%d clients of %d streams, %d bytes each way on each stream, srtt %d us; %d datagrams lost, %d reordered, %d repeated; %d datagrams of a flood and %d spoofed Initials, %d Retries to it (the most bytes to one address %d), %d Version Negotiation packet; %d clients started a new connection after the server dropped each try of their Initial over the budget of their address", state.client_count, state.streams_per_client, state.total, client.smoothed_round_trip, state.dropped, state.reordered, state.repeated, min(state.flood_sent, PEER_QUIC_FLOOD), PEER_QUIC_SPOOFED, state.retry_answers, state.most_answer_bytes, state.negotiation_answers, state.connected_again)
 			peer_quic_end(state, wanted, true)
 			return
 		}
 	}
 	if elapsed > PEER_QUIC_TIME_LIMIT {
-		state.failure = fmt.aprintf("not done in %v: client 0 in the state %v (closed with %x), %d of %d bytes back; %d datagrams of the flood sent, %d Version Negotiation answers, %d answers to the flood", PEER_QUIC_TIME_LIMIT, client.state, client.close_error_code, state.read[0][0], state.total, state.flood_sent, state.negotiation_answers, state.flood_answers)
+		// The first client that is not done: the message is about it.
+		behind := 0
+		for index in 0 ..< state.client_count {
+			if !state.finished[index][0] || state.read[index][0] != state.total {
+				behind = index
+				break
+			}
+		}
+		late := &state.clients[behind]
+		state.failure = fmt.aprintf("not done in %v: client %d in the state %v (closed with %x, by its handshake deadline: %v, by its idle timeout: %v), %d of %d bytes back; %d clients started a new connection; %d datagrams of the flood sent, %d Version Negotiation answers, %d answers to the flood", PEER_QUIC_TIME_LIMIT, behind, late.state, late.close_error_code, late.closed_by_handshake_timeout, late.closed_by_idle_timeout, state.read[behind][0], state.total, state.connected_again, state.flood_sent, state.negotiation_answers, state.flood_answers)
 		peer_quic_end(state, wanted, false)
 	}
 }

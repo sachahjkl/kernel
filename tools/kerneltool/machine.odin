@@ -3413,7 +3413,10 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			// The last counts of the server that the log has, for the
 			// message: quic_echo writes them once in a second when they
 			// change, so they can be older than the case. No step reads them
-			// here: a step Wait reads a count that the scenario needs.
+			// here: a step Wait reads a count that the scenario needs. No
+			// time passes between two cases: a case that needs the budgets
+			// of the server to be full again waits for that itself
+			// (peer_quic.odin, peer_quic_connect_again).
 			counts := log_last_line(machine, "quic_echo: accepted ")
 			if !passed {
 				fmt.eprintfln("kerneltool: test failed: step %d: the QUIC case \"%s\" of the peer: %s; the last counts of the server in the log: %s", index + 1, step.text, result, counts)
