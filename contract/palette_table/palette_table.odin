@@ -12,7 +12,8 @@
 // is a number, and a result is runs of text with what each run is.
 //
 // **The memory object**: `TABLE_PAGES` pages. A `Header` at byte 0, the
-// result area at `RESULT_OFFSET`, then `ENTRY_CAPACITY` records `Entry` at
+// result area at `RESULT_OFFSET`, the candidate area at
+// `CANDIDATES_OFFSET`, then `ENTRY_CAPACITY` records `Entry` at
 // `ENTRIES_OFFSET`.
 //
 // **The reader trusts nothing.** The provider is another program: the
@@ -26,9 +27,10 @@
 package palette_table
 
 import "base:intrinsics"
+import "contract:settings"
 
 MAGIC :: 0x544C4150 // "PALT", little-endian.
-VERSION :: 1 // A new field or a new meaning of a field is a new version.
+VERSION :: 2 // A new field or a new meaning of a field is a new version.
 
 ENTRY_CAPACITY :: 256 // The entries of a table: the commands of a console at most.
 NAME_CAPACITY :: 64 // The bytes of the name of an entry.
@@ -38,12 +40,17 @@ PARAMETER_CAPACITY :: 6 // The parameters of an entry: the parameters of an expo
 RESULT_CAPACITY :: 2048 // The bytes of the result area.
 RESULT_LINE_CAPACITY :: 12 // The lines of a result that the panel shows.
 RESULT_COLUMN_CAPACITY :: 76 // The cells of one line of a result that the panel shows.
+PARAMETER_NAME_CAPACITY :: 16 // The bytes of the name of a parameter. A longer name is absent.
+ARGUMENT_TEXT_CAPACITY :: 48 // The bytes of a Text argument that the panel sends: 6 values of a ring record.
+CANDIDATE_CAPACITY :: 96 // The candidates of one parameter: the modules of a boot image fit.
+CANDIDATE_NAME_CAPACITY :: 31 // The bytes of the name of a candidate.
 SNAPSHOT_TRIES :: 4 // The times that a reader copies a table that changes while it reads.
 
 // What an entry is.
 Entry_Kind :: enum u8 {
 	Command = 0, // A command of the provider itself.
 	Export  = 1, // An export of a module or of a service, which the provider calls.
+	Setting = 2, // One value of one setting of the machine (contract:settings): the provider sets it.
 }
 
 // The facts of an entry that are true or false.
@@ -63,23 +70,27 @@ Value_Kind :: enum u8 {
 	Bytes   = 6,
 }
 
-// One entry: 336 bytes.
+// One entry: 440 bytes.
 Entry :: struct {
 	kind:             Entry_Kind, // What the entry is.
 	flags:            Entry_Flags, // Its facts.
-	parameter_count:  u8, // Its parameters: 0 to PARAMETER_CAPACITY. More than 0: the panel cannot run it, and opens it in the provider.
+	parameter_count:  u8, // Its parameters: 0 to PARAMETER_CAPACITY. 0: the panel runs it with no argument.
 	result:           Value_Kind, // The kind of its result.
 	name_length:      u8, // The bytes of `name` in use: 1 to NAME_CAPACITY.
 	signature_length: u8, // The bytes of `signature` in use. It starts with the name.
 	about_length:     u8, // The bytes of `about` in use.
-	reserved:         u8, // 0.
+	setting:          u8, // A Setting entry: the number of the setting (settings.Setting). Else 0.
 	parameters:       [PARAMETER_CAPACITY]Value_Kind, // The kind of each parameter.
+	setting_value:    u8, // A Setting entry: the number of the value. Else 0.
+	reserved:         u8, // 0.
+	parameter_name_lengths: [PARAMETER_CAPACITY]u8, // The bytes of each parameter name in use. 0: the parameter has no name.
 	reserved_more:    [2]u8, // 0.
 	name:             [NAME_CAPACITY]u8, // The name: bytes 32 to 126.
 	signature:        [SIGNATURE_CAPACITY]u8, // "revoke(name: Text, grant: Text) -> Integer": bytes 32 to 126.
 	about:            [ABOUT_CAPACITY]u8, // What the entry does, in one sentence: bytes 32 to 126.
+	parameter_names:  [PARAMETER_CAPACITY][PARAMETER_NAME_CAPACITY]u8, // The name of each parameter: bytes 32 to 126.
 }
-#assert(size_of(Entry) == 336)
+#assert(size_of(Entry) == 440)
 
 // The start of the memory object.
 Header :: struct {
@@ -90,7 +101,23 @@ Header :: struct {
 }
 
 RESULT_OFFSET :: 64 // The first byte of the result area.
-ENTRIES_OFFSET :: RESULT_OFFSET + RESULT_CAPACITY // The first byte of the entries.
+CANDIDATES_OFFSET :: RESULT_OFFSET + RESULT_CAPACITY // The first byte of the candidate area: CANDIDATE_CAPACITY records Candidate.
+ENTRIES_OFFSET :: CANDIDATES_OFFSET + CANDIDATE_CAPACITY * size_of(Candidate) // The first byte of the entries.
+
+// One candidate of a parameter, in the candidate area: 32 bytes.
+Candidate :: struct {
+	length: u8, // The bytes of `name` in use: 1 to CANDIDATE_NAME_CAPACITY.
+	name:   [CANDIDATE_NAME_CAPACITY]u8, // A value that the parameter can take: bytes 32 to 126.
+}
+#assert(size_of(Candidate) == 32)
+
+// What the candidates of a parameter are: the list says it in words.
+Candidate_Kind :: enum u64 {
+	None    = 0, // The provider gives no candidate for the parameter.
+	Program = 1, // The programs that run.
+	Module  = 2, // The modules of the boot image.
+	Grant   = 3, // The grants that the root service can revoke.
+}
 TABLE_BYTES :: ENTRIES_OFFSET + ENTRY_CAPACITY * size_of(Entry)
 TABLE_PAGES :: (TABLE_BYTES + 4095) / 4096
 #assert(size_of(Header) <= RESULT_OFFSET)
@@ -102,14 +129,29 @@ Command :: enum u32 {
 	// Choose names the entry that the input chose. values[0]: the
 	// change_count of the table that the panel showed. values[1]: the
 	// index of the entry in that table. values[2]: name_hash of its name.
-	// values[3]: a Choose_Mode.
+	// values[3]: a Choose_Mode. values[4]: with Run_With_Arguments, the
+	// count of the Argument commands of the same tag before it.
 	Choose = 1,
+	// Candidates asks for the values that one parameter of an entry can
+	// take. values[0..2]: as Choose. values[3]: the number of the
+	// parameter, from 0. The answer is Candidates_Ready.
+	Candidates = 2,
+	// Argument gives one typed value for the Choose of the same tag that
+	// follows. values[0]: the number of the parameter in its low byte, the
+	// Value_Kind in the next byte, the count of the bytes of a Text in the
+	// byte after it. values[1]: an Integer, as an i64. values[1..6]: the
+	// bytes of a Text, ARGUMENT_TEXT_CAPACITY at most.
+	Argument = 3,
+	// Manual asks for the page of the manual of a module. values[0..3]:
+	// its name, 31 bytes at most, zero bytes after it.
+	Manual = 4,
 }
 
 // What the provider does with a chosen entry.
 Choose_Mode :: enum u64 {
 	Run  = 0, // Run the entry as a line. Only an entry with no parameter.
 	Edit = 1, // Write the entry in the edit line of the provider, with the caret between its parentheses.
+	Run_With_Arguments = 2, // Run the entry as a line, with the typed values of the Argument commands before it.
 }
 
 // What a choice gave: the kind of a completion is always 0, and values[0]
@@ -122,6 +164,8 @@ Outcome :: enum u64 {
 	Failed           = 3, // The line failed: the result area holds its error.
 	Refused          = 4, // The provider did not run the entry: the table changed, or the choice names no entry that it can run. The result area holds the sentence.
 	Edit_Opened      = 5, // The edit line of the provider holds the entry.
+	Candidates_Ready = 6, // The candidate area holds the candidates. values[1]: a Candidate_Kind. values[2]: their count.
+	Manual_Opened    = 7, // The window of the manual shows the page.
 }
 
 // The result area holds lines of runs. One run: a byte Run_Part, a byte
@@ -169,6 +213,7 @@ Problem :: enum u8 {
 	Bad_Length       = 7, // An entry: a length or a count past its field, or an empty name.
 	Bad_Byte         = 8, // An entry: a byte of a text under 32 or over 126.
 	Bad_Signature    = 9, // An entry: the signature does not start with the name.
+	Bad_Setting      = 10, // A Setting entry that names no setting or no value of it, or that has parameters; or another entry that names a setting.
 }
 
 // The name of each problem, as a log writes it.
@@ -184,6 +229,7 @@ problem_names := [Problem]string {
 	.Bad_Length       = "a length past its field, or an empty name",
 	.Bad_Byte         = "a byte that the font does not draw",
 	.Bad_Signature    = "a signature that does not start with the name",
+	.Bad_Setting      = "a setting or a value that the machine does not have",
 }
 
 // printable says if each byte of a text is a character that the font draws.
@@ -204,12 +250,27 @@ entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
 	if entry.kind > max(Entry_Kind) || (transmute(u8)entry.flags) &~ ENTRY_FLAGS_KNOWN != 0 || entry.result > max(Value_Kind) || entry.reserved != 0 || entry.reserved_more != {} {
 		return .Bad_Kind
 	}
+	if entry.kind == .Setting {
+		if entry.parameter_count != 0 || entry.setting > u8(max(settings.Setting)) || u32(entry.setting_value) >= settings.descriptions[settings.Setting(entry.setting)].value_count {
+			return .Bad_Setting
+		}
+	} else if entry.setting != 0 || entry.setting_value != 0 {
+		return .Bad_Setting
+	}
 	if entry.name_length == 0 || int(entry.name_length) > NAME_CAPACITY || int(entry.signature_length) > SIGNATURE_CAPACITY || int(entry.about_length) > ABOUT_CAPACITY || int(entry.parameter_count) > PARAMETER_CAPACITY {
 		return .Bad_Length
 	}
 	for kind in entry.parameters {
 		if kind > max(Value_Kind) {
 			return .Bad_Kind
+		}
+	}
+	for length, index in entry.parameter_name_lengths {
+		if int(length) > PARAMETER_NAME_CAPACITY {
+			return .Bad_Length
+		}
+		if !printable(entry.parameter_names[index][:length]) {
+			return .Bad_Byte
 		}
 	}
 	if !printable(entry.name[:entry.name_length]) || !printable(entry.signature[:entry.signature_length]) || !printable(entry.about[:entry.about_length]) {
@@ -352,4 +413,85 @@ result_line_end :: proc "contextless" (writer: ^Result_Writer) {
 	writer.count += 2
 	writer.lines += 1
 	writer.column = 0
+}
+
+// candidates_copy copies the candidate area of a table and checks the
+// copy: a count of CANDIDATE_CAPACITY at most, each length from 1 to
+// CANDIDATE_NAME_CAPACITY, each byte 32 to 126. count is the count that the
+// provider gave. On a problem the copy has no candidate.
+candidates_copy :: proc "contextless" (memory: []u8, count: u64, candidates: ^[CANDIDATE_CAPACITY]Candidate) -> (copied: int, ok: bool) {
+	if len(memory) < TABLE_BYTES || count > CANDIDATE_CAPACITY {
+		return 0, false
+	}
+	copied = int(count)
+	if copied > 0 {
+		intrinsics.mem_copy_non_overlapping(&candidates[0], &memory[CANDIDATES_OFFSET], copied * size_of(Candidate))
+	}
+	for &candidate in candidates[:copied] {
+		if candidate.length == 0 || int(candidate.length) > CANDIDATE_NAME_CAPACITY || !printable(candidate.name[:candidate.length]) {
+			return 0, false
+		}
+	}
+	return copied, true
+}
+
+// argument_pack gives the values of an Argument command: an Integer in
+// values[1], or the bytes of a Text in values[1..6]. A text longer than
+// ARGUMENT_TEXT_CAPACITY is cut: the sender refuses a longer one before.
+argument_pack :: proc "contextless" (parameter: int, kind: Value_Kind, integer: i64, text: string) -> (values: [7]u64) {
+	length := min(len(text), ARGUMENT_TEXT_CAPACITY)
+	values[0] = u64(parameter) & 0xFF | u64(kind) << 8 | u64(length) << 16
+	if kind == .Integer {
+		values[1] = u64(integer)
+		return values
+	}
+	bytes: [ARGUMENT_TEXT_CAPACITY]u8
+	copy(bytes[:], text[:length])
+	packed := transmute([6]u64)bytes
+	for value, index in packed {
+		values[1 + index] = value
+	}
+	return values
+}
+
+// One typed value that an Argument command carried, checked.
+Argument_Value :: struct {
+	kind:    Value_Kind, // Integer or Text.
+	integer: i64, // An Integer.
+	length:  int, // A Text: its bytes.
+	text:    [ARGUMENT_TEXT_CAPACITY]u8, // A Text: bytes 32 to 126, and no quote.
+}
+
+// argument_unpack reads the values of an Argument command. ok is false
+// for a parameter past PARAMETER_CAPACITY, a kind that is not Integer or
+// Text, a length past ARGUMENT_TEXT_CAPACITY, a byte that the font does
+// not draw, and a quote: a line has no way to hold one in a text.
+argument_unpack :: proc "contextless" (values: [7]u64) -> (parameter: int, argument: Argument_Value, ok: bool) {
+	parameter = int(values[0] & 0xFF)
+	kind := values[0] >> 8 & 0xFF
+	length := int(values[0] >> 16 & 0xFF)
+	if values[0] >> 24 != 0 || parameter >= PARAMETER_CAPACITY {
+		return 0, {}, false
+	}
+	switch Value_Kind(kind) {
+	case .Integer:
+		return parameter, {kind = .Integer, integer = i64(values[1])}, length == 0
+	case .Text:
+		if length > ARGUMENT_TEXT_CAPACITY {
+			return 0, {}, false
+		}
+		packed: [6]u64
+		for index in 0 ..< 6 {
+			packed[index] = values[1 + index]
+		}
+		argument = {kind = .Text, length = length, text = transmute([ARGUMENT_TEXT_CAPACITY]u8)packed}
+		for value in argument.text[:length] {
+			if value < 32 || value > 126 || value == '"' {
+				return 0, {}, false
+			}
+		}
+		return parameter, argument, true
+	case .None, .Record, .Handle, .Table, .Bytes:
+	}
+	return 0, {}, false
 }

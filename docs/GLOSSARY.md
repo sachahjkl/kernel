@@ -3793,7 +3793,7 @@ Do not use: task bar, window list, switcher.
 
 The palette is the panel that the key super opens, where the input types a part of a name and chooses one entry of one list: a program to start, a window to bring to the front, or another operation.
 
-The palette is the way of the keyboard to each operation that the desktop offers. The compositor draws it and holds its state; the panel holds no right of its own. Its input band is the top of the panel, flush with the top, the left and the right edge, with the typed part at twice the size of the font. With a typed part, the list is one ranking of all the palette entries by the fuzzy match of the console, with each matched character marked; with no typed part, it shows the recent choices, the windows, then the programs. Up and down move the choice, Enter runs the chosen entry, Escape and the key super close the panel. An entry that destroys something, such as the close of a window or the command `shutdown`, asks for a second Enter. A command of the console with no parameter runs from the panel, which shows a short result; a command with parameters opens in the edit line of the console. Example: the key super, "pla", Enter starts `plasma`; the key super, "mon", Enter brings the window `monitor` to the front.
+The palette is the way of the keyboard to each operation that the desktop offers. The compositor draws it and holds its state; the panel holds no right of its own. Its input band is the top of the panel, flush with the top, the left and the right edge, with the typed part at twice the size of the font. With a typed part, the list is one ranking of all the palette entries by the fuzzy match of the console, with each matched character marked; with no typed part, it shows the recent choices, the windows, then the programs. Up and down move the choice, Enter runs the chosen entry, Escape and the key super close the panel. An entry that destroys something, such as the close of a window or the command `shutdown`, asks for a second Enter. A command of the console with no parameter runs from the panel, which shows a short result; a command with parameters gets a palette form. A first character restricts the kinds: `>` commands, `@` windows, `:` settings, `?` the manual. Example: the key super, "pla", Enter starts `plasma`; the key super, "mon", Enter brings the window `monitor` to the front.
 
 The palette is not a run dialog: it runs only its entries, never a path or a line of the console. It is not the menu of the programs or the menu of the windows, which the pointer opens from the bar. It is not the console: it composes no values. It is not a set of colors: the colors of `paint` and the colors of code are not this term.
 
@@ -3805,7 +3805,7 @@ Do not use: launcher, command palette, everything palette, run dialog.
 
 A palette entry is one thing that the palette lists and that the input can choose: a name, a kind, and the fact that its mark says.
 
-The entries are data, and the panel only ranks, draws and dispatches them. An entry has a kind, which the row says in words (`window`, `program`, `close a window`, `command`, `export`); a name of at most 64 bytes, which the typed part matches; a mark, which says one fact (a program has a window now, a window has the focus, the entry destroys something); and a number that only the source of the entry reads. The compositor makes the entries of its two sources, the table `bar.names` and its client table, and of the checked copy of the palette table, when one of them changes (`palette.list_collect`, on its second thread). The record is `palette.Entry` in `support/palette`.
+The entries are data, and the panel only ranks, draws and dispatches them. An entry has a kind, which the row says in words (`window`, `program`, `close a window`, `command`, `export`, `setting`); a name of at most 64 bytes, which the typed part matches; a mark, which says one fact (a program has a window now, a window has the focus, the entry destroys something); and a number that only the source of the entry reads. The compositor makes the entries of its two sources, the table `bar.names` and its client table, and of the checked copy of the palette table, when one of them changes (`palette.list_collect`, on its second thread). The record is `palette.Entry` in `support/palette`.
 
 A palette entry is not a command line: it holds no text that another program parses.
 
@@ -3825,11 +3825,23 @@ The design: `docs/CONSOLE.md`, "8. The palette provider".
 
 Do not use: palette source, palette backend, palette plugin.
 
+### Palette form
+
+The palette form is the input band of the palette while it holds the call of a command with parameters: one typed field for each parameter.
+
+The form lets the input give the arguments of a command without a line. Each field has the name and the kind of its parameter: an Integer field takes digits, a Text field takes each character but a quote. The list under the band shows the candidates of the field that has the caret, which the palette provider gives: the programs that run, the modules of the boot image, the grants. Tab takes a candidate or goes to the next field; Enter in the last field runs. The values go to the provider as typed values, an Integer as a number and a Text as its bytes, and the provider builds the line. Example: `revoke(name: plasma, grant: log)`.
+
+The palette form is not an edit line: it holds no expression, no variable and no call inside a call. A command whose parameter is a Table or a Record has no form, and opens in the console.
+
+The design: `docs/DESIGN.md`, "Palette".
+
+Do not use: dialog, prompt, argument box.
+
 ### Palette table
 
 The palette table is the memory object where the palette provider writes its entries, and which the compositor maps read-only.
 
-The table carries data and no text of a line. It has a header with a change count, a result area, and at most 256 entries: for each one a kind, the flag "destroys", the kinds of its parameters and of its result, a name, a signature and a help sentence. The provider adds 1 to the change count before a change and 1 after it. The compositor copies the table and checks each count, each length, each kind and each byte of the copy before it uses one of them: a table that fails is no table. One ring goes with the table: the compositor names the chosen entry by the change count, its index and the hash of its name, and the provider answers with a result as runs of text in the result area. The contract is `contract/palette_table`.
+The table carries data and no text of a line. It has a header with a change count, a result area, and at most 256 entries: for each one a kind, the flag "destroys", the names and the kinds of its parameters, the kind of its result, a name, a signature and a help sentence; and a candidate area, where the provider writes the values that one parameter can take. The provider adds 1 to the change count before a change and 1 after it. The compositor copies the table and checks each count, each length, each kind and each byte of the copy before it uses one of them: a table that fails is no table. One ring goes with the table: the compositor names the chosen entry by the change count, its index and the hash of its name, and the provider answers with a result as runs of text in the result area. The arguments of a palette form go on the ring as typed values. The contract is `contract/palette_table`.
 
 The palette table is not a call region: the compositor calls nothing in the provider, and waits for no answer in its loop.
 

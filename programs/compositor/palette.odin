@@ -2,6 +2,7 @@ package compositor
 
 import "contract:palette_table"
 import "contract:ring"
+import "contract:settings"
 import "support:bar"
 import "support:display"
 import "support:interface"
@@ -80,6 +81,8 @@ palette_provider_ring: ring.Ring
 palette_provider_ring_handle, palette_provider_table_handle: system.Handle
 palette_generation_seen: u32 // The change count of the table that the loop saw last.
 palette_tags: u32 // The tag of the last choice sent.
+palette_candidates_awaited: u32 // Not 0: the tag of the request for the candidates of the current field of the form.
+palette_sent_setting: bool // The entry that the panel sent is a setting: the panel then goes back to its list.
 palette_answer_awaited: u32 // Not 0: the tag of the choice whose answer the desktop still acts on.
 
 // palette_start gives the draw tables their memory and their font, starts
@@ -304,35 +307,37 @@ palette_provider_remove :: proc "contextless" () {
 	system.close(palette_provider_table_handle)
 	palette_answer_awaited = 0
 	system.log_in("surfaces", .Info, "compositor: the palette has no provider")
+	palette_candidates_awaited = 0
+	if palette_panel.state == .Arguments || palette_panel.state == .Confirm && palette_panel.form.active {
+		palette_panel.state = .Running // The form has no provider to go to.
+	}
 	if palette_panel.state == .Running {
+		palette.form_close(&palette_panel)
 		palette.result_sentence(&palette_panel, "the console stopped, or it is no more the palette provider")
 		palette_refresh()
 	}
 	palette_entries_refresh()
 }
 
-// palette_choose sends the chosen entry of the provider on its ring: the
-// generation of the table that the list shows, the index of the entry and
-// the hash of its name. It gives false with no provider or a full ring.
-palette_choose :: proc "contextless" (picked: ^palette.Entry, mode: palette_table.Choose_Mode) -> bool {
+// palette_choose sends an entry of the provider on its ring: the
+// generation of the table that had the entry, the index of the entry and
+// the hash of its name, the mode, and the count of the Argument records
+// before it. It gives false with no provider or a full ring.
+palette_choose :: proc "contextless" (generation: u32, picked: ^palette.Entry, mode: palette_table.Choose_Mode, argument_count: int, tag: u32) -> bool {
 	if palette_provider_ring.head == nil {
 		return false
 	}
-	palette_tags += 1
-	if palette_tags == 0 {
-		palette_tags = 1
-	}
-	palette_answer_awaited = palette_tags
-	return system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Choose), tag = palette_tags, values = {0 = u64(palette_panel.list.snapshot.generation), 1 = u64(picked.number), 2 = palette_table.name_hash(palette.entry_name(picked)), 3 = u64(mode)}})
+	return system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Choose), tag = tag, values = {0 = u64(generation), 1 = u64(picked.number), 2 = palette_table.name_hash(palette.entry_name(picked)), 3 = u64(mode), 4 = u64(argument_count)}})
 }
 
-// palette_console_to_front brings the window of the provider to the front:
-// the line and its result are there.
-palette_console_to_front :: proc "contextless" () {
+// palette_window_to_front brings the window with a title to the front:
+// the window of the provider, where the line and its result are, or the
+// window of the manual.
+palette_window_to_front :: proc "contextless" (title: string) {
 	for position := order_count - 1; position >= 0; position -= 1 {
-		if system.name_of(clients[order[position]].title[:]) == "console" {
+		if system.name_of(clients[order[position]].title[:]) == title {
 			raise(position)
-			system.log_in("surfaces", .Info, "compositor: window console in front")
+			system.log_in("surfaces", .Info, "compositor: window ", title, " in front")
 			return
 		}
 	}
@@ -355,11 +360,25 @@ palette_kind_words := [palette_table.Value_Kind]string {
 // (palette.result_set). An answer to a choice that the desktop no longer
 // waits for is dropped.
 palette_answer :: proc "contextless" (record: ring.Record) {
+	outcome := record.values[0]
+	if record.tag != 0 && record.tag == palette_candidates_awaited {
+		palette_candidates_awaited = 0
+		if outcome == u64(palette_table.Outcome.Candidates_Ready) && palette_panel.state == .Arguments {
+			form := &palette_panel.form
+			palette.form_candidates_set(form, palette_ranking.table, record.values[2], record.values[1])
+			system.log_in("surfaces", .Info, "compositor: the palette has ", u64(form.candidate_count), " candidates for the field ", u64(form.current))
+			palette_refresh()
+		}
+		return
+	}
 	if record.tag == 0 || record.tag != palette_answer_awaited {
 		return
 	}
 	palette_answer_awaited = 0
-	outcome := record.values[0]
+	if outcome == u64(palette_table.Outcome.Manual_Opened) {
+		system.log_in("surfaces", .Info, "compositor: the manual shows the page")
+		palette_window_to_front("manual")
+	}
 	in_console := outcome == u64(palette_table.Outcome.Shown_In_Console) || outcome == u64(palette_table.Outcome.Edit_Opened)
 	if in_console {
 		where_text: string = "compositor: the result of the palette is in the console"
@@ -367,12 +386,22 @@ palette_answer :: proc "contextless" (record: ring.Record) {
 			where_text = "compositor: the palette opened the entry in the console"
 		}
 		system.log_in("surfaces", .Info, where_text)
-		palette_console_to_front()
+		palette_window_to_front("console")
 	}
 	if palette_panel.state != .Running {
 		return
 	}
 	palette.result_set(&palette_panel, outcome, record.values[1], palette_ranking.table, record.values[2])
+	palette.form_close(&palette_panel)
+	if palette_sent_setting && palette_panel.state == .Result && palette_panel.result.outcome == .Shown_In_Panel {
+		// A setting: the desktop shows the change, and the panel shows
+		// its list again, with the value in use marked.
+		palette_sent_setting = false
+		palette_panel.state = .Search
+		system.log_in("surfaces", .Info, "compositor: the palette did: ", palette.sent_text(&palette_panel))
+		palette_refresh()
+		return
+	}
 	if palette_panel.state == .Closed {
 		palette_panel.state = .Running // palette_close closes an open panel.
 		palette_close("")
@@ -429,7 +458,7 @@ palette_key_of :: proc "contextless" (code: u32, character: u8) -> palette.Key {
 // the palette, and false if it goes to the window that has the focus. The
 // key super opens and closes the panel. While the panel is open, it takes
 // each key: what a key does in each state is palette.key_action.
-palette_key :: proc "contextless" (code: u32, character: u8, pressed: bool) -> bool {
+palette_key :: proc "contextless" (code: u32, character: u8, pressed: bool, modifiers: u32) -> bool {
 	if !pressed {
 		if code == kept_key {
 			kept_key = 0
@@ -438,6 +467,16 @@ palette_key :: proc "contextless" (code: u32, character: u8, pressed: bool) -> b
 		return palette_is_open() || code == display.KEY_SUPER
 	}
 	key := palette_key_of(code, character)
+	// Shift with Tab and Control with Enter are keys of their own.
+	if key == .Tab && modifiers & display.MODIFIER_SHIFT != 0 {
+		key = .Shift_Tab
+	}
+	if key == .Enter && modifiers & display.MODIFIER_CONTROL != 0 {
+		key = .Control_Enter
+	}
+	if key == .Character && modifiers & display.MODIFIER_CONTROL != 0 {
+		key = .Other // Control with a key types no character.
+	}
 	was_open := palette_is_open()
 	action := palette.key_action(palette_panel.state, key)
 	if !was_open && action == .None {
@@ -518,10 +557,19 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 			palette_entry_send(picked)
 			break
 		}
+		if state_next == .Arguments {
+			palette.form_open(panel, picked)
+			system.log_in("surfaces", .Info, "compositor: the palette asks for the arguments of ", palette.entry_name(picked))
+			palette_candidates_ask()
+			palette_refresh()
+			break
+		}
 		palette_entry_run(picked)
 	case .Confirm:
 		confirmed := palette.chosen_entry(panel)
 		switch {
+		case panel.form.active:
+			palette_form_send()
 		case confirmed == nil:
 			palette_close("")
 		case state_next == .Running:
@@ -530,10 +578,125 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 			palette_entry_run(confirmed)
 		}
 	case .Back:
+		if state_next == .Arguments {
+			system.log_in("surfaces", .Info, "compositor: the palette goes back to the arguments")
+		} else {
+			palette.form_close(panel)
+			system.log_in("surfaces", .Info, "compositor: the palette goes back to the search")
+		}
 		panel.state = state_next
-		system.log_in("surfaces", .Info, "compositor: the palette goes back to the search")
 		palette_refresh()
+	case .Field_Edit:
+		drawn, leave := palette.form_field_edit(panel, key, character)
+		if leave {
+			palette.form_close(panel)
+			panel.state = .Search
+			system.log_in("surfaces", .Info, "compositor: the palette goes back to the search")
+		}
+		if drawn || leave {
+			if message := palette.form_message(&panel.form); message != "" {
+				system.log_in("surfaces", .Info, "compositor: the palette refuses the key: ", message)
+			}
+			palette_refresh()
+		}
+	case .Field_Next:
+		if palette.form_candidate_take(&panel.form) {
+			system.log_in("surfaces", .Info, "compositor: the palette takes the candidate ", palette.field_text(&panel.form, panel.form.current))
+		} else if palette.form_field_move(panel, 1) {
+			palette_candidates_ask()
+		}
+		palette_refresh()
+	case .Field_Previous:
+		if palette.form_field_move(panel, -1) {
+			palette_candidates_ask()
+		}
+		palette_refresh()
+	case .Candidate_Previous, .Candidate_Next:
+		if palette.form_candidate_move(&panel.form, action == .Candidate_Next ? 1 : -1) {
+			palette_refresh()
+		}
+	case .Submit, .Submit_All:
+		ready, moved := palette.form_submit(panel, action == .Submit_All)
+		switch {
+		case ready && state_next == .Confirm:
+			panel.state = .Confirm
+			system.log_in("surfaces", .Info, "compositor: the palette asks to confirm: ", palette.entry_name(&panel.form.entry))
+		case ready:
+			palette_form_send()
+			return
+		case moved:
+			palette_candidates_ask()
+		case:
+			system.log_in("surfaces", .Info, "compositor: the palette refuses the arguments: ", palette.form_message(&panel.form))
+		}
+		palette_refresh()
+	case .Open_In_Console:
+		// The entry of a provider goes to the edit line of its window,
+		// where a line can compose its arguments.
+		if picked := palette.chosen_entry(panel); picked != nil && palette_list_is_current() && (picked.kind == .Command || picked.kind == .Export) {
+			palette.recent_note(panel, picked)
+			opened: [palette.NAME_CAPACITY]u8
+			opened_name := string(opened[:copy(opened[:], palette.entry_name(picked))])
+			sent := palette_choose(panel.list.snapshot.generation, picked, .Edit, 0, palette_tag_next())
+			palette_close("")
+			if sent {
+				system.log_in("surfaces", .Info, "compositor: the palette opens ", opened_name, " in the console")
+			}
+		}
 	}
+}
+
+// palette_tag_next gives the tag of the next choice: the desktop acts on
+// the answer with this tag, and on no older one.
+palette_tag_next :: proc "contextless" () -> u32 {
+	palette_tags += 1
+	if palette_tags == 0 {
+		palette_tags = 1
+	}
+	palette_answer_awaited = palette_tags
+	return palette_tags
+}
+
+// palette_form_send sends the entry of the form with its typed values:
+// one Argument record for each field, an Integer as a number and a Text
+// as its bytes, then the choice. The provider builds the line; the panel
+// sends no text of a line. The panel then waits for what the entry gives.
+palette_form_send :: proc "contextless" () {
+	panel := &palette_panel
+	form := &panel.form
+	palette.sent_set(panel, &form.entry)
+	palette_sent_setting = false
+	panel.state = .Running
+	sent := palette_provider_ring.head != nil
+	tag := palette_tag_next()
+	for field in 0 ..< form.field_count {
+		sent = sent && system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Argument), tag = tag, values = palette.form_argument(form, field)})
+	}
+	sent = sent && palette_choose(form.generation, &form.entry, .Run_With_Arguments, form.field_count, tag)
+	if sent {
+		system.log_in("surfaces", .Info, "compositor: the palette sends ", palette.sent_text(panel), " with ", u64(form.field_count), " arguments to the console")
+	} else {
+		palette.form_close(panel)
+		palette.result_sentence(panel, "the console takes no choice now")
+		system.log_in("surfaces", .Info, "compositor: the palette shows a refusal")
+	}
+	palette_refresh()
+}
+
+// palette_candidates_ask asks the provider for the values that the field
+// of the form that has the caret can take. The answer comes on the ring;
+// the form shows its fields at once.
+palette_candidates_ask :: proc "contextless" () {
+	form := &palette_panel.form
+	if palette_provider_ring.head == nil || !form.active {
+		return
+	}
+	palette_tags += 1
+	if palette_tags == 0 {
+		palette_tags = 1
+	}
+	palette_candidates_awaited = palette_tags
+	system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Candidates), tag = palette_tags, values = {0 = u64(form.generation), 1 = u64(form.entry.number), 2 = palette_table.name_hash(palette.entry_name(&form.entry)), 3 = u64(form.current)}})
 }
 
 // palette_entry_send sends a chosen entry with no parameter to the
@@ -545,9 +708,23 @@ palette_entry_send :: proc "contextless" (picked: ^palette.Entry) {
 	palette.recent_note(panel, picked)
 	palette.sent_set(panel, picked)
 	panel.state = .Running
-	if palette_choose(picked, .Run) {
-		system.log_in("surfaces", .Info, "compositor: the palette sends ", palette.sent_text(panel), " to the console")
+	palette_sent_setting = picked.kind == .Setting
+	sent := false
+	if picked.kind == .Program {
+		// The prefix of the manual: the provider gets the name of the
+		// program, as a typed value, and shows its page.
+		packed := system.name_pack(palette.entry_name(picked))
+		sent = palette_provider_ring.head != nil && system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Manual), tag = palette_tag_next(), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
+		if sent {
+			system.log_in("surfaces", .Info, "compositor: the palette asks for the page of the manual of ", palette.sent_text(panel))
+		}
 	} else {
+		sent = palette_choose(panel.list.snapshot.generation, picked, .Run, 0, palette_tag_next())
+		if sent {
+			system.log_in("surfaces", .Info, "compositor: the palette sends ", palette.sent_text(panel), " to the console")
+		}
+	}
+	if !sent {
 		palette.result_sentence(panel, "the console takes no choice now")
 		system.log_in("surfaces", .Info, "compositor: the palette shows a refusal")
 	}
@@ -592,10 +769,12 @@ palette_entry_run :: proc "contextless" (picked: ^palette.Entry) {
 	case .Command, .Export:
 		// An entry with parameters: the provider writes it in its edit
 		// line, and its window comes to the front when it answers.
-		if palette_choose(picked, .Edit) {
+		if palette_choose(palette_panel.list.snapshot.generation, picked, .Edit, 0, palette_tag_next()) {
 			system.log_in("surfaces", .Info, "compositor: the palette opens ", name_text, " in the console")
 		}
 		palette_entries_refresh()
+	case .Setting:
+		// A setting has no parameter: the panel sends it (palette_entry_send).
 	}
 }
 
@@ -641,6 +820,13 @@ palette_pointer :: proc "contextless" (moved, pressed, released: bool) {
 palette_refresh :: proc "contextless" () {
 	if !palette_is_open() {
 		return
+	}
+	// The value in use of each setting: the mark of a Setting entry.
+	if display.settings_page != nil {
+		in_use := settings.read(display.settings_page)
+		for setting in settings.Setting {
+			palette_panel.settings_in_use[int(setting)] = u8(in_use.values[setting])
+		}
 	}
 	nothing: interface.Input
 	built := interface.frame_begin(&palette_now, &palette_interface_state, &nothing)

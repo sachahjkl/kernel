@@ -63,7 +63,7 @@ row_at :: proc "contextless" (panel: ^Panel, panel_x, panel_y, x, y: int) -> int
 	if part_at(panel_x, panel_y, x, y) != .List || x < panel_x + BORDER || x >= panel_x + PANEL_WIDTH - BORDER {
 		return NO_ROW
 	}
-	if panel.list == nil || panel.state == .Result || panel.state == .Running {
+	if panel.list == nil || panel.state != .Search && panel.state != .Confirm || panel.form.active {
 		return NO_ROW
 	}
 	row := panel.first_row + (y - panel_y - LIST_TOP) / ROW_HEIGHT
@@ -83,6 +83,8 @@ kind_words :: proc "contextless" (kind: Entry_Kind) -> string {
 		return "command"
 	case .Export:
 		return "export"
+	case .Setting:
+		return "setting"
 	}
 	return ""
 }
@@ -96,8 +98,13 @@ entry_words :: proc "contextless" (entry: ^Entry) -> string {
 	return kind_words(entry.kind)
 }
 
-// entry_hint gives what Enter does on an entry: the footer says it.
-entry_hint :: proc "contextless" (entry: ^Entry) -> string {
+// entry_hint gives what Enter does on an entry: the footer says it. form:
+// the panel has a field for each parameter of the entry. manual: the typed
+// part has the prefix of the manual.
+entry_hint :: proc "contextless" (entry: ^Entry, form: bool, manual: bool) -> string {
+	if manual && entry.kind == .Program {
+		return "enter: its page of the manual"
+	}
 	switch entry.kind {
 	case .Window:
 		return "enter: to the front"
@@ -106,7 +113,12 @@ entry_hint :: proc "contextless" (entry: ^Entry) -> string {
 	case .Close_Window:
 		return "enter: close"
 	case .Command, .Export:
-		return .Needs_Arguments in entry.flags ? "enter: arguments in the console" : "enter: run"
+		if .Needs_Arguments not_in entry.flags {
+			return "enter: run"
+		}
+		return form ? "enter: arguments" : "enter: arguments in the console"
+	case .Setting:
+		return "enter: set"
 	}
 	return ""
 }
@@ -149,11 +161,54 @@ entry_about :: proc "contextless" (builder: ^interface.Text_Builder, list: ^List
 		interface.text_put(builder, "Stops the program ")
 		interface.text_put(builder, window_title_of(entry))
 		interface.text_put(builder, ": its window closes. Asks for a second Enter.")
-	case .Command, .Export:
+	case .Command, .Export, .Setting:
 		if given := given_of(list, entry); given != nil {
 			interface.text_put(builder, string(given.about[:given.about_length]))
 		}
 	}
+}
+
+// setting_in_use says if a Setting entry is the value that the machine
+// uses now, from the values that the owner of the panel gave.
+setting_in_use :: proc "contextless" (panel: ^Panel, entry: ^Entry) -> bool {
+	given := given_of(panel.list, entry)
+	if given == nil || given.kind != .Setting || int(given.setting) >= len(panel.settings_in_use) {
+		return false
+	}
+	return panel.settings_in_use[given.setting] == given.setting_value
+}
+
+// signature_fit gives the parameters and the result of a command for a
+// room in cells: whole when they fit; else the parameters that fit whole,
+// then ", ...)"; else "(...)". The text is never cut inside a parameter.
+// buffer holds the cut form.
+signature_fit :: proc "contextless" (detail: string, cells: int, buffer: []u8) -> string {
+	if len(detail) <= cells {
+		return detail
+	}
+	// The end of each parameter: the place of ", " at the level of the
+	// parentheses of the call.
+	depth := 0
+	best := 0
+	for index in 0 ..< len(detail) {
+		switch detail[index] {
+		case '(':
+			depth += 1
+		case ')':
+			depth -= 1
+		case ',':
+			if depth == 1 && index + len(", ...)") <= cells {
+				best = index
+			}
+		}
+	}
+	if best == 0 {
+		short := "(...)"
+		return len(short) <= cells ? short : ""
+	}
+	count := copy(buffer, detail[:best])
+	count += copy(buffer[count:], ", ...)")
+	return string(buffer[:count])
 }
 
 // mark_color gives the color of the mark of an entry, the color of the
@@ -207,14 +262,17 @@ HEADING_RECENT :: "recent"
 HEADING_WINDOWS :: "windows"
 HEADING_PROGRAMS :: "programs"
 PLACEHOLDER :: "type a part of a name"
-KEYS_START :: "up down: choose   "
 KEYS_END :: "   esc: close"
+KEYS_OF_PREFIXES :: "> commands  @ windows  : settings  ? manual"
+KEYS_OF_ARGUMENTS :: "tab: next field   enter: run   esc: back"
+KEYS_OF_ARGUMENTS_MORE :: "tab, enter: next field   ctrl enter: run   esc: back"
 KEYS_OF_CONFIRM :: "enter: confirm   another key: back"
 KEYS_OF_RUNNING :: "esc: close; the line goes on in the console"
 KEYS_OF_RESULT :: "esc: close   another key: back"
 WORDS_OF_RUNNING :: "runs in the console"
-NOTE_NO_PROVIDER :: "the console gives no commands"
-NOTE_REFUSED_PROVIDER :: "the commands of the console were refused"
+NOTE_NO_PROVIDER :: "entries, no commands"
+NOTE_REFUSED_PROVIDER :: "entries, commands refused"
+WORD_OF_COUNT :: "entries"
 RESULT_CALL_TOP :: 8 // From the top of the list area to the line of the call of a result.
 RESULT_LINES_TOP :: 40 // From the top of the list area to the first line of a result.
 
@@ -229,7 +287,18 @@ RESULT_LINES_TOP :: 40 // From the top of the list area to the first line of a r
 panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: int) {
 	table := frame.table
 	list := panel.list
-	interface.text_input_line(frame, {x, y, PANEL_WIDTH, INPUT_BAND_HEIGHT}, typed_text(panel), panel.line.caret, INPUT_SCALE, PLACEHOLDER)
+	with_form := panel.form.active && panel.state != .Result
+	prefix, _ := prefix_of(typed_text(panel))
+	if with_form {
+		form_band_draw(frame, &panel.form, x, y)
+	} else {
+		interface.text_input_line(frame, {x, y, PANEL_WIDTH, INPUT_BAND_HEIGHT}, typed_text(panel), panel.line.caret, INPUT_SCALE, PLACEHOLDER)
+		// The word of the prefix, at the right of the band: what the list
+		// is restricted to.
+		if word := prefix_words(prefix); word != "" {
+			interface.draw_text_right(table, x + PANEL_WIDTH - TEXT_MARGIN, y + (INPUT_BAND_HEIGHT - interface.LINE) / 2, word, graphics.COLOR_DIM, interface.FONT_INTERFACE)
+		}
+	}
 
 	// Under the band: the border, as the menus of the bar have it, then
 	// the surface of a card. The border has no top side: the line of the
@@ -244,7 +313,9 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 	text_room := PANEL_WIDTH - 2 * TEXT_MARGIN
 	chosen := chosen_entry(panel)
 
-	if panel.state == .Result || panel.state == .Running {
+	if panel.state == .Arguments || panel.state == .Confirm && with_form {
+		form_list_draw(frame, panel, x, y)
+	} else if panel.state == .Result || panel.state == .Running {
 		// The list makes room for the entry that the panel sent: a new
 		// list can come while the provider runs it.
 		result_draw(frame, panel, x, y)
@@ -252,6 +323,7 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 		// The rows that the panel shows.
 		list_area := interface.Area{x + BORDER, y + LIST_TOP, PANEL_WIDTH - 2 * BORDER, LIST_HEIGHT}
 		confirm_text: interface.Text_Builder
+		signatures: [LIST_ROWS][palette_table.SIGNATURE_CAPACITY + 8]u8
 		rows: [LIST_ROWS]interface.List_Row
 		first := clamp(panel.first_row, 0, max(list.row_count - 1, 0))
 		shown_count := clamp(list.row_count - first, 0, LIST_ROWS)
@@ -269,13 +341,23 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 				entry := &list.entries[min(int(row.entry), ENTRY_CAPACITY - 1)]
 				color, outlined, shown := mark_color(entry.mark)
 				rows[index] = {kind = .Entry, name = entry_name(entry), matched_places = transmute(u128)row.places, mark_shown = shown, mark_outlined = outlined, mark_color = color, right_text = entry_words(entry)}
-				if given := given_of(list, entry); given != nil {
+				if entry.kind == .Setting {
+					// The value in use has a mark, and says so in words.
+					if setting_in_use(panel, entry) {
+						rows[index].mark_shown, rows[index].mark_color = true, graphics.COLOR_TEXT
+						rows[index].right_text = "setting, in use"
+					}
+				} else if given := given_of(list, entry); given != nil {
 					// A command is code: its name in the font of the cells,
 					// then its parameters and its result, quiet. A command
 					// that the panel cannot run is dim.
 					rows[index].name_in_cells = true
 					rows[index].name_color = .Needs_Arguments in entry.flags ? graphics.Color(graphics.COLOR_DIM) : graphics.code_class_color(.Name, false)
-					rows[index].detail = string(given.signature[given.name_length:given.signature_length])
+					// The room of the signature: the row, less its name and the
+					// words at its right. It is cut at the end of a parameter.
+					words_width := interface.text_measured_width(table, interface.FONT_INTERFACE, rows[index].right_text)
+					room := list_area.width - (list.row_count > LIST_ROWS ? interface.LIST_ROW_SCROLL_WIDTH : 0) - interface.LIST_ROW_NAME_X - interface.LIST_ROW_RIGHT_MARGIN - words_width - 16 - int(given.name_length) * graphics.CELL_WIDTH
+					rows[index].detail = signature_fit(string(given.signature[given.name_length:given.signature_length]), room / graphics.CELL_WIDTH, signatures[index][:])
 				}
 				if first + index == panel.choice {
 					chosen_shown = index
@@ -312,35 +394,194 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 	}
 
 	// The footer: at the right the keys of the state, with what Enter does
-	// on the chosen entry; at the left the count of the entries that match
-	// of all the entries, then what the list lacks when the console gives
-	// no commands. The count is a value: the font of the cells.
+	// on the chosen entry, or the prefixes while nothing is typed; at the
+	// left, in the search only, the count of the entries that match of all
+	// the entries, and what the list lacks when the console gives no
+	// commands. The count is a value: the font of the cells.
 	keys: interface.Text_Builder
 	switch panel.state {
 	case .Closed, .Search:
-		interface.text_put(&keys, KEYS_START)
-		interface.text_put(&keys, chosen != nil ? entry_hint(chosen) : "enter: run")
-		interface.text_put(&keys, KEYS_END)
+		if len(typed_text(panel)) == 0 && list.provider == .Ready {
+			// Nothing is typed: the footer teaches the prefixes. With no
+			// provider two of them list nothing, and the footer says
+			// what the list lacks.
+			interface.text_put(&keys, KEYS_OF_PREFIXES)
+		} else {
+			interface.text_put(&keys, chosen != nil ? entry_hint(chosen, form_can_open(given_of(list, chosen)), prefix == .Manual) : "enter: run")
+			interface.text_put(&keys, KEYS_END)
+		}
 	case .Confirm:
 		interface.text_put(&keys, KEYS_OF_CONFIRM)
 	case .Running:
 		interface.text_put(&keys, KEYS_OF_RUNNING)
 	case .Result:
 		interface.text_put(&keys, KEYS_OF_RESULT)
+	case .Arguments:
+		interface.text_put(&keys, panel.form.field_count > 1 ? KEYS_OF_ARGUMENTS_MORE : KEYS_OF_ARGUMENTS)
 	}
 	keys_width := interface.text_measured_width(table, interface.FONT_INTERFACE, interface.text_of(&keys))
 	interface.draw_text_right(table, x + PANEL_WIDTH - TEXT_MARGIN, y + FOOTER_TOP + 4, interface.text_of(&keys), graphics.COLOR_DIM, interface.FONT_INTERFACE)
+	if panel.state != .Search && panel.state != .Closed {
+		return
+	}
 	count: interface.Text_Builder
 	interface.text_put_number(&count, u64(list.matched_count))
 	interface.text_put(&count, " of ")
 	interface.text_put_number(&count, u64(list.entry_count))
 	after := interface.draw_text(table, x + TEXT_MARGIN, y + FOOTER_TOP + 4, interface.text_of(&count), graphics.COLOR_TEXT)
-	after = interface.draw_text(table, after + 8, y + FOOTER_TOP + 4, "entries", graphics.COLOR_DIM, interface.FONT_INTERFACE)
-	if list.provider != .Ready {
-		note := list.provider == .Absent ? NOTE_NO_PROVIDER : NOTE_REFUSED_PROVIDER
-		note_room := x + PANEL_WIDTH - TEXT_MARGIN - keys_width - 16 - (after + 16)
-		interface.draw_text(table, after + 16, y + FOOTER_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, note, note_room), graphics.COLOR_DIM, interface.FONT_INTERFACE)
+	words := WORD_OF_COUNT
+	switch list.provider {
+	case .Ready:
+	case .Absent:
+		words = NOTE_NO_PROVIDER
+	case .Refused:
+		words = NOTE_REFUSED_PROVIDER
 	}
+	words_room := x + PANEL_WIDTH - TEXT_MARGIN - keys_width - 16 - (after + 8)
+	interface.draw_text(table, after + 8, y + FOOTER_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, words, words_room), graphics.COLOR_DIM, interface.FONT_INTERFACE)
+}
+
+// The classes of the characters of the band of a form.
+@(private)
+Band_Class :: enum u8 {
+	Name, // The name of the command.
+	Quiet, // Punctuation, and the name of a parameter that has not the caret.
+	Label, // The name of the parameter that has the caret.
+	Value, // What the input typed.
+}
+
+// form_band_draw draws the input band of a form: the call as code, at the
+// scale of the typed part: the name of the command, then each parameter
+// with its name and what the input typed in it, and the caret in the
+// current field: "revoke(name: console, grant: |)". A call wider than the
+// band shows the part that holds the caret.
+@(private)
+form_band_draw :: proc "contextless" (frame: ^interface.Frame, form: ^Form, x, y: int) {
+	table := frame.table
+	characters: [512]u8
+	classes: [512]Band_Class
+	count, caret := 0, 0
+	put :: proc "contextless" (into: ^[512]u8, kinds: ^[512]Band_Class, used: ^int, text: string, class: Band_Class) {
+		for index in 0 ..< len(text) {
+			if used^ < len(into) {
+				into[used^] = text[index]
+				kinds[used^] = class
+				used^ += 1
+			}
+		}
+	}
+	put(&characters, &classes, &count, entry_name(&form.entry), .Name)
+	put(&characters, &classes, &count, "(", .Quiet)
+	for field in 0 ..< form.field_count {
+		if field > 0 {
+			put(&characters, &classes, &count, ", ", .Quiet)
+		}
+		if name := field_name(form, field); name != "" {
+			put(&characters, &classes, &count, name, field == form.current ? Band_Class.Label : Band_Class.Quiet)
+			put(&characters, &classes, &count, ": ", .Quiet)
+		}
+		if field == form.current {
+			caret = count + clamp(form.fields[field].caret, 0, form.fields[field].count)
+		}
+		put(&characters, &classes, &count, field_text(form, field), .Value)
+	}
+	put(&characters, &classes, &count, ")", .Quiet)
+
+	cell_width := graphics.CELL_WIDTH * INPUT_SCALE
+	text_height := graphics.CELL_HEIGHT * INPUT_SCALE
+	caret_width := 2 * INPUT_SCALE
+	interface.draw_rectangle(table, x, y, PANEL_WIDTH, INPUT_BAND_HEIGHT - 2, graphics.COLOR_TRACK)
+	interface.draw_rectangle(table, x, y + INPUT_BAND_HEIGHT - 2, PANEL_WIDTH, 2, graphics.COLOR_TITLE)
+	text_x := x + interface.TEXT_INPUT_LINE_MARGIN
+	text_y := y + (INPUT_BAND_HEIGHT - text_height) / 2
+	fit := (PANEL_WIDTH - 2 * interface.TEXT_INPUT_LINE_MARGIN - caret_width) / cell_width
+	first := count > fit ? clamp(caret - fit + 4, 0, count - fit) : 0
+	last := min(first + fit, count)
+	interface.draw_rectangle(table, text_x + (caret - first) * cell_width, text_y, caret_width, text_height, graphics.COLOR_TITLE)
+	font := interface.Font{scale = INPUT_SCALE}
+	// One text record for each run of one class.
+	start := first
+	for start < last {
+		end := start + 1
+		for end < last && classes[end] == classes[start] {
+			end += 1
+		}
+		color: graphics.Color
+		switch classes[start] {
+		case .Name:
+			color = graphics.code_class_color(.Name, false)
+		case .Quiet:
+			color = graphics.code_class_color(.Punctuation, false)
+		case .Label:
+			color = graphics.COLOR_TEXT
+		case .Value:
+			color = graphics.COLOR_WHITE
+		}
+		interface.draw_text(table, text_x + (start - first) * cell_width, text_y, string(characters[start:end]), color, font)
+		start = end
+	}
+}
+
+// form_list_draw draws the list area and the detail line of a form: the
+// candidates of the field that has the caret, the chosen one filled; and
+// under them why a key or a field was refused, or the signature of the
+// command. While the panel asks for a second Enter after a form, the list
+// area has the one row that says the act.
+@(private)
+form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: int) {
+	table := frame.table
+	form := &panel.form
+	list_area := interface.Area{x + BORDER, y + LIST_TOP, PANEL_WIDTH - 2 * BORDER, LIST_HEIGHT}
+	text_room := PANEL_WIDTH - 2 * TEXT_MARGIN
+	rows: [LIST_ROWS]interface.List_Row
+	if panel.state == .Confirm {
+		act: interface.Text_Builder
+		interface.text_put(&act, entry_name(&form.entry))
+		interface.text_put(&act, "(")
+		for field in 0 ..< form.field_count {
+			interface.text_put(&act, field > 0 ? ", " : "")
+			interface.text_put(&act, field_text(form, field))
+		}
+		interface.text_put(&act, "): ")
+		interface.text_put(&act, string(form.given.about[:form.given.about_length]))
+		rows[0] = {kind = .Entry, name = interface.text_of(&act), mark_shown = true, mark_color = graphics.COLOR_STOP_PROGRAM, right_text = entry_words(&form.entry)}
+		interface.list_of_rows(frame, list_area, rows[:1], {chosen = 0, chosen_color = graphics.COLOR_STOP_PROGRAM, total = 1})
+		return
+	}
+	words := ""
+	switch form.candidate_kind {
+	case .None:
+	case .Program:
+		words = "program"
+	case .Module:
+		words = "module"
+	case .Grant:
+		words = "grant"
+	}
+	choice := form.candidate_choice
+	first := choice >= LIST_ROWS ? choice - LIST_ROWS + 1 : 0
+	shown_count := clamp(form.shown_count - first, 0, LIST_ROWS)
+	for index in 0 ..< shown_count {
+		rows[index] = {kind = .Entry, name = candidate_name(form, first + index), right_text = words}
+	}
+	interface.list_of_rows(frame, list_area, rows[:shown_count], {chosen = choice - first, first = first, total = form.shown_count})
+	if form.shown_count == 0 {
+		prompt: interface.Text_Builder
+		interface.text_put(&prompt, "type the value of ")
+		name := field_name(form, form.current)
+		interface.text_put(&prompt, name != "" ? name : "the parameter")
+		interface.text_put(&prompt, form.given.parameters[form.current] == .Integer ? ": an Integer" : ": a Text")
+		interface.draw_text(table, x + TEXT_MARGIN, y + LIST_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, interface.text_of(&prompt), text_room), graphics.COLOR_DIM, interface.FONT_INTERFACE)
+	}
+	if message := form_message(form); message != "" {
+		interface.draw_text(table, x + TEXT_MARGIN, y + DETAIL_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, message, text_room), graphics.COLOR_FAILED, interface.FONT_INTERFACE)
+		return
+	}
+	// The whole signature, as code, then the help sentence.
+	signature := string(form.given.signature[:form.given.signature_length])
+	after := interface.draw_text(table, x + TEXT_MARGIN, y + DETAIL_TOP + 4, interface.text_fit(table, {}, signature, text_room), graphics.code_class_color(.Punctuation, false))
+	about := string(form.given.about[:form.given.about_length])
+	interface.draw_text(table, after + 16, y + DETAIL_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, about, x + TEXT_MARGIN + text_room - after - 16), graphics.COLOR_DIM, interface.FONT_INTERFACE)
 }
 
 // result_draw draws, in the place of the list, the entry that the panel

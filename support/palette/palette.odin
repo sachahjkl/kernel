@@ -32,6 +32,7 @@ State :: enum u8 {
 	Confirm = 2, // The chosen entry destroys something: the panel asks for a second Enter.
 	Running = 3, // The panel sent the chosen entry to its provider, and waits for what it gives.
 	Result  = 4, // The panel shows what the entry gave: a short result, or an error.
+	Arguments = 5, // The input band is the form of the chosen entry: one field for each of its parameters.
 }
 
 // What an entry is. The list says it in words at the right of each row.
@@ -41,6 +42,7 @@ Entry_Kind :: enum u8 {
 	Close_Window = 2, // The close of a window: the choice stops its program, after a second Enter.
 	Command      = 3, // A command of the palette provider: the provider runs it.
 	Export       = 4, // An export of a module or of a service, which the palette provider calls.
+	Setting      = 5, // One value of one setting of the machine: the palette provider sets it.
 }
 
 // The facts of an entry that are true or false.
@@ -100,7 +102,7 @@ entry_destroys :: proc "contextless" (entry: ^Entry) -> bool {
 
 // entry_of_provider says if a palette provider gave the entry.
 entry_of_provider :: proc "contextless" (entry: ^Entry) -> bool {
-	return entry.kind == .Command || entry.kind == .Export
+	return entry.kind == .Command || entry.kind == .Export || entry.kind == .Setting
 }
 
 // A window, as the owner of the client table gives it to entries_collect.
@@ -175,6 +177,8 @@ Panel :: struct {
 	pressed_row:   int, // The row where the left button of the pointer went down, until it goes up; or NO_ROW.
 	recents:       [RECENT_CAPACITY]Recent, // The chosen entries, the newest first.
 	recent_count:  int, // The remembered choices in use.
+	form:          Form, // Arguments: the fields of the chosen entry.
+	settings_in_use: [palette_table.PARAMETER_CAPACITY]u8, // For the owner: the value in use of each setting of the machine, by its number: the mark of a Setting entry.
 	sent_name:     [NAME_CAPACITY]u8, // Running and Result: the name of the entry that the panel sent.
 	sent_length:   int, // The bytes of `sent_name` in use.
 	result:        Result, // Result: what the entry gave.
@@ -249,7 +253,14 @@ list_collect :: proc "contextless" (list: ^List, recents: []Recent, program_name
 			flags += {.Needs_Arguments}
 		}
 		destroys := .Destroys in flags && .Needs_Arguments not_in flags
-		entry_add(list, recents, {kind = given.kind == .Command ? Entry_Kind.Command : Entry_Kind.Export, mark = destroys ? Entry_Mark.Destroys : Entry_Mark.None, flags = flags, number = u32(index)}, string(given.name[:given.name_length]), "")
+		kind := Entry_Kind.Export
+		#partial switch given.kind {
+		case .Command:
+			kind = .Command
+		case .Setting:
+			kind = .Setting
+		}
+		entry_add(list, recents, {kind = kind, mark = destroys ? Entry_Mark.Destroys : Entry_Mark.None, flags = flags, number = u32(index)}, string(given.name[:given.name_length]), "")
 	}
 	return .None, 0
 }
@@ -293,7 +304,7 @@ panel_adopt :: proc "contextless" (panel: ^Panel, list: ^List) {
 
 // kind_tie_order gives the place of a kind among entries of one score: a
 // window first, because to reach a window is the most frequent act; then a
-// program, a command, an export; the close of a window last.
+// program, a setting, a command, an export; the close of a window last.
 @(private)
 kind_tie_order :: proc "contextless" (kind: Entry_Kind) -> u32 {
 	switch kind {
@@ -301,14 +312,16 @@ kind_tie_order :: proc "contextless" (kind: Entry_Kind) -> u32 {
 		return 0
 	case .Program:
 		return 1
-	case .Command:
+	case .Setting:
 		return 2
-	case .Export:
+	case .Command:
 		return 3
-	case .Close_Window:
+	case .Export:
 		return 4
+	case .Close_Window:
+		return 5
 	}
-	return 5
+	return 6
 }
 
 // tie_order gives the order of an entry among the entries with the same
@@ -320,7 +333,72 @@ tie_order :: proc "contextless" (entry: ^Entry, index: int) -> u32 {
 	return recent << 24 | kind_tie_order(entry.kind) << 16 | u32(index) & 0xFFFF
 }
 
-// list_rank makes the rows of a list for a typed part.
+// A first character of the typed part that restricts the kinds of the
+// list (docs/DESIGN.md, "Palette").
+Prefix :: enum u8 {
+	None     = 0, // Each kind.
+	Commands = 1, // ">": the commands and the exports.
+	Windows  = 2, // "@": the windows and their closes.
+	Settings = 3, // ":": the values of the settings.
+	Manual   = 4, // "?": the programs; the choice opens the page of the manual of the program.
+}
+
+// prefix_of gives the prefix of a typed part, and the part after it: the
+// part that the names match.
+prefix_of :: proc "contextless" (typed: string) -> (prefix: Prefix, rest: string) {
+	if len(typed) == 0 {
+		return .None, typed
+	}
+	switch typed[0] {
+	case '>':
+		return .Commands, typed[1:]
+	case '@':
+		return .Windows, typed[1:]
+	case ':':
+		return .Settings, typed[1:]
+	case '?':
+		return .Manual, typed[1:]
+	}
+	return .None, typed
+}
+
+// prefix_words gives the word of a prefix: the input band shows it.
+prefix_words :: proc "contextless" (prefix: Prefix) -> string {
+	switch prefix {
+	case .None:
+		return ""
+	case .Commands:
+		return "commands"
+	case .Windows:
+		return "windows"
+	case .Settings:
+		return "settings"
+	case .Manual:
+		return "manual"
+	}
+	return ""
+}
+
+// prefix_admits says if a prefix lists a kind.
+prefix_admits :: proc "contextless" (prefix: Prefix, kind: Entry_Kind) -> bool {
+	switch prefix {
+	case .None:
+		return true
+	case .Commands:
+		return kind == .Command || kind == .Export
+	case .Windows:
+		return kind == .Window || kind == .Close_Window
+	case .Settings:
+		return kind == .Setting
+	case .Manual:
+		return kind == .Program
+	}
+	return false
+}
+
+// list_rank makes the rows of a list for a typed part. A prefix restricts
+// the kinds; with a prefix alone, the list has each entry of its kinds, in
+// the order of their tables.
 //
 // With a typed part: one list, the best match first (the fuzzy match of
 // support/line_editor), with no heading: the best match is the first row.
@@ -331,6 +409,7 @@ tie_order :: proc "contextless" (entry: ^Entry, index: int) -> u32 {
 list_rank :: proc "contextless" (list: ^List, query: string) {
 	list.row_count = 0
 	list.matched_count = 0
+	prefix, rest := prefix_of(query)
 	if len(query) == 0 {
 		// The entries chosen lately, by their age.
 		heading_shown := false
@@ -362,13 +441,17 @@ list_rank :: proc "contextless" (list: ^List, query: string) {
 		}
 		return
 	}
+	admitted := 0
 	for &entry, index in list.entries[:list.entry_count] {
-		list.candidates[index] = {name = entry_name(&entry), tie_order = tie_order(&entry, index), number = u32(index)}
+		if prefix_admits(prefix, entry.kind) {
+			list.candidates[admitted] = {name = entry_name(&entry), tie_order = tie_order(&entry, index), number = u32(index)}
+			admitted += 1
+		}
 	}
-	kept, matched := line_editor.rank_candidates(query, list.candidates[:list.entry_count], list.ranked[:])
+	kept, matched := line_editor.rank_candidates(rest, list.candidates[:admitted], list.ranked[:])
 	list.matched_count = matched
 	for ranked in list.ranked[:kept] {
-		row_add(list, {kind = .Entry, entry = u16(ranked.candidate), places = ranked.places})
+		row_add(list, {kind = .Entry, entry = u16(list.candidates[ranked.candidate].number), places = ranked.places})
 	}
 }
 

@@ -95,6 +95,8 @@ each_key_in_each_state :: proc(t: ^testing.T) {
 		.Delete    = .Edit,
 		.Character = .Edit,
 		.Tab       = .None,
+		.Shift_Tab = .None,
+		.Control_Enter = .Open_In_Console,
 	}
 	for key in Key {
 		testing.expectf(t, key_action(.Search, key) == search[key], "Search, %v: %v", key, key_action(.Search, key))
@@ -436,6 +438,7 @@ the_parts_under_the_pointer :: proc(t: ^testing.T) {
 	panel := panel_make()
 	defer panel_free(panel)
 	panel_of_test(panel)
+	panel_open(panel) // The pointer finds a row of an open panel only.
 	x, y := panel_place(1024)
 	testing.expect_value(t, x, 192)
 	testing.expect_value(t, y, 96)
@@ -683,7 +686,7 @@ the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 	// The chosen row keeps its kind; the footer says what Enter does, and
 	// counts the entries in a plain word.
 	testing.expect(t, has_text(&screen.table, "close a window"))
-	testing.expect(t, has_text(&screen.table, "up down: choose   enter: close   esc: close"))
+	testing.expect(t, has_text(&screen.table, "enter: close   esc: close"))
 	testing.expect(t, has_text(&screen.table, "1 of 14"))
 	testing.expect(t, has_text(&screen.table, "entries"))
 	testing.expect(t, has_text(&screen.table, NOTE_NO_PROVIDER))
@@ -771,6 +774,10 @@ Given :: struct {
 	parameters: u8,
 	result:     palette_table.Value_Kind,
 	destroys:   bool,
+	kinds:      [2]palette_table.Value_Kind,
+	names:      [2]string,
+	setting:    bool,
+	value:      u8,
 }
 
 @(private = "file")
@@ -797,6 +804,14 @@ table_make :: proc(given: []Given) -> []u8 {
 		entry.name_length = u8(copy(entry.name[:], item.name))
 		entry.signature_length = u8(copy(entry.signature[:], item.signature))
 		entry.about_length = u8(copy(entry.about[:], item.about))
+		for kind, number in item.kinds {
+			entry.parameters[number] = kind
+			entry.parameter_name_lengths[number] = u8(copy(entry.parameter_names[number][:], item.names[number]))
+		}
+		if item.setting {
+			entry.kind = .Setting
+			entry.setting_value = item.value
+		}
 	}
 	return memory
 }
@@ -893,6 +908,9 @@ a_hostile_table_gives_no_entry :: proc(t: ^testing.T) {
 		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.parameters[5] = palette_table.Value_Kind(7)}},
 		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.flags = transmute(palette_table.Entry_Flags)u8(0x80)}},
 		{.Bad_Signature, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.signature[0] = 'x'}},
+		{.Bad_Setting, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.setting = 1}},
+		{.Bad_Setting, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.kind, entry.setting_value = .Setting, 9}},
+		{.Bad_Length, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.parameter_name_lengths[0] = 99}},
 	}
 	for damage, number in damages {
 		table := table_make(GIVEN[:])
@@ -1025,4 +1043,252 @@ running_and_result :: proc(t: ^testing.T) {
 	panel.state = .Running
 	result_sentence(panel, "the console stopped")
 	testing.expect_value(t, panel.state, State.Result)
+}
+
+@(private = "file")
+FORMS := [?]Given {
+	{name = "revoke", signature = "revoke(name: Text, grant: Text) -> Integer", about = "end a grant of a program that runs", parameters = 2, result = .Integer, destroys = true, kinds = {.Text, .Text}, names = {"name", "grant"}},
+	{name = "repeat", signature = "repeat(Text, Integer) -> Text", about = "a text, several times", parameters = 2, result = .Text, kinds = {.Text, .Integer}},
+	{name = "where", signature = "where(Table, Text, Text) -> Table", about = "the rows of a table", parameters = 3, result = .Table, kinds = {.Table, .Text}},
+	{name = "set font to vector", signature = "set font to vector", about = "setting(\"font\", \"vector\")", setting = true, value = 0},
+	{name = "set font to spleen", signature = "set font to spleen", about = "setting(\"font\", \"spleen\")", setting = true, value = 1},
+	{name = "start", signature = "start(Text)", about = "start a program", parameters = 1, kinds = {.Text, .None}},
+}
+
+// The form of an entry: its fields from the record of the provider, the
+// order of Tab, what each kind takes, the check, and the typed values that
+// go to the provider.
+@(test)
+the_form_of_an_entry :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	table := table_make(FORMS[:])
+	defer delete(table)
+	collect_with_table(panel, table)
+	// A parameter that no field can give: no form, the console has it.
+	type_text(panel, ">where")
+	testing.expect_value(t, chosen_of(panel), Chosen.Runs)
+	line_editor.line_clear(&panel.line)
+	type_text(panel, "repeat")
+	testing.expect_value(t, chosen_of(panel), Chosen.Opens_Form)
+	testing.expect_value(t, state_after(.Search, .Run, chosen_of(panel)), State.Arguments)
+	form_open(panel, chosen_entry(panel))
+	form := &panel.form
+	testing.expect_value(t, panel.state, State.Arguments)
+	testing.expect_value(t, form.field_count, 2)
+	testing.expect_value(t, chosen_of(panel), Chosen.Form_Sends)
+	// A Text field takes each character but a quote.
+	for character in transmute([]u8)string("ab") {
+		form_field_edit(panel, .Character, character)
+	}
+	drawn, leave := form_field_edit(panel, .Character, '"')
+	testing.expect(t, drawn && !leave)
+	testing.expect_value(t, field_text(form, 0), "ab")
+	testing.expect_value(t, form_message(form), "a text holds no quote")
+	// Enter in a field that is not the last one goes to the next field.
+	ready, moved := form_submit(panel, false)
+	testing.expect(t, !ready && moved)
+	testing.expect_value(t, form.current, 1)
+	testing.expect_value(t, form_message(form), "")
+	// An Integer field refuses a letter, and says so; it takes a sign at
+	// its start only.
+	form_field_edit(panel, .Character, 'x')
+	testing.expect_value(t, field_text(form, 1), "")
+	testing.expect_value(t, form_message(form), "an Integer takes digits, and one - at its start")
+	form_field_edit(panel, .Character, '-')
+	form_field_edit(panel, .Character, '3')
+	form_field_edit(panel, .Character, '-')
+	testing.expect_value(t, field_text(form, 1), "-3")
+	// The order of Tab: from the last field to the first, and back.
+	testing.expect(t, form_field_move(panel, 1))
+	testing.expect_value(t, form.current, 0)
+	testing.expect(t, form_field_move(panel, -1))
+	testing.expect_value(t, form.current, 1)
+	// The typed values: a Text as its bytes, an Integer as a number.
+	ready, _ = form_submit(panel, false)
+	testing.expect(t, ready)
+	parameter, argument, ok := palette_table.argument_unpack(form_argument(form, 0))
+	testing.expect(t, ok && parameter == 0 && argument.kind == .Text && string(argument.text[:argument.length]) == "ab")
+	parameter, argument, ok = palette_table.argument_unpack(form_argument(form, 1))
+	testing.expect(t, ok && parameter == 1 && argument.kind == .Integer && argument.integer == -3)
+	testing.expect_value(t, state_after(.Arguments, .Submit, chosen_of(panel)), State.Running)
+	// An empty field: the check moves the caret there and says why.
+	form_field_move(panel, 1)
+	for _ in 0 ..< 2 {
+		form_field_edit(panel, .Backspace, 0)
+	}
+	form_field_move(panel, 1)
+	ready, moved = form_submit(panel, true)
+	testing.expect(t, !ready && moved)
+	testing.expect_value(t, form.current, 0)
+	testing.expect_value(t, form_message(form), "empty")
+	// Backspace in the first field, empty: back to the search.
+	_, leave = form_field_edit(panel, .Backspace, 0)
+	testing.expect(t, leave)
+	testing.expect_value(t, state_after(.Arguments, .Back, chosen_of(panel)), State.Search)
+	// An entry that destroys asks after its arguments, and goes back to
+	// its form with the fields kept.
+	form_close(panel)
+	panel.state = .Search
+	line_editor.line_clear(&panel.line)
+	type_text(panel, "revoke")
+	form_open(panel, chosen_entry(panel))
+	testing.expect_value(t, field_name(form, 1), "grant")
+	testing.expect_value(t, chosen_of(panel), Chosen.Form_Destroys)
+	testing.expect_value(t, state_after(.Arguments, .Submit_All, chosen_of(panel)), State.Confirm)
+	testing.expect_value(t, state_after(.Confirm, .Back, chosen_of(panel)), State.Arguments)
+	testing.expect_value(t, state_after(.Confirm, .Confirm, chosen_of(panel)), State.Running)
+	// The numbers: the bounds of an Integer of 64 bits.
+	Number :: struct {
+		text:  string,
+		value: i64,
+		ok:    bool,
+	}
+	numbers := [?]Number{{"0", 0, true}, {"-0", 0, true}, {"9223372036854775807", max(i64), true}, {"9223372036854775808", 0, false}, {"-9223372036854775808", min(i64), true}, {"-9223372036854775809", 0, false}, {"", 0, false}, {"-", 0, false}, {"1a", 0, false}}
+	for number in numbers {
+		value, good := integer_of(number.text)
+		testing.expectf(t, good == number.ok && (!good || value == number.value), "%q: %v %v", number.text, value, good)
+	}
+	// The keys of the state.
+	testing.expect_value(t, key_action(.Arguments, .Tab), Action.Field_Next)
+	testing.expect_value(t, key_action(.Arguments, .Shift_Tab), Action.Field_Previous)
+	testing.expect_value(t, key_action(.Arguments, .Enter), Action.Submit)
+	testing.expect_value(t, key_action(.Arguments, .Control_Enter), Action.Submit_All)
+	testing.expect_value(t, key_action(.Arguments, .Escape), Action.Back)
+	testing.expect_value(t, key_action(.Arguments, .Character), Action.Field_Edit)
+	testing.expect_value(t, key_action(.Arguments, .Down), Action.Candidate_Next)
+	testing.expect_value(t, key_action(.Arguments, .Super), Action.Close)
+	// The band of the form, as the panel draws it: the call, and the
+	// caret in the current field.
+	screen := screen_make()
+	defer screen_free(screen)
+	for character in transmute([]u8)string("net") {
+		form_field_edit(panel, .Character, character)
+	}
+	panel_build(screen, panel)
+	texts := [?]string{"revoke", "name", "net", "grant"}
+	for text in texts {
+		found := false
+		for record in screen.table.records[:screen.table.record_count] {
+			if interface.is_text_kind(record.kind) && record.text_scale == INPUT_SCALE && strings.contains(string(screen.table.text[record.text_start:][:record.text_count]), text) {
+				found = true
+			}
+		}
+		testing.expectf(t, found, "the band of the form shows %q", text)
+	}
+}
+
+// The candidates of a field: a checked copy, narrowed by the text of the
+// field; Tab takes the chosen one. A hostile area gives none.
+@(test)
+the_candidates_of_a_field :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	table := table_make(FORMS[:])
+	defer delete(table)
+	collect_with_table(panel, table)
+	type_text(panel, "start")
+	form_open(panel, chosen_entry(panel))
+	form := &panel.form
+	names := [?]string{"console", "plasma", "paint", "life"}
+	for name, index in names {
+		candidate := (^palette_table.Candidate)(&table[palette_table.CANDIDATES_OFFSET + index * size_of(palette_table.Candidate)])
+		candidate.length = u8(copy(candidate.name[:], name))
+	}
+	form_candidates_set(form, table, u64(len(names)), u64(palette_table.Candidate_Kind.Program))
+	testing.expect_value(t, form.shown_count, 4)
+	testing.expect_value(t, form.candidate_choice, 0)
+	form_field_edit(panel, .Character, 'p')
+	testing.expect_value(t, form.shown_count, 2)
+	testing.expect_value(t, candidate_name(form, 0), "plasma")
+	testing.expect(t, form_candidate_move(form, 1))
+	testing.expect_value(t, candidate_name(form, form.candidate_choice), "paint")
+	testing.expect(t, form_candidate_move(form, 1))
+	testing.expect_value(t, form.candidate_choice, 0)
+	testing.expect(t, form_candidate_take(form))
+	testing.expect_value(t, field_text(form, 0), "plasma")
+	testing.expect(t, !form_candidate_take(form), "the field holds the candidate")
+	// A count past the area, a kind out of its range, a name with a byte
+	// that the font does not draw: no candidate.
+	form_candidates_set(form, table, palette_table.CANDIDATE_CAPACITY + 1, 1)
+	testing.expect_value(t, form.candidate_count, 0)
+	form_candidates_set(form, table, 4, 99)
+	testing.expect_value(t, form.candidate_count, 0)
+	table[palette_table.CANDIDATES_OFFSET + 3] = 1
+	form_candidates_set(form, table, 4, 1)
+	testing.expect_value(t, form.candidate_count, 0)
+	testing.expect_value(t, form.candidate_choice, NO_ROW)
+}
+
+// A prefix restricts the kinds of the list; the part after it is what the
+// names match. A setting says which value is in use.
+@(test)
+the_prefixes :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	table := table_make(FORMS[:])
+	defer delete(table)
+	collect_with_table(panel, table)
+	kinds_of :: proc(panel: ^Panel) -> (kinds: bit_set[Entry_Kind]) {
+		for row in panel.list.rows[:panel.list.row_count] {
+			if row.kind == .Entry {
+				kinds += {panel.list.entries[row.entry].kind}
+			}
+		}
+		return
+	}
+	Case :: struct {
+		typed: string,
+		kinds: bit_set[Entry_Kind],
+	}
+	cases := [?]Case{{">", {.Command}}, {"@", {.Window, .Close_Window}}, {":", {.Setting}}, {"?", {.Program}}, {">re", {.Command}}, {"?pla", {.Program}}}
+	for item in cases {
+		line_editor.line_clear(&panel.line)
+		type_text(panel, item.typed)
+		testing.expectf(t, kinds_of(panel) == item.kinds, "%q lists %v", item.typed, kinds_of(panel))
+		// A prefix alone: no heading, each row is an entry.
+		for row in panel.list.rows[:panel.list.row_count] {
+			testing.expect_value(t, row.kind, Row_Kind.Entry)
+		}
+	}
+	prefix, rest := prefix_of(":font")
+	testing.expect(t, prefix == .Settings && rest == "font")
+	prefix, rest = prefix_of("font")
+	testing.expect(t, prefix == .None && rest == "font")
+	// The matched places are those of the name, not of the typed part
+	// with its prefix.
+	line_editor.line_clear(&panel.line)
+	type_text(panel, ">rev")
+	testing.expect_value(t, row_text(panel, 0), "revoke (command)")
+	testing.expect_value(t, panel.list.rows[0].places, line_editor.Match_Places{0, 1, 2})
+	// With the prefix of the manual, a program is sent to the provider.
+	line_editor.line_clear(&panel.line)
+	type_text(panel, "?pla")
+	testing.expect_value(t, row_text(panel, 0), "plasma (program)")
+	testing.expect_value(t, chosen_of(panel), Chosen.Sends)
+	// The settings: the value in use says so.
+	line_editor.line_clear(&panel.line)
+	type_text(panel, ":font")
+	testing.expect_value(t, panel.list.row_count, 2)
+	testing.expect_value(t, chosen_of(panel), Chosen.Sends)
+	panel.settings_in_use[0] = 1
+	testing.expect(t, !setting_in_use(panel, &panel.list.entries[panel.list.rows[0].entry]))
+	testing.expect(t, setting_in_use(panel, &panel.list.entries[panel.list.rows[1].entry]))
+}
+
+// A signature longer than its room is cut at the end of a parameter, with
+// "...", and never inside one.
+@(test)
+a_signature_is_cut_at_a_parameter :: proc(t: ^testing.T) {
+	buffer: [160]u8
+	whole := "(name: Text, grant: Text, count: Integer) -> Table(Program)"
+	testing.expect_value(t, signature_fit(whole, len(whole), buffer[:]), whole)
+	testing.expect_value(t, signature_fit(whole, len(whole) - 1, buffer[:]), "(name: Text, grant: Text, ...)")
+	testing.expect_value(t, signature_fit(whole, 30, buffer[:]), "(name: Text, grant: Text, ...)")
+	testing.expect_value(t, signature_fit(whole, 29, buffer[:]), "(name: Text, ...)")
+	testing.expect_value(t, signature_fit(whole, 16, buffer[:]), "(...)")
+	testing.expect_value(t, signature_fit(whole, 4, buffer[:]), "")
+	// A comma inside the type of the result is no end of a parameter.
+	nested := "(table: Table(Reading, Read)) -> Integer"
+	testing.expect_value(t, signature_fit(nested, 20, buffer[:]), "(...)")
 }

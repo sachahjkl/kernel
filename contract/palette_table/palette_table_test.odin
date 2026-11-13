@@ -110,3 +110,77 @@ the_runs_of_a_result :: proc(t: ^testing.T) {
 	testing.expect(t, !ok)
 	testing.expect_value(t, name_hash("memory") == name_hash("memorx"), false)
 }
+
+// A Setting entry names a setting and a value that the machine has.
+@(test)
+a_setting_entry_is_checked :: proc(t: ^testing.T) {
+	entry: Entry
+	entry.kind = .Setting
+	entry.name_length = u8(copy(entry.name[:], "set font to spleen"))
+	entry.signature_length = u8(copy(entry.signature[:], "set font to spleen"))
+	entry.setting, entry.setting_value = 0, 1
+	testing.expect_value(t, entry_problem(&entry), Problem.None)
+	entry.setting_value = 2 // The font has two values.
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
+	entry.setting, entry.setting_value = 200, 0
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
+	entry.setting, entry.parameter_count = 0, 1
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
+	entry.kind, entry.parameter_count, entry.setting_value = .Command, 0, 1
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
+	// The name of a parameter: its length and its bytes.
+	entry.setting_value = 0
+	entry.parameter_name_lengths[2] = PARAMETER_NAME_CAPACITY + 1
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Length)
+	entry.parameter_name_lengths[2] = 2
+	entry.parameter_names[2][1] = 3
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Byte)
+}
+
+// The candidates of a parameter, and the typed values of a choice: each
+// one is checked after its copy.
+@(test)
+candidates_and_arguments_are_checked :: proc(t: ^testing.T) {
+	memory := make([]u8, TABLE_BYTES)
+	defer delete(memory)
+	copied := new([CANDIDATE_CAPACITY]Candidate)
+	defer free(copied)
+	for index in 0 ..< 3 {
+		candidate := (^Candidate)(&memory[CANDIDATES_OFFSET + index * size_of(Candidate)])
+		candidate.length = u8(copy(candidate.name[:], "plasma"))
+	}
+	count, ok := candidates_copy(memory, 3, copied)
+	testing.expect(t, ok && count == 3)
+	testing.expect_value(t, string(copied[2].name[:copied[2].length]), "plasma")
+	_, ok = candidates_copy(memory, CANDIDATE_CAPACITY + 1, copied)
+	testing.expect(t, !ok)
+	_, ok = candidates_copy(memory, 4, copied) // The fourth one has no name.
+	testing.expect(t, !ok)
+	(^Candidate)(&memory[CANDIDATES_OFFSET]).length = 200
+	_, ok = candidates_copy(memory, 1, copied)
+	testing.expect(t, !ok)
+	(^Candidate)(&memory[CANDIDATES_OFFSET]).length = 2
+	memory[CANDIDATES_OFFSET + 2] = 10
+	_, ok = candidates_copy(memory, 1, copied)
+	testing.expect(t, !ok)
+	// An Integer and a Text go and come back whole.
+	parameter, argument, good := argument_unpack(argument_pack(4, .Integer, -42, ""))
+	testing.expect(t, good && parameter == 4 && argument.kind == .Integer && argument.integer == -42)
+	parameter, argument, good = argument_unpack(argument_pack(1, .Text, 0, "acts_for_principal"))
+	testing.expect(t, good && parameter == 1 && string(argument.text[:argument.length]) == "acts_for_principal")
+	// What a console refuses: a quote, a byte that the font does not draw,
+	// a kind with no typed value, a parameter past the last, a length past
+	// the values.
+	_, _, good = argument_unpack(argument_pack(0, .Text, 0, "a\"b"))
+	testing.expect(t, !good)
+	_, _, good = argument_unpack(argument_pack(0, .Text, 0, "a\tb"))
+	testing.expect(t, !good)
+	_, _, good = argument_unpack(argument_pack(0, .Table, 0, ""))
+	testing.expect(t, !good)
+	_, _, good = argument_unpack(argument_pack(PARAMETER_CAPACITY, .Integer, 1, ""))
+	testing.expect(t, !good)
+	_, _, good = argument_unpack({0 = u64(Value_Kind.Text) << 8 | 200 << 16})
+	testing.expect(t, !good)
+	_, _, good = argument_unpack({0 = u64(Value_Kind.Text) << 8 | 1 << 24})
+	testing.expect(t, !good)
+}

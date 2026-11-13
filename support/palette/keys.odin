@@ -26,7 +26,9 @@ Key :: enum u8 {
 	Backspace = 12,
 	Delete    = 13,
 	Character = 14, // A printable character.
-	Tab       = 15, // No entry of the panel has parameters: Tab does nothing.
+	Tab       = 15, // In a form: the next field, or the chosen candidate.
+	Shift_Tab = 16, // In a form: the field before.
+	Control_Enter = 17, // In a form: run with the fields as they are. In the search: open the entry in the window of its provider.
 }
 
 // What a key asks of the panel.
@@ -41,7 +43,15 @@ Action :: enum u8 {
 	Choose_Page_After  = 7, // Move the choice a page down, with no wrap.
 	Run                = 8, // Run the chosen entry, or ask for a second Enter when it destroys.
 	Confirm            = 9, // The second Enter: run the entry that destroys.
-	Back               = 10, // Leave the question and go back to the search, with the typed part kept.
+	Back               = 10, // Leave the question, the result or the form, and go back one state.
+	Field_Edit         = 11, // Give the key to the field of the form that has the caret.
+	Field_Next         = 12, // Take the chosen candidate, or move the caret to the next field.
+	Field_Previous     = 13, // Move the caret to the field before.
+	Candidate_Previous = 14, // Move the choice one candidate up.
+	Candidate_Next     = 15, // Move the choice one candidate down.
+	Submit             = 16, // Enter in a form: the next field, or run from the last one.
+	Submit_All         = 17, // Run the form from any field.
+	Open_In_Console    = 18, // Write the chosen entry of a provider in the edit line of its window.
 }
 
 // key_action says what a key asks in a state.
@@ -53,6 +63,11 @@ Action :: enum u8 {
 // - Confirm: Enter runs the entry; the key super closes the panel; each
 //   other key goes back to the search and does nothing else, so a key
 //   typed too early never destroys and never edits.
+// - Arguments: the key super closes; Escape goes back to the search; a
+//   character and the keys of the line edit the field; Tab takes the
+//   chosen candidate or goes to the next field, Shift with Tab to the
+//   field before; up and down move in the candidates; Enter goes to the
+//   next field and runs from the last one; Control with Enter runs.
 // - Running: the key super and Escape close the panel, and the line goes
 //   on in the provider; each other key waits for nothing and does nothing.
 // - Result: the key super and Escape close the panel; each other key goes
@@ -77,7 +92,9 @@ key_action :: proc "contextless" (state: State, key: Key) -> Action {
 			return .Choose_Page_After
 		case .Left, .Right, .Home, .End, .Backspace, .Delete, .Character:
 			return .Edit
-		case .Tab, .Other:
+		case .Control_Enter:
+			return .Open_In_Console
+		case .Tab, .Shift_Tab, .Other:
 			return .None
 		}
 	case .Confirm:
@@ -86,8 +103,31 @@ key_action :: proc "contextless" (state: State, key: Key) -> Action {
 			return .Close
 		case .Enter:
 			return .Confirm
-		case .Escape, .Up, .Down, .Page_Up, .Page_Down, .Left, .Right, .Home, .End, .Backspace, .Delete, .Character, .Tab, .Other:
+		case .Escape, .Up, .Down, .Page_Up, .Page_Down, .Left, .Right, .Home, .End, .Backspace, .Delete, .Character, .Tab, .Shift_Tab, .Control_Enter, .Other:
 			return .Back
+		}
+	case .Arguments:
+		switch key {
+		case .Super:
+			return .Close
+		case .Escape:
+			return .Back
+		case .Enter:
+			return .Submit
+		case .Control_Enter:
+			return .Submit_All
+		case .Tab:
+			return .Field_Next
+		case .Shift_Tab:
+			return .Field_Previous
+		case .Up:
+			return .Candidate_Previous
+		case .Down:
+			return .Candidate_Next
+		case .Left, .Right, .Home, .End, .Backspace, .Delete, .Character:
+			return .Field_Edit
+		case .Page_Up, .Page_Down, .Other:
+			return .None
 		}
 	case .Running:
 		return key == .Super || key == .Escape ? Action.Close : Action.None
@@ -104,13 +144,27 @@ Chosen :: enum u8 {
 	Destroys = 2, // An entry that destroys something: it asks for a second Enter.
 	Sends    = 3, // An entry of a provider with no parameter: the panel sends it and waits for what it gives.
 	Destroys_Then_Sends = 4, // An entry of a provider that destroys something: a second Enter, then the panel sends it.
+	Opens_Form    = 5, // An entry whose parameters the panel can type: Enter opens its form.
+	Form_Sends    = 6, // The panel has a form: its entry is sent with the typed values.
+	Form_Destroys = 7, // The panel has a form of an entry that destroys: a second Enter, then it is sent.
 }
 
 // chosen_of says what the chosen entry of a panel is.
 chosen_of :: proc "contextless" (panel: ^Panel) -> Chosen {
+	if panel.form.active {
+		return .Destroys in panel.form.entry.flags ? Chosen.Form_Destroys : Chosen.Form_Sends
+	}
 	entry := chosen_entry(panel)
 	if entry == nil {
 		return .Nothing
+	}
+	// With the prefix of the manual, the choice of a program asks the
+	// provider for its page.
+	if prefix, _ := prefix_of(typed_text(panel)); prefix == .Manual && entry.kind == .Program {
+		return .Sends
+	}
+	if .Needs_Arguments in entry.flags && form_can_open(given_of(panel.list, entry)) {
+		return .Opens_Form
 	}
 	// An entry with parameters opens in the window of its provider: the
 	// panel closes at once, as for an entry that runs.
@@ -146,15 +200,35 @@ state_after :: proc "contextless" (state: State, action: Action, chosen: Chosen)
 			return .Confirm
 		case .Sends:
 			return .Running
+		case .Opens_Form:
+			return .Arguments
+		case .Form_Sends, .Form_Destroys:
+			return state
 		}
 	case .Confirm:
 		if state != .Confirm {
 			return state
 		}
-		return chosen == .Destroys_Then_Sends ? State.Running : State.Closed
+		return chosen == .Destroys_Then_Sends || chosen == .Form_Destroys ? State.Running : State.Closed
 	case .Back:
-		return state == .Confirm || state == .Result ? State.Search : state
-	case .None, .Edit, .Choose_Previous, .Choose_Next, .Choose_Page_Before, .Choose_Page_After:
+		#partial switch state {
+		case .Confirm:
+			// The question of a form goes back to the form, with its fields.
+			return chosen == .Form_Destroys ? State.Arguments : State.Search
+		case .Result, .Arguments:
+			return .Search
+		}
+		return state
+	case .Submit, .Submit_All:
+		// The form is whole (form_submit): a second Enter first for an
+		// entry that destroys.
+		if state != .Arguments {
+			return state
+		}
+		return chosen == .Form_Destroys ? State.Confirm : State.Running
+	case .Open_In_Console:
+		return state == .Search && chosen != .Nothing ? State.Closed : state
+	case .None, .Edit, .Choose_Previous, .Choose_Next, .Choose_Page_Before, .Choose_Page_After, .Field_Edit, .Field_Next, .Field_Previous, .Candidate_Previous, .Candidate_Next:
 		return state
 	}
 	return state
@@ -206,6 +280,7 @@ panel_open :: proc "contextless" (panel: ^Panel) {
 panel_close :: proc "contextless" (panel: ^Panel) {
 	panel.state = .Closed
 	panel.pressed_row = NO_ROW
+	form_close(panel)
 	line_editor.line_clear(&panel.line)
 }
 
@@ -237,7 +312,7 @@ result_set :: proc "contextless" (panel: ^Panel, outcome: u64, kind: u64, memory
 	result.count = 0
 	result.kind = kind <= u64(max(palette_table.Value_Kind)) ? palette_table.Value_Kind(kind) : .None
 	switch palette_table.Outcome(outcome) {
-	case .Shown_In_Console, .Edit_Opened:
+	case .Shown_In_Console, .Edit_Opened, .Manual_Opened:
 		panel.state = .Closed
 		return
 	case .Shown_In_Panel, .Failed, .Refused:
@@ -248,7 +323,7 @@ result_set :: proc "contextless" (panel: ^Panel, outcome: u64, kind: u64, memory
 			panel.state = .Result
 			return
 		}
-	case .None:
+	case .None, .Candidates_Ready:
 	}
 	result_sentence(panel, "the provider gave an answer that the panel refuses")
 }
