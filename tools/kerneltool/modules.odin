@@ -496,12 +496,15 @@ module_convert :: proc(build: Module_Build) -> bool {
 	for name in build.imports {
 		append(&imports, Import_File{name = name, file = read_file(module_path(name)) or_return})
 	}
+	slot_symbols := make([dynamic]string, context.temp_allocator)
+	file := convert(build.name, elf, description, imports[:], &slot_symbols) or_return
+	defer delete(file)
 	// The linked file holds the name of each imported export and no type:
 	// the declarations of the sources are compared with the descriptions
-	// here, where both are at hand (import_declarations.odin).
-	import_declarations_check(build, imports[:]) or_return
-	file := convert(build.name, elf, description, imports[:]) or_return
-	defer delete(file)
+	// here, where both are at hand, and each symbol that became a slot must
+	// have one compared declaration (import_declarations.odin). The module
+	// file is written only after the check.
+	import_declarations_check(build, imports[:], slot_symbols[:]) or_return
 	if build.library {
 		module_is_a_library_check(build.name, file) or_return
 	}

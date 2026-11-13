@@ -1371,6 +1371,94 @@ the_choice_follows_its_entry :: proc(t: ^testing.T) {
 	testing.expect(t, !panel.choice_undrawn)
 }
 
+// The first row of the list that is an entry, or NO_ROW.
+@(private = "file")
+first_entry_row :: proc(panel: ^Panel) -> int {
+	for row, index in panel.list.rows[:panel.list.row_count] {
+		if row.kind == .Entry {
+			return index
+		}
+	}
+	return NO_ROW
+}
+
+// A panel whose choice a list just moved, with no frame since: the typed
+// part is "pla", the chosen program left the list, and the first entry,
+// the window of plasma, is chosen and not drawn.
+@(private = "file")
+panel_with_a_moved_choice :: proc(t: ^testing.T, panel: ^Panel) {
+	panel_of_test(panel)
+	panel_open(panel)
+	type_text(panel, "pla")
+	testing.expect(t, choice_move(panel, .Next))
+	testing.expect_value(t, row_text(panel, panel.choice), "plasma (program)")
+	testing.expect_value(t, entries_collect(panel, PROGRAMS[:5], {{title = "plasma", number = 7, focus = true}}), Adoption.Moved)
+	testing.expect(t, panel.choice_undrawn)
+}
+
+// Keys typed in one batch after a list moved the choice, before any frame:
+// a change of the typed part ends the wait for a frame, because the choice
+// that no frame showed was of the list before. Enter is then for the list
+// of the new typed part (the owner makes it wait for that list), and that
+// list chooses its first entry.
+@(test)
+a_typed_part_forgets_the_choice_that_no_frame_showed :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	panel_with_a_moved_choice(t, panel)
+	// A key that moves the caret changes no text: the wait stays.
+	drawn, text_changed := typed_edit(panel, .Left, 0)
+	testing.expect(t, drawn && !text_changed)
+	testing.expect(t, panel.choice_undrawn)
+	testing.expect(t, !panel.typed_since_list)
+	typed_edit(panel, .End, 0)
+	// A character: the wait for a frame ends, and the next list is a list
+	// for a new typed part.
+	_, text_changed = typed_edit(panel, .Character, 's')
+	testing.expect(t, text_changed)
+	testing.expect(t, !panel.choice_undrawn)
+	testing.expect(t, panel.typed_since_list)
+	// The list of "plas" comes, with no frame before it: its first entry is
+	// chosen, and Enter runs it.
+	testing.expect_value(t, list_build(panel), Adoption.Kept)
+	testing.expect(t, first_entry_row(panel) != NO_ROW)
+	testing.expect_value(t, panel.choice, first_entry_row(panel))
+	testing.expect(t, !panel.choice_undrawn)
+	testing.expect(t, !panel.typed_since_list)
+}
+
+// The narrow case: after a list moved the choice, one batch moves the
+// choice, types a character and erases it. The text is again the text of
+// the list shown, and the list that answers the batch has the same
+// content. It is still the answer to keys of the input: its first entry is
+// chosen, not the entry that the arrow reached with no frame. The list
+// after it, with no key between, is the same list.
+@(test)
+a_text_that_comes_back_still_chooses_the_first_entry :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	panel_with_a_moved_choice(t, panel)
+	testing.expect(t, choice_move(panel, .Next))
+	testing.expect(t, panel.choice != first_entry_row(panel))
+	typed_edit(panel, .Character, 'x')
+	typed_edit(panel, .Backspace, 0)
+	testing.expect_value(t, typed_text(panel), "pla")
+	testing.expect(t, !panel.choice_undrawn)
+	testing.expect(t, panel.typed_since_list)
+	adoption := entries_collect(panel, PROGRAMS[:5], {{title = "plasma", number = 7, focus = true}})
+	testing.expect_value(t, adoption, Adoption.Kept)
+	testing.expect_value(t, panel.choice, first_entry_row(panel))
+	testing.expect(t, !panel.choice_undrawn)
+	testing.expect(t, !panel.typed_since_list)
+	testing.expect_value(t, entries_collect(panel, PROGRAMS[:5], {{title = "plasma", number = 7, focus = true}}), Adoption.Same)
+	// With no key, a choice that the arrow moved stays through an equal
+	// list.
+	testing.expect(t, choice_move(panel, .Next))
+	chosen := panel.choice
+	testing.expect_value(t, entries_collect(panel, PROGRAMS[:5], {{title = "plasma", number = 7, focus = true}}), Adoption.Same)
+	testing.expect_value(t, panel.choice, chosen)
+}
+
 // Tab before the candidates of a field came waits for them: it never goes
 // to the next field while a candidate that it can take is on its way. The
 // chosen candidate stays chosen when the text of the field narrows the

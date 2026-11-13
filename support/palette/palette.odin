@@ -186,6 +186,11 @@ Panel :: struct {
 	// entry, and no frame showed it yet: Enter runs nothing until the owner
 	// drew the panel (panel_drawn). The palette runs the row that is drawn.
 	choice_undrawn: bool,
+	// The typed part changed since the list that the panel shows (typed_edit
+	// sets it): the list for the typed part of now is a list for a new typed
+	// part, also when the text came back to what it was. Its first entry is
+	// chosen, and the adoption of that list clears the bit.
+	typed_since_list: bool,
 	recents:       [RECENT_CAPACITY]Recent, // The chosen entries, the newest first.
 	recent_count:  int, // The remembered choices in use.
 	form:          Form, // Arguments: the fields of the chosen entry.
@@ -346,8 +351,12 @@ Adoption :: enum u8 {
 // (choice_undrawn), and a panel that asked for a second Enter goes back to
 // the search. A list for a new typed part chooses its first entry: it is
 // the answer to the keys of the input, and its best match is what Enter
-// means. A panel with a form keeps its question: the form holds its own
-// copy of its entry.
+// means. A list is for a new typed part when its text differs from the
+// text of the list before, and also when a key changed the typed part
+// since the list before (Panel.typed_since_list): a character and a
+// Backspace in one batch leave the same text, and the list that answers
+// them still chooses its first entry. A panel with a form keeps its
+// question: the form holds its own copy of its entry.
 panel_adopt :: proc "contextless" (panel: ^Panel, list: ^List) -> Adoption {
 	return panel_adopt_after(panel, list, panel_shown(panel))
 }
@@ -359,7 +368,18 @@ panel_adopt_after :: proc "contextless" (panel: ^Panel, list: ^List, shown_befor
 	shown := shown_before
 	panel.list = list
 	panel.pressed_row = NO_ROW
-	same_typed_part := panel.state != .Closed && shown.listed && string(shown.query[:shown.query_length]) == string(list.query[:clamp(list.query_length, 0, TYPED_CAPACITY)])
+	list_query := string(list.query[:clamp(list.query_length, 0, TYPED_CAPACITY)])
+	// Keys changed the typed part since the list shown: this list answers
+	// them, also when the text is again what that list answered (a
+	// character, then Backspace). The choice of the list before was made
+	// for other keys, so the first entry is chosen, as for each new typed
+	// part. The bit ends with the list of the typed part of now: an older
+	// list that arrives late does not end it.
+	typed_since := panel.typed_since_list
+	if list_query == typed_text(panel) {
+		panel.typed_since_list = false
+	}
+	same_typed_part := !typed_since && panel.state != .Closed && shown.listed && string(shown.query[:shown.query_length]) == list_query
 	if same_typed_part && shown.content == list.content {
 		return .Same
 	}

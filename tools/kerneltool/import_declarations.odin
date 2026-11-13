@@ -4,6 +4,7 @@ import module "contract:module"
 import "core:fmt"
 import "core:odin/ast"
 import "core:os"
+import "core:slice"
 import "core:strings"
 
 // The check of the declarations of an importer (docs/MODULE_CONTRACT.md,
@@ -27,6 +28,11 @@ import "core:strings"
 // parameters, of the records and of their fields are for a reader: they
 // can differ. A `foreign` procedure that no import exports is a procedure
 // of an assembly file of the module: it is not compared.
+//
+// The check is closed from the side of the linked file: each symbol that
+// became a slot of the importer has exactly one compared declaration
+// (declared_symbols_problem). So a declaration that this file does not
+// find stops the build, and does not pass unread.
 
 // One parameter of a call form.
 Call_Parameter :: struct {
@@ -48,14 +54,43 @@ Call_Form :: struct {
 
 // One procedure of a `foreign` block of a source.
 Foreign_Declaration :: struct {
-	link_name: string, // The symbol: the attribute link_name, else the name.
-	type:      ^ast.Proc_Type,
-	line:      int,
+	link_name:          string, // The symbol: the attribute link_name, else the name after the link_prefix of its block. "": the source does not give it as a text.
+	type:               ^ast.Proc_Type,
+	line:               int,
+	convention_problem: string, // "": the calling convention is "c". Else what the declaration has.
+}
+
+// attribute_text reads the value of an attribute `name = value` of a
+// declaration or of a block. present: the attribute is there. is_text: its
+// value is a text in the source, given with no quotes; a constant or
+// another expression is not read.
+@(private = "file")
+attribute_text :: proc(attributes: []^ast.Attribute, name: string) -> (text: string, present: bool, is_text: bool) {
+	for attribute in attributes {
+		for element in attribute.elems {
+			item, is_field_value := element.derived.(^ast.Field_Value)
+			if !is_field_value {
+				continue
+			}
+			field, is_field := item.field.derived.(^ast.Ident)
+			if !is_field || field.name != name {
+				continue
+			}
+			literal, is_literal := item.value.derived.(^ast.Basic_Lit)
+			if !is_literal {
+				return "", true, false
+			}
+			return strings.trim(literal.tok.text, "\"`"), true, true
+		}
+	}
+	return "", false, false
 }
 
 // foreign_declarations_collect adds each procedure of each `foreign` block
 // of a list of statements, also those of a block inside a `when`: a
-// program can declare an import for one build setting only.
+// program can declare an import for one build setting only. A block in
+// the body of a procedure is not read: the check of the slots
+// (declared_symbols_problem) then finds a symbol with no declaration.
 foreign_declarations_collect :: proc(statements: []^ast.Stmt, list: ^[dynamic]Foreign_Declaration) {
 	for statement in statements {
 		if statement == nil {
@@ -92,21 +127,30 @@ foreign_declarations_collect :: proc(statements: []^ast.Stmt, list: ^[dynamic]Fo
 				if type == nil {
 					continue
 				}
+				// The symbol: the text of link_name; else the name, after the
+				// text of the link_prefix of the block. A name that is not a
+				// text in the source (a constant) is not known here: the
+				// declaration then matches no export, and the check of the
+				// slots names the symbol that has no declaration.
 				link_name := identifier.name
-				for attribute in declaration.attributes {
-					for element in attribute.elems {
-						item, is_field_value := element.derived.(^ast.Field_Value)
-						if !is_field_value {
-							continue
-						}
-						field, is_field := item.field.derived.(^ast.Ident)
-						literal, is_literal := item.value.derived.(^ast.Basic_Lit)
-						if is_field && is_literal && field.name == "link_name" {
-							link_name = strings.trim(literal.tok.text, "\"`")
-						}
-					}
+				if prefix, has_prefix, prefix_is_text := attribute_text(node.attributes[:], "link_prefix"); has_prefix {
+					link_name = prefix_is_text ? strings.concatenate({prefix, identifier.name}, context.temp_allocator) : ""
 				}
-				append(list, Foreign_Declaration{link_name = link_name, type = type, line = declaration.pos.line})
+				if name, has_name_attribute, name_is_text := attribute_text(declaration.attributes[:], "link_name"); has_name_attribute {
+					link_name = name_is_text ? name : ""
+				}
+				// The calling convention: a call form is the registers of the
+				// convention "c". Another convention passes one more argument
+				// (the context), with the same parameters in the source.
+				convention := ""
+				if written, is_written := type.calling_convention.(string); is_written {
+					if strings.trim(written, "\"`") != "c" {
+						convention = strings.concatenate({"it has the calling convention ", written}, context.temp_allocator)
+					}
+				} else if default_convention, has_default, default_is_text := attribute_text(node.attributes[:], "default_calling_convention"); has_default && (!default_is_text || default_convention != "c") {
+					convention = "its block has a default calling convention that is not \"c\""
+				}
+				append(list, Foreign_Declaration{link_name = link_name, type = type, line = declaration.pos.line, convention_problem = convention})
 			}
 		}
 	}
@@ -211,7 +255,11 @@ call_form_of_declaration :: proc(state: ^Describe_State, source: string, type: ^
 				parameter.kind, parameter.record = .Record, record_at(state, number)
 				break
 			}
-			return {}, fmt.tprintf("the type %s has no description", text), false
+			// The usual cause is a name for a type of the contract. The tool
+			// follows no alias: that needs the constants of each package,
+			// which is the work of the compiler. The declaration is where a
+			// reader finds the call form, so the type is written there.
+			return {}, fmt.tprintf("the type %s has no description. The tool does not read a type alias: write the type itself in the declaration, as ^system.Table_To_Append(Record), ^system.Bytes_To_Read, ^string or i64", text), false
 		}
 		for _ in field.names {
 			append(&parameters, parameter)
@@ -419,8 +467,9 @@ Importable_Export :: struct {
 // import_declarations_of_file_agree compares each `foreign` procedure of
 // one source with the export of that name, if one of `exports` has it. It
 // prints each difference, and gives the count of the declarations that it
-// compared.
-import_declarations_of_file_agree :: proc(importer: string, path: string, exports: []Importable_Export) -> (compared: int, ok: bool) {
+// compared. compared_names receives the symbol of each compared
+// declaration, for the check of the slots (declared_symbols_problem).
+import_declarations_of_file_agree :: proc(importer: string, path: string, exports: []Importable_Export, compared_names: ^[dynamic]string = nil) -> (compared: int, ok: bool) {
 	state: Describe_State
 	target := package_state_of_file(path, &state) or_return
 	declarations := make([dynamic]Foreign_Declaration, context.temp_allocator)
@@ -428,12 +477,18 @@ import_declarations_of_file_agree :: proc(importer: string, path: string, export
 	ok = true
 	for declaration in declarations {
 		for export in exports {
-			if export.name != declaration.link_name {
+			if declaration.link_name == "" || export.name != declaration.link_name {
 				continue
 			}
 			compared += 1
+			if compared_names != nil {
+				append(compared_names, declaration.link_name)
+			}
 			form, problem, readable := call_form_of_declaration(&state, target.src, declaration.type)
-			if !readable {
+			if declaration.convention_problem != "" {
+				fmt.eprintfln("kerneltool: %s: %s(%d): the declaration of %s, an export of %s: %s. An export is called with the convention \"c\": write proc \"c\", and no default convention on the block", importer, path, declaration.line, declaration.link_name, export.module_name, declaration.convention_problem)
+				ok = false
+			} else if !readable {
 				fmt.eprintfln("kerneltool: %s: %s(%d): the declaration of %s, an export of %s: %s", importer, path, declaration.line, declaration.link_name, export.module_name, problem)
 				ok = false
 			} else if difference := call_forms_difference(form, export.form); difference != "" {
@@ -472,12 +527,47 @@ source_of_the_repository :: proc(path: string) -> (relative: string, ok: bool) {
 	return "", false
 }
 
+// declared_symbols_problem says which symbol that became a slot of the
+// importer does not have exactly one compared declaration. "": each has
+// one. slot_symbols can name a symbol several times (one slot for each
+// place that holds its address); compared_names has one name for each
+// compared declaration.
+//
+// This closes the check from the side of the linked file. A declaration
+// that the tool did not find (a `foreign` block in the body of a
+// procedure, a link_name or a link_prefix that is a constant and not a
+// text) is not compared, and the comparison of the others says nothing of
+// it. The call is still in the code, so its symbol is a slot: a slot with
+// no compared declaration stops the build. Two declarations of one symbol
+// are refused too: the call form is written one time, and the tool cannot
+// know which of the two the compiler used for a call.
+declared_symbols_problem :: proc(slot_symbols: []string, compared_names: []string) -> string {
+	for symbol, index in slot_symbols {
+		if slice.contains(slot_symbols[:index], symbol) {
+			continue
+		}
+		count := 0
+		for name in compared_names {
+			count += int(name == symbol)
+		}
+		switch {
+		case count == 0:
+			return fmt.tprintf("the import %s is called, and the tool found no declaration of it to compare: declare it in a `foreign` block at the level of the file (or of a `when` there), with its name or with link_name as a text", symbol)
+		case count > 1:
+			return fmt.tprintf("the import %s has %d declarations: declare it one time, so that one call form is compared", symbol, count)
+		}
+	}
+	return ""
+}
+
 // import_declarations_check is the check of the conversion of a module:
 // each `foreign` declaration of the sources that the compiler read for
 // this module agrees with the description of the export that it names, in
-// the module file of an import. A source is parsed only when it has the
-// word `foreign` and the name of an export of an import.
-import_declarations_check :: proc(build: Module_Build, imports: []Import_File) -> bool {
+// the module file of an import, and each symbol that became a slot of the
+// module (slot_symbols, from convert) has exactly one such declaration. A
+// source is parsed only when it has the word `foreign` and the name of an
+// export of an import.
+import_declarations_check :: proc(build: Module_Build, imports: []Import_File, slot_symbols: []string) -> bool {
 	if len(imports) == 0 {
 		return true
 	}
@@ -498,7 +588,7 @@ import_declarations_check :: proc(build: Module_Build, imports: []Import_File) -
 		return false
 	}
 	agree := true
-	compared := 0
+	compared_names := make([dynamic]string, context.temp_allocator)
 	for listed_path in source_files {
 		// The sources of the compiler itself declare no import of a module.
 		path, of_the_repository := source_of_the_repository(listed_path)
@@ -519,30 +609,34 @@ import_declarations_check :: proc(build: Module_Build, imports: []Import_File) -
 		if !names_an_export {
 			continue
 		}
-		count, file_agrees := import_declarations_of_file_agree(join("convert ", build.name), path, exports[:])
-		compared += count
+		_, file_agrees := import_declarations_of_file_agree(join("convert ", build.name), path, exports[:], &compared_names)
 		agree &&= file_agrees
 	}
-	// A module with an import calls it: with no declaration found, the
-	// tool read the wrong sources, and the check proved nothing.
-	if agree && compared == 0 {
-		fmt.eprintfln("kerneltool: convert %s: no source declares an export of its imports: the declarations are not checked", build.name)
+	// Each call of an import went through a declaration that was compared.
+	if problem := declared_symbols_problem(slot_symbols, compared_names[:]); problem != "" {
+		fmt.eprintfln("kerneltool: convert %s: %s", build.name, problem)
 		return false
 	}
 	return agree
 }
 
 // module_is_a_library_check refuses a library module with a segment that
-// is read-only after the load. Such a segment holds addresses that the
-// loader writes for one base, so a starter keeps one prepared part of it
-// for each address where an importer has the module: with many importers,
-// its table of prepared modules fills, and the next program does not
-// start (support/system, load.odin).
+// the loader writes and that is read-only after the load: a segment that
+// holds a rebase (a table of addresses: of texts, of procedures) or a slot
+// (an import). The loader writes it for one base, so a starter keeps one
+// prepared part of it for each address where an importer has the module:
+// with many importers, its table of prepared modules fills, and the next
+// program does not start (support/system, load.odin).
+//
+// A segment of that range of the linker that the loader writes nowhere is
+// not such a segment: the conversion gives it the flags of a constant
+// segment (segment_flags_after_the_relocations), so the flag that this check
+// reads is set only where a rebase or a slot is.
 module_is_a_library_check :: proc(name: string, file: []u8) -> bool {
 	for index in 1 ..< module.count(file, .Segments) {
 		segment, _ := module.record(file, .Segments, index, module.Segment)
 		if .Read_Only_After_Load in segment.flags {
-			fmt.eprintfln("kerneltool: convert %s: a library module has a segment that is read-only after the load (%d bytes at offset %x): it holds a table of addresses (a table of texts or of procedures), or an import. Remove it: each importer would need its own prepared part of the module", name, segment.memory_size, segment.memory_offset)
+			fmt.eprintfln("kerneltool: convert %s: a library module has a segment that the loader writes and that is read-only after the load (%d bytes at offset %x): it holds a rebase (a table of addresses: of texts, of procedures) or a slot (an import). Remove the table or the import: each importer would need its own prepared part of the module", name, segment.memory_size, segment.memory_offset)
 			return false
 		}
 	}

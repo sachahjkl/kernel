@@ -417,7 +417,7 @@ the_exports_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) {
 		graphics.text_choice_set(configuration.font, configuration.order)
 		// The module reads the interface font of the program in its own
 		// data; the package reads it in the draw table.
-		program_text = {state = 1, interface_font = fonts.interface_font, interface_font_given = configuration.interface_font}
+		program_text = {loaded = true, interface_font = fonts.interface_font, interface_font_given = configuration.interface_font}
 		font_of_tables: ^display.Interface_Font
 		if configuration.interface_font {
 			font_of_tables = &fonts.interface_font

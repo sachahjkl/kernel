@@ -38,10 +38,12 @@ Window_Drawing :: struct {
 	// A program that draws through the drawing module: the calls of an
 	// export of the module since the start (two for a frame with damage on
 	// a surface with one picture), and the error record of the last call
-	// that the module refused. A program with the package compiled in keeps
-	// both zero.
+	// that the module refused, which the one line of the log of a refusal
+	// reads (module_refusal_log). A program with the package compiled in
+	// keeps the three zero.
 	module_calls: u64,
 	module_error: errors.Error_Record,
+	module_refusal_logged: bool, // The line of a refusal is on the log: a window writes it one time.
 }
 
 // A rectangle as the drawing module describes it: the fields of Rectangle,
@@ -106,6 +108,7 @@ when DRAWING_THROUGH_MODULE {
 		count := module_damage_of_draw_table(&before_records, &before_text, &now_records, &now_text, &result, &drawing.module_error)
 		if count < 0 {
 			damage.count = 0
+			module_refusal_log(drawing, "damage_of_draw_table_7")
 			return false
 		}
 		damage.count = int(min(count, DAMAGE_CAPACITY))
@@ -122,6 +125,7 @@ when DRAWING_THROUGH_MODULE {
 	frame_draw :: proc "contextless" (drawing: ^Window_Drawing, now: ^Draw_Table, canvas: graphics.Canvas, rectangles: []Rectangle) -> bool {
 		if len(now.pictures) != 0 || len(now.grids) != 0 {
 			drawing.module_error = errors.error_make(.Unsupported, .None, 1, i64(len(now.pictures)) + i64(len(now.grids)))
+			module_refusal_log(drawing, "execute_draw_table_7")
 			return false
 		}
 		now_records, now_text := records_to_read(now), text_to_read(now)
@@ -130,7 +134,41 @@ when DRAWING_THROUGH_MODULE {
 		pixels := system.Bytes_To_Change{bytes = ([^]u8)(canvas.pixels), count = size, capacity = size}
 		shape := Module_Canvas_Shape{width = i64(canvas.width), height = i64(canvas.height), stride = i64(canvas.stride), fill_background = 1, background = i64(graphics.COLOR_BACKGROUND)}
 		drawing.module_calls += 1
-		return module_execute_draw_table(&now_records, &now_text, &places, &pixels, &shape, &drawing.module_error) >= 0
+		if module_execute_draw_table(&now_records, &now_text, &places, &pixels, &shape, &drawing.module_error) < 0 {
+			module_refusal_log(drawing, "execute_draw_table_7")
+			return false
+		}
+		return true
+	}
+
+	// module_refusal_log writes the one line of a window whose draw or
+	// difference the drawing module refused: the export, and the error
+	// record in words. A refused draw presents nothing and makes the next
+	// frame whole, which is refused again: with no line, the window stays
+	// empty and the log says nothing. One line for the life of the window:
+	// the cause is in the program (a table, a shape, a picture), and each
+	// frame has the same one.
+	@(private = "file")
+	module_refusal_log :: proc "contextless" (drawing: ^Window_Drawing, export_name: string) {
+		if drawing.module_refusal_logged {
+			return
+		}
+		drawing.module_refusal_logged = true
+		record := drawing.module_error
+		cause := "the module gave an error kind that this line has no words for"
+		#partial switch errors.Kind(record.kind) {
+		case .Too_Long:
+			cause = "a table has more records or bytes than the module takes"
+		case .Bad_Value:
+			cause = "the shape of the canvas has a width, a height or a stride that the module refuses"
+		case .Too_Small:
+			cause = "the pixels do not hold the shape of the canvas"
+		case .Bad_Address:
+			cause = "the address of the pixels is not a multiple of 4"
+		case .Unsupported:
+			cause = "the frame has a picture or a grid of text cells, which the module does not draw: this program must keep the interface package compiled in"
+		}
+		system.log_in("programs", .Warning, "interface: the drawing module refused ", export_name, ": ", cause, " (the error kind ", u64(max(record.kind, 0)), ", the argument ", u64(max(record.argument, 0)), "). A refused difference draws each frame whole; a refused draw leaves the window as it was. A window writes this line one time")
 	}
 } else {
 	// frame_difference finds the damage from the table before to the table

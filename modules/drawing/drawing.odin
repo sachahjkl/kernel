@@ -97,12 +97,26 @@ ARGUMENT_SHAPE :: 5
 // module loads one time, at the first draw. It is data of the module, and
 // the loader gives each program its own copy.
 //
-// state: 0 not loaded, 1 loaded, 2 a thread loads it now. A second thread
-// that draws at that time waits for the first: a draw with half of the
-// glyph caches would be a draw in another font.
+// The rule of the callers: one thread of a program at a time calls
+// execute_draw_table_7. It is the rule of the text state of the graphics
+// package, which changes "between two frames" (support/graphics,
+// text.odin), and each window of the system has one loop that draws. The
+// module takes no lock for it and waits for no other thread: the load
+// below, the choice of the settings that each draw applies, the square
+// root table and the blend tables are all written with no guard.
+//
+// What a second thread gets when a program breaks the rule: the two
+// threads can both load (they write the same values), and one can draw
+// while the other writes the choice of the font or a blend table. That
+// draw can show a text in the wrong font or with wrong colors, and when
+// the choice of the settings changes at that moment it can read a glyph
+// cache record that is half of one cache and half of the other, and
+// fault. All of it is inside the program that broke the rule: the module
+// runs in its address space, with its own copy of this data.
+// damage_of_draw_table_7 reads no text state: any thread can call it.
 @(private)
 Program_Text :: struct {
-	state:                u32,
+	loaded:               bool, // The text settings and the interface font were looked for.
 	interface_font:       display.Interface_Font, // The two glyph caches of the interface font, validated.
 	interface_font_given: bool, // The starter mapped both, and both are of a proportional font.
 }
@@ -120,38 +134,30 @@ no_context: system.Context
 // text code of this module: a change of a setting reaches the next draw
 // with no message from the program. It writes no line on the log: the
 // program validated the same caches when it opened its window, and wrote
-// the lines.
+// the lines. One thread of a program at a time runs it (Program_Text).
 @(private)
 program_text_load :: proc "contextless" () {
-	for {
-		state, swapped := intrinsics.atomic_compare_exchange_strong(&program_text.state, 0, 2)
-		if swapped {
-			context_record := &no_context
-			when ODIN_OS == .Freestanding {
-				context_record = system.context_record()
-			}
-			_, _ = display.text_settings_load(context_record)
-			weights := [2]settings.Glyph_Cache{.Interface, .Interface_Bold}
-			caches: [2]glyph_cache.Cache
-			given := true
-			for weight, index in weights {
-				problem: glyph_cache.Problem
-				caches[index], problem = settings.glyph_cache_open(&context_record.values, weight)
-				if problem.kind != .None || caches[index].header.flags & glyph_cache.FLAG_PROPORTIONAL == 0 {
-					given = false
-				}
-			}
-			if given {
-				program_text.interface_font = {regular = caches[0], bold = caches[1]}
-				program_text.interface_font_given = true
-			}
-			intrinsics.atomic_store(&program_text.state, 1)
-			break
+	if !program_text.loaded {
+		context_record := &no_context
+		when ODIN_OS == .Freestanding {
+			context_record = system.context_record()
 		}
-		if state == 1 {
-			break
+		_, _ = display.text_settings_load(context_record)
+		weights := [2]settings.Glyph_Cache{.Interface, .Interface_Bold}
+		caches: [2]glyph_cache.Cache
+		given := true
+		for weight, index in weights {
+			problem: glyph_cache.Problem
+			caches[index], problem = settings.glyph_cache_open(&context_record.values, weight)
+			if problem.kind != .None || caches[index].header.flags & glyph_cache.FLAG_PROPORTIONAL == 0 {
+				given = false
+			}
 		}
-		intrinsics.cpu_relax()
+		if given {
+			program_text.interface_font = {regular = caches[0], bold = caches[1]}
+			program_text.interface_font_given = true
+		}
+		program_text.loaded = true
 	}
 	display.text_settings_apply()
 }
@@ -161,10 +167,18 @@ program_text_load :: proc "contextless" () {
 // false, with the error record, when a count passes TABLE_LIMIT.
 //
 // The module does not check the text range of each record here: the
-// records are in memory that the caller can change during the call, so a
-// check here and a read later in the package would read two values. The
-// package checks each range where it reads it, on its one copy of the
-// record (support/interface, difference.odin and execute.odin).
+// package checks each range where it uses the record
+// (support/interface, difference.odin and execute.odin), so one place
+// holds the rule. These checks protect a correct caller from a wrong count
+// or a wrong record: no fault, and no write outside the pixels. They are
+// not a defence against a caller that changes its tables during the call.
+// The shape, the counts and the rectangles are read one time
+// (volatile_load); a draw record is a plain read, which the compiler can
+// make again after a check. A direct call is not a border of trust: the
+// module runs in the address space of its caller, with the rights of that
+// program and its own copy of the data of the module, so a caller that
+// cheats reaches only its own memory. In an isolated call the receiver
+// gives the export its own copy of the arguments.
 @(private)
 draw_table_of :: proc "contextless" (records: ^system.Table_To_Read(interface.Draw_Record), text: ^system.Bytes_To_Read, records_argument, text_argument: i64, error: ^errors.Error_Record) -> (table: interface.Draw_Table, ok: bool) {
 	record_count := intrinsics.volatile_load(&records.count)

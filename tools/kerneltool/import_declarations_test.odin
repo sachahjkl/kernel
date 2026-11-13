@@ -134,7 +134,137 @@ a_declaration_with_another_call_form_is_refused :: proc(t: ^testing.T) {
 	// A type that the description of an export cannot hold.
 	problem, readable := declared_difference(t, "i32", `(rows: rawptr, by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64`)
 	testing.expect(t, !readable)
-	testing.expect_value(t, problem, "the type rawptr has no description")
+	testing.expect(t, strings.has_prefix(problem, "the type rawptr has no description"), problem)
+	// A name for a type of the contract: the tool follows no alias, and
+	// the sentence says what to write.
+	problem, readable = declared_difference(t, "i32", `(rows: ^Rows_Of_The_Test, by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64`)
+	testing.expect(t, !readable)
+	testing.expect(t, strings.has_prefix(problem, "the type ^Rows_Of_The_Test has no description"), problem)
+	testing.expect(t, strings.contains(problem, "The tool does not read a type alias: write the type itself in the declaration"), problem)
+}
+
+// declarations_of_source parses one source and gives the procedures of its
+// `foreign` blocks that the tool finds.
+@(private = "file")
+declarations_of_source :: proc(t: ^testing.T, source: string) -> []Foreign_Declaration {
+	state: Describe_State
+	state.records = make([dynamic]Record_Description, context.temp_allocator)
+	state.structs = make(map[string]Struct_Source, context.temp_allocator)
+	declarations := make([dynamic]Foreign_Declaration, context.temp_allocator)
+	file, parsed := parse_source("declarations_of_the_test.odin", source, &state)
+	if testing.expect(t, parsed) {
+		foreign_declarations_collect(file.decls[:], &declarations)
+	}
+	return declarations[:]
+}
+
+// The calling convention of a declaration is read: an export is called
+// with the convention "c". A declaration with another convention written,
+// or with none in a block whose default is not "c", passes one more
+// argument than its parameters say: it is refused.
+@(test)
+a_declaration_with_another_calling_convention_is_refused :: proc(t: ^testing.T) {
+	source := `package conventions_of_the_test
+
+foreign _ {
+	written_c :: proc "c" (value: i64) -> i64 ---
+	not_written :: proc(value: i64) -> i64 ---
+	written_odin :: proc "odin" (value: i64) -> i64 ---
+	written_contextless :: proc "contextless" (value: i64) -> i64 ---
+}
+
+@(default_calling_convention = "c")
+foreign _ {
+	default_c :: proc(value: i64) -> i64 ---
+}
+
+@(default_calling_convention = "odin")
+foreign _ {
+	default_odin :: proc(value: i64) -> i64 ---
+	default_odin_written_c :: proc "c" (value: i64) -> i64 ---
+}
+`
+	declarations := declarations_of_source(t, source)
+	Expected :: struct {
+		name:    string,
+		refused: bool,
+	}
+	expected := [?]Expected{{"written_c", false}, {"not_written", false}, {"written_odin", true}, {"written_contextless", true}, {"default_c", false}, {"default_odin", true}, {"default_odin_written_c", false}}
+	if !testing.expect_value(t, len(declarations), len(expected)) {
+		return
+	}
+	for item, index in expected {
+		testing.expect_value(t, declarations[index].link_name, item.name)
+		testing.expectf(t, (declarations[index].convention_problem != "") == item.refused, "%s: the problem of its convention is \"%s\"", item.name, declarations[index].convention_problem)
+	}
+}
+
+// The symbol of a declaration: its name, the text of link_name, or the name
+// after the text of the link_prefix of its block. A name that the source
+// does not give as a text is not known, and a block in the body of a
+// procedure is not read: such a declaration is compared with no export.
+@(test)
+the_symbol_of_a_declaration :: proc(t: ^testing.T) {
+	source := `package symbols_of_the_test
+
+NAME_OF_THE_TEST :: "constant_name"
+
+foreign _ {
+	plain_name :: proc "c" (value: i64) -> i64 ---
+	@(link_name = "text_name")
+	with_a_text :: proc "c" (value: i64) -> i64 ---
+	@(link_name = NAME_OF_THE_TEST)
+	with_a_constant :: proc "c" (value: i64) -> i64 ---
+}
+
+@(link_prefix = "module_")
+foreign _ {
+	after_a_prefix :: proc "c" (value: i64) -> i64 ---
+	@(link_name = "own_name")
+	with_its_own_name :: proc "c" (value: i64) -> i64 ---
+}
+
+@(link_prefix = NAME_OF_THE_TEST)
+foreign _ {
+	after_a_constant_prefix :: proc "c" (value: i64) -> i64 ---
+}
+
+caller_of_the_test :: proc "c" () -> i64 {
+	foreign _ {
+		in_a_procedure :: proc "c" (value: i64) -> i64 ---
+	}
+	return in_a_procedure(1)
+}
+`
+	declarations := declarations_of_source(t, source)
+	names := [?]string{"plain_name", "text_name", "", "module_after_a_prefix", "own_name", ""}
+	if !testing.expect_value(t, len(declarations), len(names)) {
+		return
+	}
+	for name, index in names {
+		testing.expect_value(t, declarations[index].link_name, name)
+	}
+}
+
+// Each symbol that became a slot of the importer has exactly one compared
+// declaration. A symbol with none is a call through a declaration that the
+// tool did not find (the three forms of the test above): the build stops
+// and names it. Two declarations of one symbol are refused too.
+@(test)
+each_slot_has_one_compared_declaration :: proc(t: ^testing.T) {
+	// A symbol has one slot for each place that holds its address.
+	slots := [?]string{"seal", "open", "seal", "sum_values"}
+	testing.expect_value(t, declared_symbols_problem(slots[:], {"open", "sum_values", "seal"}), "")
+	testing.expect_value(t, declared_symbols_problem(nil, nil), "")
+	// A declaration of an export that the module never calls has no slot:
+	// it was compared, and it is no problem.
+	testing.expect_value(t, declared_symbols_problem(slots[:], {"open", "sum_values", "seal", "never_called"}), "")
+	missing := declared_symbols_problem(slots[:], {"seal", "sum_values"})
+	testing.expect(t, strings.has_prefix(missing, "the import open is called, and the tool found no declaration of it to compare"), missing)
+	twice := declared_symbols_problem(slots[:], {"seal", "open", "sum_values", "sum_values"})
+	testing.expect(t, strings.has_prefix(twice, "the import sum_values has 2 declarations"), twice)
+	none := declared_symbols_problem(slots[:], nil)
+	testing.expect(t, strings.has_prefix(none, "the import seal is called"), none)
 }
 
 // The sources of the repository: each module of the module table that has

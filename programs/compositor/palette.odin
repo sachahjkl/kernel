@@ -562,9 +562,6 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 		// thread, and the panel shows the list before until then.
 		drawn, text_changed := palette.typed_edit(panel, key, character)
 		if text_changed {
-			// The choice that no frame showed was of the list before. The
-			// typed part asks for a new list, and Enter waits for that one.
-			panel.choice_undrawn = false
 			palette_enter_waits = false
 			palette_entries_refresh()
 		}

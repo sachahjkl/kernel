@@ -3915,7 +3915,7 @@ A library module is a module that holds code that many programs import, in place
 
 A package that 40 programs compile in is 40 copies of the same code with no record of what each program holds. A library module is one file with one hash: the import table of each program names it, the module graph shows who runs it, and a change of its code builds one module. Its exports have descriptions, as each export: the border is coarse, so a call passes whole tables of the caller, by address, with no copy. The code that a program calls many times for one result stays compiled into the program.
 
-A library module has no segment that is read-only after the load: no table of addresses, and no import. So all its code is shared code at each address, and a starter keeps one prepared module for it, not one for each importer. The kernel tool refuses a library module that breaks this rule. Its writable data is a cache of a fixed size, one copy for each program; the caller still supplies each table and each buffer. Example: the drawing module.
+A library module has no segment that the loader writes and that is read-only after the load: no table of addresses, and no import. So all its code is shared code at each address, and a starter keeps one prepared module for it, not one for each importer. The kernel tool refuses a library module that breaks this rule. Its writable data is a cache of a fixed size, one copy for each program; the caller still supplies each table and each buffer. Example: the drawing module.
 
 A library module is not a second kind of import: it is a module, and the loader binds it as each import. The root service, the boot program and the call host import nothing: they keep the packages compiled in.
 
