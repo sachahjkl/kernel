@@ -53,7 +53,7 @@ It does not protect against:
 - **the firmware, and the kernel after the start.** The checks run once, at the start. A fault of the kernel or a device that writes memory directly (DMA) is not in their scope.
 - **a changed debug image.** The debug image (`DEBUG/OBJECTS.IMG`, beside the boot program) is not in the boot image, the system description does not list it, and the boot program reads it with no check. Anyone who can write the boot volume can make a stop report show false names of procedures and lines. No code comes from it, and each reader checks the form of each debug object before it reads it (`MODULE_CONTRACT.md`, "Debug information").
 
-The second check, by the root service, finds a fault of the path from the boot program to the first program: a fault of the copy of the boot image, or of the kernel. It does not find an attacker: no program can write the pages of the boot image before it. Its time on the test machine: ____ (the line `root: the boot image agrees ...` of the log gives it at each boot).
+The second check, by the root service, finds a fault of the path from the boot program to the first program: a fault of the copy of the boot image, or of the kernel. It does not find an attacker: no program can write the pages of the boot image before it. Its time on the test machines: 5.9 to 7.9 ms for 86 or 87 modules and resources, over the 43 machines of one run of the tests (QEMU with KVM on an AMD Ryzen 7 5800X). The line `root: the boot image agrees ...` of the log gives it at each boot, for example "root: the boot image agrees with the system description that the boot program verified: 87 modules and resources checked in 6087 us; the kernel was checked by the boot program only".
 
 ### Layer 2: the measure
 
@@ -79,7 +79,7 @@ It does not protect against:
 
 ## 3. The system description
 
-The system description is one file. It is the identity of one version of the whole system (`contract/system_description`).
+The system description is one file. It is the identity of one version of the whole system (`contract/system_description`). It lists each file of the system with its size and its hash, in one fixed order, so one system has exactly one description and one hash: two machines with the same hash of the description run the same bytes.
 
 ```
 Header, 16 bytes:
@@ -141,7 +141,7 @@ After its first draw of the display, the boot program writes its lines on the se
 
 ## 5. The signing key
 
-The signing key is an Ed25519 key pair of the principal that signs the system.
+The signing key is an Ed25519 key pair of the principal that signs the system. Its public key is built into the boot program; its private key signs each system description. Whoever holds the private key decides which systems the machine starts, so the rules below keep it out of the repository and out of reach of other users, and say what to do when it is lost or stolen.
 
 - **Where it lives**: the private key is a file outside the repository. The environment variable `SYSTEM_SIGNING_KEY` names it at build time. The tool refuses a path inside the repository. The boot volume holds the public key and the description signature only.
 - **With no variable**: the build signs with the test signing key and the test firmware signing key of `resources/keys`, and the machine says that it is not trusted.
@@ -179,6 +179,8 @@ The signing key is an Ed25519 key pair of the principal that signs the system.
 Anyone who has the private key can sign a system that the boot program accepts. Make a new key and a new boot program at once. No list of revoked keys exists.
 
 ## 6. The measure
+
+The measure is a record in the TPM of which system started: the hash of the system description, extended into one register before the kernel starts. No later code can set the register back, so a key sealed to it, or a remote party that reads it, learns which system runs. Today nothing reads it but the record of principal 0 and the boot display.
 
 - **The register**: PCR 11. The TCG rules for PC firmware leave PCR 8 to 15 to the operating system. The conventions of Linux give PCR 11 to the whole system image that a boot stage measures before the kernel starts, which is what this measure is. The firmware of the test machine does not write PCR 11.
 - **The value**: the firmware hashes the system description with SHA-256 and extends PCR 11 with it, in each active bank. In the SHA-256 bank, after a reset, PCR 11 then holds `SHA-256(32 zero bytes || SHA-256(description))`. `kerneltool` computes the same value from the description of the boot volume and compares it with the value that the boot program read back.
@@ -220,6 +222,10 @@ The steps of a machine of the TPM or of Secure Boot after `boot program: started
 
 ## 7. Secure Boot
 
+Secure Boot makes the firmware check the boot program before it runs it, which closes the one gap of layer 1: a replaced boot program. The firmware checks only RSA signatures, so the principal that signs the system holds a second key for it.
+
+![A start with Secure Boot: the firmware verified the boot program, then the boot program verified the system](screenshots/boot_secure_boot.png)
+
 1. **A second key.** UEFI Secure Boot verifies Authenticode signatures with RSA keys and X.509 certificates. It cannot verify Ed25519. So the principal that signs the system has a firmware signing key: an RSA-2048 key and a self-signed certificate, that `kerneltool key new` makes with `openssl req -new -x509 -newkey rsa:2048 -sha256 -days 36500 -nodes`, in the folder of the signing key. The firmware does not check the dates of a certificate of `db`.
 2. **The test pair** is `resources/keys/test_firmware_signing_key.pem` and `.crt`, beside the test signing key, and its private key is published in the same way. `kerneltool key test-firmware-new` writes it once.
 3. **The signature of the boot program**: `sbsign --key <key> --cert <certificate> --output <signed> <unsigned>`, of the package `sbsigntool`. The build keeps the unsigned boot program as its output and writes the signed copy beside it.
@@ -230,7 +236,7 @@ The machines with this firmware run with four processors, as every other machine
 
 ## 8. The costs
 
-- **Time**: the boot program hashes the kernel and the whole boot image, and the root service hashes the boot image again. The log gives both times: `root: the boot program checked the signature and every hash in <n> us` and `root: the boot image agrees with the system description ...: <n> modules and resources checked in <n> us`.
+- **Time**: the boot program hashes the kernel and the whole boot image, and the root service hashes the boot image again. The log gives both times: `root: the boot program checked the signature and every hash in <n> us` and `root: the boot image agrees with the system description ...: <n> modules and resources checked in <n> us`. In one run of the tests (QEMU with KVM, an AMD Ryzen 7 5800X), the boot program took 8.3 to 9.7 ms and the root service 5.9 to 7.9 ms, of a start whose firmware alone takes about 1.5 s (`docs/measures/measures.txt`).
 - **Two hash functions**: BLAKE3 is the identity of each file and of the description. The TPM uses SHA-256 because it has no BLAKE3 bank.
 - **Two keys with Secure Boot**: an Ed25519 key for the description and an RSA key for the firmware.
 - **The start of the firmware with system management mode**: the tool prints the time from the start of QEMU to `boot program: started` for each machine with that firmware.
