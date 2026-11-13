@@ -52,6 +52,29 @@ first_run :: proc "c" () -> ! {
 	schedule()
 }
 
+// debug_image_pages checks the range of the debug image that the boot
+// program gives: on a page, inside the bound, and inside one range of the
+// memory of the boot, which the kernel never gives as a free frame. A
+// memory object over other memory would let the root service read and
+// give pages that the kernel uses.
+debug_image_pages :: proc "contextless" (boot: ^info.Boot_Info) -> (pages: u64, accepted: bool) {
+	start, size := boot.debug_image, boot.debug_image_size
+	if start == 0 || start % PAGE_SIZE != 0 || size == 0 || size > info.DEBUG_IMAGE_LIMIT || start > max(u64) - info.DEBUG_IMAGE_LIMIT - PAGE_SIZE {
+		return 0, false
+	}
+	pages = (size + PAGE_SIZE - 1) / PAGE_SIZE
+	end := start + pages * PAGE_SIZE
+	for range in info.physical_slice(boot.memory_ranges, boot.memory_range_count, info.Memory_Range) {
+		if range.kind != .Boot || range.page_count > (max(u64) - range.start) / PAGE_SIZE {
+			continue
+		}
+		if start >= range.start && end <= range.start + range.page_count * PAGE_SIZE {
+			return pages, true
+		}
+	}
+	return 0, false
+}
+
 // root_start builds the first program from the module "root" of the boot
 // image. Every other program is built by a program, with kernel operations.
 root_start :: proc "contextless" (boot: ^info.Boot_Info) {
@@ -147,9 +170,13 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	record.values[op.ROOT_VALUE_BOOT_IMAGE_SIZE] = boot.boot_image_size
 	// The debug image: the kernel gives its pages and reads none of them
 	// (docs/MODULE_CONTRACT.md, "Debug information").
-	if boot.debug_image != 0 && boot.debug_image_size != 0 {
-		record.handles[op.ROOT_DEBUG_IMAGE] = handle_insert(program, {kind = .Memory, rights = {.Give, .Read}, object = region_device(boot.debug_image, (boot.debug_image_size + PAGE_SIZE - 1) / PAGE_SIZE)})
-		record.values[op.ROOT_VALUE_DEBUG_IMAGE_SIZE] = boot.debug_image_size
+	if boot.debug_image_size != 0 {
+		if pages, accepted := debug_image_pages(boot); accepted {
+			record.handles[op.ROOT_DEBUG_IMAGE] = handle_insert(program, {kind = .Memory, rights = {.Give, .Read}, object = region_device(boot.debug_image, pages)})
+			record.values[op.ROOT_VALUE_DEBUG_IMAGE_SIZE] = boot.debug_image_size
+		} else {
+			log("kernel: the debug image of the boot program is refused: its range is not on a page, is over its bound, or is not memory of the boot; a stop report names no procedure")
+		}
 	}
 
 	if _, status := thread_create(index, ROOT_BUDGET, u64(start), op.STACK_TOP, op.CONTEXT_ADDRESS); status != .Ok {

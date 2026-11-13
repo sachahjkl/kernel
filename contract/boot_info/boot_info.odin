@@ -13,6 +13,11 @@ DIRECT_MAP_BASE :: uintptr(0xFFFF_8000_0000_0000)
 KERNEL_BASE :: uintptr(0xFFFF_FFFF_8000_0000)
 PAGE_SIZE :: 4096
 BOOT_STACK_PAGES :: 16
+// The bound of the debug image (Boot_Info.debug_image): its pages stay taken
+// from the memory of the machine for its whole run. The debug image of the
+// build is 2.3 MiB, and 32 MiB is about 14 times it. The boot program reads
+// no larger file, and the kernel refuses a larger range.
+DEBUG_IMAGE_LIMIT :: 32 << 20
 
 Memory_Kind :: enum u32 {
 	Reserved = 0, // Not usable: firmware, devices, holes.

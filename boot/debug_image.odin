@@ -1,5 +1,6 @@
 package boot
 
+import info "contract:boot_info"
 import "base:intrinsics"
 
 // The debug image (docs/MODULE_CONTRACT.md, "Debug information"): the debug
@@ -11,14 +12,13 @@ import "base:intrinsics"
 // it. A volume with no such file starts as before.
 
 DEBUG_IMAGE_PATH :: "\\DEBUG\\OBJECTS.IMG"
-// A bound of the pages that the debug image takes: the debug image of the
-// build of today is a few MiB.
-DEBUG_IMAGE_LIMIT :: 256 << 20
 
 // debug_image_read reads the debug image of the volume of the boot program
 // into pages of its own. It gives 0 and 0 when the volume has no such file,
 // when the file is empty or over the bound, or when the firmware refuses a
-// step: a start never fails for the debug image.
+// step. It runs after the last allocation of the start that stops the
+// machine when it fails, and it never stops the machine itself: a start
+// never fails for the debug image. A failed read gives its pages back.
 debug_image_read :: proc "contextless" () -> (address: u64, size: u64) {
 	services := system.boot_services
 	loaded_guid := EFI_LOADED_IMAGE_GUID
@@ -53,7 +53,7 @@ debug_image_read :: proc "contextless" () -> (address: u64, size: u64) {
 	if file.set_position(file, max(u64)) != 0 || file.get_position(file, &size) != 0 || file.set_position(file, 0) != 0 {
 		return 0, 0
 	}
-	if size == 0 || size > DEBUG_IMAGE_LIMIT {
+	if size == 0 || size > info.DEBUG_IMAGE_LIMIT {
 		print("boot program: the debug image is empty or over its bound: not read\r\n")
 		return 0, 0
 	}
@@ -67,8 +67,9 @@ debug_image_read :: proc "contextless" () -> (address: u64, size: u64) {
 	for done < size {
 		count := uint(size - done)
 		if file.read(file, &count, rawptr(uintptr(address + done))) != 0 || count == 0 || u64(count) > size - done {
-			// The pages stay with the boot program: the kernel takes them
-			// as memory of the boot, and nothing names them.
+			// Pages of the kind Loader_Data that the firmware keeps are memory
+			// of the boot for the kernel, which never frees it: they go back.
+			services.free_pages(address, uint(page_count))
 			print("boot program: the read of the debug image failed: not read\r\n")
 			return 0, 0
 		}

@@ -124,3 +124,40 @@ an_empty_object_is_valid :: proc(t: ^testing.T) {
 	testing.expect_value(t, check(object), Fault.None)
 	testing.expect_value(t, place_of(object, 0x1000), Place{})
 }
+
+// A name or a path with a byte that is not a visible character of ASCII
+// would reach the log of the machine and the terminal of the host: a
+// carriage return or an escape sequence forges a line there.
+@(test)
+a_name_or_a_path_with_a_control_byte_is_refused :: proc(t: ^testing.T) {
+	object := sample_object()
+	strings_at := size_of(Header) + 2 * size_of(Procedure) + 3 * size_of(File) + 5 * size_of(Line)
+	with_bytes :: proc(source: []u8, offset: int, bytes: []u8) -> []u8 {
+		copy_of := make([]u8, len(source), context.temp_allocator)
+		copy(copy_of, source)
+		copy(copy_of[offset:], bytes)
+		return copy_of
+	}
+	cases := []struct {
+		object: []u8,
+		fault:  Fault,
+	} {
+		{with_bytes(object, strings_at + 3, {'\r'}), .Procedure_Name}, // "fau\rt::three"
+		{with_bytes(object, strings_at + 12, {0x1B}), .Procedure_Name}, // An escape at the start of "entry".
+		{with_bytes(object, strings_at + 13, {0x7F}), .Procedure_Name},
+		{with_bytes(object, strings_at + 14, {' '}), .Procedure_Name},
+		{with_bytes(object, strings_at + 15, {0xC3}), .Procedure_Name}, // A byte of UTF-8.
+		{with_bytes(object, strings_at + 17 + 8, {'\n'}), .File_Path},
+		{with_bytes(object, strings_at + 41 + 4, {0x07}), .File_Path},
+		{with_bytes(object, strings_at + 17, {'.', '.', '/'}), .File_Path}, // "../grams/fault/main.odin"
+		{with_bytes(object, strings_at + 17 + 9, {'.', '.', '/', '.', '.', '/'}), .File_Path}, // "programs/../../main.odin"
+	}
+	for item, index in cases {
+		testing.expectf(t, check(item.object) == item.fault, "case %d: %v, not %v", index, check(item.object), item.fault)
+	}
+	// The visible characters of the real names stay valid.
+	testing.expect(t, name_bytes_valid("module::record:proc\"contextless\"(file:[]u8,T:$module::Slot)->(value:module::Slot,ok:bool)"))
+	testing.expect(t, name_bytes_valid("__$equal$$struct{file_path:string,line:i32}"))
+	testing.expect(t, name_bytes_valid("sentence::[error.odin]::rights_text"))
+	testing.expect(t, !path_has_parent_part("programs/fault/main.odin") && !path_has_parent_part("a/..b/c") && path_has_parent_part(".."))
+}

@@ -89,7 +89,7 @@ machine: system.Handle
 
 image: []u8
 image_memory: system.Handle
-debug_image: []u8 // The debug objects of the modules: the names of the stack of fault. nil: none.
+debug_names: system.Debug_Names // The debug image and the verdicts of its objects: the names of the stack of fault.
 client: storage.Client
 connected: bool
 ctx_log: system.Handle
@@ -499,7 +499,7 @@ case_fault :: proc "contextless" (writer: ^system.Writer) -> bool {
 	all_in_fault := len(frames) >= 4
 	for &frame, number in frames {
 		system.write_part(writer, number == 0 ? "" : ", ")
-		system.frame_text(writer, image, debug_image, &frame, number)
+		system.frame_text(writer, image, &debug_names, &frame, number)
 		all_in_fault &&= frame.hash == fault_hash
 	}
 	return report.code == op.STOP_CODE_FAULT + 14 && all_in_fault
@@ -852,7 +852,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if address, status := system.memory_map(image_memory, {}); status == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
-	debug_image = system.debug_image_of(ctx)
+	debug_names = system.debug_names_of(ctx)
 	client, connected = storage.open(ctx)
 	math_load()
 	tally_load()

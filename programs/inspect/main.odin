@@ -50,7 +50,7 @@ Sample :: struct {
 
 machine: system.Handle
 image: []u8
-debug_image: []u8 // nil: no debug image; the frames are "module + offset".
+debug_names: system.Debug_Names // The debug image and the verdicts of its objects. With no image, the frames are "module + offset".
 entries: [PROGRAM_SLOTS]Entry
 entry_count: int
 shown: [PROGRAM_SLOTS]int // The indexes in entries that the filter keeps.
@@ -234,7 +234,7 @@ Frame_Names :: struct {
 frame_names: Frame_Names
 
 frame_names_update :: proc "contextless" () {
-	if debug_image == nil || current.stop == frame_names.report {
+	if debug_names.image == nil || current.stop == frame_names.report {
 		return
 	}
 	frame_names.report = current.stop
@@ -246,7 +246,7 @@ frame_names_update :: proc "contextless" () {
 			continue
 		}
 		writer := system.Writer{buffer = frame_names.texts[number][:]}
-		if system.place_write(&writer, system.debug_object_of(debug_image, frame.hash), frame.address - frame.base, system.name_of(entry.name[:]), number > 0) {
+		if system.place_write(&writer, system.debug_object_of(&debug_names, frame.hash), frame.address - frame.base, system.name_of(entry.name[:]), number > 0) {
 			frame_names.counts[number] = len(system.written(&writer))
 		}
 	}
@@ -344,7 +344,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
-	debug_image = system.debug_image_of(ctx)
+	debug_names = system.debug_names_of(ctx)
 	service, _ = system.service_open(ctx)
 	hex_start()
 	// The first program: this one, until the person chooses.

@@ -460,6 +460,9 @@ debug_object_host_path :: proc(object: []u8) -> string {
 		if strings.has_prefix(path, "/") {
 			return fmt.tprintf("the source file %s has an absolute path: it is in neither the repository nor the Odin installation", path)
 		}
+		if debug_object.path_has_parent_part(path) {
+			return fmt.tprintf("the source file %s has a part \"..\": it leaves the repository, and its path shows the folders of the host", path)
+		}
 	}
 	if root, error := os.get_working_directory(context.temp_allocator); error == nil && len(root) > 1 && strings.contains(string(object), root) {
 		return fmt.tprintf("its bytes hold the folder of the build, %s", root)

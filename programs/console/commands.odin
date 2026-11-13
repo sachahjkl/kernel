@@ -115,7 +115,7 @@ command_count: int
 
 machine: system.Handle
 image: []u8
-debug_image: []u8 // The debug objects of the modules: the names of a stop report. nil: none.
+debug_names: system.Debug_Names // The debug image and the verdicts of its objects: the names of a stop report. Used by the thread that runs the lines only.
 requests: ring.Ring
 requests_memory: system.Handle
 request_count: u32 // The tag of the last command to the root service.
@@ -138,7 +138,7 @@ commands_start :: proc "contextless" () {
 	if address, status := system.memory_map(image_memory, {}); status == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
-	debug_image = system.debug_image_of(ctx)
+	debug_names = system.debug_names_of(ctx)
 	requests_memory = ctx.handles[system.GRANT_ROOT]
 	requests, _ = system.ring_open(requests_memory)
 	if address, status := system.memory_map(ctx.handles[system.GRANT_REPLACEMENTS], {}); status == .Ok {
@@ -1068,8 +1068,8 @@ fault_print :: proc "contextless" (report: ^op.Stop_Report) {
 		buffer: [256]u8
 		writer := system.Writer{buffer = buffer[:]}
 		named := false
-		if entry := system.image_entry_of(image, report.module.hash); entry != nil && debug_image != nil {
-			named = system.place_write(&writer, system.debug_object_of(debug_image, report.module.hash), report.instruction - report.module.base, system.name_of(entry.name[:]), false)
+		if entry := system.image_entry_of(image, report.module.hash); entry != nil && debug_names.image != nil {
+			named = system.place_write(&writer, system.debug_object_of(&debug_names, report.module.hash), report.instruction - report.module.base, system.name_of(entry.name[:]), false)
 		}
 		if named {
 			print("error: the instruction is at ", system.written(&writer), "\n")
@@ -1084,7 +1084,7 @@ fault_print :: proc "contextless" (report: ^op.Stop_Report) {
 	for &frame, number in report.frames[:min(report.frame_count, op.STOP_FRAME_CAPACITY)] {
 		buffer: [256]u8
 		writer := system.Writer{buffer = buffer[:]}
-		system.frame_text(&writer, image, debug_image, &frame, number)
+		system.frame_text(&writer, image, &debug_names, &frame, number)
 		print("error: frame ", u64(number), ": ", system.written(&writer), number == 0 ? ", the instruction" : "", "\n")
 	}
 }

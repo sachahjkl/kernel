@@ -82,7 +82,7 @@ Efi_Boot_Services :: struct {
 	raise_priority:         rawptr,
 	restore_priority:       rawptr,
 	allocate_pages:         proc "win64" (type: Efi_Allocate_Type, memory_type: Efi_Memory_Type, page_count: uint, address: ^u64) -> Efi_Status,
-	free_pages:             rawptr,
+	free_pages:             proc "win64" (address: u64, page_count: uint) -> Efi_Status,
 	get_memory_map:         proc "win64" (size: ^uint, memory_map: rawptr, key: ^uint, descriptor_size: ^uint, descriptor_version: ^u32) -> Efi_Status,
 	allocate_pool:          rawptr,
 	free_pool:              rawptr,

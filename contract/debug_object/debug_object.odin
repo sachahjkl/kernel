@@ -113,10 +113,10 @@ Fault :: enum u32 {
 	Size_Differs       = 5, // The size of the file is not the size of its tables.
 	Reserved           = 6, // A field that must be zero is not.
 	Procedure_Order    = 7, // A procedure that does not start after the end of the one before it, or with no byte.
-	Procedure_Name     = 8, // A name outside the strings, or empty.
+	Procedure_Name     = 8, // A name outside the strings, empty, or with a byte that is not a visible character (name_bytes_valid).
 	Procedure_Package  = 9, // A package that is not followed by "::" in the name.
 	File_Zero          = 10, // The file 0 is not all zero.
-	File_Path          = 11, // A path outside the strings, or empty.
+	File_Path          = 11, // A path outside the strings, empty, with a byte that is not a visible character, or with a part "..".
 	Line_Order         = 12, // A row that does not come after the row before it.
 	Line_File          = 13, // A row that names a file that the table does not have, or a line 0 with a file.
 	Line_End           = 14, // The last row has a file.
@@ -132,10 +132,10 @@ fault_sentences := [Fault]string {
 	.Size_Differs       = "the size of the debug object is not the size of its tables",
 	.Reserved           = "a reserved field of the debug object is not zero",
 	.Procedure_Order    = "a procedure does not start after the end of the one before it",
-	.Procedure_Name     = "the name of a procedure is outside the strings",
+	.Procedure_Name     = "the name of a procedure is outside the strings, or has a byte that is not a visible character",
 	.Procedure_Package  = "the package of a procedure is not followed by \"::\"",
 	.File_Zero          = "the file 0 of the debug object is not all zero",
-	.File_Path          = "the path of a file is outside the strings",
+	.File_Path          = "the path of a file is outside the strings, has a byte that is not a visible character, or has a part \"..\"",
 	.Line_Order         = "a row of the line table does not come after the row before it",
 	.Line_File          = "a row of the line table names a file that the table does not have",
 	.Line_End           = "the last row of the line table names a file",
@@ -201,6 +201,40 @@ text_of :: proc "contextless" (strings: []u8, offset: u32, count: u32) -> string
 	return string(strings[offset:][:count])
 }
 
+// name_bytes_valid says if each byte of a name or a path is a visible
+// character of ASCII, 0x21 to 0x7E. A name and a path reach the log of the
+// machine and the terminal of the host: a control byte (a carriage return,
+// an escape sequence), the byte 0x7F, a byte of UTF-8 or a space would let
+// a hostile debug object change or forge a line there, or split a frame of
+// a stack trace in two. The real names of the build need more than letters,
+// digits and "_" (a procedure of a generic type has its signature in its
+// name: "module::record:proc\"contextless\"(file:[]u8,...)->(value:...)",
+// "__$equal$$struct{...}", "sentence::[error.odin]::rights_text"), so the
+// rule is the range of the visible characters, not a shorter list.
+name_bytes_valid :: proc "contextless" (text: string) -> bool {
+	for index in 0 ..< len(text) {
+		if text[index] < 0x21 || text[index] > 0x7E {
+			return false
+		}
+	}
+	return true
+}
+
+// path_has_parent_part says if a path has the part "..": a path of a
+// debug object stays under the root of the repository or of the compiler.
+path_has_parent_part :: proc "contextless" (path: string) -> bool {
+	start := 0
+	for index in 0 ..= len(path) {
+		if index == len(path) || path[index] == '/' {
+			if index - start == 2 && path[start] == '.' && path[start + 1] == '.' {
+				return true
+			}
+			start = index + 1
+		}
+	}
+	return false
+}
+
 // check proves the whole form of a debug object: the header, the size, the
 // order of the procedures and of the rows, each name and each path inside
 // the strings, and each file of a row in the file table. Its cost is one
@@ -219,7 +253,7 @@ check :: proc "contextless" (object: []u8) -> Fault {
 		}
 		end_of_last = u64(value.start) + u64(value.size)
 		name := text_of(parts.strings, value.name_offset, u32(value.name_count))
-		if name == "" {
+		if name == "" || !name_bytes_valid(name) {
 			return .Procedure_Name
 		}
 		if value.package_count != 0 && (int(value.package_count) + 2 >= len(name) || name[value.package_count] != ':' || name[value.package_count + 1] != ':') {
@@ -231,7 +265,8 @@ check :: proc "contextless" (object: []u8) -> Fault {
 	}
 	for &file in parts.files[1:] {
 		value := intrinsics.volatile_load(&file)
-		if value.path_count == 0 || text_of(parts.strings, value.path_offset, value.path_count) == "" {
+		path := text_of(parts.strings, value.path_offset, value.path_count)
+		if value.path_count == 0 || path == "" || !name_bytes_valid(path) || path_has_parent_part(path) {
 			return .File_Path
 		}
 	}
