@@ -1304,7 +1304,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-13. Decided by: the owner.
 - Decision: the root service gives the debug access to a program by one rule over the grants, with no name written in the code: each grant of the program is a grant that the caller holds and that was not revoked from it. A program with no grant can therefore be debugged; a service and a program with a device or a data grant cannot. The rule must not assume that a program is in the boot image: programs will come from a disk. Debugging from another machine uses the service `remote` over QUIC, with the commands of the debugger as exports of a service; the serial port stays the log of the kernel.
 - Words: "pas de cas particulier [...] on doit pas hardcoder. je te fais confiance. je pense: programmes simples [...] (anticiper que un jour les programmes seront sur disque, pas hardcodé que les modules sont dans la boot image, si jamais c'est pas déjà le cas)"; for the other machine the owner chose "Par remote sur QUIC".
-- State: decided; the rule for a program with no grant and the commands are in work.
+- State: done. A grant whose object belongs to one program (a private store, a terminal, a device, a network endpoint, a service) refuses the debug access: the debugger would write what only that program can write.
 - Where: `TOOLS.md`, "The debugger: the design".
 
 ## 11. The build and the compiler
