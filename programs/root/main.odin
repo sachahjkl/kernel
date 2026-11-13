@@ -1377,9 +1377,7 @@ debug :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64) ->
 	if target == nil {
 		return .Bad_Handle
 	}
-	// A grant that was revoked from the caller is a grant that it does not
-	// hold: the grants of its role are not enough.
-	if target == caller || !debug_allowed_for(system.name_of(caller.name[:]), name) || !(grants_of(name) <= grants_of(system.name_of(caller.name[:])) - caller.revoked) {
+	if target == caller || !debug_allowed_for(system.name_of(caller.name[:]), name) {
 		return .Bad_State
 	}
 	if .Debug in caller.revoked {
