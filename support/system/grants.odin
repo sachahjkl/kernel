@@ -240,6 +240,7 @@ root_command_names := [Root_Command]string {
 	.Principals = "Principals",
 	.Principal_Record = "Principal_Record",
 	.Principal_Unlock = "Principal_Unlock",
+	.Debug      = "Debug",
 }
 
 // root_command_name gives the name of a command of the root ring, or "an
