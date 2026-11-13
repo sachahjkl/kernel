@@ -1715,6 +1715,10 @@ stop_reason :: proc "contextless" (code: u32) -> string {
 // and the console then stops the call host. The next call starts a new
 // call host.
 call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Value {
+	// From here to the return, Escape stops this call: outside a call,
+	// Escape is a key of the next line.
+	intrinsics.atomic_store(&work.call_stoppable, 1)
+	defer intrinsics.atomic_store(&work.call_stoppable, 0)
 	sandbox := &sandboxes[item.sandbox - 1]
 	if sandbox.program != 0 {
 		if state, _ := system.program_state(sandbox.program); state == .Stopped {

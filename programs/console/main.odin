@@ -131,6 +131,10 @@ Work :: struct {
 	started:  u32, // The lines that the first thread gave. The second thread waits on this word.
 	finished: u32, // The lines that the second thread ran.
 	cancel:   u32, // 1: the input pressed Escape. An isolated call waits on this word.
+	// 1: the line is in a call that Escape can stop (a call of a sandboxed
+	// program or of a service). The second thread writes it; the first
+	// thread reads it to know what Escape means.
+	call_stoppable: u32,
 }
 
 work: Work
@@ -149,6 +153,11 @@ line: line_editor.Line
 // line that the input types (kept in draft while an older line shows),
 // n the line of age n - 1.
 history: line_editor.History
+// The second thread saves the history after the line ended, while the
+// first thread can add the next line: it copies the history under this
+// lock, and the first thread adds a line under it. The lock is held for
+// one copy in memory, never for a call of the storage service.
+history_lock: system.Lock
 history_place: int
 draft: line_editor.Line
 // The output line that goes to the log of the kernel when it ends: one Log
@@ -223,14 +232,22 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 			pressed := terminal.key(&output) or_break
 			if !running {
 				key(pressed)
-			} else if pressed.code == display.KEY_ESCAPE {
+				continue
+			}
+			// Each key waits for the end of the line, in order: it then
+			// means what it means when typed slowly. Escape acts at once
+			// only when the line waits in a call that it can stop; if not,
+			// it is a key of the next line, as the keys before it.
+			stoppable := intrinsics.atomic_load_explicit(&work.call_stoppable, .Relaxed) != 0
+			switch line_editor.running_key_action(pressed.code == display.KEY_ESCAPE, stoppable, pending_count, PENDING_CAPACITY) {
+			case .Stop_Call:
 				system.log("console: Escape stops the line after ", system.time() - work.since, " ms; keys that wait: ", u64(pending_count))
 				intrinsics.atomic_store(&work.cancel, 1)
 				system.word_wake(&work.cancel)
-			} else if pending_count < PENDING_CAPACITY {
-				// Each key but Escape waits for the end of the line, in order.
+			case .Wait:
 				pending[pending_count] = pressed
 				pending_count += 1
+			case .Drop:
 			}
 		}
 		if running && intrinsics.atomic_load_explicit(&work.finished, .Relaxed) == work.started {
@@ -264,11 +281,14 @@ run_lines :: proc "c" (parameter: rawptr) -> ! {
 		done += 1
 		services_check()
 		run_line(string(work.text[:work.count]))
-		// The line history goes to its store while the line still counts
-		// as running: the first thread adds no line to it meanwhile.
-		history_save()
+		// The line ends when its result is drawn: the keys that waited
+		// act now. The save of the line history comes after, and holds no
+		// key: it is a commit of the storage service, which takes
+		// milliseconds. This thread runs the next line after the save, so
+		// the commits keep the order of the lines.
 		intrinsics.atomic_store(&work.finished, done)
 		change()
+		history_save()
 	}
 }
 
@@ -312,7 +332,9 @@ line_enter :: proc "contextless" () {
 	echo_write(text)
 	system.unlock(&output_lock)
 	if len(text) > 0 {
+		system.lock(&history_lock)
 		line_editor.history_add(&history, text)
+		system.unlock(&history_lock)
 		system.log(PROMPT, text)
 		work.count = copy(work.text[:], text)
 		work.since = system.time()
