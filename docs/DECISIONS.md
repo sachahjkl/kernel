@@ -23,12 +23,12 @@ This file is the record of the decisions of the project: who decided what, when,
 4. [Memory](#4-memory): D-084 to D-088
 5. [The scheduler](#5-the-scheduler): D-089 to D-091, D-226, D-227, D-228, D-231, D-233
 6. [Storage](#6-storage): D-092 to D-095, D-221
-7. [The network and QUIC](#7-the-network-and-quic): D-096 to D-100
+7. [The network and QUIC](#7-the-network-and-quic): D-096 to D-100, D-235
 8. [Cryptography and randomness](#8-cryptography-and-randomness): D-101 to D-105
-9. [The interface, the fonts, the mark and the design](#9-the-interface-the-fonts-the-mark-and-the-design): D-106 to D-141, D-192, D-193
+9. [The interface, the fonts, the mark and the design](#9-the-interface-the-fonts-the-mark-and-the-design): D-106 to D-141, D-192, D-193, D-236
 10. [The console and the tools](#10-the-console-and-the-tools): D-142 to D-148, D-206, D-225, D-234
-11. [The build and the compiler](#11-the-build-and-the-compiler): D-149 to D-162, D-229
-12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194 to D-201, D-207 to D-210, D-222
+11. [The build and the compiler](#11-the-build-and-the-compiler): D-149 to D-162, D-229, D-237
+12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194 to D-201, D-207 to D-210, D-222, D-238
 13. [The name and the repository](#13-the-name-and-the-repository): D-186 to D-189
 14. [Open questions for the owner](#open-questions-for-the-owner)
 15. [Conflicts](#conflicts)
@@ -930,6 +930,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: in force (steps 76, 80 and 85).
 - Where: `QUIC.md`, sections 5 and 6; `FIRST_MILESTONE.md`, choices 506 to 517, 541 to 544 and 570 to 571.
 
+### D-235 The network service leaves the data path of TCP
+- 2026-11-13. Decided by: the owner.
+- Decision: the exception of property 5 for TCP is to be removed, not kept as a note: the code is corrected so that the network service is not on the path of the data of a TCP connection, as far as one device with one pair of queues allows. The design comes first.
+- Words: "Q03 bah corrige [...] si tu sais"
+- State: decided; the design is in work.
+- Where: `PROPERTIES.md`, property 5; the guide of the network.
+
 ## 8. Cryptography and randomness
 
 ### D-101 BLAKE3
@@ -1099,7 +1106,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-11. Decided by: nobody yet (raised by the owner).
 - Decision: floating point is not forbidden when it is needed. Rule 7 of `DESIGN.md` (integers for a display) stays, because the tests compare bytes. Posits have no hardware on x86.
 - Words: "pour moi c'est pas interdit si on a besoin [...] j'expose ça peut être intéressant la notion de posit".
-- State: open (question Q-07).
+- State: closed on 2026-11-13: posits are dropped (the owner: "oui poubelle les posits, je disais ça comme ça"). Floating point is allowed when it is needed; integers for a display.
 - Where: `DESIGN.md`, rule 7.
 
 ### D-125 A rich boot display
@@ -1234,6 +1241,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: none.
 - State: in force.
 - Where: `DESIGN.md`, section 8.
+
+### D-236 The palette replaces the launcher: every operation that the principal of the session can do, from one panel
+- 2026-11-13. Decided by: the owner (the palette, the flush input, the film; "go" to the form); the coordinator and a design (the form).
+- Decision: one panel that a key opens, the palette, reaches every operation of the system that the principal of the session can do. It replaces the launcher of D-130, and the term launcher leaves the system. The form keeps property 20: the panel is in the compositor and gets no new right; the console is the provider: it gives a table of entries made from its commands, which the compositor reads, and it runs the chosen entry as a line. A grant `Palette` of the console is visible and can be revoked; without it the palette keeps the programs and the windows. The input band is flush with the top, the left and the right edges of the panel, with no border on those three sides. The typed text is at scale 2. An entry that destroys asks for a second Enter. A table opens in the console. A film shows it.
+- Words: "ce serait la everything palette c'est à dire une palette de commande dans [laquelle] il [y a] toutes les opérations du système [...] faut maximiser l'ux et surtout j'aimerais que la zone de saisie elle soit flush avec les bords en haut à gauche et à droite [...] qu'elle soit pas entouré[e]"; "tu me fera une vidéo"; then "Go"
+- State: in work.
+- Where: `DESIGN.md`, section 9; `CONSOLE.md`.
 
 ## 10. The console and the tools
 
@@ -1413,6 +1427,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "si tu trouves que c'est plus léger ça ne crée pas de la fragilité et que ça simplifie notre dépendance [...] je suis pour [...] c'est juste [la] condition que ça crée pas des contraintes artificielles parce que voilà [si] le code est moins lisible [ou] plus difficile à commenter [...] ça mange pas de pain de dépendre de nasm qui est pas un gros programme"
 - State: in force.
 - Where: `REPRODUCIBLE_BUILD.md`; `MODULE_CONTRACT.md`, section 7.
+
+### D-237 The shared libraries become modules that programs import
+- 2026-11-13. Decided by: the owner.
+- Decision: the libraries that each program compiles into its own file today (`graphics`, `interface`, `cryptography` and the like) become modules, loaded one time and imported. The cost of a call across the border of a module is measured before and after, above all for the drawing of text.
+- Words: "okay go libs partagées en module, c'est évid[e]nt"
+- State: decided; the design is in work.
+- Where: `MODULE_CONTRACT.md`; property 10.
 
 ## 12. The site and the publication
 
@@ -1668,6 +1689,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done.
 - Where: `SITE.md`, "The docs home", "The declarations of the sources", "The scroll bars".
 
+### D-238 The tone of the posts, and the temple of Jon in a post
+- 2026-11-13. Decided by: the owner.
+- Decision: a post is simple, low-key, technical, in lower case. The temple of Jon can be posted.
+- Words: "Q14 simple lowkey technical lowercase"; "Q09 ouais pk pas [...] ça fera du lore"
+- State: in force. This settles conflict C-10 and the questions Q-09 and Q-14.
+- Where: D-183.
+
 ## 13. The name and the repository
 
 ### D-186 The name is modus
@@ -1704,18 +1732,18 @@ Each question waits for an answer of the owner. The proposal is what holds until
 
 - **Q-01 The numbered choices.** The owner has not reviewed the choices of `FIRST_MILESTONE.md` (D-043). Proposal: the choices hold as written.
 - **Q-02 The module contract.** Its four decisions are "not confirmed" (D-019), while its rules are closed (D-020). Proposal: the contract as written.
-- **Q-03 Property 5 and TCP.** The network service is on the data path for TCP segments too (D-097). Proposal: the dated note in property 5.
+- **Q-03 Property 5 and TCP.** Settled by D-235: the code is corrected.
 - **Q-04 The interface package.** The model, a `support` package or a module first, and the order of the next conversions (D-111). Proposal: `INTERFACE.md` and the order of `FIRST_MILESTONE.md`, "Next steps", item 13.
 - **Q-05 The rendering of the vector font.** The grid fit of the vertical metrics and the default order of the stripes (D-141). Proposal: on, and `rgb`.
 - **Q-06 Error details for the kernel operations.** One instruction on every command (D-033). Proposal: a measure first, then the owner decides.
-- **Q-07 Floating point and posits.** (D-124). Proposal: floating point is allowed when it is needed; integers for a display; posits are research.
+- **Q-07 Floating point and posits.** Settled on 2026-11-13 (D-124): posits are dropped.
 - **Q-08 The picture of every pointer of Posy's Cursor.** It stays in the devlog (D-134). Proposal: as now.
-- **Q-09 The temple of Jon in a post.** Until the owner decides, it is not posted (D-136, D-183).
-- **Q-10 The token of Cloudflare.** The rules of the headers and the purge of the cache need a token with the rights "Transform Rules: Edit" and "Cache Purge" (D-171).
+- **Q-09 The temple of Jon in a post.** Settled by D-238: it can be posted.
+- **Q-10 The token of Cloudflare.** Left as it is on 2026-11-13 (the owner: "OSEF jeton, pas grave"): the site sends no security header and purges no cache.
 - **Q-11 The next kernel operation past 32.** (D-073). Settled by D-214. The proposal was: the coordinator raises the target with a recorded reason, as the owner delegated.
 - **Q-12 The machine tests in the site workflow.** Settled by D-194: the full check commits its numbers in the measure record; the workflow runs no machine test.
 - **Q-13 The cache of the site workflow.** The cache of GitHub Actions now, or FlakeHub Cache (D-170).
-- **Q-14 The tone of the posts.** See conflict C-10.
+- **Q-14 The tone of the posts.** Settled by D-238.
 
 ## Conflicts
 
