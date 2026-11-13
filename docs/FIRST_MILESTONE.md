@@ -1099,3 +1099,12 @@ After the trusted boot and `remote` over QUIC, the order is:
 5. Linux in a guest.
 6. The access to a GPU for acceleration: the one graphics interface of the properties in software first, then over the virtual GPU of the test machine, then a driver domain (`docs/GLOSSARY.md`) on a real GPU, as an opt-in test.
 7. Programs of NT: studied first; dropped if it needs a large machinery.
+
+To do, with no place in the order yet:
+
+- The program `manual` reads the Markdown of the documentation of a module (bold in the bold font, lists, links as colored names): today the build removes the marks, and the text of a module in the system is plain.
+- `Memory_Map` refuses a flag that it does not know, as `Memory_Create`, `Memory_Commit` and `Memory_Protect` do: today it ignores it.
+- The nine groups of the glossary that have no explanation yet (249 terms): Devices, Network, Storage, Desktop, Text, Randomness, QUIC, Trusted boot, Project.
+- The guides that the code contradicts (found while the glossary was rewritten): the object kinds of K1, "one ring to the kernel" for a program (the code gives one for each thread), the form of a handle and the count of context values in `MODULE_CONTRACT.md`.
+- The debugger over `Thread_Control` (`docs/TOOLS.md`, "The debugger: the design").
+
