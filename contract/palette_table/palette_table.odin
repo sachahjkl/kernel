@@ -196,9 +196,12 @@ printable :: proc "contextless" (bytes: []u8) -> bool {
 	return true
 }
 
+// The bits of the flags that the contract knows: each other bit of a table is refused.
+ENTRY_FLAGS_KNOWN :: u8(1 << u8(Entry_Flag.Destroys))
+
 // entry_problem checks one entry of a copy.
 entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
-	if entry.kind > max(Entry_Kind) || transmute(u8)entry.flags &~ transmute(u8)Entry_Flags{.Destroys} != 0 || entry.result > max(Value_Kind) || entry.reserved != 0 || entry.reserved_more != {} {
+	if entry.kind > max(Entry_Kind) || (transmute(u8)entry.flags) &~ ENTRY_FLAGS_KNOWN != 0 || entry.result > max(Value_Kind) || entry.reserved != 0 || entry.reserved_more != {} {
 		return .Bad_Kind
 	}
 	if entry.name_length == 0 || int(entry.name_length) > NAME_CAPACITY || int(entry.signature_length) > SIGNATURE_CAPACITY || int(entry.about_length) > ABOUT_CAPACITY || int(entry.parameter_count) > PARAMETER_CAPACITY {
