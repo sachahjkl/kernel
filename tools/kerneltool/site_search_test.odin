@@ -101,6 +101,7 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 		{path = "index.html", title = "modus", description = "The home."},
 		{path = SITE_GUIDE_FOLDER + "/NETWORK/" + SITE_PAGE, title = "Network", description = "The guide."},
 		{path = SITE_GLOSSARY_FOLDER + "/" + SITE_PAGE, title = "Glossary", description = "The terms."},
+		{path = SITE_GLOSSARY_FOLDER + "/code/" + SITE_PAGE, title = "Glossary: Code", description = "The terms of the group Code."},
 		{path = "news/index.html", title = "News", description = "The news."},
 	}
 	for page in pages {
@@ -116,7 +117,9 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 	written := make(map[string]string, context.temp_allocator)
 	written["index.html"] = "<h1>modus</h1>"
 	written[SITE_GUIDE_FOLDER + "/NETWORK/" + SITE_PAGE] = "<h1 id=\"network\">Network</h1><h2 id=\"the-frames\">The frames</h2>"
-	written[SITE_GLOSSARY_FOLDER + "/" + SITE_PAGE] = "<h1>Glossary</h1><tr id=\"term-module-metadata\"></tr><tr id=\"term-module\"></tr>"
+	written[SITE_GLOSSARY_FOLDER + "/" + SITE_PAGE] = "<h1>Glossary</h1><div id=\"term-module-metadata\"></div><div id=\"term-module\"></div>"
+	// A term is found at its entry on the page of its group.
+	written[SITE_GLOSSARY_FOLDER + "/code/" + SITE_PAGE] = "<h1 id=\"code\">Code</h1><h2 id=\"term-module-metadata\"></h2><h2 id=\"term-module\"></h2>"
 	written["news/index.html"] = "<h1>News</h1><article id=\"news-2026-11-11-a-thing\"></article>"
 
 	entries := site_search_entries(&site)
@@ -126,7 +129,7 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 	for item in entries {
 		counts[item.kind] += 1
 	}
-	testing.expect_value(t, counts[.Page], 4)
+	testing.expect_value(t, counts[.Page], 5)
 	testing.expect_value(t, counts[.Guide_Section], 1)
 	testing.expect_value(t, counts[.Term], 2)
 	testing.expect_value(t, counts[.News], 1)

@@ -145,10 +145,26 @@ pre code { padding: 0; background: none; overflow-wrap: normal; }
 a { color: var(--text); text-decoration: underline; text-decoration-color: var(--line); text-decoration-thickness: 2px; text-underline-offset: 4px; }
 a:hover { background: var(--track); }
 a.term { text-decoration-style: dotted; text-decoration-thickness: 1px; }
-/* The glossary: each entry is a term, its short definition set apart by a
-   rule at its left, its explanation, then the words that it replaces, dim. */
+/* The glossary: on the page of a group, each entry is a term, its short
+   definition set apart by a rule at its left, its explanation, then the
+   words that it replaces, dim. The heading of an entry has the size of a
+   heading of level 3: the page has no level between the group and its
+   terms. */
 .term-entry { border-top: 1px solid var(--track); margin-top: 24px; padding-top: 8px; }
-.term-entry h3 { margin-top: 0; }
+.term-entry h2 { margin-top: 0; font-size: 18px; line-height: 24px; }
+.glossary-group-place, .glossary-count, .glossary-index-group { color: var(--dim); }
+.glossary-count, .glossary-index-group { font-family: var(--mono); font-size: 12px; }
+/* The index: the letters as one line of square buttons, then each term
+   with its group as a dim label and its short definition under it. */
+.glossary-groups { columns: 2 240px; }
+.glossary-letters { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 16px; }
+.glossary-letters a { display: inline-block; min-width: 24px; line-height: 24px; text-align: center; background: var(--track); text-decoration: none; font-family: var(--mono); }
+.glossary-index { margin: 0 0 16px; }
+.glossary-index > div { padding: 4px 0; border-top: 1px solid var(--track); }
+.glossary-index > div:target { background: var(--track); }
+.glossary-index dt { font-weight: 700; }
+.glossary-index-group { font-weight: 400; margin-left: 8px; }
+.glossary-index dd { margin: 0 0 0 16px; }
 .term-definition { border-left: 2px solid var(--line); padding-left: 16px; font-weight: 600; }
 .term-avoided { color: var(--dim); }
 .term-avoided-label { font-weight: 700; margin-right: 8px; }
@@ -338,6 +354,7 @@ span.search-kind.value-icon::before { margin-right: 4px; }
 .tree-sections ul ul a, .tree-groups ul a { padding-left: 24px; }
 .tree-group { display: block; padding: 6px 8px 2px; color: var(--dim); }
 .tree-count { font-family: var(--mono); font-size: 12px; }
+.tree-sections .tree-glossary a { padding-left: 40px; }
 .outline { font-size: 14px; line-height: 20px; margin: 16px 0; }
 .outline > summary { cursor: pointer; color: var(--dim); }
 .outline ul { list-style: none; margin: 0; padding: 0; }

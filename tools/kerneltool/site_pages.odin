@@ -439,24 +439,8 @@ site_sources :: proc(sources: ..string) -> []string {
 site_reference_add :: proc(site: ^Site) -> bool {
 	entries := make([dynamic]Site_Reference_Entry, context.temp_allocator)
 
-	// The glossary.
-	{
-		glossary_page := site_page_file(SITE_GLOSSARY_FOLDER)
-		renderer := site_renderer_make(site, glossary_page, SITE_GLOSSARY_FILE)
-		renderer.glossary = true
-		site_glossary_write(&renderer, site.glossary)
-		b := strings.builder_make(context.temp_allocator)
-		strings.write_string(&b, "<article class=\"prose\">\n")
-		fmt.sbprintf(&b, "<h1 id=\"%s\">", site_slug(site.glossary.title))
-		site_escape(&b, site.glossary.title)
-		strings.write_string(&b, "</h1>\n")
-		strings.write_string(&b, strings.to_string(renderer.builder))
-		strings.write_string(&b, "</article>\n")
-		title := site.glossary.title
-		term_count := len(glossary_terms_in_order(site.glossary))
-		site_page_add(site, Site_Page{path = glossary_page, title = title, description = site_description_cut(fmt.tprintf("The %d terms of %s: one term for each concept, with its definition, what it is for, how it differs from the word of other systems, and the words that it replaces.", term_count, SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_GLOSSARY_FILE), layout = .Documentation})
-		append(&entries, Site_Reference_Entry{path = glossary_page, title = title, what = "Each term of the project: its definition, what it is for, and how it works. A term on another page links here.", source = SITE_GLOSSARY_FILE, count = term_count, kind = .Term})
-	}
+	// The glossary: its index, and the page of each group.
+	append(&entries, site_glossary_pages_add(site))
 
 	// The commands of the tool.
 	{

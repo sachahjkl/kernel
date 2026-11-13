@@ -34,6 +34,7 @@ Site_Term :: struct {
 	name:           string,
 	id:             string,
 	definition:     string, // Its short definition: its text in the search index and in the page graph.
+	page:           string, // The page of its group (site_glossary_group_page): each link to the term names it.
 	second_of_name: bool, // The glossary has a term of this name before it: a page links the name to that one.
 }
 
@@ -47,7 +48,7 @@ Site_Renderer :: struct {
 	items:        [dynamic]Site_List_Item,
 	section:      string,
 	linked_terms: map[string]bool,
-	glossary:     bool, // The page of the glossary: a term links to its entry on the same page.
+	glossary:     bool, // A page of a group of the glossary: a term links to its entry with no tooltip.
 	in_heading:   bool,
 	// A source comment, not a document (docs/SITE.md, "The Markdown of a
 	// source comment"): a heading, a table, a quote, a line of HTML and a
@@ -887,9 +888,10 @@ site_term_at :: proc(text: string, index: int, name: string) -> (length: int, fo
 }
 
 // site_write_with_terms writes plain text, escaped, with a link on the first
-// use of each term of the glossary on the page. Not in a heading. On the page
-// of the glossary, the link names the entry on the same page, and each entry
-// links each other term once (site_glossary_write).
+// use of each term of the glossary on the page. Not in a heading. A link
+// names the entry on the page of the group of the term, never the index of
+// the glossary. On a page of a group, each entry links each other term once
+// (site_glossary_write), with no tooltip: the entry is a click away.
 site_write_with_terms :: proc(renderer: ^Site_Renderer, text: string) {
 	b := &renderer.builder
 	if renderer.in_heading || renderer.comment || renderer.site == nil || len(renderer.site.terms) == 0 {
@@ -914,12 +916,14 @@ site_write_with_terms :: proc(renderer: ^Site_Renderer, text: string) {
 				continue
 			}
 			site_escape(b, text[written:index])
-			if renderer.glossary {
+			if renderer.glossary && term.page == renderer.page {
 				fmt.sbprintf(b, "<a class=\"term\" href=\"#%s\">", term.id)
+			} else if renderer.glossary {
+				fmt.sbprintf(b, "<a class=\"term\" href=\"%s#%s\">", site_page_link(renderer.site, renderer.page, term.page), term.id)
 			} else {
 				// The short definition is the tooltip of the link: a reader
 				// learns the term without leaving the page.
-				fmt.sbprintf(b, "<a class=\"term\" href=\"%s#%s\"", site_page_link(renderer.site, renderer.page, site_page_file(SITE_GLOSSARY_FOLDER)), term.id)
+				fmt.sbprintf(b, "<a class=\"term\" href=\"%s#%s\"", site_page_link(renderer.site, renderer.page, term.page), term.id)
 				if term.definition != "" {
 					strings.write_string(b, " title=\"")
 					site_plain(b, term.definition)

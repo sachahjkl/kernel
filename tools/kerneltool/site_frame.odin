@@ -495,7 +495,7 @@ site_git_commit :: proc() -> string {
 // longest come first, so that "Module metadata" is found before "Module";
 // the sort keeps the order of the file among names of one length. A name of
 // two letters is too short to link. A name that the glossary has twice links
-// to its first entry.
+// to its first entry. Each term names the page of its group.
 site_glossary_terms :: proc(glossary: Glossary) -> []Site_Term {
 	terms := make([dynamic]Site_Term, context.temp_allocator)
 	names := make(map[string]bool, context.temp_allocator)
@@ -503,7 +503,7 @@ site_glossary_terms :: proc(glossary: Glossary) -> []Site_Term {
 		if len(term.name) < 3 {
 			continue
 		}
-		append(&terms, Site_Term{name = term.name, id = term.id, definition = term.definition, second_of_name = term.name in names})
+		append(&terms, Site_Term{name = term.name, id = term.id, definition = term.definition, page = site_glossary_group_page(term.group_id), second_of_name = term.name in names})
 		names[term.name] = true
 	}
 	slice.stable_sort_by(terms[:], proc(a, b: Site_Term) -> bool {return len(a.name) > len(b.name)})
@@ -766,6 +766,7 @@ site_build :: proc(address: string) -> bool {
 	site_write_file(&site, SITE_STYLE_SHEET, transmute([]u8)style_sheet) or_return
 	site_write_file(&site, SITE_SEARCH_SCRIPT, transmute([]u8)site_search_script()) or_return
 	site_write_file(&site, SITE_MODULE_GRAPH_SCRIPT, transmute([]u8)site_module_graph_script()) or_return
+	site_write_file(&site, SITE_GLOSSARY_SCRIPT, transmute([]u8)site_glossary_script()) or_return
 	// The commit and the time of this build: a page that a cache kept from
 	// an older build finds that it is older.
 	site_write_file(&site, SITE_VERSION_FILE, transmute([]u8)site_version_json(site.commit, site.build_time)) or_return
@@ -805,6 +806,9 @@ site_build :: proc(address: string) -> bool {
 			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
 		}
 	}
+	// The pages of the glossary: none too large to open on a slow line, and
+	// each term at its anchor on the index and on the page of its group.
+	append(&problems, ..site_glossary_problems(&site, written))
 	// Each old address of each page: a redirect page, which is not a page
 	// of the site (no bar, no sitemap, no index of the search).
 	append(&problems, ..site_redirects_make(&site))
@@ -858,6 +862,10 @@ site_build :: proc(address: string) -> bool {
 	fmt.printfln("kerneltool: site: wrote %s: %d pages (%d bytes), %d redirect pages at the old addresses, %d other files", SITE_FOLDER, len(site.pages), page_bytes, len(site.redirects), len(site.files) - len(site.pages) - len(site.redirects))
 	for generation in Site_Address_Generation {
 		fmt.printfln("kerneltool: site: %d redirect pages at the old addresses %s", site.redirect_counts[generation], site_address_generation_names[generation])
+	}
+	// The bytes of each page of the glossary: the bound is what split it.
+	for path in site_glossary_page_paths(site.glossary) {
+		fmt.printfln("kerneltool: site: %s: %d bytes of at most %d", path, len(written[path]), SITE_GLOSSARY_PAGE_BYTE_LIMIT)
 	}
 	fmt.printfln("kerneltool: site: %s: %d bytes, with %d icons of the kinds of values inside", SITE_STYLE_SHEET, len(style_sheet), site_style_sheet_icon_count(style_sheet))
 	fmt.printfln("kerneltool: site: %s: %d entries of at most %d, %d bytes of at most %d; %s: %d bytes", SITE_SEARCH_INDEX, len(search_entries), SITE_SEARCH_ENTRY_LIMIT, len(search_index), SITE_SEARCH_INDEX_BYTE_LIMIT, SITE_SEARCH_SCRIPT, site.files[SITE_SEARCH_SCRIPT])
