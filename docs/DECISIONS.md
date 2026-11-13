@@ -1432,7 +1432,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-13. Decided by: the owner.
 - Decision: the libraries that each program compiles into its own file today (`graphics`, `interface`, `cryptography` and the like) become modules, loaded one time and imported. The cost of a call across the border of a module is measured before and after, above all for the drawing of text.
 - Words: "okay go libs partagées en module, c'est évid[e]nt"
-- State: decided; the design is in work.
+- State: in work. Done: the build of a module in two steps; the first library module, `drawing`, which 23 programs import (the difference of two draw tables and the execution of a draw table); the check of each declaration of an import against the description of its export. Not done: the programs with a picture or a text grid, the terminal, the compositor; the error sentences; the network libraries.
 - Where: `MODULE_CONTRACT.md`; property 10.
 
 ## 12. The site and the publication
