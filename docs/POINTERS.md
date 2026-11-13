@@ -4,9 +4,18 @@ The system has its own format for the pictures of the pointer, simple to manage 
 
 The terms are in `GLOSSARY.md`: pointer, pointer shape, pointer picture, hot spot, nominal size, pointer theme, pointer theme file, pointer manifest, resource, caret. The system says "pointer", never "cursor". The caret of a text input is another thing.
 
+**The idea in plain words.** The pointer is the small picture that follows the mouse. It changes with what is under it: an arrow over the desktop, a hand over a button, a text bar over a text. Each of these is a **pointer shape**. A **pointer theme** gives one **pointer picture** for each shape, at one or more sizes, with a **hot spot**: the pixel of the picture that points. The whole path is short:
+
+1. A **pointer manifest** in the repository names the shapes of a theme and where their pictures come from.
+2. At each build, the kernel tool reads the manifest and writes one **pointer theme file**.
+3. The boot image holds the file as a resource. The root service checks its hash and maps it read-only into the compositor.
+4. The compositor validates the file once, chooses the shape from what is under the pointer, and blends its picture at the place of the pointer.
+
+**What this is not.** A program never sends a picture of a pointer: it names a shape, and the compositor draws its own theme. A pointer theme file is not parsed at run time: the compositor reads it in place.
+
 **For whom.** A reader who makes or changes a pointer theme, and a reader who wants to know how the compositor chooses and draws the pointer.
 
-**The map of this guide.** "1. What exists" compares Xcursor, hyprcursor and the others. "2. What this system needs" gives the requirements. "3. The format of the system: one pointer theme file" and "4. The manifest" give the two formats. "5. The two themes", "6. The license of the Posy theme" and "7. The place of the Posy theme" say what the system carries. "8. Measures" closes.
+**The map of this guide.** "1. What exists" compares Xcursor, hyprcursor and the others. "2. What this system needs" gives the pointer shapes, the request of a program, and how the compositor chooses and draws the pointer. "3. The format of the system: one pointer theme file" and "4. The manifest" give the two formats. "5. The two themes", "6. The license of the Posy theme" and "7. The place of the Posy theme" say what the system carries. "8. Measures" closes.
 
 **An example.** The compositor chooses the shape `move` while the pointer drags a window by its title bar, and blends its picture at its hot spot. The program `pointers` shows each shape of each theme.
 
@@ -41,7 +50,7 @@ What this system takes from it, and what not:
 
 - **Not as the format that the compositor reads.** At run time it needs a zip reader, an inflate and PNG decoder, an SVG rasterizer and a hyprlang parser in the compositor: four parsers of input that the compositor must not trust, against the rule of this format "no parse at run time" and against section 7 of `DESIGN.md`. The pointer theme file of section 3 is read in place after one validation. Its size is not a problem here: the Posy theme at 32 and 64 is 883 008 bytes, the boot image holds it once.
 - **As the model of the manifest.** The manifest of section 4 is the same idea as `meta.hl`, in one file for the theme: the sizes, the names that a shape takes from other names (the sources, in order), the frames with a delay, the hot spot. It differs in two places: the hot spot is in pixels of the smallest size (a fraction of the size gives a pixel only after a rounding), and a grid of squares is a source of its own.
-- **Not as a source of the tool.** Posy's Cursor exists as Xcursor files and as Windows files, not as hyprcursor. A reader of `.hlc` files in the tool needs zip and PNG (the Odin library has an inflate and a PNG reader, no zip reader). That reader is not built.
+- **Not as a source of the tool.** Posy's Cursor exists as Xcursor files and as Windows files, not as hyprcursor. A reader of `.hlc` files in the tool needs zip and PNG (the Odin library has an inflate and a PNG reader, no zip reader). That reader is not built: the tool reads Xcursor files and grids of squares only.
 
 ### The Wayland cursor shape protocol (`cursor-shape-v1`, wayland-protocols 1.48)
 
@@ -52,12 +61,12 @@ What this system takes from it, and what not:
 
 ### The pointer shapes
 
-One enum of the system, `Pointer_Shape` in `contract/pointer_pictures`, with one long name for each. Zero is the arrow: a zero record asks for the default (ZII). The CSS names are the sources in the manifest of the Posy theme.
+One enum of the system, `Pointer_Shape` in `contract/pointer_pictures`, with one long name for each. Zero is the arrow: a zero record asks for the default (ZII). The CSS names are the sources in the manifest of the Posy theme. The name of a shape in a manifest and on the log is the name of this table (`SHAPE_NAMES`).
 
 | Number | Name | CSS name | Where the system uses it today |
 |---|---|---|---|
 | 0 | `arrow` | `default` | the desktop, the bar, the frame of a window, a surface by default |
-| 1 | `text` | `text` | the input line of the launcher; the surface of the terminal (a request of the program) |
+| 1 | `text` | `text` | the input line of the launcher; the surface of the terminal (a request of the program `terminal`) |
 | 2 | `pointing_hand` | `pointer` | the close button of a window, the buttons of the bar, a line of an open menu |
 | 3 | `move` | `move` | a title bar, and a window while the pointer moves it |
 | 4 | `grab` | `grab` | a request of a program |
@@ -76,7 +85,39 @@ Not taken: the CSS names that no part of the system has a use for (`context-menu
 
 ### The request of a program
 
-A program asks for a pointer shape with the display command `Pointer_Shape` (`support/display`, `display.pointer_shape_set`). The compositor keeps one shape for each surface. It shows that shape only while the pointer is over that surface and the surface is the one in front at that place (property 20: a program does not change the pointer over another program, the bar or a frame). A number out of the enum is ignored.
+A program asks for a pointer shape with the display command `Pointer_Shape` (`support/display`, `display.pointer_shape_set`):
+
+```odin
+display.pointer_shape_set(&window, .Text)
+```
+
+- The compositor keeps one shape for each surface. The shape of a new surface is the arrow, and a shape stays until the next request.
+- It shows that shape only while the pointer is over that surface and the surface is the one in front at that place. A program does not change the pointer over another program, the bar or a frame: the pointer tells the principal what a press does, so a program that sets it elsewhere can lie about another program.
+- A number out of the enum is ignored.
+- The compositor writes one line on the log for each request: `compositor: <title> asks for the pointer shape text over its surface`.
+
+Two programs ask today: `terminal` (the shape `text` over its surface) and `pointers` (the shape of the tile under the pointer).
+
+### How the compositor chooses the shape
+
+`pointer_shape_under` (`programs/compositor/pointer_picture.odin`) gives the shape for the place of the pointer. The first rule that holds wins:
+
+1. While the pointer drags a window: `move`.
+2. While the launcher is open: `text` over its input line, `arrow` elsewhere.
+3. Over a line of an open menu, or over a button of the bar: `pointing_hand`.
+4. Over the rest of the bar: `arrow`.
+5. Over the window in front at that place: `pointing_hand` over its close button, `move` over its title bar, the shape that its program asked for over its surface, `arrow` over its border.
+6. Over the desktop: `arrow`.
+
+### How the compositor draws the pointer
+
+- **The size.** The compositor asks for the nominal size 24 (`POINTER_NOMINAL_SIZE`). `pointer_pictures.choose` gives the smallest size of the shape that is at least the size asked, else its largest size: 24 for the theme of the system, 32 for the Posy theme.
+- **A shape that the theme does not have** is drawn as the arrow. Every valid theme has the arrow.
+- **The place.** The picture is drawn with its hot spot at the place of the pointer: its top left corner is the place less the hot spot. A press acts at the place of the pointer.
+- **The blend.** `graphics.blend_premultiplied_alpha` blends the picture over the frame (`docs/SIMD.md`, "4. The compositor").
+- **An animation.** `choose` gives the frame for the time now and the time of the next frame. The compositor wakes at that time, and only while the animated shape shows.
+- **The damage.** When the picture or its place changes, the compositor damages the old rectangle and the new one, so only these pixels are drawn again.
+- **No valid theme.** A compositor with no valid pointer theme file draws an arrow of squares that its own code holds (`pointer_arrow_without_theme`), and writes `compositor: no pointer theme: the arrow of squares` on the log. The pointer never disappears.
 
 ## 3. The format of the system: one pointer theme file
 
@@ -90,12 +131,34 @@ Picture_Entry    32 bytes   x picture_count, after the shapes
 pixels           u32 each   at pixel_offset, pixel_size bytes
 ```
 
-- **Header**: `magic` (the bytes "POINTERS"), `version` (1), `shape_count`, `picture_count`, `pixel_offset`, `pixel_size`, `file_size`, `theme_name` (32 bytes), `license` (32 bytes, an SPDX identifier), `attribution` (400 bytes). The texts are ASCII 32 to 126 followed by zero bytes, so that the font of the system shows them.
+- **Header**: `magic` (the bytes "POINTERS"), `version` (1), `shape_count`, `picture_count`, a reserved word of 0, `pixel_offset`, `pixel_size`, `file_size`, `theme_name` (32 bytes), `license` (32 bytes, an SPDX identifier), `attribution` (400 bytes). The texts are ASCII 32 to 126 followed by zero bytes, so that the font of the system shows them. The name and the license are not empty; the attribution can be.
 - **Shape_Entry**: `shape` (the number of the enum), `first_picture`, `size_count`, `frame_count`. The pictures of a shape are `size_count * frame_count` entries from `first_picture`: the frames of the smallest size, then of the next. Two shapes can name the same pictures (two names, one file, as the links of an Xcursor theme).
 - **Picture_Entry**: `nominal_size`, `width`, `height`, `hot_spot_x`, `hot_spot_y`, `delay_milliseconds` (0 for a shape with one frame), `pixel_offset` (from the start of the pixels).
 - **Pixels**: 0xAARRGGBB with premultiplied alpha, the form of an Xcursor file and the form of a canvas of `support/graphics` (0x00RRGGBB) plus alpha in the high byte. The blend reads the alpha from the same word and adds the source to the destination with no conversion. Straight alpha needs three more multiplications for each pixel.
 
-**The validation** (`pointer_pictures.validate`) is one function that the tool and the compositor run. The compositor does not trust the file, also from the root service. It checks: the magic, the version, the size of the file, the tables inside the file, `pixel_offset` exactly after the tables, the texts, the shapes in increasing order with no repeat and the arrow present, each picture range inside the table, 1 to 8 sizes and 1 to 256 frames, each picture 1 to 256 pixels wide and high, its hot spot inside it, its nominal size 1 to 256, the same nominal size for the frames of one size and an increasing size from one size to the next, a delay of 1 to 60000 ms for an animation and 0 else, the pixels inside the pixel area and aligned on 4 bytes, and each pixel premultiplied (no channel above its alpha). A failure gives a `Problem`: the table, the index, the field, the value and its limit, and a sentence. The host tests damage each field.
+**The limits of the format** (constants of `contract/pointer_pictures`):
+
+| Limit | Value |
+|---|---|
+| Shapes of one file | 1 to 256 (`SHAPE_COUNT_LIMIT`); the enum has 15 today |
+| Pictures of one file | 1 to 65 536 (`PICTURE_COUNT_LIMIT`) |
+| Nominal sizes of one shape | 1 to 8 (`SIZE_COUNT_LIMIT`) |
+| Frames of one shape | 1 to 256 (`FRAME_COUNT_LIMIT`) |
+| Width, height and nominal size of a picture | 1 to 256 (`PICTURE_SIDE_LIMIT`) |
+| Delay of a frame of an animation | 1 to 60 000 ms (`DELAY_LIMIT`); 0 for a shape with one frame |
+
+**The validation** (`pointer_pictures.validate`) is one function that the tool and the compositor run. The tool runs it on each file that it makes, before it writes it. The compositor does not trust the file, also from the root service: it runs the validation once at its start, and it uses a file only after that. The validation checks:
+
+- **The file**: at least the size of the header, and its address on a multiple of 8 bytes.
+- **The header**: the magic, the version, `file_size` equal to the size of the file, the two counts in their limits, `pixel_offset` exactly at the first multiple of 64 after the tables, `pixel_size` to the end of the file and a multiple of 4, and the three texts.
+- **The shapes**: each number in the enum, the numbers in increasing order with no repeat, the arrow present, 1 to 8 sizes and 1 to 256 frames, and the range of the pictures inside the picture table.
+- **The sizes and the frames of a shape**: the same nominal size for the frames of one size, an increasing nominal size from one size to the next, a delay of 1 to 60 000 ms for each frame of an animation and 0 for a shape with one frame.
+- **Each picture**: its nominal size, its width and its height from 1 to 256, its hot spot inside it, its pixels inside the pixel area and at an offset that is a multiple of 4.
+- **The pixels**: each pixel premultiplied (no channel above its alpha).
+
+After the validation, the readers (`choose`, `shape_entries`, `picture_entries`, `pixels_of`) check nothing again: every offset of the file is inside it.
+
+A failure gives a `Problem`: its kind, the part of the file, the field, the index of the entry, the value and its limit. `pointer_pictures.sentence` writes it as one line, for example `the picture table, entry 3: hot_spot_x is not a pixel of the picture (value 40, limit 31)`. The compositor writes that line on the log and does not use the file. The host tests damage each field.
 
 ## 4. The manifest
 
@@ -120,14 +183,51 @@ source    = file name                       a file of the Xcursor folder; the fi
 - A shape has sources or a grid, not both. A grid has at most 12 squares in a line and 12 lines; a square is `size / 12` pixels, so each size of a grid is a multiple of 12.
 - A source is followed through its links (8 at most) inside the folder. The Xcursor file is hostile input: each offset and count is checked before a read.
 - For a source, a size of the list must be a nominal size of the file: the tool does not scale pixels. A `hot` adjustment is in pixels of the smallest size; the tool multiplies it for the other sizes.
+- An animation of a grid has two `frame` statements at least, each followed by the lines of its grid. A shape with a grid needs the option `hot`, inside the grid.
+- Two shapes that take the same file with the same options share their pictures in the theme file: the file holds them once.
 - An error gives the file, the line, the column, and what was expected: `resources/pointers/posy.manifest:12:7: expected a pointer shape name such as "arrow"; found "arow"`.
 - No JSON, no TOML: the system has no general parser and needs none.
 
+**An example with sources**, from `resources/pointers/posy.manifest`. The first source that the Xcursor folder has is used: the CSS name, then the old X name. The two animated shapes keep one size:
+
+```
+theme Posy's Cursor
+license CC-BY-NC-4.0
+sizes 32 64
+
+shape arrow                         default left_ptr
+shape text                          text xterm
+shape wait                          wait watch sizes 32
+```
+
+**An example with a grid**, the arrow of `resources/pointers/system.manifest`. `X` is a black square, `.` a white one, a space nothing. The hot spot is the square at the top left:
+
+```
+shape arrow hot 0 0
+|X
+|XX
+|X.X
+|X..X
+|X...X
+|X....X
+|X.....X
+|X......X
+|X..XXXXX
+|X.X
+|XX
+```
+
+**The command.** `kerneltool pointers` converts each manifest of `resources/pointers` to a pointer theme file in `build/pointers`, and prints a table of each theme: the shape, its source, its sizes, its frames and its bytes. It takes the Xcursor folder from the variable `POINTER_THEME_SOURCE` or from the path after the command. `kerneltool build` runs the same code.
+
 ## 5. The two themes
 
-- **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository): the 15 shapes as grids of squares, in the style of the arrow of `DESIGN.md`, at the sizes 24 (squares of 2 pixels) and 48 (squares of 4 pixels, for a later screen with twice the pixels). `wait` and `busy_with_arrow` have 4 frames of 250 ms. It is always in the boot image, as the resource `pointers_system`.
-- **The Posy theme** (`resources/pointers/posy.manifest`): "Posy's Cursor" from the build input `posy-cursors` of `flake.nix` (the package of nixpkgs, pinned by `flake.lock`). The flake gives its folder to the tool as `POINTER_THEME_SOURCE`. The tool converts it at each build into `build/pointers/posy.pointers`, which the boot image holds as the resource `pointers_posy`. No file of that theme and no file made from its pixels is in the repository (section 6). Sizes: 32 (the smallest size of the theme) and 64 for the later screen; the two animated shapes keep 32 only (77 frames: 315 KiB at 32, 1.26 MiB more at 64).
-- **The choice of the compositor**: the Posy theme is the default when the build has its input; the theme of the system is the fallback. The root service gives the compositor the themes of the boot image in order: `pointers_posy` when the boot image has it, then `pointers_system` (`pointer_theme_choice` in `programs/root/resources.odin`: the one place of this order). The setting `pointer_theme` of the principal chooses one of them (`docs/FONTS.md`, "7. The setting"). With no build input, the tool makes the theme of the system only, and the system works the same.
+- **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository, MIT): the 15 shapes as grids of squares, in the style of the arrow of `DESIGN.md`, at the sizes 24 (squares of 2 pixels) and 48 (squares of 4 pixels, for a later screen with twice the pixels). `wait` and `busy_with_arrow` have 4 frames of 250 ms. Its file has 42 pictures. It is always in the boot image, as the resource `pointers_system`.
+- **The Posy theme** (`resources/pointers/posy.manifest`): "Posy's Cursor" from the build input `posy-cursors` of `flake.nix` (the package of nixpkgs, pinned by `flake.lock`). The flake gives its folder to the tool as `POINTER_THEME_SOURCE`. The tool converts it at each build into `build/pointers/posy.pointers`, which the boot image holds as the resource `pointers_posy`. No file of that theme and no file made from its pixels is in the repository (section 6). Sizes: 32 (the smallest size of the theme) and 64 for the later screen; the two animated shapes keep 32 only (77 frames: 315 KiB at 32, 1.26 MiB more at 64). Its file has 178 pictures: `grab` and `grabbing` come from one file of the theme and share their pictures.
+- **The choice of the compositor**: the Posy theme is the default when the build has its input; the theme of the system is the fallback.
+  - The root service gives the compositor the themes of the boot image in order: `pointers_posy` when the boot image has it, then `pointers_system` (`pointer_theme_choice` in `programs/root/resources.odin`: the one place of this order).
+  - For each one, the root service checks the hash of the resource and maps it read-only in the compositor. It writes the address and the size of the first in the values 6 and 7 of the context of the compositor, and those of the second in the values 18 and 19 (`MODULE_CONTRACT.md`, "6. The context").
+  - The compositor validates each file once. The setting `pointer_theme` of the principal chooses one of them while the compositor runs: `owner` is the first theme that the boot image has, `system` is the theme of the system (`docs/FONTS.md`, "7. The setting"). The compositor writes `compositor: the pointer theme in use: <name>` on the log at each change.
+  - With no build input, the tool prints that `POINTER_THEME_SOURCE` is not set and makes the theme of the system only. The system works the same.
 - **How a resource enters the boot image and reaches a program**: `docs/ARCHITECTURE.md`, U2b.
 
 ## 6. The license of the Posy theme
@@ -139,7 +239,7 @@ Read on 2026-11-11:
 - The author, http://www.michieldb.nl/other/cursors/: "Posy's improved cursors for Windows 10 (and older)", "A project from 2018", and "License: \"Attribution-NonCommercial\" (free to use, change and distribute for non-commercial use)" (the license note was added on 2024-10-16; version 1.5 of the Windows sets is of 2026-10-06).
 - CC BY-NC 4.0, section 2(a)(1): the right to reproduce and share, and to make and share adapted material, "for NonCommercial purposes only". Section 3(a): a share keeps the name of the creator, a notice of the license with its URI, and says if the material was modified.
 
-What follows for this repository: property 2 of the objective of `PROPERTIES.md` reuses what is "permissively licensed"; a NonCommercial license is not. So the repository holds the manifest and the tool, and the build makes the theme file from the input. The theme file carries the license `CC-BY-NC-4.0` and the attribution: "Posy's Cursor by Michiel de Boer (Posy), michieldb.nl/other/cursors; Linux port 1.6 by simtrami, github.com/simtrami/posy-improved-cursor-linux; CC BY-NC 4.0, creativecommons.org/licenses/by-nc/4.0; converted by kerneltool: the sizes 32 and 64, no pixel changed". The program `pointers` shows it with the theme.
+What follows for this repository: property 2 of the objective of `PROPERTIES.md` reuses what is "permissively licensed"; a NonCommercial license is not. So the repository holds the manifest and the tool, and the build makes the theme file from the input. The theme file carries the license `CC-BY-NC-4.0` and the attribution, which the tool joins from the `attribution` lines of the manifest: "Posy's Cursor by Michiel de Boer (Posy), michieldb.nl/other/cursors. Linux port 1.6 by simtrami, github.com/simtrami/posy-improved-cursor-linux. License CC BY-NC 4.0, creativecommons.org/licenses/by-nc/4.0 (non-commercial use). Converted by kerneltool: the sizes 32 and 64 (32 only for wait and busy_with_arrow), no pixel changed." The program `pointers` shows it with the theme.
 
 ## 7. The place of the Posy theme
 
@@ -151,7 +251,7 @@ A commercial use of the system needs another default theme (CC BY-NC 4.0, sectio
 
 ## 8. Measures
 
-From one full check (one run, with a load of about 30 on the host: the rule of the project says that such numbers are not valid; they are an order of size):
+From one full check (one run, with a load of about 30 on the host; a measure is valid only under a load of 8, so these numbers are an order of size):
 
 | What | Time |
 |---|---|
