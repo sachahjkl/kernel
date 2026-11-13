@@ -530,8 +530,8 @@ a.declaration-link { color: inherit; text-decoration-thickness: 1px; text-underl
 .line code { display: block; padding: 8px; white-space: pre-wrap; }
 
 /* The home. */
-/* The head takes the height of its picture: the name under the heron is in
-   the picture, and the card below starts after it. */
+/* The head takes the height of its picture, the heron alone: the name is
+   the title beside it, and the card below starts after the picture. */
 .home-head { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 32px; align-items: start; padding: 32px 0; margin-bottom: 16px; }
 .home-head picture { display: block; }
 .tiles { list-style: none; padding: 0; margin: 0 0 16px; display: flex; flex-wrap: wrap; gap: 2px; }
@@ -911,6 +911,9 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	site_colors_write(&builder, site_dark_colors())
 	strings.write_string(&builder, SITE_STYLE_RULES)
+	// The font and the class of the name of the mark: after the rules, so
+	// that the class wins over the font of the place that holds the name.
+	strings.write_string(&builder, site_mark_name_rules())
 	// The color and the icon of each kind of value, in the dark form.
 	strings.write_string(&builder, site_value_rules(false))
 	// The colors of the code and of the parts of the browser, in the dark

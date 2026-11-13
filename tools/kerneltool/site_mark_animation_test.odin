@@ -76,12 +76,14 @@ site_mark_sprites_are_distinct :: proc(t: ^testing.T) {
 	// The scratch starts from the pose of the leg animation: one sprite.
 	testing.expect_value(t, sprites.of_frame[.Scratch][0], sprites.of_frame[.Leg][1])
 	// The still heron, 14 frames of the five first animations, 4 poses of the
-	// preen and 3 of the scratch. A sprite of the home is 198 pixels wide, so
-	// the home sheets are 4356 pixels wide: one row, under the 8192 pixels
-	// that a browser decodes in a picture.
+	// preen and 3 of the scratch. A sprite of the home is the heron alone,
+	// 192 pixels wide, so the home sheets are 4224 pixels wide: one row,
+	// under the 8192 pixels that a browser decodes in a picture.
 	testing.expect_value(t, len(sprites.cells), 22)
 	home, _, _, _ := site_mark_animation_pictures()
-	sprite_width, _ := site_mark_size(home)
+	sprite_width, sprite_height := site_mark_size(home)
+	testing.expect_value(t, sprite_width, mark.heron_size(home.heron_cell))
+	testing.expect_value(t, sprite_height, mark.heron_size(home.heron_cell))
 	testing.expect(t, sprite_width * len(sprites.cells) <= 8192)
 	for animation in mark.Animation {
 		testing.expect_value(t, len(sprites.of_frame[animation]), mark.animation_frame_count(animation))
@@ -110,4 +112,71 @@ site_mark_animation_table_parses :: proc(t: ^testing.T) {
 	script := site_mark_animation_script(&sprites, home)
 	testing.expect(t, !strings.contains(script, "/*TABLE*/"))
 	testing.expect(t, strings.contains(script, "mark animation self test: "))
+}
+
+// The rhythm of the site: each still time is the same part of the still
+// time of support/mark, inside the bounds of the site, and the table of the
+// script holds these times and these bounds. The order and the animations
+// are those of support/mark.
+@(test)
+site_mark_still_times_are_a_part_of_those_of_the_mark :: proc(t: ^testing.T) {
+	sprites, ok := site_mark_sprites()
+	home, _, _, pictures_ok := site_mark_animation_pictures()
+	testing.expect(t, ok && pictures_ok)
+	table := site_mark_animation_table_json(&sprites, home)
+	value, err := json.parse_string(table, .JSON, false, context.temp_allocator)
+	root, is_object := value.(json.Object)
+	testing.expect(t, err == .None && is_object)
+	if !is_object {
+		return
+	}
+	order, _ := root["order"].(json.Array)
+	testing.expect_value(t, len(order), len(mark.play_order))
+	if len(order) != len(mark.play_order) {
+		return
+	}
+	testing.expect(t, SITE_MARK_STILL_PERCENT > 0 && SITE_MARK_STILL_PERCENT < 100, "the site does not play more often than the table of the mark")
+	for step, index in mark.play_order {
+		still := site_mark_still_milliseconds(step)
+		testing.expect_value(t, still * 100, int(step.still_milliseconds) * SITE_MARK_STILL_PERCENT)
+		testing.expectf(t, still >= SITE_MARK_STILL_DURATION_LEAST && still <= SITE_MARK_STILL_DURATION_MOST, "a still time of %d ms on the site", still)
+		// The picture never changes sooner than the shortest frame.
+		testing.expect(t, still >= mark.FRAME_DURATION_LEAST)
+		pair, _ := order[index].(json.Array)
+		testing.expect_value(t, len(pair), 2)
+		if len(pair) != 2 {
+			continue
+		}
+		written_still, _ := pair[0].(json.Float)
+		written_animation, _ := pair[1].(json.Float)
+		testing.expect_value(t, int(written_still), still)
+		testing.expect_value(t, int(written_animation), int(step.animation))
+	}
+	limits, _ := root["limits"].(json.Object)
+	still_least, _ := limits["stillLeast"].(json.Float)
+	still_most, _ := limits["stillMost"].(json.Float)
+	testing.expect_value(t, int(still_least), SITE_MARK_STILL_DURATION_LEAST)
+	testing.expect_value(t, int(still_most), SITE_MARK_STILL_DURATION_MOST)
+}
+
+// The name of the mark on a page: the font is a file of the site that the
+// style sheet declares once, the class names it, and the box of the name
+// has the size of the name in cells at each of the two sizes.
+@(test)
+site_mark_name_rules_name_the_font :: proc(t: ^testing.T) {
+	sheet := site_style_sheet("")
+	testing.expect_value(t, strings.count(sheet, "@font-face"), 1)
+	testing.expect(t, strings.contains(sheet, "@font-face { font-family: \"" + MARK_FONT_FAMILY + "\"; src: url(\"" + SITE_MARK_FONT + "\") format(\"truetype\");"))
+	testing.expect(t, strings.contains(sheet, "font-display: block;"))
+	testing.expect(t, strings.contains(sheet, "." + SITE_MARK_NAME_CLASS + " { display: inline-block;"))
+	testing.expect(t, strings.contains(sheet, "font-family: \"" + MARK_FONT_FAMILY + "\", var(--mono);"))
+	testing.expect(t, strings.contains(sheet, "font-synthesis: none;"))
+	// The bar and the foot: cells of 2 pixels. The home: cells of 6 pixels,
+	// the cell of the name that the picture of the home had.
+	testing.expect(t, strings.contains(sheet, "width: 66px; height: 16px; font-size: 16px; line-height: 16px; vertical-align: -2px; }"))
+	testing.expect(t, strings.contains(sheet, ".home-head ." + SITE_MARK_NAME_CLASS + " { width: 198px; height: 48px; font-size: 48px; line-height: 48px; vertical-align: -6px; }"))
+	testing.expect_value(t, SITE_MARK_NAME_HTML, "<span class=\"mark-name\">modus</span>")
+	// The description of the heron alone does not speak of the name.
+	testing.expect_value(t, site_heron_description("A heron, above the name modus in square letters"), "A heron")
+	testing.expect_value(t, site_heron_description("The mark"), "The mark")
 }

@@ -5304,13 +5304,23 @@ Do not use: logo, icon, emblem, mascot.
 
 ### Name of the mark
 
-The name of the mark is the word "modus" drawn in letters of square cells, 5 columns by 7 rows each, under the heron.
+The name of the mark is the word "modus" drawn in letters of square cells, 5 columns by 7 rows each, under or beside the heron.
 
-It is drawn from the same cells as the heron, so the files of the mark with a name keep one grid. The head of the home of the site shows it under the heron (`pictures/mark_home.png`, heron of 8 pixels a cell, name of 6), and the picture for other sites shows it too.
+It is drawn from the same cells as the heron, so the files of the mark with a name keep one grid. A picture holds it only where one file must carry the heron and the name: the files `resources/logo/modus*.png` and the picture of the site for other sites. On a page of the site the picture is the heron alone, and the name is text in the font of the name of the mark. The boot display draws it at the right of the heron.
 
 The design: `docs/DESIGN.md`, "11. The mark".
 
 Do not use: wordmark, logotype.
+
+### Font of the name of the mark
+
+The font of the name of the mark is a font file whose glyphs are the cells of the letters of the name of the mark.
+
+It lets a page write the name as text and show the letters of the mark: a reader selects the text, and a screen reader says it. `kerneltool logo` writes it from `mark.name_letters` as `resources/logo/modus_mark.ttf`, a TrueType file, and `kerneltool check` compares its bytes. It has the letters m, o, d, u and s, their capitals with the same glyphs, and the space; it is not a font for a text. One em is 8 cells, so a font size that is a multiple of 8 pixels draws whole cells. Example: the bar of the site shows the heron as a picture of 24 pixels, then "modus" in this font at 16 pixels: cells of 2 pixels.
+
+The design: `docs/DESIGN.md`, "The font of the name".
+
+Do not use: logo font, wordmark font, pixel font.
 
 ### Still heron
 

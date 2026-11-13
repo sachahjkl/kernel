@@ -509,8 +509,8 @@ Subset_Table :: struct {
 }
 
 // sfnt_write gives a TrueType file of tables in the order of their tags,
-// with the checksums and the checksum adjustment of head.
-@(private = "file")
+// with the checksums and the checksum adjustment of head. The font of the
+// name of the mark is written with it too (mark_font.odin).
 sfnt_write :: proc(tables: []Subset_Table) -> []u8 {
 	count := len(tables)
 	out := make([dynamic]u8, context.temp_allocator)
@@ -547,7 +547,9 @@ sfnt_write :: proc(tables: []Subset_Table) -> []u8 {
 	return out[:]
 }
 
-@(private = "file")
+// table_checksum gives the checksum of a table or of a whole file: the sum
+// of its words of 32 bits, big endian, with zeros after its last byte up to
+// a whole word. The sum wraps at 32 bits.
 table_checksum :: proc(data: []u8) -> (sum: u32) {
 	for at := 0; at < len(data); at += 4 {
 		word: u32

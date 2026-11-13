@@ -47,6 +47,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `news/`, `news.xml` | The files of `news/`; see "The news" |
 | `search.json`, `search.js` | The index of the search and its script; see "The search" |
 | `version.json` | The commit and the time of the build; see "A page of an older build" |
+| `fonts/modus_mark.ttf` | The font of the name of the mark, from `support/mark`; see "The name of the mark" |
 | `releases.xml` | The feed of the releases, from `CHANGELOG.md`; see "What other sites read" |
 | `site.webmanifest`, `llms.txt` | The name, the colors and the icons of the site; the pages with their descriptions in Markdown |
 | `sitemap.xml`, `robots.txt` | Only with a site address; see "What other sites read" |
@@ -56,7 +57,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `docs/reference/module-graph/` | See "The module graph" |
 | `docs/reference/types/` | See "The types" |
 
-Each page has the bar (the heron and the name at the left, the sections as buttons: Docs, Status, News, Releases; a section appears when its page exists; on a guide or a page of the reference, Docs is the current one), breadcrumbs on each page below the home (Home / Docs / Guides / <guide>; Home / Docs / Reference / <page>; Home / Docs / Reference / Modules / <module>; Home / Status), and a foot that first names the maker ("modus · by Froment Software": the mark of the maker at 16 pixels, `resources/site/froment_software.png`, and its name as a link to its site, on one line), then names the commit, the release and the time of the build, and the files that the page comes from, as links to the repository at that commit. A reference table names the files that it is read from.
+Each page has the bar (the heron and the name at the left, the sections as buttons: Docs, Status, News, Releases; a section appears when its page exists; on a guide or a page of the reference, Docs is the current one), breadcrumbs on each page below the home (Home / Docs / Guides / <guide>; Home / Docs / Reference / <page>; Home / Docs / Reference / Modules / <module>; Home / Status), and a foot that first names the maker ("modus · by Froment Software": the name of the system in the font of the name of the mark, the mark of the maker at 16 pixels, `resources/site/froment_software.png`, and its name as a link to its site, on one line), then names the commit, the release and the time of the build, and the files that the page comes from, as links to the repository at that commit. A reference table names the files that it is read from.
 
 The tool reads the commit from the files of git (`.git`, `HEAD`, the reference, `packed-refs`), with no program. When it cannot, the foot says so and the links to files of the repository go to `master`.
 
@@ -452,14 +453,14 @@ The cells that no file records are listed by the command. They are the licenses 
 
 The site follows `DESIGN.md`, with the colors of `support/graphics/rules.odin` and `support/mark`: the style sheet repeats no color of the rules as its own number. The elements of the system carry information where they appear:
 
-- the bar at the top, as the bar of the desktop: the heron at the left, the sections as buttons, the current one marked by a line in the blue of the title bar; under 720 pixels, the sections and the search are behind one menu button (see "The site menu");
+- the bar at the top, as the bar of the desktop: the heron at the left, then the name of the system in the font of the name of the mark, the sections as buttons, the current one marked by a line in the blue of the title bar; under 720 pixels, the sections and the search are behind one menu button (see "The site menu");
 - the news cards of the home, side by side on a wide screen: the title, the line of the kind and the date, the picture and the text of each card of a row start at the same height, whatever the length of a title. Each card takes four rows of the grid of the cards and shares them (`grid-template-rows: subgrid`); each part has its row, so a card with no picture keeps its text in line. The picture boxes have one ratio, 4 by 3, the ratio of the screen pictures; a picture of another ratio is shown whole in the box (`object-fit: contain`), not cut. A browser with no subgrid shows the cards as blocks, and a title keeps the room of two lines on a wide screen, so that the common case aligns. No title is cut. On a narrow screen (one column) nothing changes. The cards of the page News stand one under the other at every width: no row to align;
 - cards with a border of 1 pixel in their accent and the bar of 4 x 16 pixels before their title, as the cards of the boot display;
 - the colors of the concepts with their meaning in the system: the stages of the start take the color of who runs them (the firmware violet, the boot program orange, the kernel blue);
 - the tables have the look of the tables of the system: the titles of the columns in the dim color, every second row on a band (`DESIGN.md`, section 10). Each column has the least width of its kind, and a table wider than the page scrolls sideways in its own box (see "The tables");
 - the grid of points of the desktop is on the home only.
 
-Prose is in the reading font of the reader's system, at most 72 characters a line on a presentation page and 80 on a documentation page; code, signatures, numbers and identifiers are in its monospace font. No animation, no shadow, no round corner; one exception: a segment of the bar of the chart of the docs home changes its place and its width in 150 ms when the search changes its count, never at the load of a page, and at once for a reader who asks for reduced motion (see "The chart of what the search finds"). The light form follows `prefers-color-scheme`. A print form hides the bar and the navigation.
+Prose is in the reading font of the reader's system, at most 72 characters a line on a presentation page and 80 on a documentation page; code, signatures, numbers and identifiers are in its monospace font. The site holds one font file: the font of the name of the mark, for the name of the system where it stands as the mark (see "The name of the mark"). No animation, no shadow, no round corner; one exception: a segment of the bar of the chart of the docs home changes its place and its width in 150 ms when the search changes its count, never at the load of a page, and at once for a reader who asks for reduced motion (see "The chart of what the search finds"). The light form follows `prefers-color-scheme`. A print form hides the bar and the navigation.
 
 The contrast of the text (WCAG 2 ratio), from the colors of the rules:
 
@@ -603,7 +604,7 @@ The legend: the reference index ends with the section "The kinds of values", a t
 
 ### The versions of the files
 
-The site is behind a proxy that keeps a file for hours. Each link to a file whose bytes change between builds carries its file version (`GLOSSARY.md`): `style.css?v=<16 hexadecimal digits>`, the first 8 bytes of the BLAKE3 hash of its bytes (`contract/blake3`). The files: `style.css`, `search.js`, `mark_animation.js`, `module_graph.js`, `glossary.js` and `search.json` (`SITE_VERSIONED_FILES`). The same bytes give the same address. The index of the search is written before the pages, so that each page names its version: `search.js` reads it from the attribute `data-index` of its own `script` element, relative to its folder, with no inline script. The check of the links ignores the query. The icons and the pictures carry no version: their bytes come from the mark and the repository and change rarely.
+The site is behind a proxy that keeps a file for hours. Each link to a file whose bytes change between builds carries its file version (`GLOSSARY.md`): `style.css?v=<16 hexadecimal digits>`, the first 8 bytes of the BLAKE3 hash of its bytes (`contract/blake3`). The files: `style.css`, `search.js`, `mark_animation.js`, `module_graph.js`, `glossary.js` and `search.json` (`SITE_VERSIONED_FILES`). The same bytes give the same address. The index of the search is written before the pages, so that each page names its version: `search.js` reads it from the attribute `data-index` of its own `script` element, relative to its folder, with no inline script. The check of the links ignores the query. The icons, the pictures and the font of the name of the mark carry no version: their bytes come from the mark and the repository and change rarely.
 
 ### A page of an older build
 
@@ -631,11 +632,65 @@ The site draws its own pictures of the mark from `support/mark` (`tools/kernelto
 
 | File | Cells | Size | Use |
 |---|---|---|---|
-| `pictures/mark_home.png`, `mark_home_light.png` | heron 8, name 6 | 198 x 250 | The head of the home, one file for each color scheme (`<picture>` and `prefers-color-scheme`) |
-| `pictures/mark_bar.png`, `mark_bar_light.png` | heron 1 | 24 x 24 | The bar |
+| `pictures/mark_home.png`, `mark_home_light.png` | heron 8 | 192 x 192 | The head of the home: the heron alone, one file for each color scheme (`<picture>` and `prefers-color-scheme`) |
+| `pictures/mark_bar.png`, `mark_bar_light.png` | heron 1 | 24 x 24 | The bar: the heron alone |
 | `pictures/mark_card.png` | heron 16, name 12 | 1200 x 630 | The picture for other sites: on the dark background, because those sites show it on white. Open Graph and the page graph name it. The command stops when it is not opaque (a color type with no alpha and no `tRNS` chunk) or not 1200 x 630 |
 
 The icons of the pages are drawn by the tool from the same table (see "The icons"); the site copies no icon of `resources/logo`. `kerneltool logo` also writes `resources/logo/modus_transparent.png` and `modus_light_transparent.png`, which the README shows in a `<picture>` for the two color schemes.
+
+Which pictures hold the name of the mark:
+
+| Picture | The name | Why |
+|---|---|---|
+| The head of the home, the bar, the sprite sheets of the animations | No: the heron alone | The name is text beside the heron, in the font of the name of the mark |
+| The icons (`favicon.ico`, `icon.svg`, the icons of the manifest) | No: the heron alone | An icon is too small for the name |
+| `pictures/mark_card.png` | Yes | Another site shows this one file, with no page and no font of this site around it |
+| `resources/logo/modus*.png`, in the README | Yes | The host of the repository shows a README with no font of the repository: the picture is the one way to show the letters there |
+| The picture of a news entry that names a file of `resources/logo` | As the file | A news entry is not changed after its step |
+
+The alt text of the heron of the home is the description of the mark of `README.md`, up to its words about the name under the heron (`site_heron_description`).
+
+### The name of the mark
+
+Where the site shows the name of the system as the mark, the name is text in the font of the name of the mark (`GLOSSARY.md`; `DESIGN.md`, "The font of the name"). The code is `tools/kerneltool/site_mark_name.odin`.
+
+- The places: the bar (after the heron), the foot (before "· by"), and the title of the home (the `h1`, beside the heron). The name in a sentence stays in the reading font: "the documentation of modus" is prose, not the mark.
+- The markup, one constant (`SITE_MARK_NAME_HTML`): `<span class="mark-name">modus</span>`. The text is `SITE_SYSTEM_NAME`. It is real text: a reader selects it, a search of the page finds it, and a screen reader says "modus".
+- The file: `fonts/modus_mark.ttf`. `kerneltool site` builds it from `support/mark` and `LICENSE`, as `kerneltool logo` does: the bytes of `resources/logo/modus_mark.ttf`. A TrueType file: each browser reads it as it is, and the tool needs no compressor.
+- The style sheet declares it once: `@font-face` with the family "modus mark", `format("truetype")`, `font-weight: 100 900` and `font-display: block`. The class `.mark-name` names the family, then the monospace font. It sets `font-weight: 400` and `font-synthesis: none`: the font answers to each weight, so a browser never thickens the squares of a name inside a bold link.
+- Each page asks for the font in its head, before it reads the style sheet: `<link rel="preload" href="fonts/modus_mark.ttf" as="font" type="font/ttf" crossorigin>`. The bar shows the name on the first screen of each page. The address of the preload and of the style sheet is the same, with no version.
+- No text jumps. The box of the name has the size of the name in cells (`display: inline-block`, a width and a height in pixels, `overflow: hidden`), whatever font draws the text. While the font loads, the text is not shown (`font-display: block`): it never shows in another font first. When the font arrives, nothing beside the name moves. A browser that cannot load the font shows the name in the monospace font in the same box.
+- The sizes. One em of the font is 8 cells, so the font size is 8 times the cell:
+
+| Place | Cell | Font size | The name | A cell on a screen of density 1 / 1.5 / 2 |
+|---|---|---|---|---|
+| The bar, the foot | 2 pixels | 16 pixels | 66 x 14 pixels | 2 / 3 / 4 pixels of the screen |
+| The title of the home | 6 pixels | 48 pixels | 198 x 42 pixels | 6 / 9 / 12 pixels of the screen |
+
+- The cell of the home is the cell that the name had in the picture of the home. The cell of the bar is twice the cell of its heron (24 pixels, cells of 1): at cells of 1 pixel the name is 7 pixels high, too small to read.
+- A cell is a whole count of pixels of the screen at each whole density, and at 1.5 because both cells are even. At another density (1.25, or a zoom of the browser) the edges of the squares are smoothed.
+- The box is 8 cells high: the 7 rows of the name and the row under the baseline. It is moved down by that row (`vertical-align`), so the letters stand on the baseline of the text beside them in the foot.
+- The colors: the name takes the color of the text of its place (the link of the bar, the title of the home), and the text color in the foot. In the light form the text color is the dark color of the name of the mark on a light background.
+- A page opened from a file: some browsers refuse a font of another folder of the disk. The name is then in the monospace font.
+- The host must allow the font: the header `Content-Security-Policy` needs `font-src 'self'` (see "How the site is published"). With `default-src 'none'` and no `font-src`, a browser refuses the font and shows the name in the monospace font.
+
+### The rhythm of the animations
+
+The animations of the mark (`DESIGN.md`, "The animations") play on the large heron of the home and on the icon of its tab. `mark_animation.js` holds the order of play of `support/mark`, with the still times of the site: each still time is 40 % of the still time of the table (`SITE_MARK_STILL_PERCENT` in `tools/kerneltool/site_mark_name.odin`), one rule for every step.
+
+| | The table of `support/mark` | The site |
+|---|---|---|
+| A still time | 2.2 to 5.5 s | 0.88 to 2.2 s |
+| The bounds of a still time | 2 to 6 s | 0.8 to 2.4 s |
+| The mean still time | 3.8 s | 1.5 s |
+| One turn of the order (17 animations) | 79.8 s: 64.1 s still, 15.7 s of animations | 41.4 s: 25.6 s still, 15.7 s of animations |
+| An animation starts, on average | each 4.7 s | each 2.4 s |
+| An animation other than the blink starts, on average | each 7.3 s | each 3.8 s |
+
+- The frames of an animation do not change: a frame lasts 150 to 1000 ms, so the picture changes at most about 6 times each second.
+- The heron of the bar does not move, on any page. A page of the documentation is read: a picture that moves each two seconds at the top of a text takes the eye from it. On the home the heron is what the page shows.
+- Nothing moves for a reader who asks for reduced motion, and nothing runs in a hidden tab.
+- The self test of the script (`?selftest=1`) checks each still time against the bounds of the site; the host test `site_mark_still_times_are_a_part_of_those_of_the_mark` checks the rule and the table of the script.
 
 ### The icons
 
@@ -1129,7 +1184,7 @@ The work is in layers; each layer adds pages to a site that works.
 - Done: the module graph, the identity card and the neighbours of each module (see "The module graph").
 - (f) Done: one section Docs in the bar, the guides and the reference under `docs/`, the docs home with its own search field, and the redirect pages of the two generations of old addresses. See "The sections", "The redirect pages" and "The docs home".
 - The count of checks of `kerneltool check` on the site: the measure record counts the checks of `kerneltool screenshots` only (the machine tests and the second build), not the host tests of `kerneltool check`.
-- An embedded font: Paper Mono is under the SIL OFL 1.1 with no Reserved Font Name (`resources/fonts/paper_mono.license`): its ASCII subsets can be copied into the site with `OFL.txt` and their `.license` files and declared with `@font-face`. The site uses the fonts of the reader's system.
+- An embedded font for the text: Paper Mono is under the SIL OFL 1.1 with no Reserved Font Name (`resources/fonts/paper_mono.license`): its ASCII subsets can be copied into the site with `OFL.txt` and their `.license` files and declared with `@font-face`. The site uses the fonts of the reader's system for its text; its one font file is the font of the name of the mark.
 
 ## How the site is published
 
@@ -1175,7 +1230,7 @@ The headers: GitHub Pages sends no header that a site chooses. The proxy of Clou
 
 | Header | Value | Why |
 |---|---|---|
-| `Content-Security-Policy` | `default-src 'none'; style-src 'self'; img-src 'self' data:; script-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` | The style sheet, the pictures and the grid of points (`data:`), `search.js` and its fetch of `search.json`, the manifest; nothing else. The page graph is data that a browser does not run: `script-src` does not apply to it |
+| `Content-Security-Policy` | `default-src 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; script-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` | The style sheet, the pictures and the grid of points (`data:`), the font of the name of the mark (`font-src`), `search.js` and its fetch of `search.json`, the manifest; nothing else. The page graph is data that a browser does not run: `script-src` does not apply to it |
 | `X-Content-Type-Options` | `nosniff` | A file is read as its type only |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` | Another host sees the host of the site, not the page |
 | `X-Frame-Options` | `DENY` | `frame-ancestors` for a browser that does not read it |
