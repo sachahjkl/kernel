@@ -115,7 +115,7 @@ Tables as parameters: one description, three ways to call (a direct call, a call
 
 ![A developer tool: the address space of the console as a band scaled by pages, with each gap folded, the table of its mappings with the pages that have a frame, its modules, its threads with the state of the scheduler; a sample each 250 ms with its cost](docs/screenshots/inspect.png)
 
-![The same tool on a program that stopped on a fault: the stack trace as module + offset, near the export before it](docs/screenshots/inspect_stopped.png)
+![The same tool on a program that stopped on a fault: each frame of the stack trace with its procedure and its source line, from the debug image](docs/screenshots/inspect_stopped.png)
 
 ![After a loss of power during the write of a root: the storage service takes the root before it, and notes finds its note and its count](docs/screenshots/power_loss.png)
 

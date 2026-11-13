@@ -51,6 +51,8 @@ Elf_Program_Header :: struct {
 #assert(size_of(Elf_Program_Header) == 56)
 
 ELF_SECTION_PROGRAM_DATA :: 1
+ELF_SECTION_SYMBOLS :: 2
+ELF_SECTION_NO_BITS :: 8 // A section with no bytes in the file (.bss).
 ELF_SECTION_RELA :: 4
 ELF_SECTION_DYNAMIC_SYMBOLS :: 11
 ELF_SECTION_INIT_ARRAY :: 14

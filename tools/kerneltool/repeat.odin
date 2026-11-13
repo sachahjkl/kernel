@@ -23,18 +23,19 @@ DIFFERENT_BUILDS_FOLDER :: BUILD_FOLDER + "/different_builds"
 
 // One file that a build writes, and what it is.
 Build_Output :: struct {
-	kind: string, // "module", "LLVM IR", "object", "boot program"
+	kind: string, // "module", "LLVM IR", "object", "debug object", "boot program"
 	path: string,
 }
 
-// The outputs of one module: the module, the LLVM IR that Odin wrote, and the
-// object that llc made from it.
-module_build_outputs :: proc(build: Module_Build) -> [3]Build_Output {
+// The outputs of one module: the module, the LLVM IR that Odin wrote, the
+// object that llc made from it, and its debug object.
+module_build_outputs :: proc(build: Module_Build) -> [4]Build_Output {
 	folder := fmt.aprintf("%s/%s", MODULE_BUILD_FOLDER, build.name)
 	return {
 		{kind = "module", path = fmt.aprintf("%s/%s.module", MODULE_BUILD_FOLDER, build.name)},
 		{kind = "LLVM IR", path = fmt.aprintf("%s/%s.ll", folder, build.name)},
 		{kind = "object", path = fmt.aprintf("%s/objects/%s.o", folder, build.name)},
+		{kind = "debug object", path = fmt.aprintf("%s/%s.debug", MODULE_BUILD_FOLDER, build.name)},
 	}
 }
 
@@ -192,7 +193,7 @@ run_repeat :: proc(args: []string) -> int {
 	if !reset_folder(DIFFERENT_BUILDS_FOLDER) {
 		return EXIT_FAILURE
 	}
-	results: [3]Distinct_Results
+	results: [4]Distinct_Results
 	for output, index in module_build_outputs(build) {
 		results[index] = {owner = build.name, output = output}
 	}
@@ -218,7 +219,7 @@ run_repeat :: proc(args: []string) -> int {
 
 // repeat_all builds every module and the boot program count times, in the
 // order of `build`, and prints one row for each: the distinct modules (or
-// boot programs), LLVM IR files and objects.
+// boot programs), LLVM IR files, objects and debug objects.
 repeat_all :: proc(count: int) -> int {
 	if !reset_folder(DIFFERENT_BUILDS_FOLDER) {
 		return EXIT_FAILURE
@@ -246,12 +247,13 @@ repeat_all :: proc(count: int) -> int {
 		free_all(context.temp_allocator)
 	}
 	fmt.printfln("kerneltool: repeat: %d builds of each of %d modules and of the boot program", count, len(module_builds))
-	fmt.printfln("%-20s %8s %16s %12s %17s", "module", "builds", "distinct files", "distinct IR", "distinct objects")
+	fmt.printfln("%-20s %8s %16s %12s %17s %23s", "module", "builds", "distinct files", "distinct IR", "distinct objects", "distinct debug objects")
 	same := true
 	for index := 0; index < len(all); {
 		owner := all[index].owner
-		// The columns: the module or the boot program, the LLVM IR, the object.
-		row := [3]string{"-", "-", "-"}
+		// The columns: the module or the boot program, the LLVM IR, the
+		// object, the debug object.
+		row := [4]string{"-", "-", "-", "-"}
 		for index < len(all) && all[index].owner == owner {
 			column := 0
 			switch all[index].output.kind {
@@ -259,6 +261,8 @@ repeat_all :: proc(count: int) -> int {
 				column = 1
 			case "object":
 				column = 2
+			case "debug object":
+				column = 3
 			}
 			row[column] = fmt.tprintf("%d", len(all[index].contents))
 			same = same && len(all[index].contents) == 1
@@ -268,7 +272,7 @@ repeat_all :: proc(count: int) -> int {
 			free_results(&all[index])
 			index += 1
 		}
-		fmt.printfln("%-20s %8s %16s %12s %17s", owner, fmt.tprintf("%d", count), row[0], row[1], row[2])
+		fmt.printfln("%-20s %8s %16s %12s %17s %23s", owner, fmt.tprintf("%d", count), row[0], row[1], row[2], row[3])
 	}
 	return same ? 0 : EXIT_FAILURE
 }
@@ -316,13 +320,44 @@ outputs_same_after_second_build :: proc() -> bool {
 	if different != 0 {
 		return false
 	}
-	same_bytes_line := fmt.tprintf("%d modules, their LLVM IR and their objects, %d pointer theme files, and the boot program and its object are the same bytes after a second build", len(module_builds), len(theme_paths))
+	same_bytes_line := fmt.tprintf("%d modules, their LLVM IR, their objects and their debug objects, %d pointer theme files, and the boot program and its object are the same bytes after a second build", len(module_builds), len(theme_paths))
 	test_passed_print("%s", same_bytes_line)
 	// The command `site` quotes this line.
 	if err := os.write_entire_file(REPRODUCIBLE_BUILD_RECORD, strings.concatenate({same_bytes_line, "\n"}, context.temp_allocator)); err != nil {
 		fmt.eprintfln("kerneltool: cannot write %s: %v", REPRODUCIBLE_BUILD_RECORD, err)
 		return false
 	}
+	return modules_same_without_debug_information()
+}
+
+// modules_same_without_debug_information builds every module a third time,
+// with no debug information, in a folder of its own, and compares each
+// module with the module of the build. The identity of a module is the hash
+// of its bytes: its debug object is a separate object, so the compiler
+// option that writes the line program must change no byte of the module
+// (docs/MODULE_CONTRACT.md, "Debug information").
+modules_same_without_debug_information :: proc() -> bool {
+	debug_information = false
+	module_build_folder = MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION
+	built := build_modules_in_parallel()
+	debug_information = true
+	module_build_folder = MODULE_BUILD_FOLDER
+	if !built {
+		return false
+	}
+	different := 0
+	for build in module_builds {
+		with := read_file(join(MODULE_BUILD_FOLDER, "/", build.name, ".module")) or_return
+		without := read_file(join(MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION, "/", build.name, ".module")) or_return
+		if !slice.equal(with, without) {
+			fmt.eprintfln("kerneltool: test failed: the module %s is not the same bytes without debug information: %s", build.name, first_difference("module", with, without))
+			different += 1
+		}
+	}
+	if different != 0 {
+		return false
+	}
+	test_passed_print("%d modules are the same bytes with and without debug information: the debug objects change no module", len(module_builds))
 	return true
 }
 

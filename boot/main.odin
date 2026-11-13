@@ -128,6 +128,11 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	boot.page_table = build_page_tables(top, kernel, head.memory_size)
 	boot.memory_ranges = u64(uintptr(ranges))
 
+	// After the last allocation that stops the machine when it fails, so a
+	// debug image never takes the memory that the start needs; before the
+	// last read of the memory map, which gives its pages the kind Boot. The
+	// page tables map all memory, its pages too.
+	boot.debug_image, boot.debug_image_size = debug_image_read()
 	print("boot program: ok\r\n")
 	for attempt in 0 ..< 2 {
 		count, key := read_memory_map(firmware_map, ranges)

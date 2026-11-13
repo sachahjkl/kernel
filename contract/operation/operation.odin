@@ -1292,9 +1292,12 @@ CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE :: 19
 // mapped for this program. A set bit is the statement of the starter that
 // the range is mapped; a program reads nothing at a fixed range whose bit
 // is clear. It is a value of the context, which only the starter writes,
-// and not a field of a shared page, which another program can write. The
-// values 21, 22 and 23 have no role.
+// and not a field of a shared page, which another program can write.
 CONTEXT_VALUE_FIXED_RANGES_MAPPED :: 20
+// The value 21: the size in bytes of the debug image, which the starter
+// mapped at the fixed range Debug_Image (contract:fixed_addresses) when its
+// bit of the value 20 is set. The values 22 and 23 have no role.
+CONTEXT_VALUE_DEBUG_IMAGE_SIZE :: 21
 CONTEXT_BUDGET :: 15 // The budget of the program.
 // The values 13 and 15 have no role: the settings page and the date page
 // are fixed ranges, mapped when their bit of the value 20 is set. A new
@@ -1306,8 +1309,10 @@ ROOT_MACHINE :: 0
 ROOT_FRAMEBUFFER :: 1
 ROOT_BOOT_IMAGE :: 2
 ROOT_LOG_RECORDS :: 3 // Memory, with Read: the records of the log.
+ROOT_DEBUG_IMAGE :: 4 // Memory, with Read: the debug image that the boot program read. 0: none.
 ROOT_VALUE_WIDTH :: 0
 ROOT_VALUE_HEIGHT :: 1
 ROOT_VALUE_PIXELS_PER_LINE :: 2
 ROOT_VALUE_FORMAT :: 3
 ROOT_VALUE_BOOT_IMAGE_SIZE :: 4
+ROOT_VALUE_DEBUG_IMAGE_SIZE :: 5 // 0: no debug image.

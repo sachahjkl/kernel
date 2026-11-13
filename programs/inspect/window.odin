@@ -344,7 +344,7 @@ draw_stop :: proc "contextless" (frame: ^interface.Frame) {
 	x := RIGHT_X + MODULES_WIDTH + 8
 	inside := card(frame, x, LOW_Y, WIDTH - 8 - x, LOW_HEIGHT, "STOP REPORT", "op.Stop_Report: where it stopped", graphics.COLOR_FAILED)
 	stop := &current.stop
-	buffer: [96]u8
+	buffer: [FRAME_NAME_CAPACITY]u8
 	writer := system.Writer{buffer = buffer[:]}
 	system.write_part(&writer, stop.vector == 14 ? "page fault: the address " : "fault: the address ")
 	system.write_number(&writer, stop.address)
@@ -363,6 +363,8 @@ draw_stop :: proc "contextless" (frame: ^interface.Frame) {
 		line := system.Writer{buffer = buffer[:]}
 		if frame.address == 0 {
 			system.write_part(&line, "not code: the kernel gives no value of this frame")
+		} else if name := frame_name(number); name != "" {
+			system.write_part(&line, name)
 		} else {
 			address_write(&line, frame.address, true)
 		}

@@ -64,7 +64,7 @@ Step_Kind :: enum {
 	Film, // Save the screen 25 times in one second, for x milliseconds, as the next pictures of the film.
 	Quit, // End QEMU: the machine does not stop by itself.
 	Monitor, // Send the line text to the QEMU monitor, as it is (for example "nmi": a non-maskable interrupt to each processor).
-	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool names each frame from the linked file of its module, and the names start with `names`.
+	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool takes the name that the system wrote in a frame, or names a frame "module + offset" from the debug object of its module, and the names start with `names`.
 	Record, // A log record with the program `program`, the channel `channel`, the level `level` and a text that has `text`, after the record of the last Record step: the tool reads log.records() through the remote service (call.odin). With any_order, the next Record step searches from the same place.
 	Agree, // The program `text`: the mapped pages and the threads that inspect.mappings() and inspect.threads() give are the ones that monitor.programs() gives (two tools, two reports of the kernel).
 	Power_Loss, // The disk that the tool serves loses its power at the first write of a root after a seeded count of writes (1 to 40 after this step): it answers nothing more, and the tool ends QEMU with no warning (power_loss.odin).
@@ -1498,7 +1498,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "kernel: program agenda stopped: invalid instruction"},
 	{kind = .Wait, text = ", which replaces "},
 	{kind = .Wait, text = "[console] error: the program agenda stopped: invalid instruction"},
-	{kind = .Wait, text = "[console] error: the instruction is at offset "},
+	// The debug image names the procedure of the instruction, in the module
+	// that ran: calendar_fixed, not calendar.
+	{kind = .Wait, text = "[console] error: the instruction is at "},
+	{kind = .Wait, text = " in calendar_fixed"},
 	{kind = .Wait, text = "... runs in place of calendar "},
 	{kind = .Type, text = "replacements()"},
 	{kind = .Wait, text = "...: replaced by calendar_fixed "},
@@ -1823,6 +1826,10 @@ scenario := [?]Step {
 	// after any case.
 	{kind = .Wait, text = "compositor: surface errors", any_order = true},
 	{kind = .Trace, text = "errors: stack of fault: ", names = "fault::three fault::two fault::one entry"},
+	// The program errors names each frame from the debug image: the
+	// instruction of the write at its line, and the call of two.
+	{kind = .Wait, text = " in fault (programs/fault/main.odin:15), fault::two + 0x"},
+	{kind = .Wait, text = " in fault (programs/fault/main.odin:20), fault::one + 0x"},
 	{kind = .Wait, text = "errors: t the pages of another program (Inspect, Pages): Inspect: the argument index has the value 1, which the call refuses"},
 	{kind = .Wait, text = "errors: u the pages past the end of the user half: Inspect: the argument address has the value 140737488351232, which the call refuses; it takes at most 140737488093184"},
 	{kind = .Wait, text = "errors: v a wrapper: display.open of 0 by 100 pixels: display.open: the argument width has the value 0, which the call refuses; it takes at most 2048"},
@@ -1886,7 +1893,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "inspect: network: "},
 	{kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"},
 	{kind = .Type, text = "fault"},
-	{kind = .Wait, text = "inspect: fault stopped: page fault at 0x0; stack: fault + "},
+	{kind = .Wait, text = "inspect: fault stopped: page fault at 0x0; stack: fault::three + 0x"},
+	{kind = .Wait, text = " in fault (programs/fault/main.odin:15), fault::two + 0x"},
 	{kind = .Shot, text = "inspect_stopped"},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "inspect: the bytes of the memory of inspect"},

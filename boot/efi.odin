@@ -82,7 +82,7 @@ Efi_Boot_Services :: struct {
 	raise_priority:         rawptr,
 	restore_priority:       rawptr,
 	allocate_pages:         proc "win64" (type: Efi_Allocate_Type, memory_type: Efi_Memory_Type, page_count: uint, address: ^u64) -> Efi_Status,
-	free_pages:             rawptr,
+	free_pages:             proc "win64" (address: u64, page_count: uint) -> Efi_Status,
 	get_memory_map:         proc "win64" (size: ^uint, memory_map: rawptr, key: ^uint, descriptor_size: ^uint, descriptor_version: ^u32) -> Efi_Status,
 	allocate_pool:          rawptr,
 	free_pool:              rawptr,
@@ -95,7 +95,7 @@ Efi_Boot_Services :: struct {
 	install_protocol:       rawptr,
 	reinstall_protocol:     rawptr,
 	uninstall_protocol:     rawptr,
-	handle_protocol:        rawptr,
+	handle_protocol:        proc "win64" (handle: rawptr, guid: ^Efi_Guid, interface: ^rawptr) -> Efi_Status,
 	reserved:               rawptr,
 	register_notify:        rawptr,
 	locate_handle:          rawptr,
@@ -206,3 +206,33 @@ EFI_TCG2_EVENT_HEADER_VERSION :: 1
 // The event type of a stage of the boot that the boot program measures
 // (TCG PC Client Platform Firmware Profile).
 TCG_EVENT_IPL :: 0x0000_000D
+
+// The files of the volume of the boot program (UEFI specification, "Media
+// Access"): the loaded image names its device, the device has a simple
+// file system, and the file system opens a file by its path.
+EFI_LOADED_IMAGE_GUID :: Efi_Guid{0x5B1B31A1, 0x9562, 0x11D2, {0x8E, 0x3F, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B}}
+EFI_SIMPLE_FILE_SYSTEM_GUID :: Efi_Guid{0x964E5B22, 0x6459, 0x11D2, {0x8E, 0x39, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B}}
+EFI_FILE_MODE_READ :: 1
+
+Efi_Loaded_Image :: struct {
+	revision:      u32,
+	parent_handle: rawptr,
+	system_table:  rawptr,
+	device_handle: rawptr,
+}
+
+Efi_Simple_File_System :: struct {
+	revision:    u64,
+	open_volume: proc "win64" (this: ^Efi_Simple_File_System, root: ^^Efi_File) -> Efi_Status,
+}
+
+Efi_File :: struct {
+	revision:     u64,
+	open:         proc "win64" (this: ^Efi_File, file: ^^Efi_File, path: [^]u16, mode: u64, attributes: u64) -> Efi_Status,
+	close:        proc "win64" (this: ^Efi_File) -> Efi_Status,
+	delete:       rawptr,
+	read:         proc "win64" (this: ^Efi_File, size: ^uint, buffer: rawptr) -> Efi_Status,
+	write:        rawptr,
+	get_position: proc "win64" (this: ^Efi_File, position: ^u64) -> Efi_Status,
+	set_position: proc "win64" (this: ^Efi_File, position: u64) -> Efi_Status,
+}
