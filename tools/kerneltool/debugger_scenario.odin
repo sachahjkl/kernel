@@ -134,11 +134,11 @@ scenario_debugger_commands := [?]Step {
 	// A breakpoint by a procedure name: the main thread stops at the first
 	// instruction of its next round, and its caller is the next frame.
 	{kind = .Type, text = "columns(break_at(\"debug_target::count_rounds\"), \"number kind place\")"},
-	// The thread can stop before the console draws the row of the command
-	// that let it run: the stop is waited for first, and the row is looked
-	// for in the whole log.
-	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 0"},
+	// The thread can stop before or after the console draws the row of the
+	// command that let it run. The row is looked for first, with no move of
+	// the place in the log; then the stop is waited for from the same place.
 	{kind = .Wait, text = "[console]      0  execute  debug_target::count_rounds", any_order = true},
+	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 0"},
 	{kind = .Type, text = "columns(events(), \"thread kind procedure offset\")"},
 	{kind = .Wait, text = "[console]      0  breakpoint 0  debug_target::count_rounds       0"},
 	{kind = .Type, text = "columns(stack(0), \"frame procedure\")"},
@@ -151,8 +151,8 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Type, text = "columns(where(break_at(\"debug_target::add_step\"), \"number\", 1), \"number kind place\")"},
 	{kind = .Wait, text = "[console]      1  execute  debug_target::add_step"},
 	{kind = .Type, text = "columns(resume(0), \"thread\")"},
-	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 1"},
 	{kind = .Wait, text = "[console]      0", any_order = true},
+	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 1"},
 	{kind = .Type, text = "columns(wait_stop(3000), \"thread kind procedure offset\")"},
 	{kind = .Wait, text = "[console]      0  breakpoint 1  debug_target::add_step       0"},
 	{kind = .Type, text = "columns(stack(0), \"frame procedure\")"},
@@ -178,8 +178,8 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Type, text = "columns(where(break_at(\"programs/debug_target/main.odin:" + DEBUG_TARGET_LINE_OF_THE_STORE + "\"), \"number\", 1), \"number kind\")"},
 	{kind = .Wait, text = "[console]      1  execute"},
 	{kind = .Type, text = "columns(resume(0), \"thread\")"},
-	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 1"},
 	{kind = .Wait, text = "[console]      0", any_order = true},
+	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 1"},
 	// The ends of the step and of the line above are no events: one row.
 	{kind = .Type, text = "columns(events(), \"kind procedure line\")"},
 	{kind = .Wait, text = "[console] breakpoint 1  debug_target::add_step    " + DEBUG_TARGET_LINE_OF_THE_STORE},
@@ -206,8 +206,8 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Type, text = "columns(watch(\"debug_target::rounds\", 8), \"number kind length place\")"},
 	{kind = .Wait, text = "[console]      0  write       8  debug_target::rounds"},
 	{kind = .Type, text = "columns(resume(0), \"thread\")"},
-	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: watch 0"},
 	{kind = .Wait, text = "[console]      0", any_order = true},
+	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: watch 0"},
 	{kind = .Type, text = "columns(events(), \"thread kind procedure\")"},
 	{kind = .Wait, text = "[console]      0  watch 0  debug_target::record_round"},
 
