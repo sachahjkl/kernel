@@ -191,6 +191,11 @@ Right :: enum u32 {
 	// Machine: give the event table of the machine (Events_Set): the kernel then writes records of its own work,
 	// for every program or for the programs that the rules name, into memory of the caller.
 	Events = 12,
+	// Program: debug it. The holder becomes the debugger of the program (Fault_Handler_Set with the program
+	// handle): it receives its debug exceptions and its breakpoints, holds its threads by their numbers, reads
+	// and writes their registers and their breakpoints, and reads the memory of the program (Thread_Control).
+	// The handle of a new program has it; the root service gives it to no program at its start.
+	Debug = 13,
 }
 // The rights of one handle, as a set: bit n is the `Right` n. It is the
 // form in which an operation takes and gives rights (`Handle_Give`,
@@ -202,7 +207,7 @@ Rights :: bit_set[Right;u32]
 Object_Kind :: enum u8 {
 	None      = 0, // No object: the handle number is free, or was never given.
 	Memory    = 1, // A memory object: pages that a program maps (`Memory_Create`). Rights: Give, Read, Write, Execute.
-	Program   = 2, // A program: its addresses, its handles and its threads (`Program_Create`). Rights: Give, Read, Control.
+	Program   = 2, // A program: its addresses, its handles and its threads (`Program_Create`). Rights: Give, Read, Control, Debug.
 	Interrupt = 3, // One interrupt line or message interrupt of a device, which wakes the threads of its holder (`Device_Create`). Rights: Give, Read.
 	Ports     = 4, // A range of input and output ports of a device (`Device_Create`). Rights: Give.
 	Machine   = 5, // The machine: its rights are Give, Inspect, Devices, Stop, Physical, Schedule and Events.
@@ -914,7 +919,7 @@ Operation :: enum u32 {
 	// ```odin
 	// changed, status := system.memory_protect(ranges[:], {})
 	// ```
-	Fault_Handler_Set = 30, // (thread, end, kinds: Fault_Kinds).
+	Fault_Handler_Set = 30, // (thread, end, kinds: Fault_Kinds, program).
 	// Makes a thread of this program the fault handler of the program: the faults of the chosen kinds of
 	// the other threads of the program become records of the
 	// [fault ring](docs/ARCHITECTURE.md#the-fault-ring) in the thread record of the handler, in place of a
@@ -929,6 +934,19 @@ Operation :: enum u32 {
 	// - `end`: 1 to end the delivery: each fault stops the program again. 0 to set the handler.
 	// - `kinds`: the `Fault_Kinds` to deliver, or 0 for page faults only, so that a handler of pages never
 	//   gets a kind that it does not know. Only the kinds of `FAULT_KINDS_DELIVERED`.
+	// - `program`: 0, or a program handle with **Debug** of another program. Then the thread becomes the
+	//   [debug handler](docs/ARCHITECTURE.md#the-debugger-of-a-program) of that program: the caller is its
+	//   debugger. The faults of the kinds `Debug` and `Breakpoint` of that program become records of the ring
+	//   of this thread, before the fault handler of the program itself, and each faulting thread waits for a
+	//   `Fault_Answer` with the same handle. `kinds` is then 0 or the whole of
+	//   `FAULT_KINDS_DEBUGGER`: the debugger takes both kinds. `end` 1 ends the debugging (the detach). A program has one debugger at a
+	//   time, and a thread is the debug handler of one program and not the fault handler of its own.
+	//
+	// The debugging ends at the detach, when the debug handler thread ends, when the last handle of the
+	// debugger to the program with **Debug** closes or is revoked, and when the program stops. The kernel
+	// then removes the breakpoints of each thread of the program and the trap flag that the debugger wrote,
+	// takes back the stops that the debugger made, and resumes each thread that waits for its answer: a
+	// debugger that ends never holds and never stops the program.
 	//
 	// When a thread of the program waits for an answer, a new handler or the end of the delivery ends the
 	// ring that holds its record: the program stops with `STOP_CODE_FAULT_UNANSWERED`, as when the handler
@@ -939,14 +957,18 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Operation`: `end` is above 1; a kind that the kernel never delivers; kinds with the end of the
-	//   delivery.
-	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with **Control**.
-	// - `Bad_State`: the thread is not a live thread of this program.
+	//   delivery; with `program`, kinds that are not 0 and not the whole of `FAULT_KINDS_DEBUGGER`.
+	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with **Control**; `program` is not a
+	//   program handle with **Debug**.
+	// - `Bad_State`: the thread is not a live thread of this program; the thread is the debug handler of a
+	//   program and would become the fault handler of its own, or the reverse; with `program`: the program is
+	//   the caller, it stopped, it has another debugger, the thread is the debug handler of another program,
+	//   or, for `end` 1, the caller is not its debugger.
 	//
 	// ```odin
 	// status := system.fault_handler_set(kinds = {.Page_Fault, .Breakpoint})
 	// ```
-	Fault_Answer = 31, // (thread, serial, answer: Fault_Answer_Kind).
+	Fault_Answer = 31, // (thread, serial, answer: Fault_Answer_Kind, program).
 	// Answers a thread of this program that waits in the fault ring, by the two values of its
 	// `Fault_Record`.
 	//
@@ -957,14 +979,21 @@ Operation :: enum u32 {
 	//   - `Resume`: the thread continues with its registers, at the instruction of its record (the faulting
 	//     instruction again, or the next one after a trap), or where `Thread_Control` wrote;
 	//   - `Stop`: the program stops as with no handler: the stop code and the stop report of the fault.
+	// - `program`: 0, or the program handle with **Debug** of the program that the caller debugs: the answer
+	//   is for a thread of that program, whose record came to the debug handler. Only `Resume`: a debugger
+	//   stops a program with `Program_Stop` and the right **Control**. After a `Debug` fault of an execute
+	//   breakpoint, `Resume` at the same instruction sets the resume flag of the thread, so that the
+	//   instruction runs once and the breakpoint stays.
 	//
 	// **Results**: none.
 	//
 	// **Statuses**
 	//
-	// - `Bad_Operation`: `answer` is not `Resume` or `Stop`.
+	// - `Bad_Operation`: `answer` is not `Resume` or `Stop`; `Stop` with `program`.
+	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Debug**.
 	// - `Bad_State`: no thread with that number waits for the fault of that serial: a wrong answer, a second
-	//   answer, or an answer from another program. Also for `Resume` after a fault kind that does not resume
+	//   answer, or an answer from another program; an answer with no `program` for a fault that went to the
+	//   debugger of the program; with `program`, the caller is not the debugger. Also for `Resume` after a fault kind that does not resume
 	//   by itself (`fault_kind_resumes`) when `Thread_Control` wrote neither the registers nor the extended
 	//   state of the thread since its fault: the thread still waits, and `Stop` ends it.
 	//
@@ -1005,7 +1034,7 @@ Operation :: enum u32 {
 	//   contiguous, is the registers of a device, or is too small for the rings; a rule that the kernel
 	//   refuses (its kind, its flags, its reserved values, its least duration or its one in N).
 	// - `Bad_Address`: the program cannot read the table of rules.
-	Thread_Control = 33, // (thread, number, command: Thread_Control_Command, address, size) -> see the command.
+	Thread_Control = 33, // (thread, number, command: Thread_Control_Command, address, size, source) -> see the command.
 	// Controls a thread: holds it and releases it, reads its registers and its extended state, and writes
 	// them ([the control of a thread](docs/ARCHITECTURE.md#the-control-of-a-thread)). `Stop` and `Resume`
 	// change the stop count of the thread: it runs only while the count is 0. The registers and the
@@ -1022,15 +1051,21 @@ Operation :: enum u32 {
 	//   (`Thread_Record.number`, `Fault_Record.thread`). Or, for `Read_Schedule` and `Write_Schedule`
 	//   only, the machine handle with **Schedule** and **Inspect**
 	//   (`thread_control_machine_rights`), and then `number` names any thread of the machine. A
-	//   thread of another program needs a handle.
+	//   thread of another program needs a handle. Or the program handle with **Debug** of the program that
+	//   the caller debugs (`Fault_Handler_Set` with that handle first), and then `number` names a live thread
+	//   of that program, for each command but the two of the schedule
+	//   (`thread_control_takes_debug_handle`).
 	// - `number`: the number of the thread when `thread` is 0; the machine number of the thread
 	//   (`Thread_Report.machine_number`) when `thread` is the machine handle.
 	// - `command`: a `Thread_Control_Command`.
 	// - `address`, `size`: the memory of the command that reads or writes: `size` is at least the size of
-	//   a `Thread_Registers`, of the extended state area (`Thread_State`) or of a `Thread_Schedule`, and
-	//   the program can read it, or write it for a read of the thread.
+	//   a `Thread_Registers`, of the extended state area (`Thread_State`), of a `Thread_Schedule` or of a
+	//   `Thread_Breakpoints`, and the program can read it, or write it for a read of the thread. For
+	//   `Read_Memory`, `size` is the count of bytes to read, at most `THREAD_MEMORY_READ_LIMIT`.
+	// - `source`: for `Read_Memory`, the address of the first byte in the program of the thread.
 	//
 	// **Results**: what the command gives: the stop count, or the bytes written and the components.
+	// `Read_Memory` gives the count of bytes that it copied.
 	//
 	// **Statuses**
 	//
@@ -1039,15 +1074,22 @@ Operation :: enum u32 {
 	//   `extended_state_refusal`); a `Write_Schedule` through 0 or a thread handle with a weight above
 	//   the weight of the thread or a request above its request; a `Write_Schedule` with a weight above
 	//   `WEIGHT_FULL`, a request above `REQUEST_LIMIT`, or a weight limit above `WEIGHT_FULL`,
-	//   changes nothing.
+	//   changes nothing; a `Write_Breakpoints` with a breakpoint that a thread cannot have
+	//   (`thread_breakpoints_refusal`) changes nothing; a `Read_Memory` of more than
+	//   `THREAD_MEMORY_READ_LIMIT` bytes.
 	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with the rights of the command, and not
 	//   the machine handle with the rights of a command of the schedule. The machine handle with
-	//   another command gives `Bad_Handle`.
+	//   another command gives `Bad_Handle`. A program handle with no **Debug** gives `No_Right`, and a
+	//   program handle with a command of the schedule `Bad_Handle`.
 	// - `Bad_State`: no live thread of this program has `number`; no live thread of the machine has the
 	//   machine number `number`; the thread or its program ended; a read or
-	//   a write of the registers of a thread that is not held, or of the calling thread; a `Stop` above
-	//   `THREAD_STOP_COUNT_LIMIT` or of a thread that ends; a `Resume` at the count 0.
-	// - `Bad_Address`: `size` is too small, or the program cannot read or write the memory.
+	//   a write of the registers or of the breakpoints of a thread that is not held, or of the calling
+	//   thread; a `Stop` above
+	//   `THREAD_STOP_COUNT_LIMIT` or of a thread that ends; a `Resume` at the count 0; through a program
+	//   handle with **Debug**: the caller is not the debugger of the program, the program is the caller, or a
+	//   `Resume` of a thread that the debugger did not stop.
+	// - `Bad_Address`: `size` is too small, or the program cannot read or write the memory; a `Read_Memory`
+	//   whose first byte the program of the thread cannot read, or whose range is not below `USER_END`.
 }
 
 // The scheduling strategy of the machine (docs/SCHEDULING.md): the rule that
@@ -1350,14 +1392,18 @@ Fault_Record :: struct {
 	// instruction that faulted, which runs again. A trap (Debug,
 	// Breakpoint): the instruction after the one that trapped, so its
 	// length is not known here: int3 (the byte CC) and int1 (the byte F1) are one byte, int 3
-	// (CD 03) is two. A debugger that wrote CC subtracts 1.
+	// (CD 03) is two. A debugger that wrote CC subtracts 1. A Debug fault of
+	// an execute breakpoint is the one Debug that is a fault: the
+	// instruction of the breakpoint, which did not run.
 	instruction: u64,
 	kind:        Fault_Kind, // The processor exception.
 	// The error code that the processor gave with the exception, whole.
 	// General_Protection: 0; a selector that the program loaded or named;
 	// or (n << 3) | 2 for an `int n` whose gate a program cannot use (0x72
 	// for int 14), which is never the exception n. Segment_Not_Present and
-	// Stack_Fault: 0 or a selector. Page_Fault: the bits of the access. 0
+	// Stack_Fault: 0 or a selector. Page_Fault: the bits of the access.
+	// Debug: the debug status, what made the exception
+	// (`DEBUG_STATUS_STEP`, `DEBUG_STATUS_BREAKPOINTS`); 0 for int1. 0
 	// for a kind with no error code.
 	error_code:  u64,
 	reserved:    u64, // 0.
@@ -1372,7 +1418,7 @@ Fault_Record :: struct {
 //   Trap:  the instruction ran; the frame holds the address of the next one.
 Fault_Kind :: enum u64 {
 	Divide_Error        = 0, // Fault. div or idiv by 0, or a quotient too large.
-	Debug               = 1, // Trap. The trap flag after an instruction, or int1. No debug register is set for a program, so no Debug is a fault.
+	Debug               = 1, // Trap: the trap flag after an instruction, int1, or a data breakpoint after the access. Fault: an execute breakpoint, before its instruction. The error code of the record is the debug status.
 	Breakpoint          = 3, // Trap. int3.
 	Invalid_Opcode      = 6, // Fault. ud2, or an instruction that this processor does not have.
 	Segment_Not_Present = 11, // Fault. A load of a segment register with a selector whose descriptor is not present.
@@ -1398,6 +1444,21 @@ Fault_Kinds :: bit_set[Fault_Kind; u64]
 FAULT_KINDS_DELIVERED :: u64(1 << 0 | 1 << 1 | 1 << 3 | 1 << 6 | 1 << 11 | 1 << 12 | 1 << 13 | 1 << 14 | 1 << 16 | 1 << 17 | 1 << 19)
 // The kinds whose class is Trap.
 FAULT_KINDS_TRAPS :: u64(1 << 1 | 1 << 3)
+// The kinds that the debugger of a program takes (Fault_Handler_Set with a
+// program handle): Debug and Breakpoint. Each other fault of the program
+// stays with the program: its own fault handler, or its stop.
+FAULT_KINDS_DEBUGGER :: FAULT_KINDS_TRAPS
+
+// The debug status: the error code of a fault record of the kind Debug. It
+// says what made the debug exception, from the status register of the
+// processor (DR6), which the kernel reads and clears at each exception. 0:
+// an `int1` of the program.
+//
+// Example: a thread that reaches the address of its breakpoint 2 gives a
+// record with `kind = .Debug`, `error_code = 4` and the address in
+// `instruction`.
+DEBUG_STATUS_BREAKPOINTS :: u64(0b1111) // Bit n: the breakpoint n of the thread (Thread_Breakpoints) was reached.
+DEBUG_STATUS_STEP :: u64(1) << 14 // One instruction ran with the trap flag set: a single step.
 // The kinds after which Resume is accepted by itself: a trap continues after
 // its instruction, and a handler changes what a page fault finds with
 // Memory_Commit and Memory_Protect. Each other fault would run the same
@@ -1446,6 +1507,19 @@ fault_kinds_of_argument :: proc "contextless" (argument: u64) -> (mask: u64, ok:
 	return argument, true
 }
 
+// fault_kinds_of_debugger_argument gives the kinds that the argument of
+// Fault_Handler_Set names for a debugger, as a mask of vectors: always
+// each kind of FAULT_KINDS_DEBUGGER. The argument is 0 or that whole set;
+// ok is false for any other. A debugger that took one of the two kinds
+// would leave the other to the program: a breakpoint that the debugger
+// set would then stop the program.
+fault_kinds_of_debugger_argument :: proc "contextless" (argument: u64) -> (mask: u64, ok: bool) {
+	if argument != 0 && argument != FAULT_KINDS_DEBUGGER {
+		return 0, false
+	}
+	return FAULT_KINDS_DEBUGGER, true
+}
+
 // What a faulting access was: the bits of the error code of the processor.
 Fault_Access_Bit :: enum u64 {
 	Present = 0, // The page has a translation: the access was not permitted. Without it: the page has no frame (not committed, or no mapping).
@@ -1469,10 +1543,14 @@ Fault_Answer_Kind :: enum u64 {
 // What Thread_Control does. The results are in the completion record.
 //
 // Each command of the registers and of the stop count needs **Inspect** on
-// the thread handle, and a write of the registers needs **Write** too
-// (`thread_control_rights`). A read or a write of the
-// registers needs the thread held: its stop count above 0 and its processor
-// left (`Bad_State` before). The two commands of the schedule need no hold.
+// the thread handle, and a write of the registers
+// and a read of the memory need **Write** too
+// (`thread_control_rights`). A write of the breakpoints takes only the
+// program handle with **Debug** of the debugger. A read or a write of the
+// registers or of the breakpoints needs the thread held: its stop count
+// above 0 and its processor
+// left (`Bad_State` before). The two commands of the schedule and the read
+// of the memory need no hold.
 // See [thread control](term:thread-control) and
 // (docs/ARCHITECTURE.md, "The control of a thread").
 Thread_Control_Command :: enum u64 {
@@ -1491,7 +1569,10 @@ Thread_Control_Command :: enum u64 {
 	// it left.
 	Stop                 = 1,
 	// Takes 1 from the stop count -> the count. Bad_State at 0. At 0, a
-	// thread whose wait ended runs again.
+	// thread whose wait ended runs again. The debugger of the program
+	// takes back only the stops that it made, and the other callers only
+	// the stops that the debugger did not make: Bad_State when the caller
+	// has no stop of its own on the thread.
 	Resume               = 2,
 	// Writes a Thread_Registers at the address (size: at least its size) ->
 	// the bytes written.
@@ -1526,6 +1607,26 @@ Thread_Control_Command :: enum u64 {
 	// above the new limit becomes the limit. A raised weight starts the
 	// thread again as a new thread for its strategy.
 	Write_Schedule       = 8,
+	// Writes the Thread_Breakpoints of the thread at the address (size: at
+	// least its size) -> the bytes written. The thread is held.
+	Read_Breakpoints     = 9,
+	// Reads a Thread_Breakpoints at the address: the thread has these
+	// breakpoints from now on, and no other. The thread is held. Only
+	// through the program handle with Debug, from the debugger of the
+	// program (thread_control_needs_the_debugger): Bad_Handle with 0 or a
+	// thread handle.
+	// Bad_Operation for a breakpoint that a thread cannot have
+	// (thread_breakpoints_refusal): nothing changes. A reached breakpoint is
+	// a fault of the kind Debug of the thread.
+	Write_Breakpoints    = 10,
+	// Copies `size` bytes (at most THREAD_MEMORY_READ_LIMIT) from the
+	// address `source` of the program of the thread to the address -> the
+	// bytes copied. The thread is not held. The copy reads only pages that
+	// the program maps, that it can read and that have a frame: no read
+	// gives a frame to a page. It stops before the first page that is not
+	// so, and gives the count before it; Bad_Address when that page holds
+	// the first byte. Device memory is never read.
+	Read_Memory          = 11,
 }
 
 // thread_control_rights gives the rights that a thread handle needs for a
@@ -1536,10 +1637,14 @@ Thread_Control_Command :: enum u64 {
 // profiler gets them with no write. A writer also reads the frame before it
 // writes it. Control, the right to end a thread, gives none of them. It
 // gives the write of the schedule, which only lowers: a holder that can end
-// a thread can also give it a smaller share, which is less.
+// a thread can also give it a smaller share, which is less. A write of the
+// breakpoints takes no thread handle and no number of an own thread
+// (thread_control_needs_the_debugger). A read of the memory of the program
+// needs Write too: a handle with Inspect alone sees how the thread runs,
+// and never the bytes that its program holds.
 thread_control_rights :: proc "contextless" (command: Thread_Control_Command) -> Rights {
 	#partial switch command {
-	case .Write_Registers, .Write_Extended_State:
+	case .Write_Registers, .Write_Extended_State, .Read_Memory:
 		return {.Inspect, .Write}
 	case .Write_Schedule:
 		return {.Control}
@@ -1563,6 +1668,151 @@ thread_control_machine_rights :: proc "contextless" (command: Thread_Control_Com
 		return {.Schedule, .Inspect}, true
 	}
 	return {}, false
+}
+
+// thread_control_takes_debug_handle says if a command of Thread_Control
+// also takes the program handle with Debug of the program that the caller
+// debugs, with the number of a thread of that program in place of a thread
+// handle: each command but the two of the schedule. A debugger holds,
+// reads and writes a thread; the share of a thread is not a part of
+// debugging.
+thread_control_takes_debug_handle :: proc "contextless" (command: Thread_Control_Command) -> bool {
+	#partial switch command {
+	case .None, .Read_Schedule, .Write_Schedule:
+		return false
+	}
+	return true
+}
+
+// thread_control_needs_the_debugger says if a command of Thread_Control
+// takes only the program handle with Debug, from the debugger of the
+// program of the thread: the write of the breakpoints. A program has no
+// use for a breakpoint on itself, and a breakpoint that a program could
+// set on its own threads would let each program put a debug exception at
+// the place where the kernel copies its memory. With 0 or a thread handle
+// the command gives Bad_Handle.
+thread_control_needs_the_debugger :: proc "contextless" (command: Thread_Control_Command) -> bool {
+	return command == .Write_Breakpoints
+}
+
+// The most bytes of one `Read_Memory` of `Thread_Control`: one page.
+THREAD_MEMORY_READ_LIMIT :: 4096
+
+// The breakpoints of one thread: the four debug address registers of the
+// processor.
+THREAD_BREAKPOINT_CAPACITY :: 4
+
+// What a breakpoint of a thread stops on.
+Thread_Breakpoint_Kind :: enum u32 {
+	None          = 0, // No breakpoint in this place.
+	Execute       = 1, // The thread reaches the instruction at the address: a Debug fault before the instruction runs.
+	Write         = 2, // The thread writes a byte of the range: a Debug trap after the instruction.
+	Read_Or_Write = 3, // The thread reads or writes a byte of the range: a Debug trap after the instruction.
+}
+
+// One breakpoint of a thread: an address of its program, and what stops
+// there. 16 bytes.
+//
+// Example: `{address = 0x40_1000, kind = .Execute}` stops the thread before
+// the instruction at 0x40_1000; `{address = 0x7FFF_0010, kind = .Write,
+// length = 8}` stops it after a write to one of the 8 bytes from that
+// address.
+Thread_Breakpoint :: struct {
+	address: u64, // Below USER_END: an address of a program, never of the kernel. A data breakpoint: a multiple of `length`.
+	kind:    Thread_Breakpoint_Kind,
+	length:  u32, // A data breakpoint: 1, 2, 4 or 8 bytes. Execute and None: 0.
+}
+#assert(size_of(Thread_Breakpoint) == 16)
+
+// The breakpoints of one thread, as `Read_Breakpoints` and
+// `Write_Breakpoints` of `Thread_Control` give and take them. The place of
+// a breakpoint is its number in the debug status of a fault record
+// (`DEBUG_STATUS_BREAKPOINTS`). A breakpoint is of one thread: no other
+// thread and no other program stops on it. A written image is hostile
+// input to the kernel: it must pass `thread_breakpoints_refusal`. 64 bytes.
+// See [breakpoint](term:breakpoint).
+Thread_Breakpoints :: struct {
+	breakpoints: [THREAD_BREAKPOINT_CAPACITY]Thread_Breakpoint,
+}
+#assert(size_of(Thread_Breakpoints) == 64)
+
+// thread_breakpoints_refusal says what a write of the breakpoints of a
+// thread refuses, and the value that it refuses: a kind that does not
+// exist, a length that the kind cannot have, an address that is not an
+// address of a program or that is not a multiple of the length. With these
+// checks no breakpoint is ever at an address of the kernel.
+thread_breakpoints_refusal :: proc "contextless" (breakpoints: ^Thread_Breakpoints) -> (refusal: Thread_Write_Refusal, value: u64) {
+	for breakpoint in breakpoints.breakpoints {
+		length := u64(breakpoint.length)
+		switch breakpoint.kind {
+		case .None:
+			if length != 0 {
+				return .Breakpoint_Length, length
+			}
+			if breakpoint.address != 0 {
+				return .Breakpoint_Address, breakpoint.address
+			}
+		case .Execute:
+			if length != 0 {
+				return .Breakpoint_Length, length
+			}
+			if breakpoint.address >= USER_END {
+				return .Breakpoint_Address, breakpoint.address
+			}
+		case .Write, .Read_Or_Write:
+			if length != 1 && length != 2 && length != 4 && length != 8 {
+				return .Breakpoint_Length, length
+			}
+			if breakpoint.address >= USER_END || breakpoint.address & (length - 1) != 0 || length > USER_END - breakpoint.address {
+				return .Breakpoint_Address, breakpoint.address
+			}
+		case:
+			return .Breakpoint_Kind, u64(breakpoint.kind)
+		}
+	}
+	return .None, 0
+}
+
+// The bits of the debug control register of the processor (DR7) that the
+// kernel writes for a thread: bit 10, which the processor always reads as
+// 1; the local enable bit of each breakpoint (bit 2n); and for each
+// breakpoint the two bits of its kind and the two bits of its length, from
+// bit 16 + 4n. Never a global enable bit, never the exact bits and never
+// the general detect bit.
+DEBUG_CONTROL_NO_BREAKPOINT :: u64(0x400)
+
+// thread_breakpoints_control gives the value of the debug control register
+// (DR7) for the breakpoints of a thread, which passed
+// thread_breakpoints_refusal: DEBUG_CONTROL_NO_BREAKPOINT with no
+// breakpoint.
+thread_breakpoints_control :: proc "contextless" (breakpoints: ^Thread_Breakpoints) -> (control: u64) {
+	control = DEBUG_CONTROL_NO_BREAKPOINT
+	for breakpoint, place in breakpoints.breakpoints {
+		kind_bits, length_bits: u64
+		switch breakpoint.kind {
+		case .None:
+			continue
+		case .Execute:
+			kind_bits = 0b00
+		case .Write:
+			kind_bits = 0b01
+		case .Read_Or_Write:
+			kind_bits = 0b11
+		}
+		// The length field of the processor: 1 byte is 00, 2 bytes 01,
+		// 8 bytes 10, 4 bytes 11. An execute breakpoint has 00.
+		switch breakpoint.length {
+		case 2:
+			length_bits = 0b01
+		case 8:
+			length_bits = 0b10
+		case 4:
+			length_bits = 0b11
+		}
+		control |= u64(1) << (2 * u64(place))
+		control |= (kind_bits | length_bits << 2) << (16 + 4 * u64(place))
+	}
+	return control
 }
 
 // The highest stop count of a thread: `Thread_Control` `Stop` gives
@@ -1619,8 +1869,8 @@ THREAD_FLAGS_REQUIRED :: u64(0x202)
 // virtual-8086, the virtual interrupt flags, the reserved bits.
 THREAD_FLAGS_ALLOWED :: u64(0x0025_0FD7)
 
-// Which part of a Thread_Registers, of an extended state area or of a
-// Thread_Schedule a write refused.
+// Which part of a Thread_Registers, of an extended state area, of a
+// Thread_Schedule or of a Thread_Breakpoints a write refused.
 //
 // `Thread_Control` gives `Bad_Operation` for a refused write, and the error
 // record names the refusal and the value. Nothing of the thread changes.
@@ -1637,6 +1887,9 @@ Thread_Write_Refusal :: enum u64 {
 	Weight              = 9, // The weight of a Thread_Schedule is above WEIGHT_FULL, or, in a write that only lowers, above the weight that the thread has: the error record gives the most that applied.
 	Request             = 10, // The request of a Thread_Schedule is above REQUEST_LIMIT, or, in a write that only lowers, above the request that the thread has: the error record gives the most that applied.
 	Weight_Limit        = 11, // The weight limit of a Thread_Schedule, in a write through the machine handle, is above WEIGHT_FULL.
+	Breakpoint_Kind     = 12, // The kind of a breakpoint of a Thread_Breakpoints is not a Thread_Breakpoint_Kind.
+	Breakpoint_Length   = 13, // The length of a data breakpoint is not 1, 2, 4 or 8; or the length of an execute breakpoint or of an empty place is not 0.
+	Breakpoint_Address  = 14, // The address of a breakpoint is not below USER_END, is not a multiple of the length of a data breakpoint, or is not 0 in an empty place.
 }
 
 // thread_registers_refusal says what a write of the registers of a thread

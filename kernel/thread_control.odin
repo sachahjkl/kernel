@@ -8,6 +8,12 @@ import op "contract:operation"
 // and its extended state, and resumes it. A debugger, a garbage collector,
 // a sampling profiler and the program that runs a guest use it.
 //
+// The debugger of a program names a thread of that program by its number,
+// with its program handle that has the right Debug, for each command but
+// the two of the schedule (docs/ARCHITECTURE.md, "The debugger of a
+// program"). The stops that it makes are counted apart (Thread.debug_stops),
+// so that the end of the debugging takes them back.
+//
 // Through a handle, a stop, a resume and a read need the right Inspect, a
 // write the right Write (op.thread_control_rights). A write lets its holder
 // choose the code that the program runs; a hold and a read do not, so a
@@ -79,7 +85,13 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	target_index: u32
 	owner := caller_program_index
 	by_machine := false // The machine handle names the thread: a write sets its weight limit.
+	by_debugger := false // The program handle with Debug names the thread: the caller is the debugger of its program.
 	if v[0] == 0 {
+		// A breakpoint is written only by the debugger of the program of
+		// the thread, through its program handle.
+		if op.thread_control_needs_the_debugger(command) {
+			return .Bad_Handle
+		}
 		// A thread of this program, by its number: under the program lock,
 		// which the caller holds, no thread of this program starts or ends.
 		target_index = thread_of_number(caller_program_index, v[1])
@@ -114,7 +126,24 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 				return .Bad_State // The thread of that number ended, and the place serves another one.
 			}
 			owner = threads[target_index].program
+		} else if named.kind == .Program && op.thread_control_takes_debug_handle(command) {
+			// The debugger of a program names a thread of it by its
+			// number. Two program locks: the control lock first.
+			if .Debug not_in named.rights {
+				return .No_Right
+			}
+			if need_control() {
+				return STATUS_RETRY
+			}
+			by_debugger = true
+			owner = named.object
 		} else {
+			// A thread handle writes no breakpoint: a program, and the
+			// holder of a handle of one of its threads, get no way to put
+			// a debug exception where the kernel copies its memory.
+			if op.thread_control_needs_the_debugger(command) {
+				return .Bad_Handle
+			}
 			// The right of the command: a handle that a program gave so
 			// that another one can end a thread (Control) does not let it
 			// hold the thread or write its registers.
@@ -141,6 +170,20 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	if programs[owner].state == .Stopped || programs[owner].state == .None {
 		return .Bad_State
 	}
+	if by_debugger {
+		// The right Debug alone names no thread: the caller first made one
+		// of its threads the debug handler of the program, so that the end
+		// of that handler gives the program back what these commands take.
+		if !debugger_is(owner, caller_program_index) {
+			return .Bad_State
+		}
+		// Under the program lock of the program, no thread of it starts
+		// or ends.
+		target_index = thread_of_number(owner, v[1])
+		if target_index == 0 {
+			return .Bad_State
+		}
+	}
 	thread := &threads[target_index]
 	if thread.program != owner {
 		return .Bad_State
@@ -149,9 +192,28 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	case .None:
 		return .Bad_Operation
 	case .Stop:
-		return thread_control_stop(target_index, results)
+		status := thread_control_stop(target_index, results)
+		if status == .Ok && by_debugger {
+			thread.debug_stops += 1
+		}
+		return status
 	case .Resume:
-		return thread_control_resume(thread, results)
+		// Each side takes back only its own stops. The debugger: the
+		// stops that it made. The program and the holder of a thread
+		// handle: the stops that are not of the debugger. So the count of
+		// the debugger is never above the stop count, and the end of the
+		// debugging takes back the stops of the debugger and no others.
+		if by_debugger && thread.debug_stops == 0 {
+			return .Bad_State
+		}
+		if !by_debugger && intrinsics.atomic_load(&thread.control_stops) <= thread.debug_stops {
+			return .Bad_State
+		}
+		status := thread_control_resume(thread, results)
+		if status == .Ok && by_debugger {
+			thread.debug_stops -= 1
+		}
+		return status
 	case .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State:
 		size := command == .Read_Registers || command == .Write_Registers ? u64(size_of(op.Thread_Registers)) : extended_state_size
 		writes_to_the_caller := command == .Read_Registers || command == .Read_Extended_State
@@ -174,6 +236,10 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			}
 			thread_frame_write(thread, &registers)
 			thread.registers_written = true
+			// A trap flag that the debugger wrote is its single step: if
+			// the debugging ends before the step, the step is dropped
+			// (debug_exception_is_dropped).
+			thread.debugger_step = by_debugger && registers.rflags & FLAG_TRAP != 0
 		case .Read_Extended_State:
 			user_copy(rawptr(uintptr(v[3])), &thread.extended_state, size)
 			results[1] = transmute(u64)extended_state_components
@@ -191,6 +257,52 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			thread.registers_written = true
 		}
 		results[0] = size
+		return .Ok
+	case .Read_Breakpoints, .Write_Breakpoints:
+		// The breakpoints of a thread (breakpoints.odin). As the registers:
+		// only while the thread is held, so that no processor loads them
+		// while they change.
+		size := u64(size_of(op.Thread_Breakpoints))
+		if v[4] < size || !user_range(caller_program, v[3], size, command == .Read_Breakpoints) {
+			return .Bad_Address
+		}
+		if target_index == caller_index || !thread_held_off_processor(thread) {
+			return .Bad_State
+		}
+		// One copy in the memory of the kernel: the values that the check
+		// accepts are the values that the thread gets.
+		breakpoints: op.Thread_Breakpoints
+		if command == .Read_Breakpoints {
+			if intrinsics.atomic_load(&thread.has_breakpoints) {
+				breakpoints = thread.breakpoints
+			}
+			user_copy(rawptr(uintptr(v[3])), &breakpoints, size)
+		} else {
+			user_copy(&breakpoints, rawptr(uintptr(v[3])), size)
+			if refusal, value := op.thread_breakpoints_refusal(&breakpoints); refusal != .None {
+				cpu.thread_write_refusal, cpu.thread_write_refused_value = refusal, value
+				return .Bad_Operation
+			}
+			thread_breakpoints_write(thread, &breakpoints)
+		}
+		results[0] = size
+		return .Ok
+	case .Read_Memory:
+		// The bytes of the program of the thread (breakpoints.odin). The
+		// thread is not held: the memory of a program changes while its
+		// other threads run in any case. The program lock of that program
+		// is held here, and the one of the caller.
+		if v[4] > op.THREAD_MEMORY_READ_LIMIT {
+			return .Bad_Operation
+		}
+		if !user_range(caller_program, v[3], v[4], true) {
+			return .Bad_Address
+		}
+		copied := program_memory_read(&programs[owner], v[5], v[3], v[4])
+		if copied == 0 && v[4] != 0 {
+			return .Bad_Address
+		}
+		results[0] = copied
 		return .Ok
 	case .Read_Schedule, .Write_Schedule:
 		size := u64(size_of(op.Thread_Schedule))

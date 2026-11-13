@@ -1468,7 +1468,7 @@ Do not use: signal number, exception code, trap number.
 
 A fault class says where a thread continues after a fault kind: a fault did not run its instruction, which runs again; a trap ran it, and the thread continues at the next one.
 
-Debug and breakpoint are traps; the other fault kinds are faults. The class decides the rule of Resume: a trap and a page fault resume by themselves, and another fault resumes only after thread control wrote the registers or the extended state of the thread: without that write, the same instruction faults again with no end.
+Debug and breakpoint are traps; the other fault kinds are faults. One debug exception is a fault: an execute breakpoint of the thread, which stops it before its instruction. The class decides the rule of Resume: a trap and a page fault resume by themselves, and another fault resumes only after thread control wrote the registers or the extended state of the thread: without that write, the same instruction faults again with no end.
 
 Do not use: exception class, exception type, abort (for this).
 
@@ -1508,12 +1508,13 @@ Do not use: siginfo, fault message.
 
 Thread control is the kernel operation `Thread_Control`: it stops a thread, reads and writes its registers and its extended state, and resumes it.
 
-No other operation stops a thread without ending it, or gives its registers. A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the program that runs a guest need both. One operation with a command (`op.Thread_Control_Command`) keeps the count of kernel operations low: `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`. Two more commands read and write the thread schedule of a thread that is not held, with their own rights: `Read_Schedule` and `Write_Schedule`.
+No other operation stops a thread without ending it, or gives its registers. A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the program that runs a guest need both. One operation with a command (`op.Thread_Control_Command`) keeps the count of kernel operations low: `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`. Two more commands read and write the thread schedule of a thread that is not held, with their own rights: `Read_Schedule` and `Write_Schedule`. Three more serve a debugger: `Read_Breakpoints` and `Write_Breakpoints` for the breakpoints of a held thread, and `Read_Memory` for the bytes of the program of a thread.
 
 Who can act on a thread:
 
 - a program acts on its own threads, by number or by handle;
 - a thread of another program needs a thread handle that the program received with `Handle_Give`, with **Inspect** for a hold and for each read, and **Inspect** and **Write** for a write of the registers, because such a write lets its holder choose the code that the thread runs;
+- the debugger of a program names a thread of that program by its number, with the program handle that has **Debug**;
 - **Control**, the right to end a thread, gives none of these: a handle given so that another program can end a thread does not become a grant to read it. It gives only the write of the thread schedule, which only lowers.
 
 The four commands of the registers need a held thread, else `Bad_State`. A write is copied once into the kernel, checked whole, and refused whole if one field is wrong (`Bad_Operation`, with the refused field in the error record): a thread never gets a frame that the processor refuses.
@@ -1528,7 +1529,7 @@ Do not use: ptrace, debug API, SuspendThread, thread_suspend (for this).
 
 The stop count of a thread is the count of the stops of thread control that hold it: each `Stop` adds 1, each `Resume` takes 1, and the thread runs only at 0.
 
-A stop is a count, not a state, so two holders that each stop a thread each resume it, and neither releases the hold of the other. `Resume` at 0 gives `Bad_State`, and the count has a limit (`THREAD_STOP_COUNT_LIMIT`). When `Stop` returns, the thread runs no instruction: a thread on another processor left it, after an interrupt that the stop sent. The count does not change the wait of the thread: a thread in a word wait stays in it, and its wait ends as before, but the thread does not run until its count is 0.
+A stop is a count, not a state, so two holders that each stop a thread each resume it, and neither releases the hold of the other. The stops of the debugger of the program are counted apart: the debugger takes back only its own, and the end of the debugging takes back those and no others. `Resume` at 0 gives `Bad_State`, and the count has a limit (`THREAD_STOP_COUNT_LIMIT`). When `Stop` returns, the thread runs no instruction: a thread on another processor left it, after an interrupt that the stop sent. The count does not change the wait of the thread: a thread in a word wait stays in it, and its wait ends as before, but the thread does not run until its count is 0.
 
 The design: `docs/ARCHITECTURE.md`, "The control of a thread".
 
@@ -1560,6 +1561,52 @@ The design: `docs/ARCHITECTURE.md`, "The control of a thread".
 
 Do not use: register context, CONTEXT, user_regs_struct.
 
+### Debugger
+
+A debugger is a program that holds the handle of another program with the right **Debug**, and that made one of its own threads the debug handler of that program.
+
+It receives the debug exceptions and the breakpoints of that program, names each of its threads by its number with the same handle, holds them, reads and writes their registers and their breakpoints, and reads the memory of the program. A program has one debugger at a time, and a program does not debug itself. Debug access is a handle to one program, never to the machine. Two holders have it: the caller that the root service gives it to on the command `Debug` of the root ring (a caller that acts for the principal whose session runs the program, and that holds each grant of that program itself), and the program that created the program, on the handle that the creation gave it. The root service gives it to no program at its start. A debugger acts with each handle of the program that it debugs.
+
+The debugging ends when the debugger detaches, when its debug handler thread ends, when its last handle with Debug closes or is revoked, and when the program stops. The kernel then removes the breakpoints, clears the trap flag that the debugger wrote, takes back its stops and resumes each thread that waits for its answer: a debugger that ends never holds and never stops the program.
+
+It is not a developer tool, which reads reports and never the bytes of a program. It is not ptrace: no program becomes the parent or the tracer of another, and no signal exists.
+
+The design: `docs/ARCHITECTURE.md`, "The debugger of a program"; `docs/TOOLS.md`, "The debugger: the design".
+
+Do not use: tracer, attach to a process.
+
+### Debug handler
+
+A debug handler is the thread of a debugger whose fault ring receives the faults of the kinds Debug and Breakpoint of the debugged program.
+
+The debugger names it with `Fault_Handler_Set` and its program handle with Debug. Those faults go to it before the fault handler of the program itself, and only the debugger answers them (`Fault_Answer` with the same handle, `Resume` only). The ring is in the thread record of the debug handler, so the debugger pays for it. A thread is the debug handler of one program, and it is not the fault handler of its own program: one ring has one role.
+
+The design: `docs/ARCHITECTURE.md`, "The debugger of a program".
+
+Do not use: tracer thread, exception port.
+
+### Breakpoint
+
+A breakpoint is one of the four places where a thread stops with a fault of the kind Debug: an instruction that it reaches, or bytes that it writes or reads.
+
+It is a debug register of the processor, not a byte written in the code: the code of a module is shared by each program that maps it. Thread control reads the breakpoints of a held thread, and only the debugger of its program writes them (`op.Thread_Breakpoints`: `Read_Breakpoints`, `Write_Breakpoints`). An execute breakpoint stops the thread before its instruction; a data breakpoint (1, 2, 4 or 8 bytes) stops it after its access. The kernel refuses an address that is not below `USER_END`, so no breakpoint is ever at an address of the kernel. A breakpoint belongs to one thread: the processor that takes the thread loads it, and the processor that leaves the thread turns it off.
+
+It is not the fault kind `Breakpoint`, which is the instruction `int3` that a program runs itself.
+
+The design: `docs/ARCHITECTURE.md`, "The debugger of a program".
+
+Do not use: watchpoint.
+
+### Debug status
+
+The debug status is the error code of a fault record of the kind Debug: it says what made the debug exception.
+
+Bit n is the breakpoint n of the thread (`op.DEBUG_STATUS_BREAKPOINTS`); bit 14 is a single step, one instruction that ran with the trap flag set (`op.DEBUG_STATUS_STEP`); 0 is the instruction `int1` of the program. The kernel reads it from the status register of the processor at each debug exception, clears that register, and keeps only the breakpoints that the thread has on.
+
+The design: `docs/ARCHITECTURE.md`, "The debugger of a program".
+
+Do not use: trap reason, debug cause.
+
 ### Reserved page
 
 A reserved page is a page that a budget paid for and that has no page frame yet.
@@ -1582,9 +1629,9 @@ Do not use: page list, radix tree.
 
 A right is one kind of operation that a handle permits on its object.
 
-The rights are Give, Read, Write, Execute, Control, Inspect, Devices, Stop, Spend, Physical, Schedule, Commit and Events. Each one means something for each kind of object: Read on a memory object is a mapping that reads, Read on a program is the reading of its state, Control on a program starts and stops it. A new object has each right of its kind. `Handle_Give` copies a handle with a part of its rights; no operation adds a right.
+The rights are Give, Read, Write, Execute, Control, Inspect, Devices, Stop, Spend, Physical, Schedule, Commit, Events and Debug. Each one means something for each kind of object: Read on a memory object is a mapping that reads, Read on a program is the reading of its state, Control on a program starts and stops it. A new object has each right of its kind. `Handle_Give` copies a handle with a part of its rights; no operation adds a right.
 
-Narrow rights let a program give exactly what another needs: Commit is the part of Spend that pays pages of an object, and Inspect on a thread holds and reads it without Write.
+Narrow rights let a program give exactly what another needs: Commit is the part of Spend that pays pages of an object, and Inspect on a thread holds and reads it without Write. Debug on a program makes its holder the debugger of that one program.
 
 The list: `contract/operation/operation.odin`.
 

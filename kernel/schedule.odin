@@ -366,6 +366,11 @@ schedule :: proc "contextless" () -> ! {
 		// processor is 0. The release of the run lock orders this save
 		// before the restore of the processor that takes it.
 		extended_state_save(&thread.extended_state, extended_state_form)
+		// The breakpoints of the thread leave the processor with it: the
+		// next thread, the idle wait and the kernel run with none.
+		if cpu.breakpoints_loaded {
+			breakpoints_unload(cpu)
+		}
 		program := thread.program
 		home := run_lock(thread)
 		ended := intrinsics.atomic_load(&thread.stop_requested)
@@ -421,6 +426,11 @@ schedule :: proc "contextless" () -> ! {
 			// a restore then costs a little, and keeps no rule of who owns
 			// the registers.
 			extended_state_restore(&thread.extended_state, extended_state_form)
+			// One flag of the hot line: a thread with no breakpoint pays
+			// this test and no write of a debug register.
+			if thread.has_breakpoints {
+				breakpoints_load(cpu, thread)
+			}
 			// The event point of a switch of threads (events.odin). The
 			// thread is the current thread of this processor now.
 			if event_wanted(cpu, OBSERVED_SWITCH, .Switch, thread.program) {

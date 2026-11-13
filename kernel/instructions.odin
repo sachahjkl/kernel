@@ -127,9 +127,32 @@ control_register_0_write :: asm(value: u64) [#volatile, #clobber memory, #clobbe
 }
 
 // The debug registers 6 (the status of the last debug exception) and 7
-// (which breakpoints are on). Only the start of a processor writes them.
+// (which breakpoints are on), and the four address registers 0 to 3. The
+// start of a processor writes 6 and 7; the switch to a thread that has
+// breakpoints writes 0 to 3 and 7, the switch away writes 7, and a debug
+// exception of a program reads and writes 6 (breakpoints.odin).
 debug_register_6_write :: asm(value: u64) [#volatile, #clobber memory, #clobber %flags] {
 	mov %dr6, value
+}
+
+debug_register_6_read :: asm() -> (value: u64) [#volatile, #clobber memory, #clobber %flags] {
+	mov value, %dr6
+}
+
+debug_register_0_write :: asm(value: u64) [#volatile, #clobber memory, #clobber %flags] {
+	mov %dr0, value
+}
+
+debug_register_1_write :: asm(value: u64) [#volatile, #clobber memory, #clobber %flags] {
+	mov %dr1, value
+}
+
+debug_register_2_write :: asm(value: u64) [#volatile, #clobber memory, #clobber %flags] {
+	mov %dr2, value
+}
+
+debug_register_3_write :: asm(value: u64) [#volatile, #clobber memory, #clobber %flags] {
+	mov %dr3, value
 }
 
 debug_register_7_write :: asm(value: u64) [#volatile, #clobber memory, #clobber %flags] {

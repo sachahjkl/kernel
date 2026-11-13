@@ -395,6 +395,130 @@ fault_record_next :: proc "contextless" (deadline: u64 = WAIT_FOREVER) -> (recor
 	}
 }
 
+// The debugger of a program (docs/ARCHITECTURE.md, "The debugger of a
+// program"). A program with a handle of another program that has the right
+// Debug becomes its debugger: it receives its debug exceptions and its
+// breakpoints in the fault ring of one of its own threads, holds its
+// threads by their numbers, reads and writes their registers and their
+// breakpoints, and reads its memory.
+//
+// ```odin
+// system.debug_attach(program)
+// system.thread_control_stop(program, 0)
+// breakpoints: op.Thread_Breakpoints
+// breakpoints.breakpoints[0] = {address = address_of_a_procedure, kind = .Execute}
+// system.thread_breakpoints_write(program, 0, breakpoints)
+// system.thread_control_resume(program, 0)
+// record := system.fault_record_next() or_return
+// registers, _ := system.thread_registers_read(program, record.thread)
+// system.debug_fault_answer(program, record)
+// system.debug_detach(program)
+// ```
+
+// debug_attach makes a thread of this program (0: the thread that calls
+// it) the debug handler of another program: this program is then its
+// debugger. The handle of that program needs the right Debug. The faults
+// of the kinds Debug and Breakpoint of that program (always both) become
+// records of the fault ring of the handler, which reads them with
+// `fault_record_next`; each faulting thread waits for `debug_fault_answer`.
+// The debugging ends at `debug_detach`, when the handler thread ends, when
+// the last handle with Debug closes, and when the program stops: the
+// program then gets back each thread that the debugger held.
+debug_attach :: proc "contextless" (program: Handle, kinds: op.Fault_Kinds = {}, thread: Handle = 0, error: ^errors.Error_Record = nil) -> Status {
+	_, status := call_with_error(error, .Fault_Handler_Set, u64(thread), 0, transmute(u64)kinds, u64(program))
+	return status
+}
+
+// debug_detach ends the debugging of a program by this program: the kernel
+// removes the breakpoints of each thread of that program, clears the trap
+// flag that the debugger wrote, takes back the stops that it made, and
+// resumes each thread that waits for its answer.
+debug_detach :: proc "contextless" (program: Handle, error: ^errors.Error_Record = nil) -> Status {
+	_, status := call_with_error(error, .Fault_Handler_Set, 0, 1, 0, u64(program))
+	return status
+}
+
+// debug_fault_answer lets the thread of a record of a debugged program go
+// on. After an execute breakpoint the thread runs the instruction of the
+// breakpoint once, and the breakpoint stays. A debugger gives no answer
+// Stop: it stops a program with Program_Stop and the right Control.
+debug_fault_answer :: proc "contextless" (program: Handle, record: op.Fault_Record, error: ^errors.Error_Record = nil) -> Status {
+	_, status := call_with_error(error, .Fault_Answer, record.thread, record.serial, u64(op.Fault_Answer_Kind.Resume), u64(program))
+	return status
+}
+
+// The control of a thread (docs/ARCHITECTURE.md, "The control of a
+// thread"). Each procedure names the thread in one of three ways:
+// - `thread` 0 and the number of a thread of this program;
+// - a thread handle with the rights of the command (`number` is not read);
+// - the handle with the right Debug of the program that this program
+//   debugs, and the number of a thread of that program.
+
+// thread_control_stop adds 1 to the stop count of a thread and gives the
+// count: the thread runs no instruction until its count is 0 again.
+thread_control_stop :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (count: u64, status: Status) {
+	results: [7]u64
+	results, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Stop))
+	return results[0], status
+}
+
+// thread_control_resume takes 1 from the stop count of a thread and gives
+// the count: at 0 the thread runs again. A debugger takes back only its
+// own stops, and each other caller only the stops that the debugger did
+// not make (Bad_State with no stop of its own).
+thread_control_resume :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (count: u64, status: Status) {
+	results: [7]u64
+	results, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Resume))
+	return results[0], status
+}
+
+// thread_registers_read gives the registers of a held thread.
+thread_registers_read :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (registers: op.Thread_Registers, status: Status) {
+	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Read_Registers), u64(uintptr(&registers)), size_of(registers))
+	return registers, status
+}
+
+// thread_registers_write gives a held thread these registers: it goes on
+// with them. Bad_Operation for registers that a thread of a program cannot
+// have; the error record names the refused part.
+thread_registers_write :: proc "contextless" (thread: Handle, number: u64, registers: op.Thread_Registers, error: ^errors.Error_Record = nil) -> (status: Status) {
+	written := registers
+	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Write_Registers), u64(uintptr(&written)), size_of(written))
+	return status
+}
+
+// thread_breakpoints_read gives the breakpoints of a held thread.
+thread_breakpoints_read :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (breakpoints: op.Thread_Breakpoints, status: Status) {
+	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Read_Breakpoints), u64(uintptr(&breakpoints)), size_of(breakpoints))
+	return breakpoints, status
+}
+
+// thread_breakpoints_write gives a held thread these breakpoints, and no
+// other: at most four, each an execute breakpoint or a data breakpoint at
+// an address of its program. Only the debugger of the program writes them:
+// `thread` is its handle with the right Debug, and 0 or a thread handle
+// gives Bad_Handle. A reached breakpoint is a fault of the kind
+// Debug of that thread, with the number of the breakpoint in the debug
+// status of its record. Bad_Operation for a breakpoint that a thread
+// cannot have; the error record names the refused part.
+thread_breakpoints_write :: proc "contextless" (thread: Handle, number: u64, breakpoints: op.Thread_Breakpoints, error: ^errors.Error_Record = nil) -> (status: Status) {
+	written := breakpoints
+	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Write_Breakpoints), u64(uintptr(&written)), size_of(written))
+	return status
+}
+
+// thread_memory_read copies bytes of the program of a thread, from
+// `source` in that program, into `buffer` (at most
+// op.THREAD_MEMORY_READ_LIMIT bytes), and gives the count that it copied.
+// It reads only pages that the program maps, can read and that have a
+// frame; it stops before the first page that is not so. Bad_Address when
+// no byte is read. A thread handle needs the rights Inspect and Write.
+thread_memory_read :: proc "contextless" (thread: Handle, number: u64, source: u64, buffer: []u8, error: ^errors.Error_Record = nil) -> (count: u64, status: Status) {
+	results: [7]u64
+	results, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Read_Memory), u64(uintptr(raw_data(buffer))), u64(len(buffer)), source)
+	return results[0], status
+}
+
 // memory_physical gives the physical address of the first page of a memory
 // object: its pages follow each other. The machine handle needs the right
 // Physical.

@@ -132,6 +132,12 @@ Processor :: struct {
 	pending:       u32, // Not 0: another processor waits in processor_sync.
 	idle:          bool, // The processor waits for an interrupt, with no thread. Another processor clears it to wake it (kick).
 	extended_state_refused: bool, // At its start, the processor could not save the extended state that the first processor saves: it never runs a thread.
+	// The debug registers of this processor hold the breakpoints of a
+	// thread (breakpoints.odin). Only this processor writes it: the switch
+	// to a thread that has breakpoints sets it, and the switch away, or a
+	// debug exception of a thread whose breakpoints were removed, clears
+	// it with the control register.
+	breakpoints_loaded: bool,
 	// The kinds of kernel events that the event table has rules for: bit n
 	// for the Event_Kind n; 0 with no table (events.odin). Each event point
 	// reads it first. It is in the first line of the record, which each
@@ -395,6 +401,7 @@ CR4_FS_GS_BASE :: 1 << 16
 // DR7 with no breakpoint on (bit 10 is always 1), and DR6 with no status
 // (its reserved bits are 1).
 DR7_NO_BREAKPOINT :: 0x400
+#assert(DR7_NO_BREAKPOINT == op.DEBUG_CONTROL_NO_BREAKPOINT)
 DR6_CLEAR :: 0xFFFF_0FF0
 
 // The processors refuse sgdt, sidt, sldt, smsw and str to programs

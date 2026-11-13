@@ -22,6 +22,7 @@ right_names := [op.Right]string {
 	.Schedule = "Schedule",
 	.Commit   = "Commit",
 	.Events   = "Events",
+	.Debug    = "Debug",
 }
 
 // The name of each object kind in a description.
