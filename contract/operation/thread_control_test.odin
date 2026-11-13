@@ -110,10 +110,10 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 	for command in Thread_Control_Command {
 		rights := thread_control_rights(command)
 		switch command {
-		case .Write_Registers, .Write_Extended_State:
+		case .Write_Registers, .Write_Extended_State, .Write_Breakpoints, .Read_Memory:
 			testing.expect_value(t, rights, Rights{.Inspect, .Write})
 			testing.expect(t, .Control not_in rights)
-		case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule:
+		case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints:
 			testing.expect_value(t, rights, Rights{.Inspect})
 		case .Write_Schedule:
 			testing.expect_value(t, rights, Rights{.Control})
@@ -134,6 +134,77 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 			testing.expect_value(t, machine_rights, Rights{})
 		}
 	}
+}
+
+// The program handle with Debug names a thread for each command but the
+// two of the schedule.
+@(test)
+the_commands_of_a_debug_handle :: proc(t: ^testing.T) {
+	for command in Thread_Control_Command {
+		taken := thread_control_takes_debug_handle(command)
+		#partial switch command {
+		case .None, .Read_Schedule, .Write_Schedule:
+			testing.expect(t, !taken)
+		case:
+			testing.expect(t, taken)
+		}
+	}
+}
+
+// A breakpoint is at an address of a program, with a kind and a length
+// that the processor has; the control register gets the local enable bits
+// only.
+@(test)
+the_breakpoints_that_a_thread_can_have :: proc(t: ^testing.T) {
+	breakpoints: Thread_Breakpoints
+	refusal, value := thread_breakpoints_refusal(&breakpoints)
+	testing.expect_value(t, refusal, Thread_Write_Refusal.None)
+	testing.expect_value(t, thread_breakpoints_control(&breakpoints), DEBUG_CONTROL_NO_BREAKPOINT)
+
+	breakpoints.breakpoints[0] = {address = 0x40_1000, kind = .Execute}
+	breakpoints.breakpoints[2] = {address = 0x7FFF_0010, kind = .Write, length = 8}
+	breakpoints.breakpoints[3] = {address = 0x7FFF_0024, kind = .Read_Or_Write, length = 4}
+	refusal, value = thread_breakpoints_refusal(&breakpoints)
+	testing.expect_value(t, refusal, Thread_Write_Refusal.None)
+	// Local enable 0, 2 and 3; breakpoint 2: write, 8 bytes (1001 at bit
+	// 24); breakpoint 3: read or write, 4 bytes (1111 at bit 28).
+	testing.expect_value(t, thread_breakpoints_control(&breakpoints), u64(0x400 | 0b0101_0001 | 0b1001 << 24 | 0b1111 << 28))
+
+	refused := [?]struct {
+		breakpoint: Thread_Breakpoint,
+		refusal:    Thread_Write_Refusal,
+		value:      u64,
+	} {
+		{{address = USER_END, kind = .Execute}, .Breakpoint_Address, USER_END},
+		{{address = 0xFFFF_8000_0000_0000, kind = .Write, length = 1}, .Breakpoint_Address, 0xFFFF_8000_0000_0000},
+		{{address = USER_END - 4, kind = .Write, length = 8}, .Breakpoint_Address, USER_END - 4},
+		{{address = 0x1001, kind = .Write, length = 2}, .Breakpoint_Address, 0x1001},
+		{{address = 0x1000, kind = .Write, length = 3}, .Breakpoint_Length, 3},
+		{{address = 0x1000, kind = .Write}, .Breakpoint_Length, 0},
+		{{address = 0x1000, kind = .Execute, length = 1}, .Breakpoint_Length, 1},
+		{{address = 0x1000}, .Breakpoint_Address, 0x1000},
+		{{address = 0x1000, kind = Thread_Breakpoint_Kind(4)}, .Breakpoint_Kind, 4},
+	}
+	for item in refused {
+		one: Thread_Breakpoints
+		one.breakpoints[1] = item.breakpoint
+		refusal, value = thread_breakpoints_refusal(&one)
+		testing.expect_value(t, refusal, item.refusal)
+		testing.expect_value(t, value, item.value)
+	}
+}
+
+// The debugger of a program takes the two traps, and no other kind.
+@(test)
+the_kinds_of_a_debugger :: proc(t: ^testing.T) {
+	mask, ok := fault_kinds_of_debugger_argument(0)
+	testing.expect(t, ok)
+	testing.expect_value(t, mask, FAULT_KINDS_DEBUGGER)
+	mask, ok = fault_kinds_of_debugger_argument(u64(1) << u64(Fault_Kind.Debug))
+	testing.expect(t, ok)
+	testing.expect_value(t, mask, u64(1) << 1)
+	_, ok = fault_kinds_of_debugger_argument(u64(1) << u64(Fault_Kind.Page_Fault))
+	testing.expect(t, !ok)
 }
 
 // The values of a schedule that a thread can have: 0 is the default of

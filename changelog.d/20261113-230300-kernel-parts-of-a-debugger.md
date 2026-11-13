@@ -1,0 +1,3 @@
+type: Added
+
+**The kernel parts of a debugger**: a program with the right `Debug` on the handle of another program becomes its debugger. It receives the debug exceptions and the breakpoints of that program, sets four breakpoints for each thread (an instruction, or bytes that the thread writes or reads) with no write to the shared code, runs a thread one instruction at a time, and reads the memory of the program, one page at most in each read. When the debugger ends or detaches, the kernel gives the program back each thread that the debugger held. The kernel still has 33 operations. The commands of the console are not built yet.

@@ -585,6 +585,10 @@ handles_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 				machine_rights, by_machine_number := op.thread_control_machine_rights(command)
 				if slot, found := read_handle_find(program, v[0], .None); found && slot.kind == .Machine && by_machine_number {
 					kind, rights = .Machine, machine_rights
+				} else if found && slot.kind == .Program && op.thread_control_takes_debug_handle(command) {
+					// The debugger of a program names a thread by the
+					// program handle with Debug.
+					kind, rights = .Program, {.Debug}
 				}
 			}
 		}
@@ -1115,16 +1119,31 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 			record_set(record, .Bad_Value, .None, 4, cpu.thread_write_refused_value, cpu.thread_write_refused_limit, u64(cpu.thread_write_refusal))
 			return true
 		}
+		// A read of the memory of a program of more bytes than one read
+		// takes.
+		if v[2] == u64(op.Thread_Control_Command.Read_Memory) && v[4] > op.THREAD_MEMORY_READ_LIMIT {
+			record_set(record, .Bad_Value, .None, 5, v[4], op.THREAD_MEMORY_READ_LIMIT, 0)
+			return true
+		}
 	case .Fault_Handler_Set:
 		switch {
 		case v[1] > 1:
 			record_set(record, .Bad_Value, .None, 2, v[1], 1, 0)
 		case v[1] == 1:
 			record_set(record, .Bad_Flags, .None, 3, v[2], 0, 0) // The end of the delivery takes no kinds.
+		case v[3] != 0:
+			record_set(record, .Bad_Flags, .None, 3, v[2], op.FAULT_KINDS_DEBUGGER, 0) // The debugger of a program takes the two traps only.
 		case:
 			record_set(record, .Bad_Flags, .None, 3, v[2], op.FAULT_KINDS_DELIVERED, 0)
 		}
 		return true
+	case .Fault_Answer:
+		// The debugger of a program answers Resume only: the largest
+		// answer that it gives.
+		if v[3] != 0 && v[2] == u64(op.Fault_Answer_Kind.Stop) {
+			record_set(record, .Bad_Value, .None, 3, v[2], u64(op.Fault_Answer_Kind.Resume), 0)
+			return true
+		}
 	case .Thread_Create:
 		// The most of a weight is the weight limit of the calling thread,
 		// which is the full weight unless the holder of the machine

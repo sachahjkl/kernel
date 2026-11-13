@@ -126,9 +126,12 @@ gdt_load:                        ; (descriptor: rawptr): load the table and all 
 ; - from the kernel anywhere else: the base of the kernel.
 ;
 ; So the stub decides:
-; - A debug trap from the kernel is always a trap of a program that came
-;   late: the kernel sets no breakpoint (DR7), and each gate and the mask of
-;   syscall clear the trap flag. It runs no compiled code, so it needs no gs:
+; - A debug trap from the kernel is always a trap of a program: one that
+;   came late (each gate and the mask of syscall clear the trap flag), or a
+;   data breakpoint of the current thread that a copy of the kernel from or
+;   to the memory of its program reached (kernel/breakpoints.odin; the
+;   kernel sets no breakpoint of its own, and a breakpoint is never at an
+;   address of the kernel). It runs no compiled code, so it needs no gs:
 ;   the stub clears DR6 and returns with iretq to the instruction where it
 ;   came, which goes on with its own stack and gs (the entry of syscall, or
 ;   a stub, whose frame of the program is intact on the kernel stack). The

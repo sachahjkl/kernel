@@ -35,6 +35,8 @@
 // - `Replace`: change the replacement table of the machine.
 // - `Principal_Create`, `Principal_Lock`, `Principals`: the named
 //   principals (docs/PRINCIPALS.md, "7. The commands").
+// - `Debug`: the handle of a program with the right Debug, for a caller
+//   that acts for the principal whose session runs that program (`debug`).
 //
 // A refused command has an error record in its completion (`refusal`): the
 // console prints it, for example after `revoke("notes", "store")` on a
@@ -163,6 +165,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Image} // It starts its children from the boot image.
 	case "fault_ring":
 		return {.Image} // It starts its children from the boot image.
+	case "debugged":
+		return {.Image} // It starts its children from the boot image, and is the debugger of each one: no grant of this service gives it that.
 	case "kernel_events":
 		return {.Events, .Image} // It gives the event table of the machine, and starts its children from the boot image.
 	case "scheduler":
@@ -368,6 +372,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 2, threads = 2} // One child at a time, with one thread.
 	case "fault_ring":
 		return {pages = 4096, programs = 2, threads = 22} // One child at a time: 512 pages and 20 threads (17 that fault in a full ring, its main thread and its handler); one thread of its own that spins while a child tries to name it.
+	case "debugged":
+		return {pages = 2048, programs = 3, threads = 4} // Two children at a time (the program that is debugged and a second debugger), each with one thread; one thread of its own that only waits.
 	case "kernel_events":
 		// Program_Create takes the program and its first thread from this
 		// budget. Pages: its module, stack, context, thread area and page
@@ -475,6 +481,10 @@ Started :: struct {
 	// program of the machine starts; the named principal whose session runs
 	// for a program that the desktop starts.
 	principal:       u64,
+	// The program that received the handle of this program with the right
+	// Debug (Root_Command.Debug). nil: none, or it stopped, or the grant
+	// was revoked.
+	debugger:        ^Started,
 }
 
 // The size of the terminal of each program, and what it shows.
@@ -892,6 +902,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					result = principal_unlock(record.values[4])
 				case .Revoke:
 					result = revoke(system.name_of(name[:]), record.values[4], &completion.values)
+				case .Debug:
+					result = debug(&item, system.name_of(name[:]), &completion.values)
 				case .Replace:
 					result = replace(&item, system.name_of(name[:]), record.values[4])
 				case .Stop:
@@ -1004,6 +1016,15 @@ refusal :: proc "contextless" (command: system.Root_Command, name: string, value
 	case .Principal_Lock:
 		if status == .Bad_State {
 			return errors.ring_fail(kind, .Absent, .Principals)
+		}
+	case .Debug:
+		switch {
+		case status == .Bad_Handle && find(name) == nil:
+			return errors.ring_fail(kind, .Absent, .Programs, 1)
+		case status == .Bad_State:
+			return errors.ring_fail(kind, .Reserved, .None, 1) // A program of the system, a service, or the caller itself.
+		case status == .Bad_Operation:
+			return errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
 		}
 	case .Principals, .Principal_Unlock:
 		if status == .Bad_Handle {
@@ -1316,6 +1337,59 @@ find :: proc "contextless" (name: string) -> ^Started {
 	return nil
 }
 
+// debug_refused_for says if no program debugs the program with this role:
+// a program of the system and a service hold what belongs to other
+// programs and to other principals (the keys of each program, the pictures
+// of each window, the stores, the frames of the network), and a debugger
+// reads each byte of the program that it debugs.
+debug_refused_for :: proc "contextless" (name: string) -> bool {
+	if name == "root" || name == "input" || name == "compositor" || name == "terminal" || name == "block" || name == "frame" {
+		return true
+	}
+	return grants_of(name) & {.Serve, .Data_Disk, .Scratch_Disk, .Network_Device, .Principals, .Settings, .Clock} != {}
+}
+
+// debug gives a caller the handle of the program with a name, with the
+// right Debug and no other: debug access is a handle to one program, and
+// the principal grants it. values is the completion of Root_Command.Debug.
+//
+// The caller acts for the principal whose session runs the program: the
+// grant Acts_For_Principal, not revoked, and the same principal. So a
+// program of the machine does not debug a program of a named principal,
+// and a program of one principal does not debug a program of another.
+// This service records the grant (`debug` in Grants) and can revoke it:
+// the kernel then ends the handle, and the debugging with it.
+//
+// Bad_Handle: no program has the name. Bad_State: the program is never
+// debugged, or it is the caller. Bad_Operation: the caller does not act
+// for the principal of the program. No_Right: the grant was revoked.
+debug :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64) -> system.Status {
+	target := find(name)
+	if target == nil {
+		return .Bad_Handle
+	}
+	if target == caller || debug_refused_for(name) {
+		return .Bad_State
+	}
+	if .Debug in caller.revoked {
+		return .No_Right
+	}
+	acts := .Acts_For_Principal in grants_of(system.name_of(caller.name[:])) && .Acts_For_Principal not_in caller.revoked
+	if !acts || target.principal != caller.principal {
+		return .Bad_Operation
+	}
+	// One debugger for one program: the kernel has the same rule.
+	if target.debugger != nil && target.debugger != caller {
+		return .Bad_State
+	}
+	given := system.give(caller.requests_memory, target.program, {.Debug}) or_return
+	target.debugger = caller
+	caller.granted += {.Debug}
+	values[0] = u64(given)
+	system.log_in("programs", .Info, "root: gave ", system.Module_Name{system.name_of(caller.name[:])}, " the right to debug ", system.Module_Name{name}, ", for principal ", caller.principal)
+	return .Ok
+}
+
 // revoke ends one grant of a program that runs: access is never given for
 // ever, and each grant can be revoked. Each grant
 // here is a handle that this service keeps: the handle of the program came
@@ -1402,6 +1476,24 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 		item.revoked += {which}
 		values[0] = count
 		system.log_in("programs", .Info, "root: revoked the grant network of ", system.Module_Name{name}, ", endpoints changed: ", count)
+		return .Ok
+	case .Debug:
+		// One handle for each program that the command Debug named: each
+		// one ends in the debugger, and the kernel ends the debugging of
+		// that program with its last handle.
+		count: u64
+		for &other in started {
+			if other.program == 0 || other.debugger != item {
+				continue
+			}
+			ended := system.handle_revoke(other.program, item.program) or_return
+			other.debugger = nil
+			count += ended
+		}
+		item.granted -= {which}
+		item.revoked += {which}
+		values[0] = count
+		system.log_in("programs", .Info, "root: revoked the grant debug of ", system.Module_Name{name}, ", holdings ended: ", count)
 		return .Ok
 	case .Log:
 		handle = system.context_record().handles[op.CONTEXT_LOG]
@@ -1647,7 +1739,24 @@ release :: proc "contextless" (item: ^Started) {
 	if item.writer != nil && item.writer.program != 0 {
 		system.call(.Program_Stop, u64(item.writer.program), 0)
 	}
+	// A debugger that stops debugs nothing. A debugged program that stops:
+	// its debugger keeps the grant `debug` only while it debugs another.
+	if debugger := item.debugger; debugger != nil {
+		item.debugger = nil
+		debugs_another := false
+		for &other in started {
+			if other.program != 0 && other.debugger == debugger {
+				debugs_another = true
+			}
+		}
+		if !debugs_another {
+			debugger.granted -= {.Debug}
+		}
+	}
 	for &other in started {
+		if other.debugger == item {
+			other.debugger = nil
+		}
 		if other.writer == item {
 			other.writer = nil
 		}

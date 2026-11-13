@@ -132,6 +132,15 @@ Root_Command :: enum u32 {
 	// Principal_Unlock starts the session of the principal with the number
 	// values[4]: `unlock` opened its sealed keys with the passphrase.
 	Principal_Unlock = 13,
+	// Debug gives the caller the handle of the program with this name, with
+	// the right Debug only: the caller becomes its debugger with
+	// `debug_attach` (docs/TOOLS.md, "The debugger: the design"). The root
+	// service gives it only to a caller that acts for the principal whose session
+	// runs that program, and never for a program of the system or a
+	// service, which hold what belongs to other programs. values[0] of the
+	// completion is the handle. The grant is `debug` in `Grants`; `Revoke`
+	// ends each handle that came from it, and the debugging with them.
+	Debug = 14,
 }
 
 // The state of a principal in the root service.
@@ -273,6 +282,7 @@ Root_Grant :: enum u32 {
 	Network     = 5, // An endpoint of datagrams in the network service, with one remote.
 	Acts_For_Principal = 6, // To act for the principal of its session in each service that the program is connected to (isolated.CALLER_ACTS_FOR_PRINCIPAL).
 	History     = 7, // The store of the line history of the console in the storage service (Root_Command.Connect_History).
+	Debug       = 8, // The handle of another program with the right Debug, for each program that the command Debug named (Root_Command.Debug).
 }
 // A set of grants: bit n is the grant n. The completion of `Grants` holds
 // two of them.
@@ -288,6 +298,7 @@ root_grant_names := [Root_Grant]string {
 	.Network     = "network",
 	.Acts_For_Principal = "acts_for_principal",
 	.History     = "history",
+	.Debug       = "debug",
 }
 
 // A name of a program in a command of the root ring: 31 bytes at most, zero

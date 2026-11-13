@@ -895,6 +895,28 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 	case .Fault_Handler_Set:
 		// The fault ring (fault_ring.odin): the program names one of its
 		// own threads; a pager for another program is not in this step.
+		if v[3] != 0 {
+			// The debugger of another program: the thread takes the debug
+			// exceptions and the breakpoints of that program. Two programs:
+			// the control lock.
+			debugger_kinds, debugger_known := op.fault_kinds_of_debugger_argument(v[2])
+			if v[1] > 1 || !debugger_known || v[1] == 1 && v[2] != 0 {
+				return .Bad_Operation
+			}
+			debugged := handle_find(program, v[3], .Program, {.Debug}) or_return
+			if need_control() {
+				return STATUS_RETRY
+			}
+			if v[1] == 1 {
+				return debug_handler_detach(program_index, debugged.object)
+			}
+			debug_handler := index
+			if v[0] != 0 {
+				slot := handle_find(program, v[0], .Thread, {.Control}) or_return
+				debug_handler = slot.object
+			}
+			return debug_handler_set(program_index, debug_handler, debugged.object, debugger_kinds)
+		}
 		kinds, known := op.fault_kinds_of_argument(v[2])
 		if v[1] > 1 || !known {
 			return .Bad_Operation
@@ -917,12 +939,28 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if answer != .Resume && answer != .Stop {
 			return .Bad_Operation
 		}
+		if v[3] != 0 {
+			// The answer of the debugger of another program. Only Resume:
+			// the report of a stop reads the stack of the program through
+			// the page table of this processor, which is the one of the
+			// debugger here; a debugger stops a program with Program_Stop.
+			if answer != .Resume {
+				return .Bad_Operation
+			}
+			debugged := handle_find(program, v[3], .Program, {.Debug}) or_return
+			if need_control() {
+				return STATUS_RETRY
+			}
+			return debug_fault_answer(program_index, debugged.object, v[0], v[1])
+		}
 		// A stop of the program on a fault takes the control lock.
 		if answer == .Stop && need_control() {
 			return STATUS_RETRY
 		}
 		waiter_index := fault_waiter_find(program_index, v[0], v[1])
-		if waiter_index == 0 {
+		// A thread whose record went to the debugger of the program waits
+		// for the debugger: the program does not answer in its place.
+		if waiter_index == 0 || threads[waiter_index].fault_to_debugger {
 			return .Bad_State // No thread with that number and fault serial waits: an old answer, or a wrong one.
 		}
 		waiter := &threads[waiter_index]
@@ -938,11 +976,21 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if answer == .Resume && !op.fault_kind_resumes(waiter.frame.vector) && !waiter.registers_written {
 			return .Bad_State
 		}
-		waiter.fault_waits = false
 		if answer == .Resume {
+			// A thread that goes on at an execute breakpoint of its own
+			// runs that instruction once (breakpoints.odin). Its frame is
+			// written only after it left its processor.
+			if waiter.frame.vector == VECTOR_DEBUG && intrinsics.atomic_load(&waiter.has_breakpoints) {
+				if !thread_held_off_processor(waiter) {
+					return .Bad_State
+				}
+				breakpoint_resume_flag_set(waiter)
+			}
+			waiter.fault_waits = false
 			thread_wake(waiter)
 			return .Ok
 		}
+		waiter.fault_waits = false
 		// The report of the fault, as with no handler. A write of
 		// Thread_Control can have moved the instruction address and the
 		// frame pointer of the waiting thread since its fault: the report

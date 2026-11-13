@@ -91,7 +91,11 @@ Object_Kind :: op.Object_Kind
 
 // The rights of the handle of a new object, by kind.
 RIGHTS_MEMORY :: op.Rights{.Give, .Read, .Write, .Execute}
-RIGHTS_PROGRAM :: op.Rights{.Give, .Read, .Control}
+// A program: Debug makes its holder the debugger of the program
+// (fault_ring.odin). The program that creates a program has it, as it has
+// the memory that it maps in that program; a copy that it gives has it only
+// when the giver names it.
+RIGHTS_PROGRAM :: op.Rights{.Give, .Read, .Control, .Debug}
 // A thread: Control ends it; Inspect holds it and reads its registers;
 // Write writes them (op.thread_control_rights).
 RIGHTS_THREAD :: op.Rights{.Give, .Read, .Write, .Control, .Inspect}
@@ -171,6 +175,12 @@ Thread :: struct #align (64) {
 	lag:              i64, // At the last wait: EEVDF, the lag; fair, the distance to the queue clock.
 	queued:           bool,
 	placed:           bool, // The strategy placed the thread: virtual means something.
+	// The thread has breakpoints (breakpoints.odin): the processor that
+	// takes it loads its debug registers. It is in this line so that a
+	// switch to a thread with no breakpoint reads no other line for it.
+	// Written under the program lock, while the thread is held or to clear
+	// it (atomic: a switch and a debug exception read it).
+	has_breakpoints:  bool,
 	frame:        Frame,
 	extended_state: Extended_State_Area, // Complete while the thread is on no processor: schedule saves it when a processor leaves the thread, and restores it when a processor takes it (docs/ARCHITECTURE.md, "The extended state of the processor").
 	program:      u32,
@@ -216,6 +226,27 @@ Thread :: struct #align (64) {
 	// last fault of the thread: Fault_Answer then accepts Resume for any
 	// kind. Program lock.
 	registers_written: bool,
+	// The breakpoints of the thread, and the value of the debug control
+	// register for them (breakpoints.odin). They mean something only while
+	// has_breakpoints is true. Written under the program lock while the
+	// thread is held; the processor that takes the thread reads them.
+	breakpoints:        op.Thread_Breakpoints,
+	breakpoint_control: u64,
+	// The record of the fault that the thread waits for is in the ring of
+	// the debugger of its program, not in the ring of its program: only
+	// the debugger answers it. Program lock.
+	fault_to_debugger: bool,
+	// The stops of control_stops that the debugger of the program made:
+	// the end of the debugging takes them back. Program lock.
+	debug_stops: u32,
+	// The debugger of the program wrote the trap flag in the frame of the
+	// thread: a single step that comes after the end of the debugging is
+	// dropped, and stops no program. Program lock.
+	debugger_step: bool,
+	// The program whose debug handler this thread is (fault_ring.odin). 0:
+	// none. Written under the control lock (atomic: Fault_Handler_Set reads
+	// it under the program lock of the thread only).
+	debugs_program: u32,
 	// The most that the weight can be: 1 to op.WEIGHT_FULL. Only a write
 	// of the schedule through the machine handle changes it; a new thread
 	// gets the limit of the thread that creates it. Read at a write of the
@@ -226,6 +257,7 @@ Thread :: struct #align (64) {
 }
 
 #assert(offset_of(Thread, placed) < 64)
+#assert(offset_of(Thread, has_breakpoints) < 64)
 #assert(offset_of(Thread, frame) == 64)
 
 // word_address gives the physical address of a 32-bit word of a program,
@@ -281,6 +313,21 @@ Program :: struct {
 	fault_written:        u32, // The records that the kernel wrote in that ring: the kernel's own count, not the one in memory of the program.
 	fault_full:           u32, // The faults that found the ring full.
 	fault_serial:         u64, // The faults given to a ring: the serial of the next record is one more. A count of this program only.
+	// The debugger of the program (fault_ring.odin), under the program
+	// lock. debug_handler is a thread of
+	// another program, the debugger: its debug handler. 0: no debugger.
+	// It changes only with the control lock held too.
+	debug_handler: u32,
+	// The thread record of the debug handler through the direct map: the
+	// ring that takes the records. The end of the debug handler clears it
+	// under the program lock before the record is unmapped, so a fault of
+	// this program never writes a record that is gone.
+	debug_record:  ^op.Thread_Record,
+	// The fault kinds of the debugger: bit n is the vector n. 0 with no
+	// debugger. Written and read as fault_kinds.
+	debug_kinds:   u64,
+	debug_written: u32, // The records that the kernel wrote in the ring of the debug handler: the kernel's own count.
+	debug_full:    u32, // The faults that found that ring full.
 }
 
 HOLDS_STOPPED :: u64(1) << 32
@@ -777,6 +824,12 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 	case .Program:
 		// A program runs only while a handle names it: nobody can stop a
 		// program that no handle names. The stop waits for control_free.
+		// The debugging of a program lives while its debugger holds the
+		// right Debug on it (fault_ring.odin): a close and a revocation
+		// both come here.
+		if .Debug in slot.rights {
+			debug_right_closed(program, slot)
+		}
 		if intrinsics.atomic_sub(&programs[slot.object].references, 1) == 1 {
 			stops_pending |= 1 << slot.object
 		}
@@ -1431,6 +1484,12 @@ thread_finish :: proc "contextless" (index: u32, serial: u32) {
 	wait_unregister(thread)
 	program_index := thread.program
 	program := &programs[program_index]
+	// The debug handler of another program ends with its thread: that
+	// program gets its threads back before the thread record, which holds
+	// the ring, is unmapped below.
+	if debugged := intrinsics.atomic_load(&thread.debugs_program); debugged != 0 {
+		debug_handler_end(debugged)
+	}
 	taken := program_lock(program_index)
 	thread.events = nil
 	thread.record_in_kernel = nil
@@ -1460,6 +1519,8 @@ thread_finish :: proc "contextless" (index: u32, serial: u32) {
 		program.thread_count -= 1
 		last = program.thread_count == 0
 	}
+	// A thread that waits for the debugger of the program has its record
+	// in another ring: the end of this handler does not lose it.
 	unanswered := handler_ended && running && fault_waiter_exists(program_index)
 	program_unlock(program_index, taken)
 	if intrinsics.atomic_load(&thread.references) == 0 {
@@ -1527,6 +1588,10 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 	// name this program, and an operation of the program sees it.
 	program.state = .Stopped
 	program.code = code
+	// The debugging of a program ends with the program: its debug handler
+	// is free for another program, and no ring takes a record of a program
+	// that stops.
+	debug_handler_end(index)
 	program_unlock(index, taken)
 	self := processor_self()
 	running: u64
@@ -1722,6 +1787,13 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	if from_program {
 		thread = &threads[cpu.current]
 		thread.frame = frame^
+		// The status of a debug exception is in a register of the
+		// processor, which keeps it until the kernel clears it: it is read
+		// once, here, into the frame of the thread, where the delivery of
+		// the fault reads it (breakpoints.odin).
+		if frame.vector == VECTOR_DEBUG {
+			thread.frame.error = debug_status_take()
+		}
 	}
 	switch {
 	case frame.vector == VECTOR_DEBUG_FRAME_LOST:
@@ -1810,17 +1882,29 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.program) {
 			event_record(cpu, .Fault, thread.program, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.First_Use))
 		}
-	case from_program && frame.vector < VECTOR_INTERRUPT_BASE && fault_deliver(cpu.current, fault_address):
-		// A record of the fault ring: the thread is Waiting until a thread
-		// of its program answers, so the end below goes to schedule. The
-		// address is 0 for a fault that is not a page fault.
-		if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.program) {
-			event_record(cpu, .Fault, thread.program, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.Fault_Ring))
-		}
 	case:
-		program_fault(thread.program, frame, fault_address)
-		if from_program && frame.vector < VECTOR_INTERRUPT_BASE && event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.program) {
-			event_record(cpu, .Fault, thread.program, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.Stopped))
+		delivery := Fault_Delivery.Stops_The_Program
+		if from_program && frame.vector < VECTOR_INTERRUPT_BASE {
+			delivery = fault_deliver(cpu.current, fault_address)
+		}
+		switch delivery {
+		case .Waits_For_An_Answer:
+			// A record of a fault ring: the thread is Waiting until a
+			// thread of its program, or its debugger, answers, so the end
+			// below goes to schedule. The address is 0 for a fault that is
+			// not a page fault.
+			if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.program) {
+				event_record(cpu, .Fault, thread.program, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.Fault_Ring))
+			}
+		case .Continues:
+			// A debug exception of a breakpoint or of a single step that
+			// its debugger no longer waits for: the thread goes on below,
+			// and it is no fault of the program.
+		case .Stops_The_Program:
+			program_fault(thread.program, frame, fault_address)
+			if from_program && frame.vector < VECTOR_INTERRUPT_BASE && event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.program) {
+				event_record(cpu, .Fault, thread.program, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.Stopped))
+			}
 		}
 	}
 	if !from_program {
