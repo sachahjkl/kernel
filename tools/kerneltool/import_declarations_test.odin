@@ -246,10 +246,10 @@ caller_of_the_test :: proc "c" () -> i64 {
 	}
 }
 
-// Each symbol that became a slot of the importer has exactly one compared
+// Each symbol that became a slot of the importer has a compared
 // declaration. A symbol with none is a call through a declaration that the
 // tool did not find (the three forms of the test above): the build stops
-// and names it. Two declarations of one symbol are refused too.
+// and names it. Two declarations of one symbol pass: each was compared.
 @(test)
 each_slot_has_one_compared_declaration :: proc(t: ^testing.T) {
 	// A symbol has one slot for each place that holds its address.
@@ -261,8 +261,7 @@ each_slot_has_one_compared_declaration :: proc(t: ^testing.T) {
 	testing.expect_value(t, declared_symbols_problem(slots[:], {"open", "sum_values", "seal", "never_called"}), "")
 	missing := declared_symbols_problem(slots[:], {"seal", "sum_values"})
 	testing.expect(t, strings.has_prefix(missing, "the import open is called, and the tool found no declaration of it to compare"), missing)
-	twice := declared_symbols_problem(slots[:], {"seal", "open", "sum_values", "sum_values"})
-	testing.expect(t, strings.has_prefix(twice, "the import sum_values has 2 declarations"), twice)
+	testing.expect_value(t, declared_symbols_problem(slots[:], {"seal", "open", "sum_values", "sum_values"}), "")
 	none := declared_symbols_problem(slots[:], nil)
 	testing.expect(t, strings.has_prefix(none, "the import seal is called"), none)
 }

@@ -30,7 +30,7 @@ import "core:strings"
 // of an assembly file of the module: it is not compared.
 //
 // The check is closed from the side of the linked file: each symbol that
-// became a slot of the importer has exactly one compared declaration
+// became a slot of the importer has a compared declaration
 // (declared_symbols_problem). So a declaration that this file does not
 // find stops the build, and does not pass unread.
 
@@ -528,10 +528,10 @@ source_of_the_repository :: proc(path: string) -> (relative: string, ok: bool) {
 }
 
 // declared_symbols_problem says which symbol that became a slot of the
-// importer does not have exactly one compared declaration. "": each has
-// one. slot_symbols can name a symbol several times (one slot for each
-// place that holds its address); compared_names has one name for each
-// compared declaration.
+// importer has no compared declaration. "": each has one or more.
+// slot_symbols can name a symbol several times (one slot for each place
+// that holds its address); compared_names has one name for each compared
+// declaration.
 //
 // This closes the check from the side of the linked file. A declaration
 // that the tool did not find (a `foreign` block in the body of a
@@ -539,22 +539,14 @@ source_of_the_repository :: proc(path: string) -> (relative: string, ok: bool) {
 // text) is not compared, and the comparison of the others says nothing of
 // it. The call is still in the code, so its symbol is a slot: a slot with
 // no compared declaration stops the build. Two declarations of one symbol
-// are refused too: the call form is written one time, and the tool cannot
-// know which of the two the compiler used for a call.
+// are allowed: each one is compared with the same description, so each is
+// the call form of the export. A program and a package that it compiles
+// can both declare an export, one of them in a `when` that this build
+// leaves out.
 declared_symbols_problem :: proc(slot_symbols: []string, compared_names: []string) -> string {
-	for symbol, index in slot_symbols {
-		if slice.contains(slot_symbols[:index], symbol) {
-			continue
-		}
-		count := 0
-		for name in compared_names {
-			count += int(name == symbol)
-		}
-		switch {
-		case count == 0:
+	for symbol in slot_symbols {
+		if !slice.contains(compared_names, symbol) {
 			return fmt.tprintf("the import %s is called, and the tool found no declaration of it to compare: declare it in a `foreign` block at the level of the file (or of a `when` there), with its name or with link_name as a text", symbol)
-		case count > 1:
-			return fmt.tprintf("the import %s has %d declarations: declare it one time, so that one call form is compared", symbol, count)
 		}
 	}
 	return ""
@@ -564,7 +556,7 @@ declared_symbols_problem :: proc(slot_symbols: []string, compared_names: []strin
 // each `foreign` declaration of the sources that the compiler read for
 // this module agrees with the description of the export that it names, in
 // the module file of an import, and each symbol that became a slot of the
-// module (slot_symbols, from convert) has exactly one such declaration. A
+// module (slot_symbols, from convert) has such a declaration. A
 // source is parsed only when it has the word `foreign` and the name of an
 // export of an import.
 import_declarations_check :: proc(build: Module_Build, imports: []Import_File, slot_symbols: []string) -> bool {
