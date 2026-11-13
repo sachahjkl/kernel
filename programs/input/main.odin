@@ -1,6 +1,35 @@
 // The input service: the device service of the PS/2 keyboard and mouse
 // (docs/ARCHITECTURE.md, U4). It has the ports of the controller and its two
 // interrupts, and nothing else. It sends input records to the compositor.
+//
+// **What it is for.** It shows that a driver is a program, not a part of
+// the kernel. This program is a [device service](term:device-service): the
+// root service gives it the five I/O ports of the PS/2 controller (0x60 to 0x64) and its two interrupts (1, the keyboard; 12,
+// the mouse). The kernel turns each interrupt into an event of the
+// program; it never reads a key itself.
+//
+// **What a reader sees.** No window: the line `input: ok` on the log, once
+// the controller is set up. Each key and each move of the mouse then
+// reaches the compositor as one record of its input ring, and the
+// compositor sends a key to the window in front.
+//
+// **The records** that it writes (`display.Input`):
+//
+// - `Key`: the scan code (with `display.KEY_EXTENDED` after the prefix
+//   0xE0), the character in the United States layout, 1 for a press or 0
+//   for a release, and the modifiers (Shift, Control).
+// - `Pointer`: the motion in x and in y, in pixels of the mouse (y grows
+//   down, as on the screen), and the three buttons.
+//
+// **How it starts.** The root service starts it at each boot, before the
+// compositor, with a context of its own: handle 0 is the input ring, which
+// it shares with the compositor; handles 1 to 3 are the ports and the two
+// interrupts. It has no grant of `grants_of`, no connection, and no
+// service: it cannot reach another program.
+//
+// **What it does not prove.** It works with the PS/2 controller that QEMU
+// emulates, with one keyboard layout. It has no USB and no layout
+// setting.
 package input
 
 import "support:display"
@@ -72,6 +101,20 @@ mouse_command :: proc "contextless" (command: u8) {
 	controller_read() // The mouse answers 0xFA.
 }
 
+// entry sets up the PS/2 controller and then turns each byte of the
+// controller into a record of the input ring, until the machine stops.
+//
+// **What it sets up**: it opens the input ring (handle 0), drops the bytes
+// that wait in the controller, enables the mouse port, turns on both
+// interrupts and the clock of the mouse, gives the mouse its default
+// settings, and asks it to send its moves. It then writes `input: ok`.
+//
+// **The loop.** It waits for an interrupt. It then reads each byte while
+// the status port says that one waits: a byte of the mouse goes to
+// `mouse_byte`, a byte of the keyboard to `keyboard_byte`.
+//
+// **The stop**: with no ring, it writes `input: no ring` and stops with the
+// code 1. Else it never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	output_memory = ctx.handles[GRANT_RING]
@@ -114,6 +157,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 }
 
+// keyboard_byte turns one byte of the keyboard into a record `Key`. The
+// prefix 0xE0 marks the next byte as an extended key; Shift and Control
+// change the modifiers; bit 7 is the release.
 keyboard_byte :: proc "contextless" (value: u8) {
 	if value == SCAN_EXTENDED {
 		extended = true
@@ -147,6 +193,10 @@ keyboard_byte :: proc "contextless" (value: u8) {
 	system.send(&output.commands, ring.Record{kind = u32(display.Input.Key), values = {0 = u64(code), 1 = u64(character), 2 = u64(pressed), 3 = u64(modifiers)}})
 }
 
+// mouse_byte keeps the bytes of a packet of 3 bytes and sends a record
+// `Pointer` when the packet is whole. A first byte with bit 3 clear is not
+// the start of a packet, and is dropped: the packets find their start
+// again after a lost byte.
 mouse_byte :: proc "contextless" (value: u8) {
 	if packet_count == 0 && value & 0x08 == 0 {
 		return // Not the first byte of a packet.

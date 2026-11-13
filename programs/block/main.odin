@@ -15,6 +15,51 @@
 // not on the path of the data, so data moves with no kernel entry. The
 // service enters the kernel
 // to wait, and to wake its client; one entry serves many requests.
+//
+// **What it is for.** It shows two things: a disk driver is a program
+// with no right beyond its one device, and the data of a disk moves with
+// no copy and no kernel entry for each block. The program that uses the
+// disk (its client) holds a [data region](term:data-region); the client
+// lends it once with `Attach`, and the device then reads and writes it
+// directly.
+//
+// **Who uses it.** The root service starts a block service when it starts
+// a program with a grant of a disk, for the device at the place of that
+// disk on the bus. It gives the [block ring](term:block-ring) to that one
+// client, and takes the device back when the block service stops:
+//
+// - the [data disk](term:data-disk), to the storage service (the grant
+//   **Data_Disk**);
+// - the [disk of the measures](term:disk-of-the-measures), to the program
+//   `disk` (the grant **Scratch_Disk**).
+//
+// No other program can name the device or the ring.
+//
+// **The commands of the block ring** (`contract/block`), each answered by
+// one completion with the same tag:
+//
+// - `Attach`: take the data region of the client.
+// - `Info`: the count of [blocks](term:block) of 4096 bytes, the most
+//   blocks of one request (64), and 1 if the disk has a cache for writes.
+// - `Read`, `Write`: a run of blocks, between the disk and a place of the
+//   data region.
+// - `Flush`: the writes before it are on the disk when it completes.
+// - `Statistics`: the requests done, the blocks moved, the kernel entries
+//   and the interrupts of the service, for a measure.
+//
+// A refusal gives a status and the values of an
+// [error record](term:error-record).
+//
+// **What a reader sees.** No window: the line `block: ok, <count> blocks of
+// 4096 bytes, a queue of <size>, <count> requests in flight at most, flush:
+// yes` on the log. A failure at the start writes a line at the level error
+// on the channel `block` and stops the service.
+//
+// **What it does not prove.** It drives virtio under QEMU only, with no
+// IOMMU: the device can reach memory beyond the data region, and only the
+// code of this service keeps it inside
+// (docs/ARCHITECTURE.md, "K5. Device grant and interrupts"). The design of the storage above it is in
+// docs/STORAGE.md.
 package block_service
 
 import "contract:block"
@@ -257,6 +302,32 @@ harvest :: proc "contextless" () -> (count: int) {
 	return count
 }
 
+// entry starts the device and then serves the block ring, until the
+// machine stops.
+//
+// **What it sets up**: the machine handle with the right Physical, the
+// message interrupt, the block ring, and the configuration of the device
+// that the root service copied. It finds the virtio registers, resets the
+// device, agrees on the features (Flush when the device has a cache), and
+// gives it the queue (`start`). It then writes `block: ok, ...`.
+//
+// **The loop.** After each wake:
+//
+// 1. It gives a completion for each request that the device finished
+//    (`harvest`).
+// 2. While the completion side of the ring keeps a place, it takes the next
+//    command: a command that waited for a place in the queue of the device
+//    goes first. `Read`, `Write` and `Flush` go to the device (`submit`);
+//    the other commands complete at once. A full queue keeps the command
+//    for the next turn.
+// 3. It tells the device of the new requests, and wakes the client when a
+//    completion came.
+// 4. It waits for the interrupt of the device, and for a new command when
+//    it has room for one.
+//
+// **The stop**: with no ring, no configuration, or no virtio registers, it
+// writes the reason (`block: no block ring`) at the level error and stops
+// with the code 1. Else it never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[pci.GRANT_MACHINE]

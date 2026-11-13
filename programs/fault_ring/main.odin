@@ -1,5 +1,43 @@
 // The fault ring (docs/ARCHITECTURE.md, "The fault ring"), case by case.
 //
+// **What it is for.** A fault does not have to end a program. With a
+// [fault handler](term:fault-handler) and a [fault ring](term:fault-ring),
+// a program repairs its own faults (a page that it commits on first use,
+// a stack that grows, a debugger that steps a thread) with no code in the
+// kernel that knows its policy. This program checks each rule of that
+// mechanism, and of the [thread control](term:thread-control) that a
+// handler uses, against a real fault: 35 cases, each in a child program,
+// each with a result that the program checks.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("fault_ring")` in the console. The window has one row for each
+// case, which turns right or wrong as its child stops. The log has one
+// line for each child: `fault_ring: <case>: the child stopped with the
+// code <code>, the address <address>: as it must`, or `: WRONG`. The last
+// line is `fault_ring: ok, 35 cases: ...`, or `fault_ring: failed: <count>
+// cases of 35`. Case 3 shows the time of one repaired fault, as a measure.
+//
+// **Why each case runs in a child.** Several cases end in a stop of the
+// program: a fault of the handler, a full ring, a handler that ends. A
+// child is this same module, started from the boot image with a role in
+// the value `VALUE_ROLE` of its context. When a child stops, the parent
+// reads its stop code and its [stop report](term:stop-report), and checks
+// that the budget of the child got back every page and every thread. The
+// parent and the child share one page (`Shared_Page`) for the values that
+// a case reports.
+//
+// **Its grants**: **Image**, to start its children from the boot image.
+// Its log handle has the right Give: the child that repairs logs its own
+// cases. Its budget holds one child at a time (512 pages, 20 threads) and
+// one thread of its own that spins while a child tries to name it.
+//
+// **What it does not prove.** The cases of the debug trap run on the
+// processor of the test only: case 35 accepts two outcomes, and its line
+// says which one the processor gave. The cases use one processor model,
+// under QEMU.
+//
+// **How the mechanism works:**
+//
 // A program names one of its threads as its fault handler, with the fault
 // kinds that it takes. A fault of such a kind of another thread then does
 // not stop the program: the kernel writes a record in the ring of the
@@ -1520,6 +1558,28 @@ case_log :: proc "contextless" (item: ^Case, code: u32, address: u64) {
 	system.log("fault_ring: ", item.name, ": the child stopped with the code ", system.Hex(u64(code)), ", the address ", system.Hex(address), item.right ? string(": as it must") : string(": WRONG"))
 }
 
+// entry is the entry of the parent and of each child: the value
+// `VALUE_ROLE` of the context says which.
+//
+// **A child** waits until the parent sets the word `go` of the shared page,
+// then runs its role (`child`) and stops with a code whose bits say which
+// of its checks held.
+//
+// **The parent**, in order:
+//
+// 1. It opens its window and maps the boot image.
+// 2. It runs one child for the cases 1 to 4, then one child for each of the
+//    cases 5 to 19, and checks the stop code and the stop report of each
+//    (`child_run`).
+// 3. It runs one child for the controls of a thread (cases 20 to 27), and
+//    one for case 28, while a thread of its own spins and must keep
+//    running.
+// 4. It runs one child for the entries to the gates and the debug trap
+//    (cases 29 to 34), and one for case 35.
+// 5. It writes the summary line, then draws the window each second.
+//
+// **The stop**: with no random seed, no window or no boot image, the
+// parent stops with the code 1. Else it never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if role := role_of(ctx.values[VALUE_ROLE]); role != .Parent {

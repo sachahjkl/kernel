@@ -7,6 +7,41 @@
 // request: its own entries (the system library counts them) and those of
 // the block service (the command Statistics). Then it writes a pattern,
 // flushes, reads it back and compares.
+//
+// **What it is for.** It measures the cost of a disk under this design: a
+// [block service](term:block-service) that is a program, a
+// [block ring](term:block-ring) between two programs, and a
+// [data region](term:data-region) that the device reads and writes
+// directly. The kernel entries for each request show that the kernel is
+// not on the path of the data: an entry is a wait or a wake, and one entry
+// serves many requests when several are in flight.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("disk")` in the console. The window has one row for each of the
+// five measures: a read or a write, the blocks in each request, the
+// requests in flight, a bar of the blocks in one second, and a bar of the
+// kernel entries of this program and of the block service for 100
+// requests. Its lines in the log:
+//
+// - `disk: ok, the disk has <count> blocks, 64 blocks in one request at
+//   most`;
+// - one line for each measure: `disk: read, 1 block in each request, 32 in
+//   flight: <rate> blocks in one second, ...`;
+// - `disk: a read of 2 blocks from the last block: ...`, the error record of
+//   a read past the end of the disk, which the program checks field by
+//   field;
+// - `disk: ok, 5 measures, 0 errors, write then read back: 0 wrong`, or
+//   `disk: wrong: ...`.
+//
+// **Its grant**: **Scratch_Disk**: a block service of the
+// [disk of the measures](term:disk-of-the-measures), and its block ring.
+// The disk holds no data of a program, so the measure writes over it. The
+// program has no store and no other disk.
+//
+// **What it does not prove.** The numbers are those of virtio under QEMU on
+// the host of the run, not of a real disk: they are printed as measures,
+// and no test compares them to a bound. The measures use the first 4096
+// blocks (16 MiB) of the disk only.
 package disk
 
 import "contract:block"
@@ -58,7 +93,7 @@ measures := [?]Measure {
 blocks: ring.Ring
 region: [^]u8
 disk_blocks: u64
-wrong: u64 // Blocks that did not read back as written.
+wrong: u64 // The bytes of the check that did not read back as written, and its requests that failed.
 statistics_tag: u32 = 1 << 31
 
 // request sends one command, and waits for room if the queue is full.
@@ -97,10 +132,17 @@ call :: proc "contextless" (command: block.Command, values: [7]u64 = {}) -> ring
 	}
 }
 
+// service_entries gives the kernel entries of the block service so far,
+// from the command `Statistics`.
 service_entries :: proc "contextless" () -> u64 {
 	return call(.Statistics).values[2]
 }
 
+// run does one measure for one second: it keeps `measure.depth` requests
+// in flight, each of `measure.blocks` blocks, at places that walk the first
+// 4096 blocks of the disk. It writes the rate, the kernel entries of the
+// two programs for 100 requests, and the failed requests into the record,
+// and one line on the log.
 run :: proc "contextless" (measure: ^Measure) {
 	command := measure.write ? block.Command.Write : block.Command.Read
 	next: u64 // The number of the next request.
@@ -144,8 +186,10 @@ run :: proc "contextless" (measure: ^Measure) {
 	system.log("disk: ", measure.write ? "write" : "read", ", ", measure.blocks, measure.blocks == 1 ? " block" : " blocks", " in each request, ", u64(measure.depth), " in flight: ", measure.rate, " blocks in one second, kernel entries for 100 requests: ", measure.client, " of this program, ", measure.service, " of the block service, ", measure.errors, " errors")
 }
 
-// check writes a pattern in 256 blocks, flushes, reads the blocks back in
-// another part of the region and compares.
+// check writes a pattern in 128 blocks after the blocks of the measures,
+// flushes, reads the blocks back into the second half of the region, and
+// compares each byte. Each failed request and each wrong byte adds 1 to
+// `wrong`.
 check :: proc "contextless" () {
 	COUNT :: 128
 	for index in 0 ..< COUNT * block.BLOCK_SIZE {
@@ -246,6 +290,27 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.window_frame_end(&drawing, &frame, window)
 }
 
+// entry runs the measures once, shows them, then keeps the window open
+// until the program is stopped.
+//
+// **What it does**, in order:
+//
+// 1. It opens a window, the block ring, and a data region of 256 pages
+//    (1 MiB, contiguous: the device reads and writes it).
+// 2. It gives the data region to the block service through the block ring,
+//    and sends `Attach`. The block service maps the ring when it starts; the
+//    program tries again each millisecond, until the hang bound.
+// 3. It asks `Info` for the size of the disk.
+// 4. It runs each of the five measures for one second (`run`).
+// 5. It writes a pattern, flushes, reads it back and compares (`check`).
+// 6. It reads 2 blocks from the last block of the disk, and checks the
+//    error record of the refusal: kind `Out_Of_Range`, argument 1, value
+//    the count of blocks + 1, limit the count of blocks.
+// 7. It writes the summary line, then draws the window at each event.
+//
+// **The stop**: with no window, no block ring, no data region, no block
+// service, or a refused `Attach`, it writes the reason on the log and stops
+// with the code 1. Else it never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "disk")

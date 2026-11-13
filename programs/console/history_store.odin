@@ -2,7 +2,7 @@ package console
 
 // The line history across a stop (docs/CONSOLE.md, section 6). The history
 // is the state of the console: it goes to a store of its own in the
-// storage service, apart from the private store that the person fills.
+// storage service, apart from the private store that the principal fills.
 // The root service gives the connection (Root_Command.Connect_History):
 // that store and no other one, with a limit of 4 blocks.
 //
@@ -14,7 +14,7 @@ package console
 //              thread adds no line meanwhile. One commit for each line
 //              added: a held Enter adds one line at most (an empty line
 //              and the newest line again add nothing), so the commits
-//              follow the lines that the person types. Before shutdown()
+//              follow the lines that the input types. Before shutdown()
 //              and stop("console"), whose save after the line never comes.
 //
 // A line of the file is data that this run did not write: the read checks

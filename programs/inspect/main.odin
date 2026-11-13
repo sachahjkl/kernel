@@ -1,21 +1,57 @@
 // A developer tool: the memory and the execution of one program, live
 // (docs/TOOLS.md).
 //
-// The person chooses a program in the list at the left: up and down, a
-// click, or letters that filter the list. The window shows the address
-// space of the program as one band and a table, its modules, its threads
-// with the state of the scheduler, and the stop report of a program that
-// stopped on a fault, each address as "module + offset", or with the debug
-// image as the procedure and its source line. A sample of the
-// reports of the kernel comes each 250 ms; a value that changed is drawn in
-// the color of the boot program for one sample. Space freezes the sample.
-// Tab shows the bytes of the memory of this program itself (hex.odin).
+// **What it is for.** A reader who wants to see how one program runs: where
+// its memory is, which modules it holds, what its threads do now, and
+// where it stopped if it faulted. It shows that a
+// [developer tool](term:developer-tool) needs no special access: it reads
+// the reports of the kernel with a [grant](term:grant), the same reports
+// that any holder of the machine with **Inspect** can ask for, and it
+// changes nothing.
 //
-// The program holds the machine with the right Inspect, the boot image (the
-// names of the modules and their exports) and the debug image (the names
-// of the procedures and the source lines), and nothing more: it reads
-// reports, it changes nothing, and it reads no byte of another program.
-// It also serves the same facts as tables (exports.odin).
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("inspect")` in the console. The window has a list of the programs
+// at the left. The input chooses one: Up and Down, a click, or letters that
+// filter the list. The window then shows, for that program:
+//
+// - its address space, as one band scaled by address and as a table: each
+//   mapping, its kind (module code, module data, thread area, device,
+//   shared memory...), its pages and the pages that have a page frame;
+// - its modules: the name in the boot image, the hash, the base, the size;
+// - its threads, with the state of the scheduler: the processor, the
+//   weight, the virtual time, the lag, the word wait;
+// - the [stop report](term:stop-report) of a program that stopped on a
+//   fault, each frame as its procedure and its source line when the
+//   [debug image](term:debug-image) names it, else as `module + offset`.
+//
+// A sample of the reports comes each 250 ms; a value that changed is drawn
+// in the color of the boot program for one sample. Space freezes the
+// sample. Tab shows the bytes of the memory of this program itself
+// (`hex.odin`). The log gets `inspect: ok, <count> programs; ...` at the
+// start.
+//
+// **Its grants**: **Inspect** (the machine handle that reads the reports),
+// **Image** (the names of the modules and their exports), **Debug_Image**
+// (the names of the procedures and the source lines), and **Serve** (its
+// exports). Nothing more: it reads reports, it changes nothing, and it reads
+// no byte of another program.
+//
+// **Its exports** (`exports.odin`) give the same facts as tables, to a
+// caller that [acts for the principal](term:acts-for-the-principal):
+// `mappings`, `threads` and `modules`, each for one program by its name.
+//
+// ```
+// connect("inspect")
+// inspect.threads("console")
+// ```
+//
+// **What it does not show.** The bytes of another program: no report gives
+// them, and the system has no right that reads them. A program is chosen by
+// its slot and its serial, not by its name, in the window; the exports
+// take a name, and of two programs with one name they give the one in the
+// lowest slot. The
+// design is in docs/TOOLS.md, "The program `inspect`", and "What `inspect`
+// does not read: the bytes of another program".
 package inspect
 
 import op "contract:operation"
@@ -334,6 +370,25 @@ key :: proc "contextless" (event: display.Event) {
 	}
 }
 
+// entry opens the window of `inspect` and runs its loop: one sample of the
+// reports each 250 ms, until the program is stopped.
+//
+// **What it sets up**: a window of `WIDTH` by `HEIGHT` pixels; the machine
+// handle with **Inspect**; the boot image and the debug image, read-only;
+// the service ring of its exports; the hex view of its own memory. The first
+// program that it shows is `inspect` itself. It writes
+// `inspect: ok, <count> programs; up, down, letters: choose; ...` on the
+// log.
+//
+// **The loop.** It draws the window, then waits for an event of the window
+// or a call until the time of the next sample. A key or a click in the
+// list changes the chosen program and draws again at once. A call runs
+// between two samples. At the time of the sample it takes a new sample, or,
+// when Space froze the sample, it only reads the list of the programs
+// again.
+//
+// **The stop**: with no window, it stops with the code 1. Else it never
+// returns: `stop("inspect")`, or the close button of its window, ends it.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "inspect")
@@ -347,7 +402,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	debug_names = system.debug_names_of(ctx)
 	service, _ = system.service_open(ctx)
 	hex_start()
-	// The first program: this one, until the person chooses.
+	// The first program: this one, until the input chooses.
 	list_read()
 	for &item in entries[:entry_count] {
 		if system.name_of(item.name[:]) == "inspect" {

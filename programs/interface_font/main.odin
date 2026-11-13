@@ -7,6 +7,24 @@
 // The two glyph caches are resources of the boot image that the root
 // service maps read-only at their fixed ranges (display.interface_font_open
 // validates them). The labels of the window are the text of the system.
+//
+// **What it is for.** It shows the [interface font](term:interface-font)
+// as the system draws it: [text shaping](term:text-shaping) with the
+// [pair adjustments](term:pair-adjustment) of the font, glyphs at a
+// [subpixel position](term:subpixel-position), and the
+// [glyph caches](term:glyph-cache) that the build computes once. A reader
+// compares a pair with and without its adjustment, and one word at three
+// positions of a pixel.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("interface_font")` in the console. The log gets the time of
+// shaping and of drawing one line, then `interface_font: ok, B612 Regular
+// and Bold, <count> and <count> pairs, ...`. With no valid glyph cache in
+// the boot image, it writes `interface_font: the boot image gives no valid
+// cache of the interface font`.
+//
+// **Its grants**: none. The root service maps the glyph caches into each
+// program that it starts.
 package interface_font
 
 import "contract:glyph_cache"
@@ -162,6 +180,10 @@ measure :: proc "contextless" () {
 	}
 }
 
+// entry opens the window, opens the glyph caches of the interface font,
+// measures one line, writes the lines on the log, then draws the window at
+// each event until the program is stopped. With no window, it stops with
+// the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "interface_font")

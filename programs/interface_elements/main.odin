@@ -11,6 +11,23 @@
 // window: a frame where nothing changed, a frame where one number changed,
 // a frame where everything moved, and the whole frame drawn with no
 // comparison. The log has the numbers.
+//
+// **What it is for.** It is the catalog of the
+// [elements](term:element) of the [interface package](term:interface-package),
+// each in its live state, and the measure of
+// [damage by difference](term:damage-by-difference): a frame is a
+// [draw table](term:draw-table) that the package compares with the table
+// of the frame before, and only the rectangles that differ are drawn again.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("interface_elements")` in the console. The input can press the
+// button, choose a line of the list, and type in the text input; the
+// second card shows the cost of each frame. The log gets one line for each
+// measured frame (`interface_elements: <frame>: <count> records, <count>
+// damage rectangles, ...`), the time of one whole frame, then
+// `interface_elements: ok, ...`.
+//
+// **Its grants**: none. A window is all that it needs.
 package interface_elements
 
 import "support:display"
@@ -208,6 +225,10 @@ measure_fonts :: proc "contextless" (window: ^display.Window) {
 	system.log("interface_elements: one whole frame, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, " us, the interface font ", least[1] / 1000, " us")
 }
 
+// entry opens the window, runs the four measures of the damage by
+// difference and the measure of one whole frame, writes them on the log,
+// then draws a frame at each event of the window until the program is
+// stopped. With no window, it stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "interface_elements")

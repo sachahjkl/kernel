@@ -12,6 +12,24 @@
 // empty. A thread that first reads the counters for a short time
 // (system.wait_spin) finds most of the time that the other thread
 // continued.
+//
+// **What it is for.** It shows that a [ring](term:ring) is a
+// non-blocking queue in shared memory: the records move with no kernel
+// entry, and the count of kernel entries for one million records shows
+// how rarely a thread must wait.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("flow")` in the console. The window shows the four measures: the
+// records in one second, and the kernel entries for one million records.
+// The log gets one line for each measure (`flow: capacity 32, wait at
+// once: <rate> records in one second, ...`), then `flow: ok, 4 measures, 0
+// records lost`, or `flow: wrong: ...`.
+//
+// **Its grant**: **Inspect**: the machine handle reads the kernel entries
+// of this program, which the measure counts.
+//
+// **What it does not prove.** The rates are measures of the host of the
+// run, printed and never compared to a bound.
 package flow
 
 import "support:display"
@@ -192,6 +210,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.window_frame_end(&drawing, &frame, window)
 }
 
+// entry finds its own slot with the machine handle, runs the four measures
+// (`run`), and writes the summary line. A measure is wrong when a record is
+// lost or when the program found no slot. The program then keeps its
+// window open until it is stopped; with no window, it stops with the code
+// 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "flow")

@@ -7,6 +7,24 @@
 // then frees them: each page returns. Then it takes a part of its budget
 // for a new budget, and closes it: what the new budget held returns, and
 // this budget pays for the objects that live.
+//
+// **What it is for.** It shows that memory is supplied by the caller: a
+// [budget](term:budget) is a handle that pays for each page, each program
+// and each thread, and the kernel refuses with `No_Budget`, never with a
+// hidden allocation, when it cannot pay. It also shows that a program can
+// split its budget, and that a closed budget gives back what it held.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("budget")` in the console. The window has one row for each step,
+// with its answer: the pages of the budget from the root service; memory
+// objects of 64 pages until `No_Budget`, then all of them closed; threads
+// until `No_Budget`; a part of the budget given to a new budget, then that
+// budget closed. The log gets `budget: ok, <count> memory objects then no
+// budget, <count> threads then no budget, each page returned`, or
+// `budget: wrong answer: ...` for a step that gave another answer.
+//
+// **Its grants**: none. Its budget from the root service holds 1024 pages,
+// 1 program and 4 threads: the limits that the steps reach.
 package budget
 
 import "support:display"
@@ -77,6 +95,11 @@ wait_release :: proc "c" (parameter: rawptr) -> ! {
 	system.thread_stop()
 }
 
+// entry runs each step of the demonstration once, writes the summary line,
+// then keeps the window open until the program is stopped. Each step checks
+// its answer against the budget that it read before (`system.budget_read`):
+// the count of objects that the pages pay for, the pages left, and each
+// page back after the close. With no window, it stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "budget")

@@ -23,6 +23,25 @@
 //
 // The program needs the machine with the right Inspect (its own mappings)
 // and the boot image (its child).
+//
+// **What it is for.** A program that manages its own memory (an arena, a
+// sparse table, a stack with a guard) needs to reserve addresses with no
+// memory behind them, [commit](term:committed-page) and
+// [decommit](term:decommit) pages, change their
+// [protection](term:page-protection), and use
+// [large pages](term:large-page). This program does each of these with the
+// kernel operations of the virtual memory, and checks that the budget pays
+// only for what the program uses, and gets each page back.
+//
+// **How to start it.** From the menu of the programs, or with
+// `start("address_space")` in the console.
+//
+// **Its budget** from the root service holds 40960 pages and 2 programs:
+// 64 MiB of large pages, two ranges of 1 GiB with their page tables, and
+// the child of the guard page.
+//
+// **What it does not prove.** The times (a commit, a shoot-down, a read
+// through large pages) are measures of the host of the run.
 package address_space
 
 import "contract:fixed_addresses"
@@ -1306,6 +1325,12 @@ frame_draw :: proc "contextless" (window: ^display.Window) {
 	interface.window_frame_end(&drawing, &frame, window)
 }
 
+// entry runs each case once, checks its counts against the budget and the
+// mappings that the kernel reports, writes one log line for each case and
+// the summary (`address_space: ok, ...` or `address_space: wrong: <the
+// first problem>`), then keeps the window open until the program is
+// stopped. When the context names the role of the child, it only writes
+// down its stack into the guard page, and the kernel stops it there.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if ctx.values[VALUE_ROLE] == 1 {

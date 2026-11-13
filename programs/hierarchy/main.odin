@@ -1,6 +1,21 @@
 // A test of the trees of a store (docs/STORAGE.md): many entries in trees inside trees, a listing in pages, a rename, the removal of a tree, and a handle on a part of the store that reaches nothing outside it.
 //
 // The first run (an empty store) makes 100 trees of 10 trees of 100 objects, one commit for each 100 entries, and checks each case. The second run, on the same disk after a new start of the machine, checks the counts and the contents that the first run left. Each case ends with a line "...: as it must", or a line "WRONG". The times are measures: no case checks a speed.
+//
+// **What it is for.** It checks that a [store](term:store) holds a large
+// [tree](term:tree) of entries across a restart of the machine, and that a
+// handle on a part of the store reaches nothing outside that part. A
+// program sees only its [private store](term:private-store); inside it, a
+// tree is the unit that a program lends to a part of itself.
+//
+// **What a reader sees.** It has no window and no menu line: the machine
+// test starts it with `start("hierarchy")` on a machine with a data disk,
+// two times. Each case writes one log line, `hierarchy: <case>: as it
+// must`, or `hierarchy: WRONG: <case>` at the level error. The first run
+// writes `hierarchy: a new store: the first run`, and the time to make the
+// 100 000 objects.
+//
+// **Its grant**: **Store**, its private store in the storage service.
 package hierarchy
 
 import "contract:errors"
@@ -393,6 +408,13 @@ second_run :: proc "contextless" (counts: storage.Usage) {
 	outcome(total_objects == expected && contents_good == TOP_TREES - 2 && moved_parts == PARTS && found_moved, "after the remount: ", i64(total_objects), " objects listed in the parts, ", i64(contents_good), " contents byte for byte, the renamed tree and object in their places, in ", system.time() - start, " ms")
 }
 
+// entry connects to the private store and reads its usage. On an empty
+// store it runs the first run: it makes the trees, then checks each case.
+// On a store that the first run filled it runs the second run: it checks
+// the counts and the contents. Each case writes its line on the log. The
+// program then stops with the code 0 when each case held, else 2. With no
+// store or no usage, it writes `hierarchy: WRONG: no store` (or `no usage`)
+// at the level error, and stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ok: bool

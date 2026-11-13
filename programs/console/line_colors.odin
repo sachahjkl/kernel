@@ -2,7 +2,7 @@ package console
 
 // The colors of the code of the console (docs/CONSOLE.md, section 7): the
 // edit line at each key, the line that the console writes back when the
-// person enters it, and the rows of the completion list. The scanner of
+// input enters it, and the rows of the completion list. The scanner of
 // support/console_language gives what each part is; the console gives the
 // roles of its names; the terminal maps each kind to a color.
 
@@ -52,7 +52,7 @@ edit_runs :: proc "contextless" (text: string, caret: int, runs: []terminal.Code
 	return console_language.line_runs(text, len(PROMPT), caret, console_names, runs)
 }
 
-// echo_write writes the line that the person entered, after the prompt, as
+// echo_write writes the line that the input entered, after the prompt, as
 // runs of text with the kind of each part: the terminal keeps it with its
 // colors. A part with no kind is in the tone Strong, as the whole line was.
 // The caller holds output_lock.

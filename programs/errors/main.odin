@@ -3,6 +3,63 @@
 // The cases: kernel operations that the kernel refuses (a right, a handle that was revoked or closed, a budget that cannot pay, an address, a size, a flag); loads that fail (a missing import, a replacement that fails its check); a direct call of a module export that fails; isolated calls of the storage service that fail; and a program that faults three calls deep, with its stack trace.
 //
 // The program runs each case at its start. A key from a to y, or a click on a case, runs it again.
+//
+// **What it is for.** In this system an error is a value, not a number to
+// look up: each failed call gives an [error record](term:error-record) with
+// an [error kind](term:error-kind), the argument that caused it, the value
+// that it had and the limit that it passed, and the console writes it as a
+// sentence. This program makes 25 real errors, one of each family, and
+// checks that each one gives the record that the contract states
+// (docs/MODULE_CONTRACT.md, "8. Errors that diagnose"). There is no global
+// last error: the record comes back with the call.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("errors")` in the console. The window lists the cases on two
+// pages (Tab shows the other page): for each one, what the program does,
+// the kind that it expects, and the sentence of the record that it got, in
+// the color "failed" when the answer is not the expected one. The log has
+// one line for each case (`errors: a map the boot image to write: ...`),
+// then `errors: ok, 25 cases, each with the expected error record`, the
+// [stack trace](term:stack-trace) of the fault case, a case under
+// contention, and the measures of the cost of an error.
+//
+// **The families of cases:**
+//
+// - kernel operations that the kernel refuses: a right, a handle that was
+//   revoked or closed, a handle of the wrong kind, a number that names no
+//   handle, a budget that cannot pay, an address in the kernel half, a name
+//   too long, an unknown flag, an unknown operation, the pages of another
+//   program;
+// - [load errors](term:load-error): a missing import, a
+//   [replacement](term:replacement) that fails its check;
+// - a [direct call](term:direct-call) of a module export that fails
+//   (`square_root(-4)` of the module `math`);
+// - calls of the storage service that fail: an empty name, a name too
+//   long, a zero byte, a write over the limit of the store, an absent name;
+// - the other families of calls: a wrapper of support/system, a ring of
+//   the root service, an export of a service (`tally.add`);
+// - a fault three calls deep, with its stack trace from the
+//   [debug image](term:debug-image).
+//
+// **The case under contention.** Two threads make failures on handles that
+// a third thread closes and makes again, for a short time. Each record
+// must explain its status; a record of the kind `Refused` (its cause was
+// gone when the kernel read the state again) must stay rare.
+//
+// **The measures**, printed and never compared to a bound: a kernel
+// operation that succeeds and one that fails with its record; a direct
+// call that succeeds and one that fails; a refused `Log` over the limit of
+// a budget, measured by a child (a copy of this program with no log
+// records in its budget); a refused `Memory_Create`, with the takes of the
+// locks of the kernel.
+//
+// **Its grants**, one for each family: **Store** (the cases of the storage
+// service), **Image** (load modules, and start its child and the program
+// `fault`), **Inspect** (the counts of the locks, the pages of another
+// program), **Connect** (ask the root service for a connection that it
+// refuses: the root service lets it call no service), and **Debug_Image**
+// (the names of the stack trace). Its log handle has the right Give, for
+// its child.
 package errors_program
 
 import "contract:errors"
@@ -505,7 +562,8 @@ case_fault :: proc "contextless" (writer: ^system.Writer) -> bool {
 	return report.code == op.STOP_CODE_FAULT + 14 && all_in_fault
 }
 
-// case_run runs the case of an index.
+// case_run runs the case of an index, writes the sentence of its error
+// record, and says if the call failed with the expected kind.
 case_run :: proc "contextless" (index: int, writer: ^system.Writer) -> bool {
 	switch index {
 	case 0:
@@ -830,6 +888,31 @@ FAULT_CASE :: 18
 // The random generator of this program (support/random).
 program_generator: random.Generator
 
+// entry runs every case once, then the measures, then shows the cases in
+// a window until the program is stopped.
+//
+// **When it is the child** (the value `VALUE_CHILD` of its context is not
+// 0), it only runs the refused `Log` operations of the measure (`child`)
+// and stops with the code 0.
+//
+// **Else, in order:**
+//
+// 1. It opens its window, and maps the boot image and the debug image.
+// 2. It connects to its private store, loads the modules `math` and
+//    `tally`, and opens the ring of the root service.
+// 3. It runs each case (`run`) and writes one log line for each, then the
+//    summary: `errors: ok, 25 cases, each with the expected error record`,
+//    or the count of the cases that gave another answer.
+// 4. It runs the case under contention (`contend`), then the measures
+//    (`measure`, `families_measure`, `refusals`), and writes the times in
+//    nanoseconds.
+// 5. It draws the window at each event. Tab shows the other page; a key
+//    from `a` to `y`, or a press on a case, runs that case again and writes
+//    its new sentence.
+//
+// **The stop**: with no random seed or no window, it stops with the code 1.
+// Else it never returns. A wrong case does not stop it: the log says
+// `WRONG:` before the sentence.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random generator of this program, from the seed that its starter

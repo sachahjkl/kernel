@@ -1,10 +1,65 @@
-// The compositor (docs/ARCHITECTURE.md, U8): the service that owns the
+// The compositor (docs/ARCHITECTURE.md, "U8. Graphics: WebGPU library and compositor"): the service that owns the
 // display. It combines the surfaces of programs into the framebuffer, and it
 // sends input to the program that has focus. It is also the desktop shell of
 // this first version: a bar with the menu of the programs and the menu of
-// the windows, and windows that the person moves. It follows the design
+// the windows, and windows that the input moves. It follows the design
 // rules (docs/DESIGN.md): rectangles only, the grid of 8 pixels, the colors
 // of support/graphics.
+//
+// **What it is for.** No program writes to the screen. A program asks the
+// compositor for a [surface](term:surface): memory that the program and the
+// compositor share. The program draws into it and sends `Present`; the
+// compositor copies the changed rectangle into its frame, then the frame to
+// the framebuffer. The compositor is the only holder of the framebuffer and
+// of the ring of the [input service](term:input-service), so no program
+// reads the keys of another window or draws over it.
+//
+// **What a reader sees.** The whole screen: the background with its grid
+// of points, the [bar](term:bar) at the top (the
+// [menu of the programs](term:menu-of-the-programs), the
+// [menu of the windows](term:menu-of-the-windows), the hint of the
+// [launcher](term:launcher), the date and the time), the windows with their
+// [title bar](term:title-bar) and their close button, and the
+// [pointer](term:pointer). The input can:
+//
+// - press a line of the menu of the programs: the compositor asks the root
+//   service to start that program;
+// - press the key super: the launcher opens; typed letters filter the names
+//   of the programs, and Enter starts the chosen one;
+// - drag a title bar: the window moves; a press on a window brings it to the
+//   front and gives it the [focus](term:focus);
+// - press the close button: the root service stops the program.
+//
+// The keys go to the window in front, unless the launcher is open.
+//
+// **Its lines in the log**: `compositor: ok <width>x<height>` at the start,
+// `compositor: first frame`, then, on the channel `surfaces`, one line for
+// each new surface, each move and each window brought to the front, the
+// time of a full frame, and the events of the launcher.
+//
+// **How it starts.** The root service starts it at each boot, after the
+// input service and before the console. Its context is not the context of
+// the other programs: the handles 0 to 2 are the framebuffer, the ring of
+// the input service, and a control ring to the root service; the values 0
+// to 3 are the width, the height, the pixels of a line and the pixel format
+// of the screen. The root service also maps its own file (for its exports),
+// two [pointer themes](term:pointer-theme), the
+// [settings page](term:settings-page), the glyph caches and the
+// [date page](term:date-page). It has no grant of `grants_of`: the root
+// service gives these handles by name.
+//
+// **Its exports**: `pointer` and `windows`, to a caller that
+// [acts for the principal](term:acts-for-the-principal) (`exports.odin`).
+// The machine test reads them through the remote service before each press,
+// so that a press lands where the scenario wants it.
+//
+// **What it does not prove.** The compositor draws with the processor,
+// into memory: it is not the graphics interface of the system, which is
+// WebGPU with WGSL and is not built. A full frame of the screen takes a few
+// milliseconds of one processor; the log gives the measure.
+//
+// The design of the desktop is in docs/DESIGN.md, "9. The desktop"; the
+// pointer is in docs/POINTERS.md.
 package compositor
 
 import "support:display"
@@ -96,14 +151,14 @@ damage: [DAMAGE_CAPACITY]Rectangle // The parts of the screen that the next fram
 damage_count: int
 frames: u64
 // The measures of the time of a frame (docs/DESIGN.md, section 7). A full
-// frame draws the whole screen: the first frame, and the frame after a
-// person puts a window down. The frames of a move are the frames while a
-// person drags a window.
+// frame draws the whole screen: the first frame, and the frame after the
+// input puts a window down. The frames of a move are the frames while the
+// input drags a window.
 full_measure: bool // The next frame draws the whole screen, and the log has its time.
 move_frames, move_time, move_longest: u64 // Nanoseconds.
 // The launcher: the panel that the key super opens (docs/DESIGN.md, section 9).
 launcher_open: bool
-typed: [bar.TYPED_CAPACITY]u8 // The part of a name that the person typed.
+typed: [bar.TYPED_CAPACITY]u8 // The part of a name that the input typed.
 typed_count: int
 matches: [len(bar.names)]int // Indexes in bar.names: the names that contain the typed part.
 match_count: int
@@ -182,7 +237,7 @@ damage_menu_of :: proc "contextless" (layout: bar.Layout) {
 // fonts (docs/DESIGN.md, section 5): the names (the buttons of the bar, the
 // lines of the menus, the titles of the windows, the names of the
 // launcher, a hint) in the interface font; the values (the clock, the date,
-// the text that the person types, a count) in the font of the cells. The
+// the text that the input types, a count) in the font of the cells. The
 // interface font is the one of support/display (interface_font_load); with
 // none, or with the setting Spleen 8x16, each text is in the font of the
 // cells with the same layout rules.
@@ -322,6 +377,38 @@ canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
 	return {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = width}
 }
 
+// entry starts the compositor and runs its one loop: it draws the screen
+// until the machine stops.
+//
+// **What it sets up**: the framebuffer, the ring of the input service and
+// the control ring of the root service; the frame and the background,
+// each the size of the screen; the mark of the bar; the pointer theme; the
+// service ring of its exports; the text settings and the interface font.
+// It writes `compositor: ok <width>x<height>` and the measures of the bar
+// and of a title bar.
+//
+// **The loop.** One wait covers the control ring, the input ring, the
+// service ring, the ring of each window and the change count of the
+// settings page. The deadline is the next frame when the screen has
+// damage, else the next second of the clock in the bar, or the next frame
+// of an animated pointer. After the wait, in this order:
+//
+// 1. A change of the settings: the new font, the new pointer theme, and an
+//    event to each window, which draws again.
+// 2. The control ring: a window to add or to remove.
+// 3. The input ring: a key goes to the launcher, or to the window in
+//    front; a move or a button of the pointer moves the pointer, drags a
+//    window, opens a menu or starts a program.
+// 4. The calls of `pointer` and `windows`, after the input, so that they
+//    give the place of now.
+// 5. The ring of each window: `Surface_Create`, `Present` (the changed
+//    rectangle becomes damage), and `Pointer_Shape`.
+// 6. A frame, at most one each 16 ms, when the screen has damage.
+//
+// **The stop.** With no framebuffer or no ring, the compositor writes
+// `compositor: no framebuffer` and stops with the code 1. Without the
+// memory of its frame, it writes `compositor: no memory` and stops. Else it
+// never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	width := int(ctx.values[VALUE_WIDTH])
@@ -357,7 +444,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	full_measure = true
 	system.log("compositor: ok ", u64(width), "x", u64(height))
 	service_start(ctx) // exports.odin
-	// The text of the desktop: the settings of the person and the glyph cache
+	// The text of the desktop: the settings of the principal and the glyph cache
 	// (contract:settings); a change of the settings wakes this loop.
 	display.text_settings_open(ctx)
 	display.interface_font_load(ctx)
@@ -643,7 +730,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 			clients[dragging].x, clients[dragging].y = bar.dragged_window_place(pointer_x, pointer_y, drag_x, drag_y, window_frame_of(&clients[dragging]), screen.width, screen.height)
 			damage_window(&clients[dragging])
 		} else {
-			// The person put the window down: the log has its new place.
+			// The input put the window down: the log has its new place.
 			client := &clients[dragging]
 			system.log_in("surfaces", .Info, "compositor: window ", system.name_of(client.title[:]), " moved to ", u64(max(client.x, 0)), ",", u64(client.y))
 			system.log_in("surfaces", .Info, "compositor: the move of ", system.name_of(client.title[:]), ": ", move_frames, " frames, ", move_time / max(move_frames, 1) / 1000, " us per frame, ", move_longest / 1000, " us the longest")

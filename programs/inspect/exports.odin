@@ -28,7 +28,7 @@ Mapping :: struct {
 // One thread of a program: threads().
 Thread :: struct {
 	number:    i64, // The thread area.
-	state:     [8]u8, // ready, waiting or stopped.
+	state:     [8]u8, // created, ready, waiting or stopped.
 	processor: i64, // 1 + the processor that runs it. 0: none.
 	home:      i64, // The processor of its run queue.
 	weight:    i64,
@@ -77,6 +77,37 @@ program_find :: proc "contextless" (name: ^string, error: ^errors.Error_Record) 
 }
 
 // mappings gives one row for each mapping of the program with this name, in the order of the addresses: the address, the module and the offset when a module holds it, the pages, the pages with a page frame, the kind, the rights, the memory object and how many handles and mappings name it. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-2, no program has this name); Absent (-3, a new program took the slot during the call, three times).
+//
+// **What it is for.** It shows where the memory of a program is and what
+// holds it: the code and the data of each module, the thread areas, the
+// device memory, the memory that two programs share. A caller compares two
+// rows by `object`: one serial is one [memory object](term:memory-object).
+//
+// **Parameter**: `program`, the name of a program that runs, as
+// `programs()` lists it (at most 31 bytes). If two programs have that name,
+// the one in the lowest slot answers.
+//
+// **Grant**: the caller must **act for the principal**: the facts are of
+// another program, and a program sees no other program.
+//
+// **A row** (`Mapping`): `address`; `module` and `offset` when a module
+// record holds the address; `pages`; `present`, the pages with a page
+// frame; `kind`; `rights`, as `r`, `w`, `x` or `-`; `object`, the serial of
+// the memory object; `names`, the handles and mappings that name it in all
+// programs.
+//
+// **Errors**:
+//
+// - `No_Grant` (-1): the caller does not act for the principal.
+// - `Absent` (-2): no program has this name, or the name has 32 bytes or
+//   more.
+// - `Absent` (-3): a new program took the slot between the two reports of
+//   the call, three times in a row.
+//
+// ```
+// connect("inspect")
+// where(inspect.mappings("console"), "kind", "shared")
+// ```
 @(export, link_name = "mappings")
 mappings :: proc "c" (program: ^string, result: ^[]Mapping, error: ^errors.Error_Record) -> i64 {
 	slot, failure := program_find(program, error)
@@ -125,6 +156,30 @@ thread_states := [op.Program_State]string {
 }
 
 // threads gives one row for each thread of the program with this name: its thread area, its state, the processor that runs it and its home queue, its weight and its request, its virtual time and its lag, its processor time, the words of its word wait and the end of its wait. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-2, no program has this name).
+//
+// **Parameter**: `program`, the name of a program that runs, as
+// `programs()` lists it (at most 31 bytes). If two programs have that name,
+// the one in the lowest slot answers.
+//
+// **Grant**: the caller must **act for the principal**: the facts are of
+// another program, and a program sees no other program.
+//
+// **A row** (`Thread`): `number`, the thread area; `state` (`ready`,
+// `waiting`, `stopped`, or `created` before its first run); `processor`, 1 +
+// the processor that runs it, or 0; `home`, the processor of its run queue;
+// `weight` and `request` (docs/SCHEDULING.md); `virtual` and `lag`, the
+// state of the fair strategies; `time`, milliseconds of processor time;
+// `words`, the words of its word wait; `deadline`, the end of its wait in
+// milliseconds since the start, or -1. The kernel reads these fields with no
+// lock: each field is whole, two fields can come from two instants.
+//
+// **Errors**: `No_Grant` (-1), the caller does not act for the principal;
+// `Absent` (-2), no program has this name.
+//
+// ```
+// connect("inspect")
+// inspect.threads("console")
+// ```
 @(export, link_name = "threads")
 threads :: proc "c" (program: ^string, result: ^[]Thread, error: ^errors.Error_Record) -> i64 {
 	slot, failure := program_find(program, error)
@@ -157,6 +212,30 @@ threads :: proc "c" (program: ^string, result: ^[]Thread, error: ^errors.Error_R
 }
 
 // modules gives one row for each module record of the program with this name: the name in the boot image, the hash, the base and the size. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-2, no program has this name).
+//
+// A program holds one module, its own, until a loader puts more in it: the
+// console after `load`, a program with imports. Each row is one
+// [module record](term:module-record) of the kernel: the identity of the
+// code that the program runs.
+//
+// **Parameter**: `program`, the name of a program that runs, as
+// `programs()` lists it (at most 31 bytes). If two programs have that name,
+// the one in the lowest slot answers.
+//
+// **Grant**: the caller must **act for the principal**: the facts are of
+// another program, and a program sees no other program.
+//
+// **A row** (`Module`): `name`, the name in the boot image, or empty when
+// no module of the boot image has the hash; `hash`, the BLAKE3 hash in hex;
+// `base` and `size`, its place in the address space.
+//
+// **Errors**: `No_Grant` (-1), the caller does not act for the principal;
+// `Absent` (-2), no program has this name.
+//
+// ```
+// connect("inspect")
+// inspect.modules("console")
+// ```
 @(export, link_name = "modules")
 modules :: proc "c" (program: ^string, result: ^[]Module, error: ^errors.Error_Record) -> i64 {
 	slot, failure := program_find(program, error)

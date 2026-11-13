@@ -4,9 +4,26 @@
 // name, a text. The program sends no escape sequence: the style of a run
 // is a field of its record. The status has the count of lines.
 //
-// The program has no surface. It reads the keys of the person from its
+// The program has no surface. It reads the keys of the input from its
 // terminal: the key Space stops the lines, and starts them again. While
 // the lines do not move, the program waits for a key and uses no processor.
+//
+// **What it is for.** It shows that a program needs no standard output: it
+// writes typed records to a [terminal](term:terminal) that the root
+// service gave it, each with its runs and their styles, and the terminal
+// draws them. A program that writes as fast as it can shows how the
+// terminal keeps up, and that the program waits with no processor use when
+// it has nothing to do.
+//
+// **What a reader sees.** Start it from the menu of the programs, or with
+// `start("flood")` in the console. The root service starts its terminal
+// with it: a window whose lines scroll fast, with the count of lines in
+// its status. Space stops the lines and starts them again; the log gets
+// `flood: Space: no more lines after <count>` and `flood: Space: the lines
+// continue`.
+//
+// **Its grant**: **Terminal**: the terminal ring and the text region that
+// it shares with its terminal. Nothing else.
 package flood
 
 import "support:system"
@@ -42,6 +59,10 @@ texts := [?]string {
 	"  the queue was full: the writer waited for the reader",
 }
 
+// entry opens the terminal, writes `flood: ok`, then writes numbered lines
+// with no end. Each 256 lines it reads the keys: Space pauses, and
+// while paused it waits for a key with no processor use. With no terminal,
+// it writes `flood: no terminal` and stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	output, ok := terminal.open(ctx)
