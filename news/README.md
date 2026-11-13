@@ -5,7 +5,7 @@ This folder holds the news of the system: one file for each news entry (`docs/GL
 The changelog and the news are two records:
 
 - `CHANGELOG.md` is a technical list for each release: every change, for a developer of the system.
-- A news entry is a dated report in prose of one thing that a person can now see or use, for a reader who is not a developer of the system: a few sentences, one picture, the measured number when there is one, a link to its release and to its guide.
+- A news entry is a dated report in prose of one thing that a reader can now see or use, for a reader who is not a developer of the system: a few sentences, one picture, the measured number when there is one, a link to its release and to its guide.
 
 ## When to write one
 
@@ -44,10 +44,10 @@ The kinds, the colored mark of the card of the entry:
 
 | Kind | What the entry reports |
 |---|---|
-| `Shown` | A person can now see or use a new thing in the running system |
+| `Shown` | A reader can now see or use a new thing in the running system |
 | `Measured` | A number about a thing that exists is measured, with its conditions |
-| `Decided` | A choice of design that a person sees: a name, a mark, a font. The text says what the thing is now, not who chose it |
-| `Fixed` | A thing that a person saw fail now works |
+| `Decided` | A choice of design that a reader sees: a name, a mark, a font. The text says what the thing is now, not who chose it |
+| `Fixed` | A thing that a reader saw fail now works |
 
 The text: at most 1200 bytes; no heading (the title is the heading); no line of HTML. Write in the simplified technical English of the repository: one fact in each sentence, no promotion, no adjective that is not measured, each number with the conditions that its document gives. A longer report belongs in the guide that the entry names. Never write "the owner": a reader of the site does not know that word; say what the thing is now.
 

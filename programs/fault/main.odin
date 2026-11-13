@@ -21,10 +21,7 @@ two :: #force_no_inline proc "contextless" (address: uintptr) {
 	intrinsics.volatile_store(&depth, 2)
 }
 
-// one is the first of the three calls. The functions three and two stay
-// with no comment of their own: the machine test waits for the source lines
-// of the write (in three) and of the call of three (in two), and a line
-// added above them moves both.
+// one is the first of the three calls.
 one :: #force_no_inline proc "contextless" (address: uintptr) {
 	two(address)
 	intrinsics.volatile_store(&depth, 1)

@@ -2423,7 +2423,7 @@ Virtio is the standard of devices that work through queues in shared memory, whi
 
 Virtio makes the first device services short: a virtio device is already a set of queues in memory, so a device service translates between these queues and a ring with little code. The system uses virtio 1 over PCI, the "modern" interface, with no older interface (`disable-legacy=on` in the command of QEMU).
 
-`support/virtio` holds what each virtio device service does the same way: it reads the virtio capabilities in the copy of the configuration, agrees on the features with the device, and drives split queues. A queue takes three pages of the memory of the queues: the descriptors, what the driver gives, what the device used. The block service and the frame service use it.
+`support/virtio` holds what each virtio device service does the same way: it reads the virtio capabilities in the copy of the configuration, agrees on the features with the device, and drives split queues. A queue takes three pages of the memory of the queues: the descriptors, what the driver gives, what the device used. The block service and the frame service use it. A start asks the device for a reset and reads its status until it is 0, at most 1 000 000 times: a device that does not finish its reset makes the device service write "the device did not finish its reset" on the log and stop.
 
 Virtio is not a part of the kernel: the kernel has no code for any device. Virtio is the first class of devices because the system starts on fixed hardware; a device of another class gets its own device service with the same contract.
 

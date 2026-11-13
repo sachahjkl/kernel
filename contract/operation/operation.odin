@@ -309,7 +309,7 @@ Operation :: enum u32 {
 	//   `Large_Pages` that is mapped by whole large pages.
 	// - `flags`: a `Map_Flags`: `Write`, `Execute` (never both: no page is writable and executable), or
 	//   `No_Access`: the pages fault until `Memory_Protect` gives them access. No flag: read only. The
-	//   kernel reads no other bit.
+	//   kernel refuses any other bit.
 	// - `first`: the first page of the object.
 	// - `pages`: the count of pages, or 0 for each page from `first` to the end of the object.
 	//
@@ -322,7 +322,8 @@ Operation :: enum u32 {
 	//   (`Memory_Protect`): such an object has one mapping only.
 	// - `Bad_Address`: the pages are not inside the object; the address is not a multiple of 4096, is below
 	//   4096, ends above `USER_END`, or meets another mapping.
-	// - `Bad_Operation`: `Write` with `Execute`.
+	// - `Bad_Operation`: `Write` with `Execute`; or a flag that the kernel does not know, which it refuses
+	//   before it reads the handles.
 	// - `No_Slot`: the program has 128 mappings, or the kernel finds no free place for the address that it
 	//   chooses.
 	// - `No_Budget`, `No_Memory`: the budget of the program that receives the mapping cannot pay its page

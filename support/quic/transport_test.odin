@@ -652,6 +652,12 @@ random_authentic_packets_never_trap :: proc(t: ^testing.T) {
 	testing.expect(t, closed > 0)
 }
 
+// The first 24 bytes of a preferred_address: 192.0.2.1 port 4433, then
+// 2001:db8::1 port 4433 (addresses of documentation).
+PREFERRED_ADDRESSES :: "c0000201" + "1151" + "20010db8000000000000000000000001" + "1151"
+// The 16 bytes of the stateless reset token of a preferred_address.
+PREFERRED_TOKEN :: "000102030405060708090a0b0c0d0e0f"
+
 // The transport parameters of a peer: each rule of RFC 9000, section 18.2,
 // that a value can break gives TRANSPORT_PARAMETER_ERROR; an unknown
 // parameter is skipped.
@@ -681,6 +687,20 @@ transport_parameters_of_a_peer :: proc(t: ^testing.T) {
 		{"a connection identifier of 21 bytes", .Client, "0f15000102030405060708090a0b0c0d0e0f1011121314", .Transport_Parameter_Error},
 		{"a length past the end", .Client, "0f05aa", .Transport_Parameter_Error},
 		{"disable_active_migration with a value", .Client, "0c0101" + "0f01aa", .Transport_Parameter_Error},
+		// RFC 9000, section 18.2, gives max_udp_payload_size no largest
+		// value: 65528 (80 00 ff f8), one over what UDP carries, is taken.
+		{"max_udp_payload_size of 65528", .Client, "03048000fff8" + "0f01aa", .No_Error},
+		// preferred_address (0d): 24 bytes of addresses and ports, the length
+		// of a connection identifier, the identifier, a token of 16 bytes.
+		// The server names its first identifier (00 01 bb) in each case.
+		{"preferred_address with an identifier of 4 bytes", .Server, "0d2d" + PREFERRED_ADDRESSES + "04" + "c1c2c3c4" + PREFERRED_TOKEN + "0001bb" + "0f01aa", .No_Error},
+		{"preferred_address from a client", .Client, "0d2d" + PREFERRED_ADDRESSES + "04" + "c1c2c3c4" + PREFERRED_TOKEN + "0f01aa", .Transport_Parameter_Error},
+		{"preferred_address cut before its identifier", .Server, "0d10" + "c0000201" + "1151" + "20010db8000000000000" + "0001bb" + "0f01aa", .Transport_Parameter_Error},
+		{"preferred_address one byte short", .Server, "0d2c" + PREFERRED_ADDRESSES + "04" + "c1c2c3" + PREFERRED_TOKEN + "0001bb" + "0f01aa", .Transport_Parameter_Error},
+		{"preferred_address one byte long", .Server, "0d2e" + PREFERRED_ADDRESSES + "04" + "c1c2c3c4" + PREFERRED_TOKEN + "00" + "0001bb" + "0f01aa", .Transport_Parameter_Error},
+		{"preferred_address with an empty identifier", .Server, "0d29" + PREFERRED_ADDRESSES + "00" + PREFERRED_TOKEN + "0001bb" + "0f01aa", .Transport_Parameter_Error},
+		{"preferred_address with an identifier of 21 bytes", .Server, "0d3e" + PREFERRED_ADDRESSES + "15" + "000102030405060708090a0b0c0d0e0f1011121314" + PREFERRED_TOKEN + "0001bb" + "0f01aa", .Transport_Parameter_Error},
+		{"preferred_address from a server with an empty identifier", .Server, "0d2d" + PREFERRED_ADDRESSES + "04" + "c1c2c3c4" + PREFERRED_TOKEN + "0001bb" + "0f00", .Transport_Parameter_Error},
 	}
 	for item in cases {
 		parameters: Transport_Parameters
@@ -1014,6 +1034,132 @@ configurations_that_are_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, error.kind, i64(errors.Kind.Empty))
 	// A failure of TLS for bytes after a change of keys closes with
 	// PROTOCOL_VIOLATION, not with an alert.
-	connection.tls.bytes_after_key_change = true
+	connection.tls.protocol_violation = true
 	testing.expect_value(t, tls_failure_code(connection), u64(Transport_Error.Protocol_Violation))
+}
+
+// expect_record checks the kind, the argument, the value and the limit of an
+// error record, and says all four when one differs.
+expect_record :: proc(t: ^testing.T, name: string, record: errors.Error_Record, kind: errors.Kind, argument: i64, value: i64, limit: i64) {
+	testing.expectf(t, record.kind == i64(kind) && record.argument == argument && record.value == value && record.limit == limit, "%s: kind %d, argument %d, value %d, limit %d; not kind %d, argument %d, value %d, limit %d", name, record.kind, record.argument, record.value, record.limit, i64(kind), argument, value, limit)
+}
+
+// Each error record names the argument at fault as its caller gave it, and
+// the value that the argument had. Before the correction: a weak least seed
+// strength named argument 1 for each caller; a bad length in the facts of a
+// token named the remote; an identifier too long of a Retry gave the limit
+// as its size; an empty token of a Retry gave Too_Small on the buffer; a
+// label or an output of HKDF-Expand-Label named the label with the length of
+// the output; each failure of TLS named the bytes of tls_receive.
+@(test)
+error_records_name_the_argument_at_fault :: proc(t: ^testing.T) {
+	cryptography := module_cryptography()
+	generator: random.Generator
+	// A seed of zeros is refused, and the generator then makes nothing: the
+	// starts below that must work need a generator with a seed.
+	seed: [random.SEED_SIZE]u8
+	for index in 0 ..< random.SEED_SIZE {
+		seed[index] = u8(31 + index)
+	}
+	testing.expect(t, random.generator_seed(&generator, &seed, .Entropy), "the generator of the test has no seed")
+	error: errors.Error_Record
+
+	// The least seed strength of a configuration: argument 3 of the two
+	// starts, argument 5 of server_init.
+	configuration: Connection_Configuration
+	configuration.idle_timeout_milliseconds = 30_000
+	configuration.tls.application_protocol_length = text_into(configuration.tls.application_protocol[:], "kernel-remote")
+	configuration.tls.server_public_key[0] = 1
+	connections := make([]Connection, 1)
+	defer delete(connections)
+	streams := make([]Stream, 1)
+	defer delete(streams)
+	testing.expect(t, !connection_start_client(&connections[0], streams, &configuration, &cryptography, &generator, 0, &error))
+	expect_record(t, "connection_start_client", error, .Bad_Value, 3, 0, i64(random.Seed_Strength.Processor))
+	testing.expect(t, !connection_start_server(&connections[0], streams, &configuration, &cryptography, &generator, 0, &error))
+	expect_record(t, "connection_start_server", error, .Bad_Value, 3, 0, i64(random.Seed_Strength.Processor))
+	server := new(Server)
+	defer free(server)
+	records: [1]Server_Record
+	testing.expect(t, !server_init(server, connections, records[:], streams, &configuration, &cryptography, &generator, SERVER_LIMITS_DEFAULT, &error))
+	expect_record(t, "server_init", error, .Bad_Value, 5, 0, i64(random.Seed_Strength.Processor))
+
+	// The facts of a token are argument 5 of retry_token_make.
+	key: [RETRY_TOKEN_KEY_SIZE]u8
+	token: [RETRY_TOKEN_SIZE]u8
+	facts := Retry_Token_Facts{original_destination_connection_id_length = CONNECTION_ID_LIMIT + 1}
+	testing.expect(t, !retry_token_make(&cryptography, &key, 1, Remote{0x0A00_0302, 50_000}, &facts, &token, &error))
+	expect_record(t, "retry_token_make", error, .Too_Long, 5, CONNECTION_ID_LIMIT + 1, CONNECTION_ID_LIMIT)
+
+	// retry_packet_write: each identifier by its own number, with its size;
+	// an empty token is Empty, not a small buffer.
+	buffer: [MAX_DATAGRAM_SIZE]u8
+	too_long: [CONNECTION_ID_LIMIT + 1]u8
+	fitting: [CONNECTION_ID_SIZE]u8
+	some_token := [5]u8{1, 2, 3, 4, 5}
+	_, ok := retry_packet_write(&cryptography, buffer[:], 0, too_long[:], fitting[:], some_token[:], fitting[:], &error)
+	testing.expect(t, !ok)
+	expect_record(t, "retry_packet_write, destination", error, .Too_Long, 4, CONNECTION_ID_LIMIT + 1, CONNECTION_ID_LIMIT)
+	_, ok = retry_packet_write(&cryptography, buffer[:], 0, fitting[:], too_long[:], some_token[:], fitting[:], &error)
+	testing.expect(t, !ok)
+	expect_record(t, "retry_packet_write, source", error, .Too_Long, 5, CONNECTION_ID_LIMIT + 1, CONNECTION_ID_LIMIT)
+	_, ok = retry_packet_write(&cryptography, buffer[:], 0, fitting[:], fitting[:], some_token[:], too_long[:], &error)
+	testing.expect(t, !ok)
+	expect_record(t, "retry_packet_write, original destination", error, .Too_Long, 7, CONNECTION_ID_LIMIT + 1, CONNECTION_ID_LIMIT)
+	_, ok = retry_packet_write(&cryptography, buffer[:], 0, fitting[:], fitting[:], nil, fitting[:], &error)
+	testing.expect(t, !ok)
+	expect_record(t, "retry_packet_write, an empty token", error, .Empty, 6, 0, RETRY_TOKEN_LIMIT)
+	_, ok = retry_packet_write(&cryptography, buffer[:10], 0, fitting[:], fitting[:], some_token[:], fitting[:], &error)
+	testing.expect(t, !ok)
+	expect_record(t, "retry_packet_write, a small buffer", error, .Too_Small, 2, 10, 1 + 4 + 1 + CONNECTION_ID_SIZE + 1 + CONNECTION_ID_SIZE + 5 + TAG_SIZE)
+
+	// HKDF-Expand-Label: the label is argument 3, the output argument 4;
+	// with a context, the context is argument 4 and the output argument 5.
+	secret: [HASH_SIZE]u8
+	output: [HASH_SIZE]u8
+	long_label_bytes: [LABEL_LIMIT + 1]u8
+	for &byte in long_label_bytes {
+		byte = 'a'
+	}
+	long_label := string(long_label_bytes[:])
+	long_context: [CONTEXT_LIMIT + 1]u8
+	testing.expect(t, !hkdf_expand_label(&cryptography, secret[:], long_label, output[:], &error))
+	expect_record(t, "hkdf_expand_label, the label", error, .Too_Long, 3, LABEL_LIMIT + 1, LABEL_LIMIT)
+	testing.expect(t, !hkdf_expand_label(&cryptography, secret[:], "quic key", nil, &error))
+	expect_record(t, "hkdf_expand_label, no output", error, .Empty, 4, 0, 0xFFFF)
+	testing.expect(t, !hkdf_expand_label_with_context(&cryptography, secret[:], long_label, nil, output[:], &error))
+	expect_record(t, "hkdf_expand_label_with_context, the label", error, .Too_Long, 3, LABEL_LIMIT + 1, LABEL_LIMIT)
+	testing.expect(t, !hkdf_expand_label_with_context(&cryptography, secret[:], "finished", long_context[:], output[:], &error))
+	expect_record(t, "hkdf_expand_label_with_context, the context", error, .Too_Long, 4, CONTEXT_LIMIT + 1, CONTEXT_LIMIT)
+	testing.expect(t, !hkdf_expand_label_with_context(&cryptography, secret[:], "finished", nil, nil, &error))
+	expect_record(t, "hkdf_expand_label_with_context, no output", error, .Empty, 5, 0, 0xFFFF)
+
+	// TLS: the configuration is argument 2 of tls_start; the level is
+	// argument 2 of tls_receive, its bytes argument 3; a handshake that
+	// failed before names no argument.
+	handshake := new(Tls_Handshake)
+	defer free(handshake)
+	tls_configuration := configuration.tls
+	tls_configuration.role = .Client
+	testing.expect(t, !tls_start(handshake, &tls_configuration, &cryptography, &generator, &error))
+	expect_record(t, "tls_start, the least seed strength", error, .Bad_Value, 2, 0, 0)
+	tls_configuration.least_seed_strength = .Processor
+	tls_configuration.application_protocol_length = 0
+	testing.expect(t, !tls_start(handshake, &tls_configuration, &cryptography, &generator, &error))
+	expect_record(t, "tls_start, the protocol name", error, .Bad_Value, 2, 0, 0)
+	tls_configuration.application_protocol_length = text_into(tls_configuration.application_protocol[:], "kernel-remote")
+	tls_configuration.server_public_key = {}
+	testing.expect(t, !tls_start(handshake, &tls_configuration, &cryptography, &generator, &error))
+	expect_record(t, "tls_start, no pinned key", error, .Empty, 2, 0, 0)
+	tls_configuration.server_public_key[0] = 1
+	testing.expect(t, tls_start(handshake, &tls_configuration, &cryptography, &generator, &error))
+	level_that_does_not_exist := u8(3)
+	testing.expect(t, !tls_receive(handshake, Encryption_Level(level_that_does_not_exist), []u8{1}, &error))
+	expect_record(t, "tls_receive, a level that does not exist", error, .Bad_Value, 2, 3, 0)
+	testing.expect(t, !tls_receive(handshake, .Initial, []u8{1}, &error))
+	expect_record(t, "tls_receive, after a failure", error, .State, 0, 0, 0)
+	// A message of a type that the state does not wait for: the bytes.
+	testing.expect(t, tls_start(handshake, &tls_configuration, &cryptography, &generator, &error))
+	testing.expect(t, !tls_receive(handshake, .Initial, []u8{u8(Handshake_Message.Finished), 0, 0, 0}, &error))
+	expect_record(t, "tls_receive, a message out of order", error, .State, 3, i64(Handshake_Message.Finished), 0)
 }

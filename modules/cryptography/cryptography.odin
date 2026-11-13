@@ -209,7 +209,7 @@ aead_export :: proc "contextless" (aead: Aead, sealing: bool, key, nonce, additi
 //
 // - `key`: 32 bytes.
 // - `nonce`: 12 bytes. **A nonce must never come two times with one key**: that is the duty of the caller.
-// - `additional`: the additional data, which the tag covers and which is not encrypted: 1024 bytes at most.
+// - `additional`: the additional data, which the tag covers and which is not encrypted: 2048 bytes at most.
 // - `text`: the text to encrypt.
 // - `result`: room for the bytes of the text and 16 more, in *private memory of the caller*.
 //

@@ -137,6 +137,8 @@ start :: proc "contextless" (queues: system.Handle) {
 		fail("the device has no virtio 1 interface")
 	case .Features_Refused:
 		fail("the device refused the features")
+	case .Reset_Not_Done:
+		fail("the device did not finish its reset")
 	}
 	has_flush = offered & (1 << FEATURE_FLUSH) != 0
 

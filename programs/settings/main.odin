@@ -144,7 +144,7 @@ setting_of :: proc "contextless" (name: string) -> (setting: settings.Setting, f
 	return {}, false
 }
 
-// set changes a setting of the person, and keeps it in the store: set("font", "vector" or "spleen"); set("subpixel_order", "rgb", "bgr" or "none"); set("pointer_theme", "owner" or "system"); set("grid_fit", "on" or "off").
+// set changes a setting of the system, and keeps it in the store: set("font", "vector" or "spleen"); set("subpixel_order", "rgb", "bgr" or "none"); set("pointer_theme", "owner" or "system"); set("grid_fit", "on" or "off").
 //
 // Every window draws again: the settings page wakes the compositor, which gives the new font and pointer theme to
 // each window. The order is the store first, then the page, so a stop of the machine between the two keeps the
@@ -193,7 +193,7 @@ set :: proc "c" (name: ^string, value: ^string, error: ^errors.Error_Record) -> 
 	return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 2)
 }
 
-// get gives the value of a setting of the person as a text: get("font"), get("subpixel_order"), get("pointer_theme"), get("grid_fit").
+// get gives the value of a setting of the system as a text: get("font"), get("subpixel_order"), get("pointer_theme"), get("grid_fit").
 //
 // It reads the settings page, which each program can read too: so it needs no grant, and each caller gets the
 // value.

@@ -214,6 +214,11 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Memory_Map:
 		flags := transmute(op.Map_Flags)v[3]
+		// A bit that the kernel does not know is refused, as the other
+		// memory operations refuse it: a later kernel can give it a meaning.
+		if flags - {.Write, .Execute, .No_Access} != {} {
+			return .Bad_Operation
+		}
 		needed := op.Rights{.Read}
 		if .Write in flags {
 			needed += {.Write}

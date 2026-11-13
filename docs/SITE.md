@@ -185,10 +185,10 @@ A news entry (`GLOSSARY.md`) is one file of `news/`, `news/<yyyy-mm-dd>-<subject
 
 | Kind | What the entry reports | Its mark |
 |---|---|---|
-| Shown | A person can now see or use a new thing in the running system | The color of a program |
+| Shown | A reader can now see or use a new thing in the running system | The color of a program |
 | Measured | A number about a thing that exists is measured, with its conditions | The color of memory |
-| Decided | The owner chose a thing that a person sees: a name, a mark, a font | The color of the kernel |
-| Fixed | A thing that a person saw fail now works | The color of the machine |
+| Decided | The owner chose a thing that a reader sees: a name, a mark, a font | The color of the kernel |
+| Fixed | A thing that a reader saw fail now works | The color of the machine |
 
 - `kerneltool news new <subject>` writes an entry with the date of the host, `release: next`, and no title and no text, so that the check fails until a person writes them. `kerneltool news check` checks each entry: the head, each key known and present once, the date a date of the calendar and the date of the file name, the picture a PNG file of `docs/screenshots/` or `resources/logo/`, the release a release of `CHANGELOG.md` or `next`, the guide a document of `docs/` that is a page of the site, the text not empty, at most 1200 bytes, with no heading and no line of HTML, and no two titles the same. `kerneltool check` runs it, and `kerneltool site` stops on the same faults.
 - `news/`: each entry, newest first, as a card with the color of its kind, its date, a link to its release and to its guide, its picture, and a link to its file. Its anchor is `news-<the name of its file>`. One renderer renders all the entries of the page, so the ids stay unique and each term of the glossary links once.

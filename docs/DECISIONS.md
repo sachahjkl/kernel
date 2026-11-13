@@ -18,16 +18,16 @@ This file is the record of the decisions of the project: who decided what, when,
 ## Groups
 
 1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191, D-205, D-214 to D-217, D-223
-2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213, D-218, D-219, D-224
+2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213, D-218, D-219, D-224, D-230
 3. [The kernel](#3-the-kernel): D-071 to D-083, D-220
 4. [Memory](#4-memory): D-084 to D-088
-5. [The scheduler](#5-the-scheduler): D-089 to D-091, D-226, D-227
+5. [The scheduler](#5-the-scheduler): D-089 to D-091, D-226, D-227, D-228
 6. [Storage](#6-storage): D-092 to D-095, D-221
 7. [The network and QUIC](#7-the-network-and-quic): D-096 to D-100
 8. [Cryptography and randomness](#8-cryptography-and-randomness): D-101 to D-105
 9. [The interface, the fonts, the mark and the design](#9-the-interface-the-fonts-the-mark-and-the-design): D-106 to D-141, D-192, D-193
 10. [The console and the tools](#10-the-console-and-the-tools): D-142 to D-148, D-206, D-225
-11. [The build and the compiler](#11-the-build-and-the-compiler): D-149 to D-162
+11. [The build and the compiler](#11-the-build-and-the-compiler): D-149 to D-162, D-229
 12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194 to D-201, D-207 to D-210, D-222
 13. [The name and the repository](#13-the-name-and-the-repository): D-186 to D-189
 14. [Open questions for the owner](#open-questions-for-the-owner)
@@ -647,6 +647,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: in force.
 - Where: `AGENTS.md`; `FIRST_MILESTONE.md`, "Next steps".
 
+### D-230 The pause ends: the whole queue, in order, written in one go
+- 2026-11-13. Decided by: the owner.
+- Decision: the pause of D-224 ends. The queue is built in its order: the schedule of a live thread, the faults of the QUIC library, the console that draws results, the `switch` of strategies, the debugger, the placement and the share for each budget, the small faults, `manual` that reads Markdown, then the IOMMU, the guests, Linux in a guest and the GPU. The code is written first; the build, the corrections and the reviews come at the end of each batch. The debugger also gets the debug information of a module (variables and types, not only names and lines), and debugging from another machine.
+- Words: "on va faire tout ça avec le fait de pouvoir déboguer j'aimerais bien aussi évidemment que ce soit capable d'exporter les symboles d'un module on les a déjà un petit peu mais les informations du binaire donc c'est à dire les variables enfin tout ce bordel pour qu'on puisse vraiment inspecter l'exécution du programme comme on peut faire dans [un débogueur] traditionnel et câbler ça au fait pouvoir du coup faire du débogage à distance je sais pas moi via le port série ou via une socket [QUIC] [...] fait toute [la liste] dans l'ordre de 1 à 9 et tu fais ça d'une traite dans le sens que tu écris [...] du code et à la fin [tu builds] et tu corriges et tu fais une revue"
+- State: in work.
+- Where: `FIRST_MILESTONE.md`, "Next steps"; `TOOLS.md`, "The debugger: the design".
+
 ## 3. The kernel
 
 ### D-071 The kernel ring is the only kernel entry
@@ -820,6 +827,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "tu m'as convaincu que il y a pas besoin du coup de ce compilateur dans le noyau c'était juste une discussion [...] vaut mieux bien choisir nos contraintes par exemple la forme proche que tu as dit la politique dehors le mécanisme dedans c'est exactement je pense que ce sur quoi on devrait s'arrêter"
 - State: decided, not built: which values a program can set, and under which right, is not designed.
 - Where: `SCHEDULING.md`; `FIRST_MILESTONE.md`, "Next steps".
+
+### D-228 The first layer of the policy of scheduling is built now: the weight and the request of a live thread
+- 2026-11-13. Decided by: the owner (to build it now, during the pause of D-224); the coordinator (the design).
+- Decision: two commands of `Thread_Control` read and write the weight and the request of a live thread, with no new kernel operation. A program writes them for its own threads; a holder of a thread handle with **Control** for that thread; the holder of the machine handle with **Schedule** for any thread. The weight stays at most the full weight. The placement of a thread on processors and a share for each budget are later layers.
+- Words: "ouais enfin ça reste à concevoir mais je pense que c'est relativement évident étant donné notre design actuel donc hésite pas à commencer à le faire pour pas laisser traîner"
+- State: in work.
+- Where: `SCHEDULING.md`; `ARCHITECTURE.md`, "The control of a thread".
 
 ## 6. Storage
 
@@ -1364,6 +1378,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: none.
 - State: not done yet.
 - Where: `REPRODUCIBLE_BUILD.md`.
+
+### D-229 The build keeps `nasm`
+- 2026-11-13. Decided by: the owner (the condition); the coordinator (the judgement that the condition is not met).
+- Decision: the assembly files stay in the syntax of `nasm`. The assembler of LLVM (`llvm-mc`) is already in the build environment and can replace it, but the change adds constraints for no gain that a reader sees: every comment changes its mark, each memory operand and each macro changes form, the 16-bit and 32-bit start of a processor (`kernel/processor.asm`) goes through the less tested Intel syntax of LLVM, and the host tests still need `nasm`, because the compiler calls it itself for a file `.asm` that a package imports. `nasm` is a small tool, fixed by the flake.
+- Words: "si tu trouves que c'est plus léger ça ne crée pas de la fragilité et que ça simplifie notre dépendance [...] je suis pour [...] c'est juste [la] condition que ça crée pas des contraintes artificielles parce que voilà [si] le code est moins lisible [ou] plus difficile à commenter [...] ça mange pas de pain de dépendre de nasm qui est pas un gros programme"
+- State: in force.
+- Where: `REPRODUCIBLE_BUILD.md`; `MODULE_CONTRACT.md`, section 7.
 
 ## 12. The site and the publication
 

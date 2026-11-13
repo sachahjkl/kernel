@@ -1061,7 +1061,11 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		}
 		return true
 	case .Memory_Map:
-		record_set(record, .Bad_Value, .None, 4, v[3], 0, 0) // Write and Execute: no page is both.
+		if v[3] & ~u64(0b111) != 0 {
+			record_set(record, .Bad_Flags, .None, 4, v[3], 0b111, 0)
+		} else {
+			record_set(record, .Bad_Value, .None, 4, v[3], 0, 0) // Write and Execute: no page is both.
+		}
 		return true
 	case .Memory_Commit:
 		switch {

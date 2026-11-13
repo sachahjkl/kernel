@@ -23,7 +23,8 @@
 // `isolate("math")` gives the same answers through a sandboxed program.
 //
 // **What it does not do**: no export checks an overflow of 64 bits, except
-// fibonacci, which stops at the last number that fits. power(10, 19), for
+// fibonacci, which stops at the last number that fits, and gcd, which
+// refuses the one integer that has no absolute value. power(10, 19), for
 // example, wraps.
 package math
 
@@ -32,11 +33,19 @@ import "contract:errors"
 // gcd gives the greatest common divisor.
 //
 // It uses the absolute values, so the result is never negative; gcd(0, n) is the absolute value of n, and
-// gcd(0, 0) is 0. It never fails.
+// gcd(0, 0) is 0. It fails with -1 and an error record: `Too_Small` when an argument is the most negative integer
+// (-9223372036854775808), whose absolute value does not fit in 64 bits; the record names the argument and the
+// least value that the call takes.
 //
 // Example: `gcd(84, 36)` gives 12.
 @(export, link_name = "gcd")
-gcd :: proc "c" (first, second: i64) -> i64 {
+gcd :: proc "c" (first, second: i64, error: ^errors.Error_Record) -> i64 {
+	switch {
+	case first == min(i64):
+		return errors.fail(error, -1, .Too_Small, .None, 1, first, min(i64) + 1)
+	case second == min(i64):
+		return errors.fail(error, -1, .Too_Small, .None, 2, second, min(i64) + 1)
+	}
 	a, b := abs(first), abs(second)
 	for b != 0 {
 		a, b = b, a % b

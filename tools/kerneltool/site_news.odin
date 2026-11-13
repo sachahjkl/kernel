@@ -128,7 +128,7 @@ site_news_add :: proc(site: ^Site) {
 	path := site_section_page(.News)
 	b := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&b, "<h1>News</h1>\n<p>What a reader can now see or use in %s, newest first: %d entries. Each entry is one file of <code>%s/</code>, written in the step that made the thing, and never moved or merged. The technical list of the changes of each release is on the page <a href=\"%s\">Releases</a>. The same entries as a feed: <a href=\"%s\">%s</a> (Atom).</p>\n<p>Each entry has a kind, which its color shows: <strong>Shown</strong>, a new thing runs in the system; <strong>Measured</strong>, a number about a thing that exists, with its conditions; <strong>Decided</strong>, a choice that a reader sees, as a name, a mark or a font; <strong>Fixed</strong>, a thing that failed now works. An entry links to its release and to the guide that explains the thing.</p>\n", SITE_SYSTEM_NAME, len(site.news), NEWS_FOLDER, site_page_link(site, path, site_section_page(.Releases)), site_relative(path, SITE_NEWS_FEED), SITE_NEWS_FEED)
-	strings.write_string(&b, "<p class=\"source\">The kinds: <span class=\"news-kind accent-program\">Shown</span> a person can now see or use a new thing; <span class=\"news-kind accent-memory\">Measured</span> a number about a thing that exists, with its conditions; <span class=\"news-kind accent-kernel\">Decided</span> a choice of design that a person sees; <span class=\"news-kind accent-machine\">Fixed</span> a thing that a person saw fail now works.</p>\n")
+	strings.write_string(&b, "<p class=\"source\">The kinds: <span class=\"news-kind accent-program\">Shown</span> a reader can now see or use a new thing; <span class=\"news-kind accent-memory\">Measured</span> a number about a thing that exists, with its conditions; <span class=\"news-kind accent-kernel\">Decided</span> a choice of design that a reader sees; <span class=\"news-kind accent-machine\">Fixed</span> a thing that a reader saw fail now works.</p>\n")
 	// One renderer for the page: the ids of the page stay unique, and each
 	// term of the glossary links once.
 	renderer := site_renderer_make(site, path, NEWS_FOLDER + "/" + NEWS_FOLDER_GUIDE)
@@ -156,7 +156,7 @@ site_news_add :: proc(site: ^Site) {
 		fmt.sbprintf(&b, "</div>\n<p class=\"source\">From <a href=\"%s\"><code>%s/%s</code></a>.</p>\n</article>\n", site_repository_file(site, renderer.source), NEWS_FOLDER, entry.file_name)
 	}
 	newest := site.news[0].entry
-	site_page_add(site, Site_Page{path = path, title = "News", description = site_description_cut(fmt.tprintf("What a person can now see or use in %s, newest first: %d dated reports, the newest on %s.", SITE_SYSTEM_NAME, len(site.news), newest.date)), section = .News, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = sources[:]})
+	site_page_add(site, Site_Page{path = path, title = "News", description = site_description_cut(fmt.tprintf("What a reader can now see or use in %s, newest first: %d dated reports, the newest on %s.", SITE_SYSTEM_NAME, len(site.news), newest.date)), section = .News, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = sources[:]})
 }
 
 // site_news_home writes the newest entries on the home: the door to the
@@ -240,7 +240,7 @@ site_xml_escape :: proc(b: ^strings.Builder, text: string) {
 site_news_feed :: proc(site: ^Site) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n")
-	fmt.sbprintf(&b, "<title>News of %s</title>\n<subtitle>What a person can now see or use in %s, newest first.</subtitle>\n", SITE_SYSTEM_NAME, SITE_SYSTEM_NAME)
+	fmt.sbprintf(&b, "<title>News of %s</title>\n<subtitle>What a reader can now see or use in %s, newest first.</subtitle>\n", SITE_SYSTEM_NAME, SITE_SYSTEM_NAME)
 	fmt.sbprintf(&b, "<id>%s/tree/master/%s</id>\n", SITE_REPOSITORY_ADDRESS, NEWS_FOLDER)
 	fmt.sbprintf(&b, "<updated>%sT00:00:00Z</updated>\n", site.news[0].entry.date)
 	site_feed_author(site, &b)

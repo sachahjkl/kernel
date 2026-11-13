@@ -85,7 +85,7 @@ Each QUIC packet is encrypted and authenticated, and even its header is masked. 
 
   Failures:
   - A tag that does not verify gives `Not_Authentic`. The frames are erased (the module erases what it wrote), so the packet cannot be opened again from this copy, with any key.
-  - Reserved bits that are not 0 after the open give `Bad_Value`: a PROTOCOL_VIOLATION in RFC 9000, section 17.2. They are checked after the open only, so a packet that is not authentic cannot close a connection.
+  - Reserved bits that are not 0 after the open give `Bad_Value`: a PROTOCOL_VIOLATION in RFC 9000, section 17.2. They are checked after the open only, so a packet that is not authentic cannot close a connection. The open says which failure it is in `Opened_Packet.authentic_with_reserved_bits`, true only when the tag verified: the kind `Bad_Value` also comes before the open (keys with no suite, offsets that do not fit), so the transport closes on that field, never on the kind.
 - **Retry** (RFC 9001, section 5.8): `retry_integrity_tag` and `retry_integrity_check`, with the fixed key and nonce of version 1. The Retry Pseudo-Packet is the additional data of AES-128-GCM; the module takes 2048 bytes of additional data, so a Retry of 2043 bytes (with an original Destination Connection ID of 20 bytes), and an Initial packet with the longest token that a datagram holds, are taken.
 - **The duties of the caller** (RFC 9000, sections 7.2, 14.1 and 17.2.2). The transport (section 5) does them; a program that uses this layer alone must do them too:
   - a server drops a client Initial in a datagram of less than 1200 bytes;
@@ -113,7 +113,7 @@ Each QUIC packet is encrypted and authenticated, and even its header is masked. 
   - 50 000 random datagrams for the AES Initial keys and 50 000 for ChaCha20 keys, a third with a long header of version 1, a third with a short header, one in five with a sample that starts with `ff ff ff ff` (none traps, none opens);
   - the ChaCha20 mask at the counter `ff ff ff ff` (the last block of the stream, which the sender chooses), against a value of an independent implementation;
   - two packets in one datagram (an Initial and a Handshake packet), and a second packet whose Length lies;
-  - authentic packets with reserved bits set (`Bad_Value` after the open);
+  - authentic packets with reserved bits set (`Bad_Value` after the open, and the field that says so); a failure with `Bad_Value` before the open, and a packet that is not authentic, which do not set that field;
   - the seal that writes the packet number, and refuses a Length that is one byte short or long;
   - the removal of header protection, then an open with the keys of another phase (the frames are erased);
   - a Retry with an empty token, version 0, an unknown version, a connection identifier of 21 bytes for each;
@@ -140,21 +140,23 @@ TLS 1.3 gives the two sides of a connection their keys, and proves to the client
 - The client compares the key with `Tls_Configuration.server_public_key`, the key that its caller pinned. Another key gives bad_certificate. Then CertificateVerify proves that the server holds the private key of that key, over the transcript (RFC 8446, section 4.4.3).
 - So there is no certificate authority, no name and no date: a client trusts one key, given by its caller. For `remote`, the root service gives the key as a grant (the next layers).
 
-**Who holds the private key.** The server program holds its Ed25519 private key in `Tls_Configuration.server_private_key`, in its own memory; the module `cryptography` runs in the same program, so the key never crosses a ring. The handshake erases its copy, its X25519 private key and its secrets when it fails (`tls_handshake_erase_secrets`); the X25519 private key is erased as soon as the shared secret is made.
+**Who holds the private key.** The server program holds its Ed25519 private key in `Tls_Configuration.server_private_key`, in its own memory; the module `cryptography` runs in the same program, so the key never crosses a ring. The handshake erases its copy, its X25519 private key and its secrets when the transport ends the connection, and at once on most failures (`tls_handshake_erase_secrets`; three failures that keep the error record of the generator leave the erase to the end of the connection); the X25519 private key is erased as soon as the shared secret is made.
 
 **Randomness.** The client random, the server random and each X25519 private key come from the generator of the program through `random.fill_for_a_key`, with the least seed strength of the configuration: QUIC asks for `processor` at least (`docs/RANDOMNESS.md`). `tls_start` refuses a configuration whose least strength is under `processor` (a field left at its zero value would accept a weak seed), and a client whose pinned key is 32 zero bytes (no key was pinned).
 
 **Hostile input.** Each message of the peer:
 - has each length checked before a byte is read (`Reader`);
 - may come in parts (the side waits for the rest), but over 4096 bytes is refused;
-- goes into the transcript, which holds 8192 bytes: a ClientHello of up to 4092 bytes (a peer with large key shares and padding) and the flight of the server. A handshake costs about 33 KiB;
+- goes into the transcript, which holds 8192 bytes: a ClientHello whose body has up to 4092 bytes, 4096 with its header (a peer with large key shares and padding) and the flight of the server. A handshake costs about 33 KiB;
 - must come at the level of the keys in use: bytes of a level left when the next keys take its place, or bytes of an earlier level that come later, fail the handshake, and QUIC closes with PROTOCOL_VIOLATION (RFC 9001, section 4.1.3);
 - must have the type that the state waits for, at its level: else unexpected_message;
 - may hold an extension that the side does not know: it is skipped in a ClientHello, and refused with unsupported_extension where the side did not offer it (ServerHello, EncryptedExtensions);
+- may hold, in EncryptedExtensions, only an answer to an extension that the client offered and that RFC 8446, section 4.2, allows there: ALPN, `server_certificate_type`, `quic_transport_parameters` and `supported_groups`. The last one names the groups that the server prefers (RFC 8446, section 4.2.7): the client takes it and does not read it. `server_name`, `client_certificate_type` and `early_data` can be in EncryptedExtensions too, but only as answers, and this client offers none of them: they are refused with unsupported_extension;
+- may not ask for the compatibility mode of TLS: a ClientHello with a session identifier fails the handshake, and QUIC closes with PROTOCOL_VIOLATION, not with the code of an alert (RFC 9001, section 8.4);
 - may not hold one extension type two times (illegal_parameter);
-- gives, at a failure, the alert of TLS in `Tls_Handshake.alert` (QUIC sends it as the error code 0x100 + alert) and an error record whose `found` field is the alert.
+- gives, at a failure, the alert of TLS in `Tls_Handshake.alert` (QUIC sends it as the error code 0x100 + alert) and an error record whose `found` field is the alert. The record names the argument at fault as the caller of `tls_start` or `tls_receive` gave it: 3, the bytes, for a message of the peer; 2 for the configuration of `tls_start` and for the level of `tls_receive`; 0 for a failure of this side that no argument caused (a refusal of the module, a full buffer).
 
-**Keys for QUIC.** `tls_packet_keys(handshake, level, sending, keys, error)` gives the packet keys of the Handshake or the Application level, from the traffic secrets, through `packet_keys_from_secret`.
+**Keys for QUIC.** `tls_packet_keys(handshake, level, sending, keys, error)` gives the packet keys of the Handshake or the Application level, from the traffic secrets, through `packet_keys_from_secret`. It gives keys only while the secrets exist: once they are erased (`tls_handshake_erase_secrets`, and each failure of the handshake), `handshake_keys_ready` and `application_keys_ready` are false again, and the call fails with `State`. It never gives keys made from a secret of zeros.
 
 **Tests** (`support/quic/tls_handshake_test.odin`, host):
 - The key schedule against the trace "Simple 1-RTT Handshake" of RFC 8448, section 3:
@@ -165,6 +167,9 @@ TLS 1.3 gives the two sides of a connection their keys, and proves to the client
   - the two finished keys and the two Finished values.
 - A whole handshake of a client against a server in memory: both connected with ChaCha20-Poly1305, the same keys in each direction, the transport parameters of the other side, the X25519 private keys erased.
 - The refusals: a server key that is not the pinned key (bad_certificate), a protocol that the server does not speak (no_application_protocol), a weak seed (Seed_Too_Weak, nothing sent).
+- No packet keys after the secrets are erased, and after a handshake that failed (`State`).
+- EncryptedExtensions with `supported_groups` is taken; with `server_name`, or with an extension that is not known, it is refused.
+- A ClientHello with a session identifier fails as a PROTOCOL_VIOLATION.
 - Hostile messages:
   - each message cut at each length, with its length field set to the cut (the side fails) and left as it was (the side waits);
   - one bit of each byte of each message changed (the two sides never both connect);
@@ -195,9 +200,11 @@ This layer is the protocol of one QUIC connection: the handshake, the acknowledg
 
 **What it does:**
 - **The three packet number spaces**, each with its keys, its packet numbers, its ACK ranges and its packets in flight. The Initial keys go when the client sends its first Handshake packet and when the server opens one; the Handshake keys go when the handshake is confirmed (RFC 9001, section 4.9).
-- **The handshake**: the bytes of TLS go in CRYPTO frames at their level, 4096 bytes at most for each level and direction. The keys of each level are installed when TLS gives them; the secrets of TLS are erased once the 1-RTT keys are installed. A failure of TLS closes the connection with the code 0x100 + alert. The 4096 bytes of the 1-RTT level hold every NewSessionTicket of the life of a connection: a server that sends more gives CRYPTO_BUFFER_EXCEEDED. The servers of this system send none.
+- **The handshake**: the bytes of TLS go in CRYPTO frames at their level, 4096 bytes at most for each level and direction. The keys of each level are installed when TLS gives them; the secrets of TLS are erased once TLS is connected (a server has its 1-RTT keys before that). A failure of TLS closes the connection with the code 0x100 + alert. The 4096 bytes of the 1-RTT level hold every NewSessionTicket of the life of a connection: a server that sends more gives CRYPTO_BUFFER_EXCEEDED. The servers of this system send none.
 - **A server takes a client only with an authentic Initial**: the keys of the first Initial come from its Destination Connection ID into local records, and the record of the connection takes that identifier and those keys only when the packet opens. Anyone can make an authentic Initial (its keys come from a public value), so a handshake that does not complete within 10 s (`HANDSHAKE_TIME_LIMIT`) ends the record, whatever the idle timeout; a client has the same limit. A listening program keeps one record for each Destination Connection ID of a client, with a limit on the count of records (the server of several connections, section 6).
 - **Transport parameters**: each side sends its limits and its connection identifiers. The values of the peer are checked (RFC 9000, section 18.2): a repeated parameter, a value out of its range, a parameter that only a server sends, or an identifier that is not the one that the packets carried, gives TRANSPORT_PARAMETER_ERROR.
+  - `max_udp_payload_size` must be 1200 at least. The RFC gives it no largest value, so a value over the 65527 bytes that UDP carries is taken as it is: this side sends 1200 bytes at most, whatever the value.
+  - `preferred_address` is not used (no migration), and its form is checked: two addresses with their ports, a connection identifier of 1 to 20 bytes with its length, and a stateless reset token of 16 bytes, with nothing after. An empty identifier there, or a `preferred_address` from a server whose own identifier is empty, is refused.
 - **Acknowledgements**: an ACK frame of up to 16 ranges. In the Initial and Handshake spaces it goes at once; in the 1-RTT space after 2 ack-eliciting packets or 25 ms.
 - **Loss detection** (RFC 9002, section 6):
   - a packet is lost when a packet 3 numbers later is acknowledged, or when it is older than 9/8 of the round-trip time;
@@ -206,10 +213,10 @@ This layer is the protocol of one QUIC connection: the handshake, the acknowledg
 - **The data of a lost packet goes again**: the CRYPTO and STREAM ranges, HANDSHAKE_DONE, MAX_DATA, MAX_STREAMS, STREAMS_BLOCKED, and the MAX_STREAM_DATA, RESET_STREAM and STOP_SENDING of its stream (with their values of now). A packet carries one STREAM frame and the control frames of one stream at most, so its record names one stream for each. A PATH_RESPONSE does not go again. Data or a frame of a stream that ended since the packet went is not sent again.
 - **A fixed congestion window** of 12 000 bytes (the initial window of RFC 9002, section 7.2). Probes go past it.
 - **Streams** (`support/quic/streams.odin`): bidirectional streams, which only the client opens. Unidirectional streams are not allowed (a limit of 0 each way).
-  - **The table of stream records.** The caller gives a table of `quic.Stream` records with the connection, in memory of the caller (a record has 2 × 64 KiB of buffers and about 1 KiB of state: about 129 KiB). Its count is the most streams that are open at one time.
+  - **The table of stream records.** The caller gives a table of `quic.Stream` records with the connection, in memory of the caller (a record has 2 × 64 KiB of buffers and under 2 KiB of state: about 130 KiB). Its count is the most streams that are open at one time.
   - **The limit of streams.** A server gives the client a limit equal to its records (MAX_STREAMS in the transport parameters), and one more each time a stream of the client ended, with a MAX_STREAMS frame: the limit never promises a stream that has no record. A server opens no stream: it would take a record that the limit promised. A client that reaches the limit sends STREAMS_BLOCKED.
   - **The implicit open.** A frame that names a stream of the client that is not open yet opens it, and each lower stream of the client (RFC 9000, section 3.2). The limit bounds that count, so a stream number far ahead within the limit takes records that exist, and one past the limit is STREAM_LIMIT_ERROR before any record is taken.
-  - **The end of a stream.** A stream ends when both directions ended: this side's last byte (all bytes and the end acknowledged) or its RESET_STREAM acknowledged; and the end of the peer read by the application (its last byte, or its reset). Its record is then free, the part of its rings that it used is written with zeros, and its identifier never names a stream again: a later frame for it is dropped. A program must read each stream to its end: a stream that it never reads keeps its record for the life of the connection, and a server then gives the client no stream in its place.
+  - **The end of a stream.** A stream ends when both directions ended: this side's last byte (all bytes and the end acknowledged) or its RESET_STREAM acknowledged; and the end of the peer read by the application (its last byte, or its reset). Its record is then free, the part of its rings that it used is written with zeros, and its identifier never names a stream again: a later frame for it is dropped. When the connection ends (the state `Closed`), each stream that is still open ends the same way: its rings are written with zeros and its record is free, so no byte of a peer stays in memory after its connection. A `stream_read` after that gives nothing: a program reads what it wants of a stream before the connection is `Closed`, and it still can in the closing and draining states. A program must read each stream to its end: a stream that it never reads keeps its record for the life of the connection, and a server then gives the client no stream in its place.
   - **Resets.** `stream_reset` sends RESET_STREAM and no more data. Its final size is the largest offset sent (RFC 9000, section 4.5): the bytes that flow control held back are dropped at the reset, because the peer never counted them. After the reset, `stream_write` takes no byte, and no end of the stream (FIN) goes. `stream_stop_sending` sends STOP_SENDING; a peer that gets it answers with RESET_STREAM and the same code (this side does so too). A RESET_STREAM of the peer ends the bytes for the application, and the bytes that it never read give their room back to the window of the connection.
   - **The order of sending.** Each packet carries one STREAM frame: of the next stream, from the record after the one that sent last, that has bytes or its end to send. Each stream gets its turn.
 - **Flow control**, for each stream and for the connection:
@@ -232,7 +239,7 @@ This layer is the protocol of one QUIC connection: the handshake, the acknowledg
 - **Packet numbers that were forgotten**: the set of received packet numbers keeps 32 ranges. When it drops its lowest range, the numbers below the end of that range are refused from then on, before the open, so that no packet is processed two times (RFC 9000, section 12.3).
 - **Times that cannot wrap**: the sums and products of times saturate at the largest value, the ack delay of the peer is at most its max_ack_delay in each state, and the round-trip sample is adjusted with a subtraction that cannot wrap. A peer cannot move a deadline into the past.
 - **Datagrams of 1200 bytes**: a datagram with an Initial packet of the client, or an ack-eliciting Initial packet of the server, is padded to 1200 bytes. A server drops a client Initial in a smaller datagram, or with a Destination Connection ID under 8 bytes; a client drops a server Initial with a token.
-- **The close**: a side that closes sends CONNECTION_CLOSE and answers each later datagram with it, for 3 probe timeouts (closing). A side that receives it sends nothing for 3 probe timeouts (draining). An application close before the 1-RTT keys goes as APPLICATION_ERROR, with no code of the application.
+- **The close**: a side that closes sends CONNECTION_CLOSE and answers the 1st, 2nd, 4th, 8th... later datagram with it, for 3 probe timeouts (closing). A side that receives it sends nothing for 3 probe timeouts (draining). An application close before the 1-RTT keys goes as APPLICATION_ERROR, with no code of the application.
 
 ### The frames
 
@@ -251,9 +258,11 @@ This layer is the protocol of one QUIC connection: the handshake, the acknowledg
 | STOP_SENDING | Acted on: this side answers with RESET_STREAM and the same code, and sends no more data on the stream |
 | NEW_CONNECTION_ID | Minimal: read for its form and not used (no migration). A Retire Prior To above 0 closes the connection with PROTOCOL_VIOLATION: this layer has no other identifier of the peer. A real peer seldom sends it, but it may; this is a known gap |
 | RETIRE_CONNECTION_ID | Minimal: this side gave no identifier past the one of the handshake: a number above 0 is PROTOCOL_VIOLATION |
-| PATH_CHALLENGE | Answered with PATH_RESPONSE |
+| PATH_CHALLENGE | Answered with PATH_RESPONSE. The record keeps the data of one challenge: when a second one comes before the answer went, the answer echoes the newest only (below) |
 | PATH_RESPONSE, DATA_BLOCKED, STREAM_DATA_BLOCKED, STREAMS_BLOCKED | Read and not used (STREAM_DATA_BLOCKED checks its stream as STREAM does) |
 | NEW_TOKEN | A client reads it and keeps no token; to a server, PROTOCOL_VIOLATION |
+
+**One PATH_CHALLENGE at a time.** RFC 9000, section 8.2.2, asks for a PATH_RESPONSE that echoes the data of each PATH_CHALLENGE. This side keeps the 8 bytes of one challenge, and sends its answer in the next 1-RTT packet. A second challenge that comes before that packet went replaces the first, which gets no answer. For the peer, that is the loss of one PATH_RESPONSE, which it must bear in any case: a PATH_RESPONSE never goes again when its packet is lost (RFC 9000, section 13.3), and the peer validates a path with any one answer to a challenge that it sent on it (section 8.2.3). This side has one path, because it does not migrate, so the newest challenge is the one whose answer the peer still waits for. A queue of challenges would need a bound too, and would add a state for a case that a peer does not make on one path.
 
 ### What the transport does not do yet
 
@@ -292,7 +301,7 @@ This layer is the protocol of one QUIC connection: the handshake, the acknowledg
   - 4 streams at once, 100 KiB each way on each, with 2 % lost and 5 % out of order: each byte comes back on its own stream (each stream has its own pattern);
   - 12 streams through a server that gives 4 at a time: the client is blocked, then opens the next ones as each MAX_STREAMS comes; every record of both sides is free at the end, and the limit is 16;
   - a reset after flow control held bytes back (64 KiB sent, 32 KiB more written), by `stream_reset` and by a STOP_SENDING of the peer: the final size is the 64 KiB sent, the two sides count the same bytes for the connection, and the client then fills two new streams up to the limit of the connection exactly, with no FLOW_CONTROL_ERROR. Before the correction the final size was the 96 KiB written, and the server closed;
-  - the rings of a stream record are zero after its stream ended;
+  - the rings of a stream record are zero after its stream ended; the rings of a stream that is still open, with bytes not read and bytes not acknowledged, are zero after its connection ended, and its record is free;
   - a stream that the client resets and stops: the server reads the reset, answers with RESET_STREAM and the code of the STOP_SENDING, both records end, and the 3000 bytes that the server never read count as read for the window of the connection;
   - hostile frames: a stream far ahead within the limit opens each lower one; one past the limit, and a number near 2^62, are STREAM_LIMIT_ERROR with no record taken; data within the limit of each stream and past the limit of the connection is FLOW_CONTROL_ERROR; a reset under the data, or that changes the end, is FINAL_SIZE_ERROR; STOP_SENDING ends the sending part; a server opens no stream;
 - the corrections found by a review, each with a test that failed before it:
@@ -303,6 +312,8 @@ This layer is the protocol of one QUIC connection: the handshake, the acknowledg
   - a replayed packet whose number was forgotten is refused;
   - the round-trip time, the probe timeout and the idle deadline with values near 2^64;
   - a least seed strength left at zero, and a client with no pinned key, are refused;
+  - each error record names the argument at fault as its caller gave it, with the value that it had: the configuration (argument 3 of the two starts, argument 5 of `server_init`), the facts of a Retry token, each identifier and the token of a Retry packet, the label, the context and the output of HKDF-Expand-Label, the configuration, the level and the bytes of TLS;
+  - the transport parameter `preferred_address`: whole, cut, one byte short and long, with an empty identifier, with an identifier of 21 bytes, from a client, and from a server with an empty identifier; a `max_udp_payload_size` of 65528 is taken;
   - a ClientHello of 3900 bytes is taken; bytes left at the Initial level after the ServerHello fail the handshake.
 
 ## 6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)
@@ -438,6 +449,8 @@ Before the budgets, each forged Initial cost the 11 exports (about 30 us), with 
 
 **What the closing state answers.** In the closing state a record answers the 1st, 2nd, 4th, 8th... datagram with its identifier, not each one (RFC 9000, section 10.2.1). These datagrams are not opened, so a third party that knows the identifier and forges the address of the client makes at most a few CONNECTION_CLOSE packets of about 50 bytes.
 
+**A record that ended, and its remote.** `server_sweep` frees each record whose connection ended, and gives the remote of each one that no other record has, so that the caller releases it. The caller gives the places for those remotes. A record whose remote has no place left is not freed in that call: it stays in use, and the next call frees it and gives its remote. So no remote is lost, and a caller with one place for each record frees every ended record in one call.
+
 **A record and its generation.** Each time a record is taken it gets a new generation number; `quic_echo` ties its echo state to it, so a new client of a place never takes the echo state of the client before.
 
 **What a client over a limit gets: nothing.** A CONNECTION_CLOSE would need an Initial packet built outside a record, for a client whose identity no one checked; an attacker that fills the table would learn when it is full. A real client tries again at its probe timeout, and ends at its own handshake deadline.
@@ -466,6 +479,7 @@ Before the budgets, each forged Initial cost the 11 exports (about 30 us), with 
   - 8 authentic Initials from 4 forged addresses every 10 s, and a real client that starts in the middle of it: no record is taken, and the real client connects in under 1 s;
   - one address with a valid token that sends 500 Initials a second that do not open, for 2 s: its budget of 4 checks a second stops them before any open, the shared budget is not spent, and a real client connects during it and ends its echo;
   - a token takes a record once: after its record ended, the same Initial takes none;
+  - three records that end at once, with one place for a remote in each sweep: each sweep frees one record and gives its remote; two records of one remote need one place;
   - a batch with a datagram of a known record and two datagrams of a new client: the known one first, then both new ones, and the second one goes to the record that the first one took;
   - a record asks for the validation of its remote until a result of 1 for its generation;
   - 33 real addresses with valid tokens that send 2000 Initials a second in turn, for 2 s: at most 33 × 6 Initial checks, the shared budget is not spent, and a client that starts with the attack and another that starts 1 s into it both connect during it;

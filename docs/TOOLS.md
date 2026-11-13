@@ -297,7 +297,7 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `power` | The loss of power: of the storage, of the settings, of the ranges |
 | `trusted_boot` | The volumes of the trusted boot; `trusted_boot tpm` adds the two machines with a software TPM |
 
-The persistence and the self tests of the kernel have no part of their own: only the whole run starts them. An argument that is not a part runs the whole test.
+The persistence and the self tests of the kernel have no part of their own: only the whole run starts them. An argument that is not a part is refused before the build: the command prints the parts that it knows and ends with the exit code 2.
 
 ## The bounds of the tests
 
