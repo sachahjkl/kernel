@@ -1311,3 +1311,199 @@ whole_window_next_forgets_each_picture :: proc(t: ^testing.T) {
 	draw_whole_window_next(&drawing)
 	testing.expect(t, !drawing.drawn && !drawing.drawn_second)
 }
+
+// The records of a table as a list of their texts: has_text says if one
+// record draws exactly this text.
+@(private = "file")
+has_text :: proc(table: ^Draw_Table, text: string) -> bool {
+	for record in table.records[:table.record_count] {
+		if is_text_kind(record.kind) && string(table.text[record.text_start:][:record.text_count]) == text {
+			return true
+		}
+	}
+	return false
+}
+
+@(private = "file")
+rectangles_of_color :: proc(table: ^Draw_Table, color: graphics.Color) -> (count: int, last: Draw_Record) {
+	for record in table.records[:table.record_count] {
+		if record.kind == .Rectangle && record.first_color == u32(color) {
+			count += 1
+			last = record
+		}
+	}
+	return
+}
+
+// A list of rows: a heading is a dim text with no mark; an entry has its
+// mark, its name and its text at the right; the chosen row is filled, its
+// hint takes the place of the text at the right, and a line of 2 pixels is
+// under each run of matched characters.
+@(test)
+list_of_rows_draws_marks_matches_and_the_choice :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	state: Interface_State
+	input: Input
+	rows := [?]List_Row {
+		{kind = .Heading, name = "windows"},
+		{name = "console", mark_shown = true, mark_color = graphics.COLOR_TITLE, right_text = "window"},
+		// The bytes 0, 1 and 3 matched: two runs.
+		{name = "plasma", matched_places = 0b1011, mark_shown = true, mark_color = graphics.COLOR_PROGRAM, right_text = "program"},
+		{name = "paint", right_text = "program"},
+	}
+	frame := frame_begin(&table, &state, &input)
+	shown := list_of_rows(&frame, {0, 0, 320, 96}, rows[:], {chosen = 2, chosen_hint = "enter: start", total = len(rows)})
+	frame_end(&frame)
+	testing.expect_value(t, shown, 4)
+	testing.expect(t, has_text(&table, "windows") && has_text(&table, "console") && has_text(&table, "plasma") && has_text(&table, "paint"))
+	// The chosen row: one fill of its whole line, its hint and not its kind.
+	count, fill := rectangles_of_color(&table, graphics.COLOR_CHOSEN)
+	testing.expect_value(t, count, 1)
+	testing.expect_value(t, fill.y, 2 * TABLE_LINE)
+	testing.expect_value(t, fill.width, 320)
+	testing.expect_value(t, fill.height, TABLE_LINE)
+	testing.expect(t, has_text(&table, "enter: start"))
+	// The words at the right of the two rows that are not chosen.
+	words := 0
+	for record in table.records[:table.record_count] {
+		if is_text_kind(record.kind) && string(table.text[record.text_start:][:record.text_count]) == "program" {
+			words += 1
+			testing.expect_value(t, record.first_color, u32(graphics.COLOR_DIM))
+			testing.expect_value(t, int(record.x + record.width), 320 - LIST_ROW_RIGHT_MARGIN)
+		}
+	}
+	testing.expect_value(t, words, 1)
+	// The marks: the one of the row that is not chosen keeps its color;
+	// the lines under the matched runs of the chosen row are white, and
+	// each run is one line: "pl" (2 cells) and "s" (1 cell).
+	count, _ = rectangles_of_color(&table, graphics.COLOR_TITLE)
+	testing.expect_value(t, count, 1)
+	lines: [2]Draw_Record
+	line_count := 0
+	for record in table.records[:table.record_count] {
+		if record.kind == .Rectangle && record.height == 2 {
+			testing.expect_value(t, record.first_color, u32(graphics.COLOR_WHITE))
+			testing.expect_value(t, int(record.y), 2 * TABLE_LINE + 20)
+			if line_count < len(lines) {
+				lines[line_count] = record
+			}
+			line_count += 1
+		}
+	}
+	testing.expect_value(t, line_count, 2)
+	testing.expect_value(t, int(lines[0].x), LIST_ROW_NAME_X)
+	testing.expect_value(t, int(lines[0].width), 2 * graphics.CELL_WIDTH)
+	testing.expect_value(t, int(lines[1].x), LIST_ROW_NAME_X + 3 * graphics.CELL_WIDTH)
+	testing.expect_value(t, int(lines[1].width), graphics.CELL_WIDTH)
+	// A mark in the color of its own row has no contrast there: it is white.
+	rows[1].mark_color = graphics.COLOR_CHOSEN
+	frame = frame_begin(&table, &state, &input)
+	list_of_rows(&frame, {0, 0, 320, 96}, rows[:], {chosen = 1, total = len(rows)})
+	frame_end(&frame)
+	count, _ = rectangles_of_color(&table, graphics.COLOR_CHOSEN)
+	testing.expect_value(t, count, 1) // The fill of the row, and no mark in its color.
+	// With no choice, no row is filled, and a line under a match is in the accent.
+	frame = frame_begin(&table, &state, &input)
+	list_of_rows(&frame, {0, 0, 320, 96}, rows[:], {chosen = -1, total = len(rows)})
+	frame_end(&frame)
+	count, _ = rectangles_of_color(&table, graphics.COLOR_KERNEL)
+	testing.expect_value(t, count, 2)
+}
+
+// A list of rows draws only the rows of its area, and shows a bar of 2
+// pixels at the right when the whole list has more rows.
+@(test)
+list_of_rows_draws_the_rows_of_its_area :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	state: Interface_State
+	input: Input
+	rows: [8]List_Row
+	for &row in rows {
+		row = {name = "a row", right_text = "kind"}
+	}
+	frame := frame_begin(&table, &state, &input)
+	shown := list_of_rows(&frame, {0, 0, 320, 3 * TABLE_LINE}, rows[:], {chosen = 0, first = 10, total = 40})
+	frame_end(&frame)
+	testing.expect_value(t, shown, 3)
+	// The fill of the chosen row stops before the bar.
+	count, fill := rectangles_of_color(&table, graphics.COLOR_CHOSEN)
+	testing.expect_value(t, count, 1)
+	testing.expect_value(t, int(fill.width), 320 - LIST_ROW_SCROLL_WIDTH)
+	// The bar: its track over the height of the rows, and the part shown.
+	count, fill = rectangles_of_color(&table, graphics.COLOR_TRACK)
+	testing.expect_value(t, count, 1)
+	testing.expect_value(t, fill.x, 320 - LIST_ROW_SCROLL_WIDTH)
+	testing.expect_value(t, fill.height, 3 * TABLE_LINE)
+	count, fill = rectangles_of_color(&table, graphics.COLOR_DIM)
+	testing.expect_value(t, count, 1)
+	testing.expect_value(t, int(fill.y), 10 * 3 * TABLE_LINE / 40)
+	// A name longer than its room is cut: no text passes the list.
+	long := [?]List_Row{{name = "a name that is far longer than the room of a narrow list of rows", right_text = "kind"}}
+	frame = frame_begin(&table, &state, &input)
+	list_of_rows(&frame, {0, 0, 160, TABLE_LINE}, long[:], {chosen = -1, total = 1})
+	frame_end(&frame)
+	for record in table.records[:table.record_count] {
+		testing.expect(t, int(record.x + record.width) <= 160)
+	}
+}
+
+// A text input line: the field reaches each edge of its area, the line of
+// 2 pixels is its last 2 pixels, the caret stands at any place of the
+// text at the scale of the text, and a long text shows the part that holds
+// the caret.
+@(test)
+text_input_line_draws_a_caret_at_any_place :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	state: Interface_State
+	input: Input
+	build :: proc(table: ^Draw_Table, state: ^Interface_State, input: ^Input, text: string, caret: int, scale: int) {
+		frame := frame_begin(table, state, input)
+		text_input_line(&frame, {32, 16, 320, 48}, text, caret, scale, "type here")
+		frame_end(&frame)
+	}
+	caret_of :: proc(table: ^Draw_Table) -> Draw_Record {
+		for record in table.records[:table.record_count] {
+			if record.kind == .Rectangle && record.first_color == u32(graphics.COLOR_TITLE) && record.height != 2 {
+				return record
+			}
+		}
+		return {}
+	}
+	build(&table, &state, &input, "", 0, 2)
+	// The field, then its line, from edge to edge.
+	testing.expect_value(t, table.records[0], Draw_Record{kind = .Rectangle, x = 32, y = 16, width = 320, height = 46, first_color = graphics.COLOR_TRACK})
+	testing.expect_value(t, table.records[1], Draw_Record{kind = .Rectangle, x = 32, y = 62, width = 320, height = 2, first_color = graphics.COLOR_TITLE})
+	testing.expect(t, has_text(&table, "type here"))
+	caret := caret_of(&table)
+	testing.expect_value(t, int(caret.x), 32 + TEXT_INPUT_LINE_MARGIN)
+	testing.expect_value(t, int(caret.y), 16 + 8)
+	testing.expect_value(t, int(caret.width), 4)
+	testing.expect_value(t, int(caret.height), 32)
+	// A caret inside the text, at scale 2: cells of 16 pixels.
+	build(&table, &state, &input, "plasma", 2, 2)
+	testing.expect(t, has_text(&table, "plasma") && !has_text(&table, "type here"))
+	testing.expect_value(t, int(caret_of(&table).x), 32 + TEXT_INPUT_LINE_MARGIN + 2 * 16)
+	// At scale 1: cells of 8 pixels, a caret of 2 by 16.
+	build(&table, &state, &input, "plasma", 6, 1)
+	caret = caret_of(&table)
+	testing.expect_value(t, int(caret.x), 32 + TEXT_INPUT_LINE_MARGIN + 6 * 8)
+	testing.expect_value(t, int(caret.width), 2)
+	testing.expect_value(t, int(caret.height), 16)
+	// A caret past the text is at its end.
+	build(&table, &state, &input, "ab", 9, 2)
+	testing.expect_value(t, int(caret_of(&table).x), 32 + TEXT_INPUT_LINE_MARGIN + 2 * 16)
+	// A text longer than the field (17 cells at scale 2): with the caret at
+	// its end, its end shows; with the caret at its start, its start.
+	long := "abcdefghijklmnopqrstuvwxyz"
+	build(&table, &state, &input, long, len(long), 2)
+	testing.expect(t, has_text(&table, long[len(long) - 17:]))
+	testing.expect_value(t, int(caret_of(&table).x), 32 + TEXT_INPUT_LINE_MARGIN + 17 * 16)
+	build(&table, &state, &input, long, 0, 2)
+	testing.expect(t, has_text(&table, long[:17]))
+	for record in table.records[:table.record_count] {
+		testing.expect(t, int(record.x) >= 32 && int(record.x + record.width) <= 32 + 320, "no record passes the field")
+	}
+}

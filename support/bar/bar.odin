@@ -2,7 +2,7 @@
 // button of the bar and of each line of its two menus, the menu of the
 // programs and the menu of the windows. The compositor draws them; the
 // kernel tool clicks them in the machine test. The two read this one table.
-// The launcher (launcher.odin) lists the same names.
+// The palette (support/palette) lists the same names.
 package bar
 
 import "contract:glyph_cache"

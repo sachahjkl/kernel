@@ -73,7 +73,7 @@ next_number :: proc(state: ^u32) -> int {
 }
 
 @(private = "file")
-WORDS :: [?]string{"To", "LT", "Ty", "settings", "AVATAR", "Wave", "launcher", "jj", "fill", "rings", "0O 1lI", "Monitor", "the clock", "W", "i"}
+WORDS :: [?]string{"To", "LT", "Ty", "settings", "AVATAR", "Wave", "palette", "jj", "fill", "rings", "0O 1lI", "Monitor", "the clock", "W", "i"}
 
 // The parts of a frame of build_labels that a change can name.
 @(private = "file")
@@ -303,7 +303,7 @@ the_font_of_a_text_is_the_font_of_its_measure :: proc(t: ^testing.T) {
 	testing.expect(t, record.text_origin_thirds <= 2)
 	testing.expect(t, int(record.x + record.width) - int(record.second_color) <= 101)
 	// The measure of many texts in one call gives the measures one by one.
-	texts := [?]string{"To", "LT", "launcher", "", "W"}
+	texts := [?]string{"To", "LT", "palette", "", "W"}
 	widths: [len(texts)]int
 	texts_measure(&table, FONT_INTERFACE, texts[:], widths[:])
 	for text, index in texts {

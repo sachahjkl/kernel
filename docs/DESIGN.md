@@ -123,7 +123,7 @@ The kinds that the log writes, on a dark surface (contrast on the background `0x
   - Both draw in the line of 16 pixels of the grid, at the scales 1, 2 and 3. The places of the elements stay on the grid of 8; the letters of the interface font do not.
   - A text is measured in the font that draws it, and an element cuts a text to its box: no text passes its element in either font.
   - With no interface font (absent, refused, or the setting `font` is Spleen 8x16), each text is in the font of the cells, with the same layout rules.
-  - The compositor follows the same rule: the buttons of the bar, the lines of its menus, the titles of the windows, the names and the hints of the launcher are in the interface font; the clock, the date, the text that is typed in the launcher and the counts of the menus are in the font of the cells. The mark and its name in square cells do not change. The places of the buttons and of the lines come from the widths of their texts in the font that draws them (the bar layout).
+  - The compositor follows the same rule: the buttons of the bar, the lines of its menus, the titles of the windows, the names, the sentences and the hints of the palette are in the interface font; the clock, the date, the text that is typed in the palette and the counts of the menus and of the palette are in the font of the cells. The mark and its name in square cells do not change. The places of the buttons and of the lines come from the widths of their texts in the font that draws them (the bar layout).
   - **The boot display, by design, in two steps**: the boot program holds no glyph cache, so the first screen of the machine is in Spleen 8x16, the one font of its binary, as a text grid is. The root service then draws the same display again with the caches of the boot image: the titles of its cards and the names of its facts in the interface font, its values in the font of the cells.
 - The font of the cells: the vector font by default, drawn with a coverage for each subpixel band; Spleen 8x16 as the fallback and as the other value of the setting `font` (`docs/FONTS.md`).
 - Three sizes: lines of 1, 2 and 3 times 16 pixels; cells of 1, 2 and 3 times 8 x 16 for the font of the cells. No other size.
@@ -160,18 +160,18 @@ Three things carry no fact: the grid of points on the background, the blue of th
 
 This section applies the rules of sections 1 to 8 to the screen that a principal sees first: its sizes, colors and behaviour, element by element.
 
-The desktop is the screen of the compositor: the background, the bar, the windows, the two menus of the bar and the launcher. It follows sections 1 to 8.
+The desktop is the screen of the compositor: the background, the bar, the windows, the two menus of the bar and the palette. It follows sections 1 to 8.
 
-### The gradient and the launcher
+### The gradient and the palette
 
 - **The gradient** of a title bar goes from the blue of the title bar, `0x3F7CC4`, at its left to a darker blue at its right. The background of the desktop is not that blue: it is the background of the rules.
-- **The launcher** is not the menu of the programs. The menu is a list that the pointer opens from the bar. The launcher is a panel in the middle of the screen that a key opens: the input types a part of a name, and the list narrows at each key. It is the way of the keyboard to start a program. The desktop keeps the menu.
+- **The palette** is not the menu of the programs. The menu is a list that the pointer opens from the bar. The palette is a panel in the upper third of the screen that a key opens: the input types a part of a name, and the list narrows at each key. It is the way of the keyboard to each operation: it starts a program and reaches a window. The desktop keeps the menus.
 
 ### Background and bar
 
 - The background is `COLOR_BACKGROUND` with the grid of points of section 3. The compositor computes it once, at its start.
 - The bar is 32 pixels high, at the top of the screen. It has the surface of a card (`COLOR_CARD_TOP` to `COLOR_CARD_BOTTOM`) and a line of 1 pixel in `COLOR_TRACK` at its bottom.
-- The bar holds, from the left: the mark of the system (the heron with cells of 1 pixel, 24 by 24, at (16, 4): section 11); the button `programs`; the button `windows`; at the right, the key of the launcher ("launcher: super") and the clock: the date and the time of day in UTC (`contract/date`), or the time since the start of the machine while the system has no date.
+- The bar holds, from the left: the mark of the system (the heron with cells of 1 pixel, 24 by 24, at (16, 4): section 11); the button `programs`; the button `windows`; at the right, the key of the palette ("palette: super") and the clock: the date and the time of day in UTC (`contract/date`), or the time since the start of the machine while the system has no date.
 - A button is 24 pixels high, in `COLOR_TRACK`. The button of an open menu is in `COLOR_TITLE`, with its label in white.
 
 ### Menus
@@ -194,17 +194,58 @@ The desktop is the screen of the compositor: the background, the bar, the window
 ### Pointer
 
 - The pointer is an arrow of squares of 2 pixels, 8 squares wide and 11 high: black at the edge, white inside. Its point is the top left square. This arrow is the shape `arrow` of the pointer theme of the system (`resources/pointers/system.manifest`). Each other pointer shape of that theme has the same style: squares of 2 pixels, black and white.
-- **Not a rectangle.** The theme "Posy's Cursor" (`docs/POINTERS.md`) is a build input. When the build has it, it is the default pointer theme. Its pointer pictures have smooth edges, curves and transparency: they are not rectangles. The pointer picture is the one picture resource of the desktop that does not follow sections 2 and 7. It is drawn with a blend of premultiplied alpha. The windows, the bar, the menus, the launcher and each program keep rectangular forms and no transparency.
+- **Not a rectangle.** The theme "Posy's Cursor" (`docs/POINTERS.md`) is a build input. When the build has it, it is the default pointer theme. Its pointer pictures have smooth edges, curves and transparency: they are not rectangles. The pointer picture is the one picture resource of the desktop that does not follow sections 2 and 7. It is drawn with a blend of premultiplied alpha. The windows, the bar, the menus, the palette and each program keep rectangular forms and no transparency.
 
-### Launcher
+### Palette
 
-- The key super (the left key with the logo, `display.KEY_SUPER`) opens and closes the launcher. No program uses this key: the compositor keeps it, and the program that has the focus never receives it.
-- While the launcher is open, it takes each key: a character adds to the typed part, backspace removes the last one, up and down move the choice (from the last line to the first, and back), Enter starts the chosen program, Escape closes the launcher. A press of the pointer closes it. The program that has the focus receives no key and no pointer event while the launcher is open.
-- The panel is a card of 384 pixels in the middle of the screen, on the grid. It has the title `LAUNCHER`, the caption `bar.names`, and the count of the names that match. The compositor writes the same count on the log at each key: "compositor: the launcher lists 11 of 50 for "p": pages, plasma, paint, ...".
-- The input line is a field of 24 pixels in `COLOR_TRACK`, with a line of 2 pixels in `COLOR_TITLE` under it. It shows the typed part in white and a caret of 2 x 16 pixels in `COLOR_TITLE`. When it is empty, it says "type a part of a name" in the dim color.
-- The list shows 10 lines. A name matches if it contains the typed part, without the case of the letters. The names that start with the typed part come first, then the others; each group is in the order of `bar.names`. A line of 2 pixels is under the typed part in each name. The chosen line is a chosen row: `COLOR_CHOSEN`, with its name and "enter: start" at its right in white (section 10). If more than 10 names match, a bar at the right says which part of the list the panel shows.
-- With no match, the list says `no program has "xyz" in its name`, and Enter starts nothing.
-- The launcher lists what the menu of the programs lists, from the same table, and starts a program as the menu does: the compositor sends `Start` with the name to the root service. It has no other power.
+- **One panel, one key.** The key super (the left key with the logo, `display.KEY_SUPER`) opens and closes the palette. No program uses this key: the compositor keeps it, and the program that has the focus never receives it. While the palette is open, it takes each key and the pointer: no window and no menu receives them.
+- **The panel holds no right.** It is a part of the compositor, which already owns each key and each pixel. An entry of the compositor itself does what the desktop already does: a program starts through the root service as the menu of the programs starts it (`Start` with the name), a window comes to the front as a press brings it, a close stops the program as the close button does (`Stop`). A provider entry runs in the program that gave it.
+- **The place.** The panel is 640 pixels wide and 400 high. Its top is at y = 96, fixed, in the upper third of the screen, so the input band never moves when the list changes. It is in the middle of the width of the screen, on the grid: x = 192 on a screen of 1024 (`palette.panel_place`). It opens with no animation, in the next frame, and its height never changes: a short list leaves empty rows.
+- **The parts, from the top**:
+
+| Part | Height | Content |
+|---|---|---|
+| Input band | 48 | The typed part at scale 2 (cells of 16 x 32), 16 pixels from the left edge. Its last 2 pixels are a line in `COLOR_TITLE` |
+| List | 12 rows of 24 = 288 | The entries |
+| Gap | 8 | |
+| Detail line | 24 | One sentence in the dim color: what the choice of the chosen entry does |
+| Footer | 24 | At the left: the source of the chosen entry (`bar.names`, `the client table`), then the count of the entries that match, of all the entries ("3 of 61"). At the right: the keys of the state |
+| Margin | 8 | |
+
+- **The input band is flush.** It is the top of the panel. Its fill (`COLOR_TRACK`) touches the top, the left and the right edge of the panel. Nothing is around it: no title over it, no margin, no border on those three sides. A reader tells it from the list by four signs: the step of surface (the track over the surface of a card); the line of 2 pixels in `COLOR_TITLE` under the band, from edge to edge; the caret of 4 x 32 pixels in `COLOR_TITLE`; the size of the typed part, at scale 2 where each row is at scale 1.
+- **The edge of the rest.** The list, the detail line and the footer have the surface of a card and a border of 1 pixel in the color of the kernel (28 % to 14 %) at the left, the right and the bottom, as a menu of the bar has. They have no border at the top: the line of the band is the edge there. The palette is not a card: it has no title and no caption. Its footer names the source of the chosen entry, so a reader can still find the record behind a row.
+- **The typed part.** It is white, in the font of the cells. Left, Right, Home, End, Delete and Backspace edit it at the caret (`support/line_editor`). It holds at most 64 characters. When it is empty, the band says "type a part of a name" in the dim color, at scale 2.
+- **Two kinds of entries** come from the compositor itself and need no other program: the programs (the table `bar.names`, what the menu of the programs lists) and the windows (the client table, what the menu of the windows lists). Each window also gives the entry of its close, named "close" and its title. A palette provider adds the entries of its own program; no program is one yet.
+- **A row** is 24 pixels: 16 pixels, the mark, 8 pixels, the name, then at the right the kind in words, 16 pixels from the edge.
+  - **The mark** is a square of 8 pixels that says one fact, in the color of its concept. A program: `COLOR_PROGRAM` when it has a window now, `COLOR_NOT_USABLE` when it has none. A window: `COLOR_TITLE` for the window that has the focus, no mark for the others. An entry that destroys: `COLOR_STOP_PROGRAM`.
+  - **The kind** is said in words, in the dim color: `window`, `program`, `close a window`. A color never stands alone for a fact (section 4).
+  - **The name** is in the interface font.
+  - **The matched characters**: a line of 2 pixels in the color of the kernel is under each matched character of a name.
+- **The chosen row** is a chosen row of section 10: `COLOR_CHOSEN`, its name in white, the line under each matched character in white. Its key hint takes the place of the kind, in white: "enter: to the front", "enter: start", "enter: close". A mark in the blue of the title bar is white on it.
+- **With a typed part: one list, ranked**, with no group: the best match is the first row. The match is the fuzzy match of the console (`support/line_editor`): the characters of the typed part appear in the name in their order, not always side by side, without the case of the letters ("closepla" matches "close plasma"). Among entries of one score, the order is: the entries chosen lately, the newest first; then the kind (a window, a program, a close); then the order of the table. A better match always comes before a recent choice.
+- **With no typed part: groups**, each under a dim line of text: "recent" (at most 5 entries, the newest first), "windows" (each window, the front one first), "programs" (the order of `bar.names`). A group with no entry is absent. To reach a window is the most frequent act, so the windows show before any letter. The entries that destroy show only for a typed part.
+- **The recent choices**: the panel remembers the last 16 chosen entries, by kind and name, in the memory of the compositor. A restart of the machine loses them.
+- **More than 12 rows**: a bar of 2 pixels at the right says which part of the list the panel shows.
+- **No match**: one dim line, `nothing has "xyz" in its name`, and Enter runs nothing.
+- **An entry that destroys asks for a second Enter.** Enter on it changes the chosen row: its fill is `COLOR_STOP_PROGRAM`, its text says the act in full ("stop plasma: its window closes"), and its hint is "enter: confirm". A second Enter runs it. Each other key goes back to the search, with the typed part kept, and does nothing else. The compositor draws this question.
+- **The keys**:
+
+| Key | In the search | In the question of an entry that destroys |
+|---|---|---|
+| Super | Closes the panel | Closes the panel |
+| Escape | Closes the panel | Back to the search |
+| A character | Goes in at the caret; the list follows | Back to the search |
+| Left, Right, Home, End, Delete, Backspace | Edit the typed part | Back to the search |
+| Up, Down | Move the choice, from the last entry to the first and back | Back to the search |
+| Page Up, Page Down | Move the choice by 11 rows, with no wrap | Back to the search |
+| Enter | Runs the chosen entry: starts the program, brings the window to the front, or asks the question | Runs the entry |
+| Tab | Nothing | Back to the search |
+
+- **The pointer**: a move of the pointer over an entry chooses it (only a move: a list that changes under a still pointer keeps its choice). A press and a release on one row run it, as Enter does. A press outside the panel closes it. A press inside the panel that is on no row does nothing. The pointer shape is `text` over the input band and `pointing_hand` over an entry.
+- **After a choice** that starts a program or brings a window to the front, the panel closes at once: what it started shows on the desktop.
+- **The states** of the panel are one enumeration (`palette.State`): closed, the search, the question. Two pure procedures hold each transition (`palette.key_action`, `palette.state_after`), and host tests run each state with each key.
+- **The cost.** The key super only sets the state and builds the draw records of the 12 rows shown: the entries and the list of an empty typed part are made when a window appears, leaves or comes to the front, and after a choice, not at the key. A typed key ranks the entries of the compositor (the programs and the windows, a table of constants of its own) and draws the rows shown. The compositor writes on the log at each key the count and the first rows, "compositor: the palette lists 3 of 61 for "mon": monitor (window), monitor (program), close monitor (close a window)", and at each close the frames, the mean time of a frame and the longest ranking.
+- The code: the state, the entries, the ranking, the keys and the draw records are `support/palette`; the keys, the pointer and the acts are `programs/compositor/palette.odin`.
 
 
 ## 10. Elements
@@ -220,18 +261,21 @@ The interface package (`support/interface`, `docs/INTERFACE.md`) draws these ele
 | Bar | The track in `COLOR_TRACK`; the full part from 125 % of its color at the top to 78 % at the bottom; 2 pixels at least for a value above 0 |
 | Button | A rectangle of the track with its label in the text color; blue (`COLOR_TITLE`) at 60 % when it has the focus or the pointer is over it, full blue with a white label when it is open or both |
 | List with a choice | Lines of 24 pixels; the chosen line in `COLOR_CHOSEN` with its name and its hint in white; a line of 2 pixels under a searched part of each name; a bar of 2 pixels at the right when the lines do not fit |
-| Text input | A field of the track with a line of 2 pixels at its bottom (`COLOR_TITLE` with the focus, `COLOR_NOT_USABLE` without); the text in white; a caret of 2 x 16 pixels in `COLOR_TITLE` with the focus; the placeholder in the dim color |
+| List of rows | Rows of 24 pixels: a mark of 8 pixels that says one fact, the name, and at the right what the row is, in words, in the dim color; a line of 2 pixels under each matched character of a name; the chosen row filled, with its text and its hint in white; a dim line of text as the heading of a group; a bar of 2 pixels at the right when the rows do not fit |
+| Text input | A field of the track with a line of 2 pixels at its bottom (`COLOR_TITLE` with the focus, `COLOR_NOT_USABLE` without); the text in white, at scale 1 or 2; a caret of 2 x 16 pixels in `COLOR_TITLE` with the focus (4 x 32 at scale 2), at any place of the text; the placeholder in the dim color |
+| Panel with a flush input | The input is the top band of the panel, from edge to edge, with no border on its three outer sides: its fill and the line of 2 pixels under it are its edge. The rest of the panel has a border of 1 pixel at the left, the right and the bottom |
 | Large number | The font at 3 times its size, drawn from its outline at 24 x 48: the one number of a card (section 5) |
 
 ### The chosen row
 
-A chosen row is the chosen line of a list, of a menu of the bar, of the launcher, and of the completion list of the terminal.
+A chosen row is the chosen line of a list, of a menu of the bar, of the palette, and of the completion list of the terminal.
 
 - Its color is `COLOR_CHOSEN`, `0x3C76BB`: the blue of the title bar at 96 % (`shade(COLOR_TITLE, 96)`). It is not the title blue itself: white has 4.29 to 1 on `0x3F7CC4`, under the 4.5 that a text needs.
 - Its text is white: 4.67 to 1. No other color of the rules keeps 4.5 on it: the text color has 3.63, the accent of a match under 3.3.
-- A matched character of a chosen row in a grid of cells is the reverse: the chosen blue on a white cell, 4.67 to 1. In a list of the interface font, the line of 2 pixels under the searched part is white.
+- A matched character of a chosen row in a grid of cells is the reverse: the chosen blue on a white cell, 4.67 to 1. In a list of the interface font, the line of 2 pixels under the searched part, or under each matched character, is white.
 - A title bar is not a chosen row: it keeps its gradient from `COLOR_TITLE`. An open button draws its white label on `COLOR_CHOSEN` too (4.67).
-- A host test computes the contrast of the text and of a matched character on the chosen row (`support/terminal/code_runs_test.odin`).
+- The row of the palette that asks for a second Enter is not in `COLOR_CHOSEN`: its fill is `COLOR_STOP_PROGRAM`, the concept of what it does, and its text is white: 6.3 to 1.
+- A host test computes the contrast of the text and of a matched character on the chosen row (`support/terminal/code_runs_test.odin`). A second host test computes the pairs of the palette: white on the chosen row, white on `COLOR_STOP_PROGRAM`, white and each color of code on the track of the input band, the dim color on the surface of a card, and the dim placeholder of the input band as a large text, at 3 to 1 (`support/graphics/palette_colors_test.odin`).
 
 - An element that takes input can take the focus, and the keyboard reaches it: Tab, Enter, Space, the arrows (`docs/INTERFACE.md`, section 4).
 
@@ -328,7 +372,7 @@ With the boot image of the last build (77 modules and 9 resources), the card nam
 ## State
 
 - The boot display follows all rules.
-- The desktop (the compositor: background, bar, menus, windows, pointer, launcher) follows all rules. The pointer pictures of the theme "Posy's Cursor" are the one exception of their own (section 9, "Pointer"). New windows and windows that the pointer drags are on the grid of 8.
-- `clock`, the window of `remote`, the launcher of the compositor, `interface_elements`, `vector_glyphs` and `settings` are built with the interface package (section 10). `errors`, `locks` and `net` take all their colors from `support/graphics`. `log` and `pages` take the background, the text and the dim color from it.
+- The desktop (the compositor: background, bar, menus, windows, pointer, palette) follows all rules. The pointer pictures of the theme "Posy's Cursor" are the one exception of their own (section 9, "Pointer"). New windows and windows that the pointer drags are on the grid of 8.
+- `clock`, the window of `remote`, the palette of the compositor, `interface_elements`, `vector_glyphs` and `settings` are built with the interface package (section 10). `errors`, `locks` and `net` take all their colors from `support/graphics`. `log` and `pages` take the background, the text and the dim color from it.
 - Each other program takes from `support/graphics` the colors that have a role of the rules: the background, the card (a panel or a band), the text, the dim color, the track (the empty part of a bar), an expected answer (`COLOR_PROGRAM`) and a failure (`COLOR_FAILED`), where its own color had that role. The colors that mean something of one program stay in it: a refusal that the program expects, an answer that is not the expected one (`0xE0B040` in eight programs), the measures of `flow`, `crowd`, `disk` and `clock`, the bars of `budget` and `processors`, the states of `rings`, `threads` and `terminal`, the headings of `manual`, the count of `tally`, the marble of `temple`, the paper of `paint`, the levels of `log`, the kinds of pages of `pages`. Some of them have the value of a rule color with another meaning (`0xE0A040` for kernel entries): a color of the rules for them is a change of meaning, which is not done.
 - The windows below the level of the boot display, `remote` and `scheduler`, from the farthest: `temple` (marble and ink, no rule color), `paint` (a light paper), `manual` (its own colors for headings, no cards), `monitor` (one list, no cards), the tables of `budget`, `rights`, `origin`, `limits`, `frames`, `imports`, `processors` (one size of text, bands but no cards and no captions), the measures of `clock`, `crowd`, `flow`, `disk`, then `rings`, `threads`, `workers`, `tally`, `notes`, `life`, and the text of `console` and `terminal`.

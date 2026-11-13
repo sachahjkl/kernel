@@ -459,6 +459,8 @@ The tests pin these orders on real names of the system (the exports of `monitor`
 
 The pass back takes the latest place of each character: `set` in `manual.segments` takes the second `e`, not the `e` beside the `s`. A search of the best window costs more work for each name; the order above is the result of the bounded rule.
 
+The palette of the desktop ranks its entries with the same match and the same order (`support/line_editor`; `DESIGN.md`, "Palette"). Its tie order is: the entries chosen lately, the newest first; then the kind of the entry; then the order of its table.
+
 ## 4. The bounds, and the cost of one key
 
 The names in the list come from descriptions that other programs wrote, and a hostile description can hold very many or very long names. Each bound below keeps the work of one key below a fixed count of steps, whatever the names are.

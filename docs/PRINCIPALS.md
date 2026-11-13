@@ -136,7 +136,7 @@ The root service records, for each program that it starts, the principal whose s
 |---|---|
 | The root service itself (the services, the console, the boot passes) | 0, the machine |
 | A service that starts on demand (`storage`, `sample`) | 0 |
-| The desktop: the menu or the launcher of the compositor | The named principal that is unlocked, else 0 |
+| The desktop: the menu or the palette of the compositor | The named principal that is unlocked, else 0 |
 | A program, through its ring to the root service (`start("name")` in the console) | The principal of the program that asks |
 | The terminal of a program | The principal of that program |
 

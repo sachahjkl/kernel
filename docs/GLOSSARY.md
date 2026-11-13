@@ -3657,9 +3657,9 @@ Do not use: back buffer, front buffer, swap chain.
 
 The compositor is the service that owns the display: it combines the surfaces of the programs into the framebuffer and routes the input to the program that has the focus.
 
-The compositor is the one program that writes the screen. The root service gives it the framebuffer, a ring to the input service, and a ring to each program with a surface (`Client_Add`). It draws the background, the bar, each window (a title bar over the surface of its program, with a border), the two menus of the bar, the launcher and the pointer. It draws again only the damage rectangles of a frame. It sends each key to the program in front, and each pointer event over a surface to the program of that surface, in the coordinates of the surface.
+The compositor is the one program that writes the screen. The root service gives it the framebuffer, a ring to the input service, and a ring to each program with a surface (`Client_Add`). It draws the background, the bar, each window (a title bar over the surface of its program, with a border), the two menus of the bar, the palette and the pointer. It draws again only the damage rectangles of a frame. It sends each key to the program in front, and each pointer event over a surface to the program of that surface, in the coordinates of the surface.
 
-In the first version, it is also the desktop shell: it starts a program from its menus or the launcher by the command `Start` to the root service, and it stops a program when its window closes. It serves exports, such as `compositor.pointer()`, which the machine tests read through the remote service.
+In the first version, it is also the desktop shell: it starts a program from its menus or the palette by the command `Start` to the root service, and it stops a program when its window closes. It serves exports, such as `compositor.pointer()`, which the machine tests read through the remote service.
 
 The compositor is not a window manager that another program can replace, and not a display server with a protocol of drawing: a program gives it pixels, never commands to draw.
 
@@ -3707,7 +3707,7 @@ Do not use: TTY, shell.
 
 The desktop shell is the program that starts programs and shows their windows to the principal.
 
-In the first version, the compositor is the desktop shell: its bar has the menu of the programs and the menu of the windows, the launcher starts a program by a key, and the close button of a window stops its program. The compositor starts a program by the command `Start` to the root service, with the name of the program, and has no other power: the root service decides the grants of the program. The design also gives the desktop shell the list of the grants of each program; today the console shows them, with `grants`.
+In the first version, the compositor is the desktop shell: its bar has the menu of the programs and the menu of the windows, the palette starts a program and reaches a window by a key, and the close button of a window stops its program. The compositor starts a program by the command `Start` to the root service, with the name of the program, and has no other power: the root service decides the grants of the program. The design also gives the desktop shell the list of the grants of each program; today the console shows them, with `grants`.
 
 The desktop shell is not a window manager with rules of placement: the compositor places new windows at fixed steps on the grid.
 
@@ -3719,7 +3719,7 @@ Do not use: window manager.
 
 The focus is the state of the window in front: its program receives the keys, and its title bar shows it in blue.
 
-The focus decides where each key goes. A press on a window brings it to the front and gives it the focus; a line of the menu of the windows does the same. The compositor sends the keys only to the program that has the focus, and sends a pointer event to the program of the surface under the pointer. While the launcher is open, no program receives a key or a pointer event. The key super never reaches a program: the compositor keeps it.
+The focus decides where each key goes. A press on a window brings it to the front and gives it the focus; a line of the menu of the windows does the same. The compositor sends the keys only to the program that has the focus, and sends a pointer event to the program of the surface under the pointer. While the palette is open, no program receives a key or a pointer event. The key super never reaches a program: the compositor keeps it.
 
 Inside a window, the interface package has a focus of its own: the element that takes the keys, which Tab and Shift+Tab move. The two are different: the focus of the compositor chooses a window, the focus of the interface state chooses an element in it.
 
@@ -3743,9 +3743,9 @@ Do not use: header, caption, decoration.
 
 ### Bar
 
-The bar is the line at the top of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the launcher, and the time since the start.
+The bar is the line at the top of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the palette, and the time since the start.
 
-The bar is the fixed place of the desktop where the input starts a program or finds a window. It is 32 pixels high. From the left: the mark of the system, the button `programs`, the button `windows`; at the right, "launcher: super" and the time since the start of the machine. A press on a button opens its menu under it. `support/bar` holds the places of the buttons and of each line of the menus, and the table of the names of the programs, `bar.names`: the compositor draws from it, and the kernel tool presses the same places in the machine tests.
+The bar is the fixed place of the desktop where the input starts a program or finds a window. It is 32 pixels high. From the left: the mark of the system, the button `programs`, the button `windows`; at the right, "palette: super" and the time since the start of the machine. A press on a button opens its menu under it. `support/bar` holds the places of the buttons and of each line of the menus, and the table of the names of the programs, `bar.names`: the compositor draws from it, and the kernel tool presses the same places in the machine tests.
 
 The bar is not a task bar with an icon for each program, and not a dock: it holds two menus and no state of a program.
 
@@ -3771,11 +3771,11 @@ The menu of the programs is the menu of the bar with one line for each name of t
 
 The menu is the way of the pointer to start a program. It is a card under the button `programs`, in two columns, with the caption `bar.names` and the count of its lines. The line under the pointer is a chosen row. A press sends `Start` with the name to the root service, which decides the grants of the program.
 
-The menu of the programs is not the launcher: the launcher lists the same names but is opened by a key and narrows as the input types. It is not a start menu with folders: it has one flat table.
+The menu of the programs is not the palette: the palette lists the same names, with the windows, but is opened by a key and narrows as the input types. It is not a start menu with folders: it has one flat table.
 
 The design: `docs/DESIGN.md`, "Menus".
 
-Do not use: launcher, start menu.
+Do not use: start menu, application menu.
 
 ### Menu of the windows
 
@@ -3789,17 +3789,41 @@ The design: `docs/DESIGN.md`, "Menus".
 
 Do not use: task bar, window list, switcher.
 
-### Launcher
+### Palette
 
-The launcher is the panel in the middle of the screen that the key super opens, where the input types a part of a name and starts the chosen program.
+The palette is the panel that the key super opens, where the input types a part of a name and chooses one entry of one list: a program to start, a window to bring to the front, or another operation.
 
-The launcher is the way of the keyboard to start a program. While it is open it takes each key: a character adds to the typed part, Backspace removes the last one, up and down move the choice, Enter starts the chosen program, Escape closes it. The list has the names of `bar.names` that contain the typed part, without the case of the letters: the names that start with it first, then the others, 10 lines at once, and the count "6 of 31". With no match, the list says `no program has "xyz" in its name`. Enter sends `Start` to the root service, as the menu of the programs does; the launcher has no other power.
+The palette is the way of the keyboard to each operation that the desktop offers. The compositor draws it and holds its state; the panel holds no right of its own. Its input band is the top of the panel, flush with the top, the left and the right edge, with the typed part at twice the size of the font. With a typed part, the list is one ranking of all the palette entries by the fuzzy match of the console, with each matched character marked; with no typed part, it shows the recent choices, the windows, then the programs. Up and down move the choice, Enter runs the chosen entry, Escape and the key super close the panel. An entry that destroys something, such as the close of a window, asks for a second Enter. Example: the key super, "pla", Enter starts `plasma`; the key super, "mon", Enter brings the window `monitor` to the front.
 
-The launcher is not a run dialog: it starts only the names of the table, never a path or a command line. It is not the menu of the programs, which the pointer opens from the bar.
+The palette is not a run dialog: it runs only its entries, never a path or a line of the console. It is not the menu of the programs or the menu of the windows, which the pointer opens from the bar. It is not the console: it composes no values. It is not a set of colors: the colors of `paint` and the colors of code are not this term.
 
-The design: `docs/DESIGN.md`, "Launcher".
+The design: `docs/DESIGN.md`, "Palette".
 
-Do not use: run dialog, command palette, menu of the programs.
+Do not use: launcher, command palette, everything palette, run dialog.
+
+### Palette entry
+
+A palette entry is one thing that the palette lists and that the input can choose: a name, a kind, and the fact that its mark says.
+
+The entries are data, and the panel only ranks, draws and dispatches them. An entry has a kind, which the row says in words (`window`, `program`, `close a window`); a name of at most 64 bytes, which the typed part matches; a mark, which says one fact (a program has a window now, a window has the focus, the entry destroys something); and a number that only the source of the entry reads. The compositor makes the entries of its two sources, the table `bar.names` and its client table, when one of them changes (`palette.entries_collect`). The record is `palette.Entry` in `support/palette`.
+
+A palette entry is not a command line: it holds no text that another program parses.
+
+The design: `docs/DESIGN.md`, "Palette".
+
+Do not use: palette item, palette command, action.
+
+### Palette provider
+
+A palette provider is a program that gives palette entries of its own to the panel and runs the one that the input chooses, with its own rights.
+
+The provider keeps the rule that the panel holds no right: an entry runs in the program that gave it, with the grants of that program, and the panel only names the chosen entry. The compositor is the source of the entries of the programs and of the windows, and needs no provider for them. No program is a palette provider yet: the console is the first one planned, for its commands.
+
+A palette provider is not a plugin of the compositor: it runs in its own program, and it draws nothing in the panel.
+
+The design: `docs/DESIGN.md`, "Palette".
+
+Do not use: palette source, palette backend, palette plugin.
 
 ### Interface package
 
@@ -3807,7 +3831,7 @@ The interface package is `support/interface`: the code that builds the window of
 
 The interface package gives each program one way to draw its window by the design rules, with no retained tree of widgets. It works in immediate mode: at each frame, the program calls an element procedure for each part of its window (`card`, `label_value_line`, `button`, `list_with_choice`, `text_input`). Each call appends draw records to the draw table and gives back what the input did to that element: pressed, has the focus, changed. Then `damage_by_difference` finds what changed, and `execute_in_rectangles` draws it.
 
-The package allocates nothing: the program gives the draw tables, the text tables and the interface state. An error is a value: a full table keeps the flag `full`, and the next frame of that picture is drawn whole. Its core makes no kernel call. Example: the programs `disk`, `inspect` and `monitor`, and the launcher of the compositor, are drawn with it.
+The package allocates nothing: the program gives the draw tables, the text tables and the interface state. An error is a value: a full table keeps the flag `full`, and the next frame of that picture is drawn whole. Its core makes no kernel call. Example: the programs `disk`, `inspect` and `monitor`, and the palette of the compositor, are drawn with it.
 
 The interface package is not a toolkit with objects, callbacks and a tree; its state is the state of the program.
 
@@ -3891,7 +3915,7 @@ Do not use: widget, control, component, view.
 
 An element identity is a number that names one element from one frame to the next, made from a text: the focus and the state of the pointer follow it.
 
-In immediate mode no object lives between frames, so the interface state needs a stable name for each element that takes input. `identity("launcher list")` gives the 64-bit FNV-1a hash of the text. Two elements with one text have one identity; `identity_with(base, row)` and `identity_in(parent, name)` make them two, and `Frame.identity_collisions` counts the elements of a frame that repeat an identity. Each draw record keeps the low 32 bits of the identity that wrote it, so a tool can say which element changed.
+In immediate mode no object lives between frames, so the interface state needs a stable name for each element that takes input. `identity("list")` gives the 64-bit FNV-1a hash of the text. Two elements with one text have one identity; `identity_with(base, row)` and `identity_in(parent, name)` make them two, and `Frame.identity_collisions` counts the elements of a frame that repeat an identity. Each draw record keeps the low 32 bits of the identity that wrote it, so a tool can say which element changed.
 
 An element identity is not a handle: it names nothing in the kernel and gives no access.
 
@@ -3939,7 +3963,7 @@ Do not use: cursor, mouse cursor, mouse pointer.
 
 A pointer shape is what the pointer shows, as one name of the system: `arrow`, `text`, `pointing_hand`, `move`, `wait`, and ten more.
 
-One list of names lets any theme serve each program: a program asks for a name, and the theme gives the pictures. The 15 shapes are `Pointer_Shape` of `contract/pointer_pictures`; zero is `arrow`, so a zero record asks for the default. The compositor chooses the shape from what is under the pointer: `move` over a title bar, `pointing_hand` over a button, `text` over the input line of the launcher. A program asks for a shape over its own surface with `display.pointer_shape_set`; the compositor shows it only while the pointer is over that surface and that surface is in front there, so a program cannot change the pointer over another program, the bar or a frame. A number outside the list is ignored.
+One list of names lets any theme serve each program: a program asks for a name, and the theme gives the pictures. The 15 shapes are `Pointer_Shape` of `contract/pointer_pictures`; zero is `arrow`, so a zero record asks for the default. The compositor chooses the shape from what is under the pointer: `move` over a title bar, `pointing_hand` over a button, `text` over the input band of the palette. A program asks for a shape over its own surface with `display.pointer_shape_set`; the compositor shows it only while the pointer is over that surface and that surface is in front there, so a program cannot change the pointer over another program, the bar or a frame. A number outside the list is ignored.
 
 A pointer shape is not a file name of a theme: the manifest of a theme maps each shape to its sources.
 
@@ -4052,11 +4076,11 @@ Do not use: asset, data file, blob.
 
 The caret is the mark in a text input of the place where the next typed character goes.
 
-The caret shows where the keys act. In the launcher it is a bar of 2 by 16 pixels in the blue of the title bar; in the edit line of the console the line editor keeps its place. A text input shows the caret only when it has the focus.
+The caret shows where the keys act. In the palette it is a bar of 4 by 32 pixels in the blue of the title bar, at the place of the typed part where the next character goes; in the edit line of the console the line editor keeps its place. A text input shows the caret only when it has the focus.
 
 The caret is not the pointer: the pointer follows the pointing device, the caret follows the keys. The system does not use the word "cursor" for either one.
 
-The design: `docs/DESIGN.md`, "Launcher".
+The design: `docs/DESIGN.md`, "Palette".
 
 Do not use: cursor, text cursor, insertion point.
 
@@ -4236,7 +4260,7 @@ The interface font is the proportional font of the titles, the labels, the butto
 
 B612 has an em of 2000 units and 19 different advances in ASCII. At scale 1 its cap height is 10 rows of the grid. Its digits are all 1300 units wide, so a column of numbers aligns in it too. Its Bold weight has scale 1 only, for titles.
 
-A program uses it through `support/interface`: an element that names or explains draws an `Interface_Text` record, and the table measures and draws it with text shaping and a proportional cache. The compositor draws the bar, the menus, the title bars and the launcher in it, and the root service draws the titles of the boot display in it. If the caches are absent or refused, or if the setting `font` is `spleen`, each element draws in the font of the cells with the same rules.
+A program uses it through `support/interface`: an element that names or explains draws an `Interface_Text` record, and the table measures and draws it with text shaping and a proportional cache. The compositor draws the bar, the menus, the title bars and the palette in it, and the root service draws the titles of the boot display in it. If the caches are absent or refused, or if the setting `font` is `spleen`, each element draws in the font of the cells with the same rules.
 
 The design: `docs/FONTS.md`, "12. The interface font and the text shaping module".
 

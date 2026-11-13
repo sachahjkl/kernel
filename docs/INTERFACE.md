@@ -29,8 +29,8 @@ Counted on 2026-11-11 (`master` `cbe3c0e`) with `grep` over `programs/*/` and `s
 | Private copies of large text (each pixel of the font as a square) | 5: `large` in `remote`, `scheduler`, `terminal`; `write_large` in the boot display and `server` |
 | Programs that draw a bar on a track | 15 |
 | Programs that draw a table (a header, columns, bands) | 8 |
-| Lists with a choice | 3: the menus and the launcher of the compositor, `manual`, `errors` |
-| Text inputs with a caret | 2: the launcher, `terminal` (`console` draws through the terminal) |
+| Lists with a choice | 3: the menus and the palette of the compositor, `manual`, `errors` |
+| Text inputs with a caret | 2: the palette, `terminal` (`console` draws through the terminal) |
 | Programs that react to the pointer | 7; to the keys: 9. Each one tests rectangles by hand |
 | Programs that track damage | 1: the compositor. Each other program draws its whole surface for each change, and `Present` damages the whole surface |
 
@@ -147,13 +147,14 @@ Layout places the elements of a window. The package has no solver: a program tak
 
 The package gives each element its input with no callback: the program passes the events of the frame, and each element returns what happened to it. Only the focus, the element under the pointer and the pressed element live from frame to frame, by the identity of the element.
 
-An example from the launcher of the compositor: `identity("launcher list")` names its list in each frame, so the list keeps the focus while its rows change.
+An example from `interface_elements`: `identity("list")` names its list in each frame, so the list keeps the focus while its rows change.
 
 - The program gives each frame an `Input` record, filled from the `display.Event` records of the frame: the place of the pointer, a press and a release of the left button, and the keys pressed in this frame (at most 16).
-- **Element identity**: an element that takes input has an identity, a u64 that the caller makes from a text with `identity("launcher list")` (the 64-bit FNV-1a hash of the text). The identity must stay the same from one frame to the next for one element. Two elements with one text have one identity: `identity_with(base, row)` and `identity_in(parent, name)` make them two, and `Frame.identity_collisions` counts the elements of a frame that repeat an identity (a host test).
+- **Element identity**: an element that takes input has an identity, a u64 that the caller makes from a text with `identity("list")` (the 64-bit FNV-1a hash of the text). The identity must stay the same from one frame to the next for one element. Two elements with one text have one identity: `identity_with(base, row)` and `identity_in(parent, name)` make them two, and `Frame.identity_collisions` counts the elements of a frame that repeat an identity (a host test).
 - The order of Tab holds 64 elements (`FOCUS_ORDER_CAPACITY`); an element after them takes a press but not Tab, and `Frame.focus_overflow` counts them.
 - **The interface state** (`Interface_State`, memory of the caller, 544 bytes: three identities, the order of 64 identities and its count) keeps between frames: the element that has the focus, the element under the pointer, the element pressed and not yet released, and the order of the elements that can take the focus in the last frame.
-- **The keyboard is a first path**: Tab and Shift+Tab move the focus in the order of the elements of the last frame; Enter and Space press the button that has the focus; up and down move the choice of a list that has the focus; a text input that has the focus takes the characters and Backspace. The launcher of the compositor is the model: each thing that the pointer does, a key does.
+- **The keyboard is a first path**: Tab and Shift+Tab move the focus in the order of the elements of the last frame; Enter and Space press the button that has the focus; up and down move the choice of a list that has the focus; a text input that has the focus takes the characters and Backspace. The palette of the compositor is the model: each thing that the pointer does, a key does.
+- **Elements that take no input**: `list_of_rows` and `text_input_line` only draw. Their caller owns the choice, the typed text and the caret, and decides what each key does in a pure procedure of its own (`support/palette`, `key_action`): a host test then runs each state with each key, with no frame. `list_of_rows` gets only the rows that its area shows, with the place of the first one in the whole list, so its work is the rows on the screen. `text_input_line` draws a line that `support/line_editor` edits: a caret at any place, at a scale of 1 to 3, and a field with no border, whose fill reaches each edge of its area.
 - **The pointer**: an element under the pointer is "under the pointer" (the close button of a window is brighter); a press and a release on one element press it. A press on an element gives it the focus.
 
 ## 5. Text
@@ -198,7 +199,7 @@ The module is the right form: the interface is shared code, as P10 and P11 say. 
 ## 8. Property 20 and the compositor
 
 - The package draws only into the canvas that the caller gives: a program draws only into its own surface. The package has no handle and makes no kernel call (P20: no ambient access).
-- The compositor is a user of the same package: its launcher is built as a draw table, executed into its frame, and damaged by difference as each program's window is.
+- The compositor is a user of the same package: its palette is built as a draw table, executed into its frame, and damaged by difference as each program's window is.
 
 ## 9. Text: a vector font, research note and prototype
 
@@ -267,12 +268,12 @@ Most programs now draw their window with the package. This section lists the inv
 | A negative height of a column does not make `used` smaller | `top + max(height, 0)` | Host test `column_negative_height` |
 | `row_split` checks its sizes | Negative sizes are 0, fixed sizes are cut, each column stays in the row, no overflow | Host test `row_split_checks_its_sizes` |
 | A press under the last line or on the bar of a list chooses no line; a cut choice is reported | The list | Host test `list_press_and_cut_choice` |
-| Tab in the launcher does not move the focus | The launcher ignores Tab | The compositor does not run on the host; the launcher steps of the machine test |
+| Tab in the palette does not move the focus | `palette.key_action` gives no action for Tab | Host test `each_key_in_each_state` of `support/palette` |
 | Two elements with one text get two identities; elements past 64 are counted | `identity_in` and `identity_with`; `Frame.identity_collisions` and `Frame.focus_overflow` count them; section 4 says the limit | Host test `identity_collision` |
 | `draw_text_right` keeps the element; an `int` is not cut to `i32` with no check | The element passes; each place and size is clamped to `i32` | Host test `coordinates_are_cut_to_i32` |
 | The core files make no kernel call | `draw_table.odin` and the other core files; `window_drawing.odin` reads events and presents (section 2.3) | Read |
 | A table that does not cover its surface leaves no stale pixel | Each damage rectangle of a surface is painted with the background first (`draw_damage_on_surface`), a whole frame starts from the background, with no rule for the caller | Host test `a_gone_record_leaves_no_pixel` |
-| Names are complete words | `raster.odin`: `start_x`, `signed_height`, `width_inverse`, `first_x`, ...; `parse.odin`: `start_read`, `end_read`, `glyph_bytes`; `vector_glyphs`: `pixel_x`, `pixel_y`; `bar`: `full_width`; the launcher: `name_index`, `line_number`. The TrueType tags stay | Read |
+| Names are complete words | `raster.odin`: `start_x`, `signed_height`, `width_inverse`, `first_x`, ...; `parse.odin`: `start_read`, `end_read`, `glyph_bytes`; `vector_glyphs`: `pixel_x`, `pixel_y`; `bar`: `full_width`; the palette: `first_row`, `matched_count`. The TrueType tags stay | Read |
 
 The package has 49 host tests (45 in `support/interface/interface_test.odin`, 4 in `interface_font_test.odin`), and `support/vector_font` has 22.
 
@@ -301,7 +302,7 @@ The package has 49 host tests (45 in `support/interface/interface_test.odin`, 4 
 | origin | 10 | 0 | 24 576 | 40 960 |
 | manual | 10 | 0 | 114 688 | 126 976 |
 | life | 2 | 2 (its own board picture, by design: the Picture record) | 32 768 | 51 148 |
-| clock, remote, the launcher | 32, 31, 48 lines | 0 | | |
+| clock, remote, the palette | 32, 31, 48 lines | 0 | | |
 | Sum of the 19 programs above | 346 | 2 | | |
 
 - Each converted module grows by 8 to 16 KiB (2 to 4 pages): the package is in each one. `processors`, which is not converted, grows by 4 KiB from the measure of pictures of `display`. This is the measured argument for the package as one shared module (section 7): about 230 KiB in all for these programs, today paid once for each.
