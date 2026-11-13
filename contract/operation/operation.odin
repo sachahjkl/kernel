@@ -17,6 +17,7 @@
 package operation
 
 import info "contract:boot_info"
+import "contract:value_kinds"
 
 PAGE_SIZE :: 4096
 WAIT_FOREVER :: max(u64)
@@ -100,7 +101,7 @@ Object_Kind :: enum u8 {
 
 Operation :: enum u32 {
 	None           = 0,
-	Log            = 1, // (log, address, count, level, channel 0, channel 1): write one text on the log. The channel is 16 bytes in two values.
+	Log            = 1, // (log, address, count, level, channel 0, channel 1, runs): write one text on the log. The channel is 16 bytes in two values. The value runs of the text (value_kinds.Value_Run_In_Call, at most LOG_CALL_RUN_LIMIT) follow its count bytes at the address; runs that do not fit the text leave it plain.
 	Memory_Create  = 2, // (budget, page_count, Memory_Flags) -> memory handle. The memory is zero.
 	// The budget pays now for each page. A page gets its page frame at its first use (a page on first use),
 	// or now with Frames_Now. An access to the memory never fails for lack of memory.
@@ -1086,8 +1087,14 @@ Log_Level :: enum u8 {
 	Error   = 3,
 }
 
-LOG_TEXT_CAPACITY :: 176
+LOG_TEXT_CAPACITY :: 152
 LOG_CHANNEL_CAPACITY :: 16
+// The value runs that one record keeps: the kind of each typed part of its
+// text (contract:value_kinds). A text with more typed parts keeps its first
+// runs; the rest of its text is plain.
+LOG_RUN_CAPACITY :: 8
+// The value runs that one Log operation takes, after its text.
+LOG_CALL_RUN_LIMIT :: 32
 // 128 pages: 2047 records. With 64 pages (1023 records), the main machine
 // test wrote about 1024 records before it starts the program log, which
 // checks that it lost none: each new line of a program broke the check.
@@ -1108,9 +1115,11 @@ Log_Record :: struct {
 	level:      Log_Level,
 	more:       u8, // 1: the text continues in the next record.
 	text_count: u16,
-	reserved:   u32,
+	run_count:  u8, // The value runs of the text: runs[:run_count].
+	reserved:   [3]u8,
 	name:       [32]u8, // The name of the program, or "kernel".
 	channel:    [LOG_CHANNEL_CAPACITY]u8, // All zero: the program gave no channel.
+	runs:       [LOG_RUN_CAPACITY]value_kinds.Value_Run, // In order, inside text[:text_count].
 	text:       [LOG_TEXT_CAPACITY]u8,
 }
 

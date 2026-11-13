@@ -90,7 +90,7 @@ unlock_start :: proc "contextless" (create: bool, name: string) -> system.Status
 	unlock_name_length = 0
 	unlock_name = {}
 	if status != .Ok {
-		system.log_in("programs", .Warning, "root: unlock did not start (status ", u64(status), "): no named principal can be created or unlocked")
+		system.log_in("programs", .Warning, "root: unlock did not start (status ", status, "): no named principal can be created or unlocked")
 	}
 	return status
 }

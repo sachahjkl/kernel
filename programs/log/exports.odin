@@ -2,6 +2,7 @@ package log
 
 import "contract:errors"
 import "contract:isolated"
+import "contract:value_kinds"
 import op "contract:operation"
 import "support:system"
 import "base:intrinsics"
@@ -17,12 +18,12 @@ import "base:intrinsics"
 // the principal.
 
 // One row of the log: records(). A row has 256 bytes, the most that a
-// record of a description has, so its text has 160 bytes: a log record of
-// up to 176 bytes of text gives one row or two. No byte is cut: a row says
-// that its text goes on in the next row (continues), as a log record says
-// that its text goes on in the next log record (Log_Record.more).
+// record of a description has, and holds one log record: its text has the
+// 152 bytes of the text of a log record. A row says that its text goes on in
+// the next row (continues), as a log record says that its text goes on in
+// the next log record (Log_Record.more).
 Record :: struct {
-	number:    i64, // The number of the log record, from 0. The two rows of one log record have one number.
+	number:    i64, // The number of the log record, from 0.
 	time:      i64, // Microseconds since the start of the machine.
 	program:   [32]u8, // The name of the program, or "kernel".
 	slot:      i64, // The slot of the program. 0: the kernel.
@@ -30,10 +31,21 @@ Record :: struct {
 	channel:   [16]u8, // Empty: the program gave no channel.
 	lost:      i64, // The first row only: the log records after `after` that the kernel wrote over before this call read them.
 	continues: i64, // 1: the text goes on in the next row.
-	text:      [160]u8, // ROW_TEXT_SIZE: the tool that reads the descriptions needs the number.
+	runs:      i64, // The count of the value runs of the text: value_runs() gives them.
+	text:      [152]u8, // op.LOG_TEXT_CAPACITY: the tool that reads the descriptions needs the number.
 }
 #assert(size_of(Record) == 256)
-ROW_TEXT_SIZE :: 160
+#assert(op.LOG_TEXT_CAPACITY == 152)
+
+// One value run of a log record: value_runs(). It says that the bytes start ..<
+// start + length of the text of the record `number` are a value of the
+// kind `kind`: number, size, time, module, version, status...
+Value_Run :: struct {
+	number: i64, // The number of the log record.
+	start:  i64, // From 0, in bytes of the text of the record.
+	length: i64, // In bytes, at least 1.
+	kind:   [16]u8, // The name of the value kind, as the site names it.
+}
 
 ERROR_ACTS_FOR_PRINCIPAL :: -1
 
@@ -49,31 +61,28 @@ service: system.Service
 reader_head: ^op.Log_Head
 reader_records: [^]op.Log_Record
 
-// records gives the log records from the number `after` on: the number, the time in microseconds, the program and its slot, the level, the channel, and the text. A text of more than 160 bytes takes two rows, and a row says when its text goes on in the next row. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows from `after` to the last record, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+// first_kept gives the first record from `after` on that the kernel did not
+// write over, and the count of the records before it that it wrote over.
+first_kept :: proc "contextless" (after: i64, written: u64) -> (next, lost: u64) {
+	next = min(u64(max(after, 0)), written)
+	if written - next > op.LOG_RECORD_CAPACITY {
+		lost = written - next - op.LOG_RECORD_CAPACITY
+		next += lost
+	}
+	return next, lost
+}
+
+// records gives the log records from the number `after` on, one row each: the number, the time in microseconds, the program and its slot, the level, the channel, the count of its value runs, and the text. A row says when its text goes on in the next row. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows from `after` to the last record, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
 @(export, link_name = "records")
 records :: proc "c" (after: i64, result: ^[]Record, error: ^errors.Error_Record) -> i64 {
 	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	written := intrinsics.atomic_load(&reader_head.written)
-	next := u64(max(after, 0))
-	lost: u64
-	if next > written {
-		next = written
-	}
-	if written - next > op.LOG_RECORD_CAPACITY {
-		lost = written - next - op.LOG_RECORD_CAPACITY
-		next += lost
-	}
-	rows_of :: proc "contextless" (record: ^op.Log_Record) -> int {
-		return int(record.text_count) > ROW_TEXT_SIZE ? 2 : 1
-	}
-	total := 0
-	for number in next ..< written {
-		total += rows_of(&reader_records[number % op.LOG_RECORD_CAPACITY])
-	}
+	next, lost := first_kept(after, written)
+	total := written - next
 	count := 0
-	for next < written {
+	for next < written && count < len(result^) {
 		record := reader_records[next % op.LOG_RECORD_CAPACITY]
 		// The kernel can write over the record during the copy.
 		if intrinsics.atomic_load(&reader_head.written) - next > op.LOG_RECORD_CAPACITY {
@@ -81,31 +90,59 @@ records :: proc "c" (after: i64, result: ^[]Record, error: ^errors.Error_Record)
 			next += 1
 			continue
 		}
-		parts := rows_of(&record)
-		if count == len(result^) {
-			break
-		}
 		// Each place of the result has a row (a Table result: the caller
-		// reads min(count, capacity) rows). A record whose second row does not
-		// fit gives its first row, which says that it continues: the caller
-		// reads again from that record.
+		// reads min(count, capacity) rows).
 		text_count := min(int(record.text_count), len(record.text))
-		for part in 0 ..< min(parts, len(result^) - count) {
-			row := &result[count]
-			row^ = {number = i64(record.sequence), time = i64(record.time), slot = i64(record.program)}
-			copy(row.program[:len(row.program) - 1], system.name_of(record.name[:]))
-			if record.level <= max(system.Log_Level) {
-				copy(row.level[:], level_names[record.level])
-			}
-			copy(row.channel[:], system.name_of(record.channel[:]))
-			copy(row.text[:], record.text[part * ROW_TEXT_SIZE:text_count])
-			row.continues = part < parts - 1 || record.more != 0 ? 1 : 0
-			count += 1
+		row := &result[count]
+		row^ = {number = i64(record.sequence), time = i64(record.time), slot = i64(record.program)}
+		copy(row.program[:len(row.program) - 1], system.name_of(record.name[:]))
+		if record.level <= max(system.Log_Level) {
+			copy(row.level[:], level_names[record.level])
 		}
+		copy(row.channel[:], system.name_of(record.channel[:]))
+		copy(row.text[:], record.text[:text_count])
+		row.continues = record.more != 0 ? 1 : 0
+		row.runs = i64(min(int(record.run_count), len(record.runs)))
+		count += 1
 		next += 1
 	}
 	if count > 0 {
 		result[0].lost = i64(lost)
+	}
+	return i64(total)
+}
+
+// value_runs gives the value runs of the log records from the number `after` on: for each one, the number of its record, its start and its length in bytes of the text of the record, and the name of its kind (number, size, time, module, version, status...). The rows of one record are in the order of its text. The result is the count of the runs from `after` to the last record, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+@(export, link_name = "value_runs")
+value_runs :: proc "c" (after: i64, result: ^[]Value_Run, error: ^errors.Error_Record) -> i64 {
+	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	written := intrinsics.atomic_load(&reader_head.written)
+	next, _ := first_kept(after, written)
+	total := 0
+	count := 0
+	for ; next < written; next += 1 {
+		record := reader_records[next % op.LOG_RECORD_CAPACITY]
+		// The kernel can write over the record during the copy.
+		if intrinsics.atomic_load(&reader_head.written) - next > op.LOG_RECORD_CAPACITY {
+			continue
+		}
+		text_count := min(int(record.text_count), len(record.text))
+		for index in 0 ..< min(int(record.run_count), len(record.runs)) {
+			run := record.runs[index]
+			start, end, ok := value_kinds.value_run_in_text(run, text_count)
+			if !ok {
+				continue
+			}
+			total += 1
+			if count < len(result^) {
+				row := &result[count]
+				row^ = {number = i64(record.sequence), start = i64(start), length = i64(end - start)}
+				copy(row.kind[:], value_kinds.VALUE_KIND_NAMES[run.kind])
+				count += 1
+			}
+		}
 	}
 	return i64(total)
 }

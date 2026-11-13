@@ -125,6 +125,6 @@ settings_boot_pass_start :: proc "contextless" () {
 	status := start("settings")
 	settings_boot_pass = false
 	if status != .Ok {
-		system.log_in("programs", .Warning, "root: the boot pass of settings did not start (status ", u64(status), "): the settings are the defaults")
+		system.log_in("programs", .Warning, "root: the boot pass of settings did not start (status ", status, "): the settings are the defaults")
 	}
 }

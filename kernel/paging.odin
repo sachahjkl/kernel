@@ -284,7 +284,7 @@ audit: op.Mapping_Report
 // does not keep its rules.
 paging_audit :: proc "contextless" () {
 	mappings_report(&audit, kernel_table, 256, 512)
-	log_in("paging", .Info, "kernel: paging: ", audit.pages, " pages in ", audit.run_count, " runs, ", audit.execute_pages, " pages of code, ", audit.write_execute_pages, " pages write and execute, ", audit.guard_pages, " guard pages of ", audit.guards_expected)
+	log_in("paging", .Info, "kernel: paging: ", Size{audit.pages, .Pages}, " in ", audit.run_count, " runs, ", Size{audit.execute_pages, .Pages}, " of code, ", Size{audit.write_execute_pages, .Pages}, " write and execute, ", audit.guard_pages, " guard pages of ", audit.guards_expected)
 	log_in("paging", .Info, "kernel: paging: the kernel ", kernel_no_execute ? "cannot" : "can", " execute memory of programs, and ", user_access_guard != 0 ? "cannot" : "can", " use it outside a copy")
 	if audit.write_execute_pages != 0 || audit.guard_pages != audit.guards_expected {
 		log("kernel: the page tables of the kernel do not keep their rules")

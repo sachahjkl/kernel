@@ -727,11 +727,23 @@ Do not use: negative test, lkdtm.
 
 ### Log record
 
-A log record is one entry of the log of the kernel (`op.Log_Record`, 256 bytes): a number, a time, a program, a thread, a level, a channel and a text.
+A log record is one entry of the log of the kernel (`op.Log_Record`, 256 bytes): a number, a time, a program, a thread, a level, a channel, a text and the value runs of the text.
 
-A program writes a record with the kernel operation `Log` and a log handle with Write. The kernel sets the number, the time, the program and the thread, so a program cannot write a record in the name of another one. The text has 176 bytes at most per record; a longer text continues in the next record. The budget of the program limits its log records in each second.
+A program writes a record with the kernel operation `Log` and a log handle with Write. The kernel sets the number, the time, the program and the thread, so a program cannot write a record in the name of another one. The text has 152 bytes at most per record; a longer text continues in the next record. The serial port prints the text only. The budget of the program limits its log records in each second.
 
-A program with the grant to read the log serves the records as a table: `log.records(after)`.
+A program with the grant to read the log serves the records as a table: `log.records(after)`, and their value runs: `log.value_runs(after)`.
+
+The design: `docs/TOOLS.md`, "The log".
+
+### Value run
+
+A value run is a part of the text of a log record that is one value: a start, a length and its value kind.
+
+A writer states the kind of each part of a line of the log (`system.Size`, `system.Duration`, `system.Module_Name`, a number...), and the record keeps the runs beside its text, at most 8 per record. A reader draws each run in the color of its kind; a reader that ignores the runs reads the same text. A run gives a color, never text: runs that do not fit their text leave the record plain, and its text whole. It is not a run of code: a run of code is a part of a line of the console, with a code kind.
+
+The design: `docs/TOOLS.md`, "The log".
+
+Do not use: span (for this), token, highlight range.
 
 Do not use: log line, message.
 
@@ -3478,7 +3490,9 @@ Do not use: entry, item, API (for this).
 
 ### Value kind
 
-The kind of a technical value that the site shows: a number, a size, a time, a handle, a value of the context, a grant, a status, a type, an operation, a command, a module, a file, a guide, a version, yes or no, a procedure, a constant or a global variable. Each kind has one class, one color in each color scheme and one icon, in one table of the tool (`site_value_kinds`). The writer of a table or a symbol states the kind of each value.
+A value kind is what a technical value is, for a reader: a number, a size, a time, a handle, a value of the context, a grant, a status, a type, an operation, a command, a module, a file, a guide, a version, yes or no, a procedure, a constant or a global variable.
+
+One enumeration gives the kinds to the site and to the system (`contract/value_kinds`), and one table gives each kind its color in each color scheme (`support/graphics/value_colors.odin`). The site adds a class, a title and an icon to each kind (`site_value_kinds`); a log record keeps the kind of each value of its text (a value run). The writer of a table, a symbol or a line of the log states the kind of each value: no text is classified by its look.
 
 Do not use: value type, badge, chip, tag (for this).
 

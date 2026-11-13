@@ -45,7 +45,7 @@ driver_start :: proc "contextless" (device_number: u32, kind: Driver = DRIVER_BL
 	place := pci.Place{bus = 0, device = device_number}
 	identity := pci.read_32(place, 0)
 	if identity & 0xFFFF != pci.VENDOR_VIRTIO || identity >> 16 != kind.device {
-		system.log_in("devices", .Error, "root: no virtio device for ", kind.name, " at the place ", u64(device_number), " of the bus")
+		system.log_in("devices", .Error, "root: no virtio device for ", system.Module_Name{kind.name}, " at the place ", u64(device_number), " of the bus")
 		return nil, 0, .Bad_Handle
 	}
 	for &item in started {
@@ -163,7 +163,7 @@ driver_start :: proc "contextless" (device_number: u32, kind: Driver = DRIVER_BL
 	driver.device = place
 	driver.granted = {.Log}
 	copy(driver.name[:len(driver.name) - 1], kind.name)
-	system.log_in("devices", .Info, "root: started ", kind.name, " for the device at the place ", u64(device_number), " of the bus")
+	system.log_in("devices", .Info, "root: started ", system.Module_Name{kind.name}, " for the device at the place ", u64(device_number), " of the bus")
 	return driver, ring_memory, .Ok
 }
 

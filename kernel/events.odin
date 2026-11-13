@@ -379,7 +379,7 @@ event_table_give :: proc "contextless" (table: ^Event_Table, region_index: u32, 
 	if event_logged_owner != owner || event_logged_serial != event_table.owner_serial {
 		event_logged_owner = owner
 		event_logged_serial = event_table.owner_serial
-		log_in("events", .Info, "kernel: program ", program_name(&programs[owner]), " gave the event table: ", u64(table.rule_count), " rules, ", table.records, " records in the ring of each of ", u64(processor_count), " processors")
+		log_in("events", .Info, "kernel: program ", Module_Name{program_name(&programs[owner])}, " gave the event table: ", u64(table.rule_count), " rules, ", table.records, " records in the ring of each of ", u64(processor_count), " processors")
 	}
 }
 
@@ -415,9 +415,9 @@ event_table_end :: proc "contextless" (reason: Event_Table_End) {
 	switch reason {
 	case .Taken_Away:
 	case .Owner_Stopped:
-		log_in("events", .Info, "kernel: the event table of program ", program_name(&programs[owner]), " ended: its program stopped; ", written, " records written, ", lost, " lost")
+		log_in("events", .Info, "kernel: the event table of program ", Module_Name{program_name(&programs[owner])}, " ended: its program stopped; ", written, " records written, ", lost, " lost")
 	case .Right_Ended:
-		log_in("events", .Info, "kernel: the event table of program ", program_name(&programs[owner]), " ended: its right Events ended; ", written, " records written, ", lost, " lost")
+		log_in("events", .Info, "kernel: the event table of program ", Module_Name{program_name(&programs[owner])}, " ended: its right Events ended; ", written, " records written, ", lost, " lost")
 	}
 	region_release(region)
 }

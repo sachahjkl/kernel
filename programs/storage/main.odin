@@ -1002,7 +1002,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if mounted.first_cut {
 			system.log_in("storage", .Warning, "storage: the first root of the disk has a wrong check and no commit followed it: a format that a stop cut; the service formats again")
 		}
-		system.log("storage: ok, a new disk: generation 1, ", root.disk_blocks, " blocks")
+		system.log("storage: ok, a new disk: generation 1, ", system.Size{root.disk_blocks, .Blocks})
 	case:
 		if mounted.cut != 0 {
 			system.log_in("storage", .Warning, "storage: the root of generation ", mounted.cut, " has a wrong check: a write that a stop cut; the service uses the root before it")
@@ -1026,7 +1026,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if mounted.stores_recounted != 0 || mounted.stores_with_wrong_count != 0 {
 			system.log_in("storage", .Warning, "storage: the disk gives ", mounted.stores_recounted, " stores another count of blocks than the open counted; the service takes the counts of the open (", mounted.stores_with_wrong_count, " stores with no damage have a wrong count: a fault of the engine that wrote it)")
 		}
-		system.log("storage: ok, generation ", mounted.generation, ": ", mounted.stores, " stores, ", mounted.objects, " objects, ", mounted.trees, " trees, ", mounted.versions, " versions, ", opened.in_use_count, " blocks in use, ", mounted.shared, " shared, ", mounted.checked, " blocks checked, ", mounted.wrong, " wrong, in ", elapsed, " ms")
+		system.log("storage: ok, generation ", mounted.generation, ": ", mounted.stores, " stores, ", mounted.objects, " objects, ", mounted.trees, " trees, ", mounted.versions, " versions, ", system.Size{opened.in_use_count, .Blocks}, " in use, ", mounted.shared, " shared, ", mounted.checked, " blocks checked, ", mounted.wrong, " wrong, in ", system.Duration{elapsed, .Milliseconds})
 		if mounted.removing != 0 {
 			system.log("storage: ", mounted.removing, " trees wait to be freed: the removal continues")
 		}

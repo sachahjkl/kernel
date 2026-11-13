@@ -87,7 +87,7 @@ fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> bool {
 	if program.fault_written - read >= op.FAULT_RECORD_CAPACITY {
 		program.fault_full += 1
 		intrinsics.volatile_store(&record.fault_full, program.fault_full)
-		log_in("fault", .Warning, "kernel: program ", program_name(program), ": the fault ring is full (", u64(program.fault_full), " times): the fault stops the program")
+		log_in("fault", .Warning, "kernel: program ", Module_Name{program_name(program)}, ": the fault ring is full (", u64(program.fault_full), " times): the fault stops the program")
 		return false
 	}
 	// The entries of an earlier word wait stay in the table of words until

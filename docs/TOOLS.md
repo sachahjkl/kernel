@@ -14,8 +14,35 @@ A developer tool (`GLOSSARY.md`) shows how the system runs. It reads reports of 
 | `locks` | machine, Inspect | `System_Report.locks` |
 | `scheduler` | machine, Inspect and Schedule | `Processor_Report`, `System_Report.strategy` |
 | `manual` | machine, Inspect; boot image; replacement table | the flat tables of the modules, `Module_Report` of each slot |
-| `log` | the log records, Read | `op.Log_Record`. It serves `records(after)` |
+| `log` | the log records, Read | `op.Log_Record`. It serves `records(after)` and `value_runs(after)` |
 | `inspect` | machine, Inspect; boot image; debug image | `Program_Report`, `Module_Report`, and the four reports below, of the program that the person chooses. It serves `mappings()`, `threads()` and `modules()` |
+
+## The log
+
+A log record (`GLOSSARY.md`) keeps its text and the value runs of the text: which bytes are a number, a size, a time, a module, a version or a status. The text is the text that the serial port prints, byte for byte: the machine tests wait for texts of the serial port, and a reader that ignores the runs reads the same record.
+
+**The writer states the kind.** A line of the log is made of parts (`system.log`, `system.log_in`, and `log` in the kernel). A text is plain. Each other part is a value with a value kind (`contract/value_kinds`):
+
+| Part | Writes | Value kind |
+|---|---|---|
+| `u64`, `i64`, `Hex` | the number, in decimal or in 16 hexadecimal digits | Number |
+| `Size{value, unit}` | the number, a space and the unit: `bytes`, `KiB`, `MiB`, `pages`, `blocks` | Size |
+| `Duration{value, unit}` | the number, a space and the unit: `ns`, `us`, `ms`, `s` | Time |
+| `Hash{bytes}` | two hexadecimal digits for each byte: the head of a hash is its first 8 bytes | Version |
+| `Module_Name{name}` | the name of a program or of a module | Module |
+| a status of the kernel (`system.Status`) | its number | Status |
+
+No text is classified by its look. A value that a writer gives as a text stays plain.
+
+**The record.** A log record has 152 bytes of text and at most 8 value runs (`op.LOG_RUN_CAPACITY`): 3 bytes each, a start, a length and the kind. The operation `Log` takes the runs of its text in its seventh value, a count of at most 32 (`op.LOG_CALL_RUN_LIMIT`); the runs (6 bytes each, `Value_Run_In_Call`) follow the text at its address. The kernel copies them once and checks them in its copy: each run inside the text, after the run before it, with at least one byte and a kind. One run that fails: the record has no runs, and its text is whole. The kernel cuts the runs at the bounds of the records: a run across two records is one run in each. A text with more values than runs keeps the runs of its first values; the rest of its text is plain.
+
+**The cost.** On the path of `log` in the kernel: one store of 6 bytes for each value, and at most 12 runs on the stack (72 bytes). In `log_record`, under the log lock: one pass over the runs for each record, at most 32 steps. No allocation. The serial port gets the same bytes as before.
+
+**The window.** The program `log` shows the last 30 records: the time, the mark of the level, the program, the channel, and the text in the font of the cells. Each value run is in the color of its value kind (`docs/DESIGN.md`, "The colors of values"); the rest of the text is in the text color, or in the color "failed" for a record of the level error. The head of the column of the text is the legend: the six kinds that the logs write, each in its color. A text that starts with the name of its program and ": ", then its channel and ": ", shows without that start: the columns at its left say it. The record keeps its text whole.
+
+**The tables.** `log.records(after)` gives one row for each record: its fields, the count of its value runs (`runs`), and its text. `log.value_runs(after)` gives the value runs: the number of the record, the start and the length in bytes of its text, and the name of the kind (`size`, `time`...). Join them on `number`.
+
+**The console and the terminal.** A log record reaches the console only as the rows of these two tables: the console prints them as a table, with no colors. A program writes to its terminal apart from the log; a Text record of the terminal already carries a color for each run (`Style.color`), so a console that writes a record as runs of text, one run for each value run, needs no new form of the terminal.
 
 ## The program `inspect`
 

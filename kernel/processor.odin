@@ -2,6 +2,7 @@ package kernel
 
 import "base:intrinsics"
 import op "contract:operation"
+import "contract:value_kinds"
 
 // The processor: segments, the interrupt table, the interrupt controller and
 // the timer. The frame layout is the one of kernel/processor.asm.
@@ -198,6 +199,7 @@ Processor :: struct {
 	// Records too large for the kernel stack, for the operation that runs on
 	// this processor.
 	log_text:       [4096]u8,
+	log_runs:       [op.LOG_CALL_RUN_LIMIT]value_kinds.Value_Run_In_Call,
 	boot_report:    op.Boot_Report,
 	mapping_report: op.Mapping_Report,
 	module_report:  op.Module_Report,

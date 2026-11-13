@@ -6,6 +6,7 @@
 // source of the module (describe.odin), and the root service.
 package kerneltool
 
+import "contract:value_kinds"
 import "core:fmt"
 import "core:strings"
 import module "contract:module"
@@ -106,7 +107,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 				site_module_link(site, &b, modules_page, item.build.name)
 				// A column of two states: each cell has the icon of its state.
 				strings.write_string(&b, "</td><td>")
-				site_value(&b, item.build.image ? Site_Value_Kind.Yes : Site_Value_Kind.No, item.build.image ? "yes" : "no", true)
+				site_value(&b, item.build.image ? value_kinds.Value_Kind.Yes : value_kinds.Value_Kind.No, item.build.image ? "yes" : "no", true)
 				fmt.sbprintf(&b, "</td><td>%d</td><td>", len(item.description.exports))
 				for name, index in item.build.imports {
 					if index > 0 {

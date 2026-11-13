@@ -8,6 +8,7 @@
 // writer already stated what it holds.
 package kerneltool
 
+import "contract:value_kinds"
 import "core:fmt"
 import "core:math"
 import "core:strings"
@@ -23,137 +24,92 @@ SITE_VALUE_CONTRAST_LEAST :: 4.5
 // of the docs home on each surface where it is drawn (WCAG 2.1, 1.4.11).
 SITE_VALUE_GRAPHIC_CONTRAST_LEAST :: 3.0
 
-Site_Value_Kind :: enum {
-	None, // Not a value: the cell is a name or a text.
-	Number,
-	Size,
-	Time,
-	Handle,
-	Value,
-	Grant,
-	Status,
-	Type,
-	Operation,
-	Command,
-	Module,
-	File,
-	Guide,
-	Term,
-	Version,
-	Yes,
-	No,
-	Procedure,
-	Constant,
-	Variable,
-}
+// The kinds are value_kinds.Value_Kind, the one enumeration of the system
+// (contract/value_kinds): a log record of the system keeps the same kinds.
 
 Site_Value_Kind_Description :: struct {
-	name:          string, // The class "value-<name>" and the file of the icon.
 	title:         string, // In the legend.
 	meaning:       string, // One line, in the legend.
-	color:         graphics.Color, // An accent of the design rules.
-	dark_percent:  u32, // graphics.shade of the accent in the dark form: 100 is the accent itself.
-	light_percent: u32, // graphics.shade of the accent in the light form: darker, for its contrast on white.
 	cells:         [SITE_VALUE_ICON_SIZE]string, // "#" is a cell of the icon, "." is empty.
 }
 
-// The one table of the kinds. The accents are those of the design rules,
-// by what they mean on the desktop: the kernel blue for what the kernel
-// names, the program green for what a person runs, the memory teal for
-// numbers, the machine pink for what the root service gives, the color of
-// the boot program for time and versions, the red of a failure for a
-// status, the dim color for a place in the repository and for "no".
-site_value_kinds := [Site_Value_Kind]Site_Value_Kind_Description {
+// The one table of the names, the meanings and the icons of the kinds. The
+// color of each kind is in the table of the system, which the programs
+// read too (support/graphics/value_colors.odin).
+site_value_kinds := [value_kinds.Value_Kind]Site_Value_Kind_Description {
 	.None = {},
 	.Number = {
-		name = "number", title = "Number", meaning = "A count, a place, an index or an address.",
-		color = graphics.COLOR_MEMORY, dark_percent = 100, light_percent = 65,
+		title = "Number", meaning = "A count, a place, an index or an address.",
 		cells = {"............", "...##..##...", "...##..##...", ".##########.", "...##..##...", "...##..##...", "...##..##...", ".##########.", "...##..##...", "...##..##...", "............", "............"},
 	},
 	.Size = {
-		name = "size", title = "Size", meaning = "A size in bytes or in pages.",
-		color = graphics.COLOR_MEMORY, dark_percent = 100, light_percent = 65,
+		title = "Size", meaning = "A size in bytes or in pages.",
 		cells = {"............", "..########..", "..########..", "............", ".##########.", ".##########.", "............", "############", "############", "............", "............", "............"},
 	},
 	.Time = {
-		name = "time", title = "Time", meaning = "A duration, a date or a time.",
-		color = graphics.COLOR_BOOT_PROGRAM, dark_percent = 100, light_percent = 65,
+		title = "Time", meaning = "A duration, a date or a time.",
 		cells = {"............", ".##########.", ".#........#.", ".#...##...#.", ".#...##...#.", ".#...####.#.", ".#...####.#.", ".#........#.", ".#........#.", ".##########.", "............", "............"},
 	},
 	.Handle = {
-		name = "handle", title = "Handle", meaning = "A handle of a kernel object, held by a program.",
-		color = graphics.COLOR_KERNEL, dark_percent = 100, light_percent = 73,
+		title = "Handle", meaning = "A handle of a kernel object, held by a program.",
 		cells = {"............", "...######...", "...#....#...", "...#....#...", "...######...", ".....##.....", ".....##.....", ".....##.....", "....####....", "....####....", "............", "............"},
 	},
 	.Value = {
-		name = "value", title = "Value", meaning = "A plain value of the context of a program: not a handle.",
-		color = graphics.COLOR_MEMORY, dark_percent = 100, light_percent = 65,
+		title = "Value", meaning = "A plain value of the context of a program: not a handle.",
 		cells = {"............", "............", "............", "....####....", "....####....", "....####....", "....####....", "............", "............", "............", "............", "............"},
 	},
 	.Grant = {
-		name = "grant", title = "Grant", meaning = "What the root service gives a program, or records and can revoke.",
-		color = graphics.COLOR_MACHINE, dark_percent = 100, light_percent = 78,
+		title = "Grant", meaning = "What the root service gives a program, or records and can revoke.",
 		cells = {"............", "..........##", ".........##.", "........##..", ".......##...", "##....##....", ".##..##.....", "..####......", "...##.......", "............", "............", "............"},
 	},
 	.Status = {
-		name = "status", title = "Status", meaning = "A status, an error kind or the state of a property.",
-		color = graphics.COLOR_FAILED, dark_percent = 100, light_percent = 78,
+		title = "Status", meaning = "A status, an error kind or the state of a property.",
 		cells = {"............", ".##.........", ".#######....", ".########...", ".#######....", ".##.........", ".##.........", ".##.........", ".##.........", ".##.........", "............", "............"},
 	},
 	.Type = {
-		name = "type", title = "Type", meaning = "A type: of the contract, a wire form of the module contract, a record of a module, or a basic type.",
-		color = graphics.COLOR_FIRMWARE, dark_percent = 115, light_percent = 83,
+		title = "Type", meaning = "A type: of the contract, a wire form of the module contract, a record of a module, or a basic type.",
 		cells = {"............", "...##..##...", "..##....##..", ".##......##.", "##........##", ".##......##.", "..##....##..", "...##..##...", "............", "............", "............", "............"},
 	},
 	.Operation = {
-		name = "operation", title = "Operation", meaning = "An operation that a program asks the kernel.",
-		color = graphics.COLOR_KERNEL, dark_percent = 100, light_percent = 73,
+		title = "Operation", meaning = "An operation that a program asks the kernel.",
 		cells = {"............", "......######", "......#....#", "......#....#", "##########.#", "##########.#", "......#....#", "......#....#", "......######", "............", "............", "............"},
 	},
 	.Command = {
-		name = "command", title = "Command", meaning = "A command of the console or of kerneltool.",
-		color = graphics.COLOR_PROGRAM, dark_percent = 100, light_percent = 58,
+		title = "Command", meaning = "A command of the console or of kerneltool.",
 		cells = {"............", ".##.........", "..##........", "...##.......", "....##......", "...##.......", "..##........", ".##...#####.", "......#####.", "............", "............", "............"},
 	},
 	.Module = {
-		name = "module", title = "Module", meaning = "A module or a program of the boot image or of the build.",
-		color = graphics.COLOR_PROGRAM, dark_percent = 100, light_percent = 58,
+		title = "Module", meaning = "A module or a program of the boot image or of the build.",
 		cells = {"............", ".###....###.", ".###....###.", ".##########.", ".##########.", ".##########.", ".##########.", ".##########.", "............", "............", "............", "............"},
 	},
 	.File = {
-		name = "file", title = "File", meaning = "A file or a folder of the repository.",
-		color = graphics.COLOR_DIM, dark_percent = 100, light_percent = 82,
+		title = "File", meaning = "A file or a folder of the repository.",
 		cells = {".######.....", ".#....##....", ".#.....##...", ".#......##..", ".#.......#..", ".#.......#..", ".#.......#..", ".#.......#..", ".#.......#..", ".#########..", "............", "............"},
 	},
 	// A document is text to read: the color of the text. Its reference is
 	// a name in the reading font, not a value: the kind gives its color and
 	// its icon (docs/SITE.md, "The references to documents").
 	.Guide = {
-		name = "guide", title = "Guide", meaning = "A document of the site, a guide or the glossary, and the heading that a reference names; a working record is a file of the repository.",
-		color = graphics.COLOR_TEXT, dark_percent = 100, light_percent = 20,
+		title = "Guide", meaning = "A document of the site, a guide or the glossary, and the heading that a reference names; a working record is a file of the repository.",
 		cells = {"............", ".##########.", ".#........#.", ".#.######.#.", ".#........#.", ".#.######.#.", ".#........#.", ".#.####...#.", ".#........#.", ".##########.", "............", "............"},
 	},
 	// A term of the glossary is a name, not a value, as a document is: the
 	// kind gives the glossary and the terms of the search their icon and
 	// their color, so that a term does not look like a guide section.
 	.Term = {
-		name = "term", title = "Term", meaning = "A term of the glossary: one name for one concept.",
-		color = graphics.COLOR_MEMORY, dark_percent = 100, light_percent = 65,
+		title = "Term", meaning = "A term of the glossary: one name for one concept.",
 		cells = {"............", ".##########.", ".##########.", ".....##.....", ".....##.....", ".....##.....", ".....##.....", ".....##.....", ".....##.....", "....####....", "............", "............"},
 	},
 	.Version = {
-		name = "version", title = "Version", meaning = "A version, a release, a commit or a hash.",
-		color = graphics.COLOR_BOOT_PROGRAM, dark_percent = 100, light_percent = 65,
+		title = "Version", meaning = "A version, a release, a commit or a hash.",
 		cells = {"............", "...#######..", "..##.....#..", ".##..##..#..", ".##..##..#..", "..##.....#..", "...#######..", "............", "............", "............", "............", "............"},
 	},
 	.Yes = {
-		name = "yes", title = "Yes", meaning = "A state that holds: in the boot image, measured.",
-		color = graphics.COLOR_PROGRAM, dark_percent = 100, light_percent = 58,
+		title = "Yes", meaning = "A state that holds: in the boot image, measured.",
 		cells = {"............", ".##########.", ".##########.", ".##########.", ".##########.", ".##########.", ".##########.", ".##########.", ".##########.", ".##########.", "............", "............"},
 	},
 	.No = {
-		name = "no", title = "No", meaning = "A state that does not hold: not in the boot image, not built.",
-		color = graphics.COLOR_DIM, dark_percent = 100, light_percent = 82,
+		title = "No", meaning = "A state that does not hold: not in the boot image, not built.",
 		cells = {"............", ".##########.", ".#........#.", ".#........#.", ".#........#.", ".#........#.", ".#........#.", ".#........#.", ".#........#.", ".##########.", "............", "............"},
 	},
 	// The three kinds of a declaration of the sources that are not a type
@@ -162,49 +118,45 @@ site_value_kinds := [Site_Value_Kind]Site_Value_Kind_Description {
 	// of the code: the color of a literal, with a lock. A global variable
 	// changes over the run, as a time does: the color of the boot program.
 	.Procedure = {
-		name = "procedure", title = "Procedure", meaning = "A procedure that the sources of the system declare.",
-		color = graphics.COLOR_KERNEL, dark_percent = 100, light_percent = 73,
+		title = "Procedure", meaning = "A procedure that the sources of the system declare.",
 		cells = {"............", "...#....#...", "..##....##..", "..#......#..", ".##......##.", ".##......##.", ".##......##.", "..#......#..", "..##....##..", "...#....#...", "............", "............"},
 	},
 	.Constant = {
-		name = "constant", title = "Constant", meaning = "A constant that the sources of the system declare.",
-		color = graphics.COLOR_MEMORY, dark_percent = 100, light_percent = 65,
+		title = "Constant", meaning = "A constant that the sources of the system declare.",
 		cells = {"............", "....####....", "...#....#...", "...#....#...", "..########..", "..########..", "..###..###..", "..###..###..", "..########..", "..########..", "............", "............"},
 	},
 	.Variable = {
-		name = "variable", title = "Global variable", meaning = "A variable that the sources of the system declare at the top of a package.",
-		color = graphics.COLOR_BOOT_PROGRAM, dark_percent = 100, light_percent = 65,
+		title = "Global variable", meaning = "A variable that the sources of the system declare at the top of a package.",
 		cells = {"............", ".##......##.", "..##....##..", "...##..##...", "....####....", ".....##.....", "....####....", "...##..##...", "..##....##..", ".##......##.", "............", "............"},
 	},
 }
 
 // site_value_color gives the color of the text of a kind in one form.
-site_value_color :: proc(kind: Site_Value_Kind, light: bool) -> graphics.Color {
-	description := site_value_kinds[kind]
-	return graphics.shade(description.color, light ? description.light_percent : description.dark_percent)
+site_value_color :: proc(kind: value_kinds.Value_Kind, light: bool) -> graphics.Color {
+	return graphics.value_kind_color(kind, light)
 }
 
 // site_value writes a value of a kind: one code element in the monospace
 // font, in the accent of the kind, with a thin rule at its left. With its
 // icon only where the column head or the label does not say the kind: the
 // icon is decoration, and the text says the value.
-site_value :: proc(b: ^strings.Builder, kind: Site_Value_Kind, text: string, with_icon: bool) {
+site_value :: proc(b: ^strings.Builder, kind: value_kinds.Value_Kind, text: string, with_icon: bool) {
 	icon_class: string = with_icon ? " value-icon" : ""
-	fmt.sbprintf(b, "<code class=\"value value-%s%s\">", site_value_kinds[kind].name, icon_class)
+	fmt.sbprintf(b, "<code class=\"value value-%s%s\">", value_kinds.VALUE_KIND_NAMES[kind], icon_class)
 	site_escape(b, text)
 	strings.write_string(b, "</code>")
 }
 
 // site_value_html gives the markup of a value with no icon, for a fact of
 // a symbol whose label carries the icon.
-site_value_html :: proc(kind: Site_Value_Kind, text: string) -> string {
+site_value_html :: proc(kind: value_kinds.Value_Kind, text: string) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	site_value(&b, kind, text, false)
 	return strings.to_string(b)
 }
 
 // site_value_link writes a value that is a link: the link holds the value.
-site_value_link :: proc(b: ^strings.Builder, kind: Site_Value_Kind, address, text: string, with_icon: bool) {
+site_value_link :: proc(b: ^strings.Builder, kind: value_kinds.Value_Kind, address, text: string, with_icon: bool) {
 	strings.write_string(b, "<a href=\"")
 	site_escape(b, address)
 	strings.write_string(b, "\">")
@@ -215,7 +167,7 @@ site_value_link :: proc(b: ^strings.Builder, kind: Site_Value_Kind, address, tex
 // site_value_icon_svg gives the icon of a kind as an SVG picture: one rect
 // for each run of cells of a row, in black: the style sheet uses it as a
 // mask, so the icon takes the color of its kind.
-site_value_icon_svg :: proc(kind: Site_Value_Kind) -> string {
+site_value_icon_svg :: proc(kind: value_kinds.Value_Kind) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&b, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%d\" height=\"%d\" viewBox=\"0 0 %d %d\" shape-rendering=\"crispEdges\">", SITE_VALUE_ICON_SIZE, SITE_VALUE_ICON_SIZE, SITE_VALUE_ICON_SIZE, SITE_VALUE_ICON_SIZE)
 	for row, y in site_value_kinds[kind].cells {
@@ -241,7 +193,7 @@ site_value_icon_svg :: proc(kind: Site_Value_Kind) -> string {
 // is inside the style sheet: a file for each icon was one more request for
 // each, which the browser learns of only after the style sheet, so the
 // icons came after the first paint (docs/SITE.md, "The kinds of values").
-site_value_icon_address :: proc(kind: Site_Value_Kind) -> string {
+site_value_icon_address :: proc(kind: value_kinds.Value_Kind) -> string {
 	return site_svg_data_address(site_value_icon_svg(kind))
 }
 
@@ -251,11 +203,11 @@ site_value_icon_address :: proc(kind: Site_Value_Kind) -> string {
 // style sheet holds it once.
 site_value_rules :: proc(light: bool) -> string {
 	b := strings.builder_make(context.temp_allocator)
-	for kind in Site_Value_Kind {
+	for kind in value_kinds.Value_Kind {
 		if kind == .None {
 			continue
 		}
-		fmt.sbprintf(&b, ".value-%s {{ --value-color: %s;", site_value_kinds[kind].name, site_color(site_value_color(kind, light)))
+		fmt.sbprintf(&b, ".value-%s {{ --value-color: %s;", value_kinds.VALUE_KIND_NAMES[kind], site_color(site_value_color(kind, light)))
 		if !light {
 			fmt.sbprintf(&b, " --value-icon: url(\"%s\");", site_value_icon_address(kind))
 		}
@@ -289,12 +241,12 @@ site_contrast_ratio :: proc(first, second: graphics.Color) -> f64 {
 site_value_legend :: proc(b: ^strings.Builder) {
 	strings.write_string(b, "<h2 id=\"kinds-of-values\">The kinds of values</h2>\n<p>A value is in the monospace font and in the color of its kind. The icon of a kind is in the head of a column of that kind, before the label of a fact, or before a value whose kind its column does not say.</p>\n")
 	legend := site_table_start(b, "The kinds of values", {{"Icon", .Short}, {"Kind", .Name}, {"What it holds", .Prose}})
-	for kind in Site_Value_Kind {
+	for kind in value_kinds.Value_Kind {
 		if kind == .None {
 			continue
 		}
 		description := site_value_kinds[kind]
-		fmt.sbprintf(b, "<tr id=\"value-kind-%s\"><td><span class=\"value-icon value-%s\" aria-hidden=\"true\"></span></td><td>", description.name, description.name)
+		fmt.sbprintf(b, "<tr id=\"value-kind-%s\"><td><span class=\"value-icon value-%s\" aria-hidden=\"true\"></span></td><td>", value_kinds.VALUE_KIND_NAMES[kind], value_kinds.VALUE_KIND_NAMES[kind])
 		site_value(b, kind, description.title, false)
 		strings.write_string(b, "</td>")
 		site_text_cell(b, description.meaning)

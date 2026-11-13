@@ -8,6 +8,7 @@
 // tokenizer of the compiler, as the blocks of code are.
 package kerneltool
 
+import "contract:value_kinds"
 import "core:fmt"
 import "core:mem/virtual"
 import "core:odin/ast"
@@ -44,7 +45,7 @@ site_declaration_kind_names := [Site_Declaration_Kind]string {
 }
 
 // The value kind of each kind of declaration: its icon and its color.
-site_declaration_value_kinds := [Site_Declaration_Kind]Site_Value_Kind {
+site_declaration_value_kinds := [Site_Declaration_Kind]value_kinds.Value_Kind {
 	.Procedure = .Procedure,
 	.Type      = .Type,
 	.Constant  = .Constant,

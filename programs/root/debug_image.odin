@@ -21,7 +21,7 @@ debug_image_take :: proc "contextless" (ctx: ^system.Context) {
 		system.log("root: no debug image: a stop report names each frame by its module and its offset")
 		return
 	}
-	system.log("root: the debug image has ", debug_image_size, " bytes")
+	system.log("root: the debug image has ", system.Size{debug_image_size, .Bytes})
 }
 
 // debug_image_give adds the debug image, read-only, to the mappings of a

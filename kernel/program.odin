@@ -325,16 +325,6 @@ module_of :: proc "contextless" (program: ^Program, address: u64) -> ^op.Module_
 	return nil
 }
 
-// hash_head gives the first 8 bytes of a hash as a number: its hexadecimal
-// text is the text of these bytes.
-hash_head :: proc "contextless" (hash: [32]u8) -> Hex {
-	value: u64
-	for index in 0 ..< 8 {
-		value = value << 8 | u64(hash[index])
-	}
-	return Hex(value)
-}
-
 BUDGET_CAPACITY :: 128
 
 // A budget: see operation.Budget_Amounts. Budget 0 is not live: it holds
@@ -1797,7 +1787,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		// in the kernel; a fault handler never sees it, so a repair cannot
 		// hide it in a loop of faults.
 		fault_report_begin()
-		log("kernel: a page table entry of program ", program_name(&programs[thread.program]), " has a reserved bit: page fault error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(fault_address))
+		log("kernel: a page table entry of program ", Module_Name{program_name(&programs[thread.program])}, " has a reserved bit: page fault error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(fault_address))
 		machine_stop(2)
 	case frame.vector == VECTOR_PAGE_FAULT && frame.error & FAULT_PRESENT == 0 && page_fault(thread.program, fault_address, frame.error):
 		// A page on first use, or a page that another thread made present
@@ -1898,11 +1888,11 @@ program_fault_report :: proc "contextless" (index: u32, frame: ^Frame, address: 
 		}
 	}
 	if found == nil {
-		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(address))
+		log_in("fault", .Warning, "kernel: program ", Module_Name{program_name(program)}, " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(address))
 	} else if found.replaces == {} {
-		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(address), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base))
+		log_in("fault", .Warning, "kernel: program ", Module_Name{program_name(program)}, " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(address), ", in module ", Hash{found.hash[:8]}, " at offset ", Hex(frame.rip - found.base))
 	} else {
-		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(address), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base), ", which replaces ", hash_head(found.replaces))
+		log_in("fault", .Warning, "kernel: program ", Module_Name{program_name(program)}, " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(address), ", in module ", Hash{found.hash[:8]}, " at offset ", Hex(frame.rip - found.base), ", which replaces ", Hash{found.replaces[:8]})
 	}
 	// The stack trace: the page table of the program is the one of this
 	// processor, and the program lock is held (user_range, user_copy).
