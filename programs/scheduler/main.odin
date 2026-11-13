@@ -38,7 +38,16 @@
 // threads; a write of the program never raises a weight or a request; the
 // lag that the kernel reports for a held thread stays the same after a
 // write of the program, and is 0 after a raise through the machine
-// handle.
+// handle. For the placement of a thread on the processors
+// (docs/SCHEDULING.md, "The placement of a thread"; placement.odin): a
+// thread narrows its own set and then runs only there; the kernel refuses
+// each write that it must refuse; a limit that the machine handle wrote
+// holds against the writes of the thread and against its new threads; a
+// thread that waits, that a stop holds, that is in a list or that runs
+// moves into a new set; two groups of spinners with no common processor
+// never run on a processor of the other group; a queue of threads that a
+// processor cannot take does not stop the balance; writes of placements
+// during the changes of strategy lose no thread.
 //
 // The program needs the machine with the rights Inspect and Schedule.
 //
@@ -1693,6 +1702,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if !owing_kept(processors) {
 		fail("a write of a schedule did not leave or start again the place of a held thread")
+	}
+	if !placement_cases(processors) {
+		fail("a placement of a thread did not hold")
 	}
 	for index in 0 ..< STRATEGY_COUNT {
 		measure(index, processors)

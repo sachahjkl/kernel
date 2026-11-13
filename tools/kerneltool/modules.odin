@@ -226,13 +226,17 @@ files_with_suffix :: proc(folder, suffix: string) -> (paths: []string, ok: bool)
 	return list[:], true
 }
 
-// The checks of the kernel: the lock order at each take (TEST_BUILD_CHECKS_LOCK_ORDER)
-// and the sums of the frames at each report and each drain, with a drain
-// of all the frame caches at each 64th refill (TEST_BUILD_CHECKS_FRAME_SUMS). The test
+// The checks of the kernel: the lock order at each take (TEST_BUILD_CHECKS_LOCK_ORDER),
+// the sums of the frames at each report and each drain, with a drain
+// of all the frame caches at each 64th refill (TEST_BUILD_CHECKS_FRAME_SUMS), and the
+// placement of each thread that enters a run queue (TEST_BUILD_CHECKS_PLACEMENT). The test
 // build has them (`check`, `test`, `screenshots`, `measure`, `run`); the
 // measure build has none (`measure without_checks`, `run without_checks`). The tool
-// passes the two defines in each build: the defaults of the source never
-// decide.
+// passes the three defines in each build: the defaults of the source never
+// decide. The source of the check of the placement has it off, so a build
+// outside the tool has none. The defines are a part of the compile command,
+// which the key of the incremental build holds: a change of one builds the
+// kernel again.
 test_build_checks := true
 
 // module_compile_command gives the command of the compiler for a module,
@@ -281,6 +285,7 @@ module_compile_command :: proc(build: Module_Build) -> []string {
 		append(&compile, "-disable-red-zone")
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_LOCK_ORDER=true" : "-define:TEST_BUILD_CHECKS_LOCK_ORDER=false")
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_FRAME_SUMS=true" : "-define:TEST_BUILD_CHECKS_FRAME_SUMS=false")
+		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_PLACEMENT=true" : "-define:TEST_BUILD_CHECKS_PLACEMENT=false")
 	} else {
 		append(&compile, SUPPORT_LIBRARY) // The kernel has the contract library only.
 	}

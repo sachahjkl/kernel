@@ -576,9 +576,9 @@ handles_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 			}
 		case .Thread_Control:
 			// The right depends on the command: Write for a write of the
-			// registers, Control for a write of the schedule. A command of
-			// the schedule also takes the machine handle, with Schedule
-			// and Inspect.
+			// registers, Control for a write of the schedule or of the
+			// placement. A command of the schedule or of the placement
+			// also takes the machine handle, with Schedule and Inspect.
 			if n == 0 && v[2] <= u64(max(op.Thread_Control_Command)) {
 				command := op.Thread_Control_Command(v[2])
 				rights = op.thread_control_rights(command)
@@ -1114,7 +1114,10 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		// command itself is a choice, below. A weight, a request and a
 		// weight limit have a largest value, which the operation kept too:
 		// for a weight it is the full weight, or the weight that the thread
-		// had then when its own program wrote a higher one.
+		// had then when its own program wrote a higher one. A refused set
+		// of processors has the set that it had to stay inside in the place
+		// of the largest value: the set of the thread, its limit, or the
+		// processors of the machine.
 		if cpu := processor_self(); cpu.thread_write_refusal != .None {
 			record_set(record, .Bad_Value, .None, 4, cpu.thread_write_refused_value, cpu.thread_write_refused_limit, u64(cpu.thread_write_refusal))
 			return true

@@ -118,20 +118,23 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 			// the program, through its program handle.
 			testing.expect(t, thread_control_needs_the_debugger(command))
 			testing.expect(t, thread_control_takes_debug_handle(command))
-		case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints:
+		case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints, .Read_Placement:
 			testing.expect_value(t, rights, Rights{.Inspect})
-		case .Write_Schedule:
+		case .Write_Schedule, .Write_Placement:
+			// A write that only lowers a share, or only narrows a set of
+			// processors: less than the end of the thread.
 			testing.expect_value(t, rights, Rights{.Control})
 		}
-		// The machine handle: the schedule only, with Schedule and Inspect
-		// for each: a read is a report of the machine, and a write gives the
-		// three values, so its holder reads first.
+		// The machine handle: the schedule and the placement only, with
+		// Schedule and Inspect for each: a read is a report of the machine,
+		// and a write gives each value of the record, so its holder reads
+		// first.
 		machine_rights, by_machine_number := thread_control_machine_rights(command)
 		#partial switch command {
-		case .Read_Schedule:
+		case .Read_Schedule, .Read_Placement:
 			testing.expect(t, by_machine_number)
 			testing.expect_value(t, machine_rights, Rights{.Schedule, .Inspect})
-		case .Write_Schedule:
+		case .Write_Schedule, .Write_Placement:
 			testing.expect(t, by_machine_number)
 			testing.expect_value(t, machine_rights, Rights{.Schedule, .Inspect})
 		case:
@@ -142,16 +145,179 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 }
 
 // The program handle with Debug names a thread for each command but the
-// two of the schedule.
+// two of the schedule and the two of the placement.
 @(test)
 the_commands_of_a_debug_handle :: proc(t: ^testing.T) {
 	for command in Thread_Control_Command {
 		taken := thread_control_takes_debug_handle(command)
 		#partial switch command {
-		case .None, .Read_Schedule, .Write_Schedule:
+		case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement:
 			testing.expect(t, !taken)
 		case:
 			testing.expect(t, taken)
+		}
+	}
+}
+
+// The machine of these cases has 4 processors, as the machine of the
+// machine test.
+@(private = "file")
+FOUR_PROCESSORS :: u64(0b1111)
+
+// A program only narrows the set of its thread: a set inside the set that
+// the thread has is accepted, 0 keeps the set, and the limit of the record
+// is not read. The bits of processors that the machine does not have are
+// dropped.
+@(test)
+a_program_only_narrows_a_placement :: proc(t: ^testing.T) {
+	whole := Thread_Placement{processors = FOUR_PROCESSORS, processors_limit = FOUR_PROCESSORS}
+	cases := [?]struct {
+		written: Thread_Placement,
+		held:    Thread_Placement,
+		after:   Thread_Placement,
+	} {
+		// One processor of the four.
+		{{processors = 0b0100}, whole, {0b0100, FOUR_PROCESSORS}},
+		// 0 keeps the set.
+		{{}, {0b0110, FOUR_PROCESSORS}, {0b0110, FOUR_PROCESSORS}},
+		// The same set again.
+		{{processors = 0b0110}, {0b0110, FOUR_PROCESSORS}, {0b0110, FOUR_PROCESSORS}},
+		// All ones: the processors that the machine does not have are dropped.
+		{{processors = max(u64)}, whole, whole},
+		// The limit of the record is not read: the thread keeps its limit.
+		{{processors = 0b0001, processors_limit = max(u64)}, {0b0011, 0b0011}, {0b0001, 0b0011}},
+		{{processors_limit = max(u64)}, {0b0011, 0b0011}, {0b0011, 0b0011}},
+	}
+	for item in cases {
+		after, refusal, _ := thread_placement_after_write(item.written, item.held, FOUR_PROCESSORS, false)
+		testing.expect_value(t, refusal, Thread_Write_Refusal.None)
+		testing.expect_value(t, after, item.after)
+	}
+}
+
+// What a write of a program refuses: a processor that the set of the
+// thread does not have, and a set with no processor of the machine. The
+// placement stays, and the error record gets the set that the write had
+// to stay inside.
+@(test)
+the_placements_that_a_program_cannot_write :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		written: u64,
+		held:    Thread_Placement,
+		most:    u64,
+	} {
+		// A wider set.
+		{0b0011, {0b0001, FOUR_PROCESSORS}, 0b0001},
+		// Another processor, also inside the limit of the thread.
+		{0b0010, {0b0001, FOUR_PROCESSORS}, 0b0001},
+		// All ones on a thread that was narrowed.
+		{max(u64), {0b0110, FOUR_PROCESSORS}, 0b0110},
+		// Only processors that the machine does not have.
+		{0b1_0000, {FOUR_PROCESSORS, FOUR_PROCESSORS}, FOUR_PROCESSORS},
+		{u64(1) << 63, {0b0001, 0b0001}, FOUR_PROCESSORS},
+	}
+	for item in cases {
+		after, refusal, most := thread_placement_after_write({processors = item.written}, item.held, FOUR_PROCESSORS, false)
+		testing.expect_value(t, refusal, Thread_Write_Refusal.Processors)
+		testing.expect_value(t, most, item.most)
+		testing.expect_value(t, after, item.held)
+	}
+}
+
+// The holder of the machine writes any set and the limit: 0 is every
+// processor for the limit and the limit for the set, and the part of a set
+// that is outside the new limit is dropped.
+@(test)
+the_machine_handle_writes_any_placement :: proc(t: ^testing.T) {
+	narrow := Thread_Placement{processors = 0b0001, processors_limit = 0b0001}
+	cases := [?]struct {
+		written: Thread_Placement,
+		after:   Thread_Placement,
+	} {
+		// The zero record: every processor, also for a thread that was narrowed.
+		{{}, {FOUR_PROCESSORS, FOUR_PROCESSORS}},
+		// A set wider than the set of the thread, and another limit.
+		{{processors = 0b1100, processors_limit = 0b1110}, {0b1100, 0b1110}},
+		// The set 0 is the limit.
+		{{processors_limit = 0b1010}, {0b1010, 0b1010}},
+		// The limit 0 is every processor.
+		{{processors = 0b1000}, {0b1000, FOUR_PROCESSORS}},
+		// The part of the set outside the limit is dropped.
+		{{processors = 0b0111, processors_limit = 0b0110}, {0b0110, 0b0110}},
+		// All ones for both.
+		{{processors = max(u64), processors_limit = max(u64)}, {FOUR_PROCESSORS, FOUR_PROCESSORS}},
+	}
+	for item in cases {
+		after, refusal, _ := thread_placement_after_write(item.written, narrow, FOUR_PROCESSORS, true)
+		testing.expect_value(t, refusal, Thread_Write_Refusal.None)
+		testing.expect_value(t, after, item.after)
+	}
+}
+
+// What a write through the machine handle refuses: a limit or a set with
+// no processor of the machine, and a set with no processor inside the
+// limit. An empty set is never written: no accepted write gives a thread
+// no processor.
+@(test)
+the_placements_that_the_machine_handle_cannot_write :: proc(t: ^testing.T) {
+	held := Thread_Placement{processors = 0b0011, processors_limit = 0b0111}
+	cases := [?]struct {
+		written: Thread_Placement,
+		refusal: Thread_Write_Refusal,
+		most:    u64,
+	} {
+		{{processors_limit = 0b1_0000}, .Processors_Limit, FOUR_PROCESSORS},
+		{{processors = 0b0001, processors_limit = u64(1) << 40}, .Processors_Limit, FOUR_PROCESSORS},
+		{{processors = 0b1_0000}, .Processors, FOUR_PROCESSORS},
+		{{processors = 0b1_0000, processors_limit = 0b0011}, .Processors, FOUR_PROCESSORS},
+		{{processors = 0b1000, processors_limit = 0b0011}, .Processors, 0b0011},
+		{{processors = 0b0100, processors_limit = 0b1011}, .Processors, 0b1011},
+	}
+	for item in cases {
+		after, refusal, most := thread_placement_after_write(item.written, held, FOUR_PROCESSORS, true)
+		testing.expect_value(t, refusal, item.refusal)
+		testing.expect_value(t, most, item.most)
+		testing.expect_value(t, after, held)
+	}
+}
+
+// Each accepted write leaves a set that is not empty, that is inside its
+// limit and inside the machine; a write of a program is also inside the
+// set of before and keeps the limit. Each small pair of sets is tried, on
+// machines of 1, 4 and 64 processors.
+@(test)
+no_write_leaves_a_placement_outside_its_bounds :: proc(t: ^testing.T) {
+	machines := [?]u64{0b1, FOUR_PROCESSORS, max(u64)}
+	writers := [?]bool{false, true}
+	for machine in machines {
+		for held_set in u64(1) ..< 16 {
+			for held_limit in u64(1) ..< 16 {
+				// A placement that the kernel can hold: a set inside its
+				// limit, both inside the machine.
+				if held_set & machine != held_set || held_limit & machine != held_limit || held_set & held_limit != held_set {
+					continue
+				}
+				held := Thread_Placement{held_set, held_limit}
+				for set in u64(0) ..< 32 {
+					for limit in u64(0) ..< 32 {
+						for by_machine in writers {
+							after, refusal, _ := thread_placement_after_write({set, limit}, held, machine, by_machine)
+							if refusal != .None {
+								testing.expect_value(t, after, held)
+								continue
+							}
+							testing.expect(t, after.processors != 0)
+							testing.expect(t, after.processors & machine == after.processors)
+							testing.expect(t, after.processors_limit & machine == after.processors_limit)
+							testing.expect(t, after.processors & after.processors_limit == after.processors)
+							if !by_machine {
+								testing.expect(t, after.processors & held.processors == after.processors)
+								testing.expect_value(t, after.processors_limit, held.processors_limit)
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 }

@@ -182,8 +182,8 @@ Right :: enum u32 {
 	Stop    = 7, // Machine: stop the machine.
 	Spend   = 8, // Budget: create objects with it, and take a part of it for a new budget.
 	Physical = 9, // Machine: read the physical address of a memory object (Memory_Physical).
-	// Machine: change the scheduling strategy of the machine (Strategy_Set), and the weight, the request and the
-	// weight limit of any thread (Thread_Control).
+	// Machine: change the scheduling strategy of the machine (Strategy_Set), and the weight, the request, the
+	// weight limit and the placement of any thread (Thread_Control).
 	Schedule = 10,
 	// Budget: pay pages of a memory object that this budget already pays for (Memory_Commit), and nothing else: no
 	// object, thread, program or budget is created with it. The narrow form of Spend, to give to another program.
@@ -390,6 +390,8 @@ Operation :: enum u32 {
 	Program_Start  = 7, // (program, entry, stack, context).
 	// Starts a program that `Program_Create` made: its first thread runs at `entry`, and the program goes
 	// from `Created` to `Ready`. The budget of the program pays for the thread, as `Thread_Create` does.
+	// The first thread gets the weight limit of the calling thread (`Thread_Schedule`) and the limit of its
+	// placement (`Thread_Placement`): a program does not leave a limit by a program that it starts.
 	//
 	// **Arguments**
 	//
@@ -603,7 +605,8 @@ Operation :: enum u32 {
 	// - `weight`: from 1 to the weight limit of the calling thread, which is `WEIGHT_FULL` unless the holder
 	//   of the machine lowered it (`Thread_Schedule`); 0 is that limit. The share of the thread under the
 	//   strategies that use weights. A weight can only be lower than the weight of a thread created with 0.
-	//   The new thread gets the weight limit of the calling thread.
+	//   The new thread gets the weight limit of the calling thread. It also gets the limit of the
+	//   placement of the calling thread, as its set of processors and as its limit (`Thread_Placement`).
 	// - `request`: microseconds, from 1 to `REQUEST_LIMIT`; 0 is `REQUEST_DEFAULT`. The delay that the
 	//   thread asks for under EEVDF ([weights and requests](docs/SCHEDULING.md#weights-and-requests-a-field-at-thread-creation)).
 	//
@@ -1041,26 +1044,29 @@ Operation :: enum u32 {
 	// extended state are read and written only while the thread is held: its stop count is above 0, or it
 	// waits for an answer of the fault ring. It also reads and writes the schedule of a thread: its weight
 	// and its request (`Thread_Schedule`), also while the thread runs
-	// ([the schedule of a live thread](docs/SCHEDULING.md#the-schedule-of-a-live-thread)).
+	// ([the schedule of a live thread](docs/SCHEDULING.md#the-schedule-of-a-live-thread)). And it reads and
+	// writes the placement of a thread: the processors that can run it (`Thread_Placement`), also while the
+	// thread runs ([the placement of a thread](docs/SCHEDULING.md#the-placement-of-a-thread)).
 	//
 	// **Arguments**
 	//
 	// - `thread`: a thread handle with the rights of the command (`thread_control_rights`): **Inspect**,
 	//   and **Write** too for a write of the registers or of the extended state; **Control** for
-	//   `Write_Schedule`. Or 0, and then `number` names a live thread of this program
-	//   (`Thread_Record.number`, `Fault_Record.thread`). Or, for `Read_Schedule` and `Write_Schedule`
-	//   only, the machine handle with **Schedule** and **Inspect**
+	//   `Write_Schedule` and `Write_Placement`. Or 0, and then `number` names a live thread of this program
+	//   (`Thread_Record.number`, `Fault_Record.thread`). Or, for the two commands of the schedule and the
+	//   two commands of the placement only, the machine handle with **Schedule** and **Inspect**
 	//   (`thread_control_machine_rights`), and then `number` names any thread of the machine. A
 	//   thread of another program needs a handle. Or the program handle with **Debug** of the program that
 	//   the caller debugs (`Fault_Handler_Set` with that handle first), and then `number` names a live thread
-	//   of that program, for each command but the two of the schedule
+	//   of that program, for each command but the two of the schedule and the two of the placement
 	//   (`thread_control_takes_debug_handle`).
 	// - `number`: the number of the thread when `thread` is 0; the machine number of the thread
 	//   (`Thread_Report.machine_number`) when `thread` is the machine handle.
 	// - `command`: a `Thread_Control_Command`.
 	// - `address`, `size`: the memory of the command that reads or writes: `size` is at least the size of
-	//   a `Thread_Registers`, of the extended state area (`Thread_State`), of a `Thread_Schedule` or of a
-	//   `Thread_Breakpoints`, and the program can read it, or write it for a read of the thread. For
+	//   a `Thread_Registers`, of the extended state area (`Thread_State`), of a `Thread_Schedule`, of a
+	//   `Thread_Breakpoints` or of a `Thread_Placement`, and the program can read it, or write it for a read
+	//   of the thread. For
 	//   `Read_Memory`, `size` is the count of bytes to read, at most `THREAD_MEMORY_READ_LIMIT`.
 	// - `source`: for `Read_Memory`, the address of the first byte in the program of the thread.
 	//
@@ -1076,13 +1082,16 @@ Operation :: enum u32 {
 	//   `WEIGHT_FULL`, a request above `REQUEST_LIMIT`, or a weight limit above `WEIGHT_FULL`,
 	//   changes nothing; a `Write_Breakpoints` with a breakpoint that a thread cannot have
 	//   (`thread_breakpoints_refusal`) changes nothing; a `Read_Memory` of more than
-	//   `THREAD_MEMORY_READ_LIMIT` bytes.
+	//   `THREAD_MEMORY_READ_LIMIT` bytes; a `Write_Placement` that `thread_placement_after_write` refuses
+	//   changes nothing: through 0 or a thread handle a set with a processor that the set of the thread
+	//   does not have, and for each writer a set or a limit with no processor that the machine has.
 	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with the rights of the command, and not
-	//   the machine handle with the rights of a command of the schedule. The machine handle with
-	//   another command gives `Bad_Handle`. A program handle with no **Debug** gives `No_Right`, and a
-	//   program handle with a command of the schedule `Bad_Handle`.
+	//   the machine handle with the rights of a command of the schedule or of the placement. The machine
+	//   handle with another command gives `Bad_Handle`. A program handle with no **Debug** gives
+	//   `No_Right`, and a program handle with a command of the schedule or of the placement `Bad_Handle`.
 	// - `Bad_State`: no live thread of this program has `number`; no live thread of the machine has the
-	//   machine number `number`; the thread or its program ended; a read or
+	//   machine number `number`; the thread or its program ended, also for a read or a write of a
+	//   schedule or of a placement of a thread that ends; a read or
 	//   a write of the registers or of the breakpoints of a thread that is not held, or of the calling
 	//   thread; a `Stop` above
 	//   `THREAD_STOP_COUNT_LIMIT` or of a thread that ends; a `Resume` at the count 0; through a program
@@ -1179,6 +1188,110 @@ Thread_Schedule :: struct {
 // weight limit of the thread, which this check does not know.
 thread_schedule_accepted :: proc "contextless" (weight, request: u64) -> bool {
 	return weight <= WEIGHT_FULL && request <= REQUEST_LIMIT
+}
+
+// The most processors that a set of processors names: one bit of a `u64`
+// for each. The kernel runs threads on no more processors than this.
+PLACEMENT_PROCESSOR_CAPACITY :: 64
+
+// The placement of a thread: the processors that can run it, and the most
+// that this set can be. `Thread_Control` reads it (`Read_Placement`) and
+// writes it (`Write_Placement`) while the thread lives, also while it runs.
+// See [thread placement](term:thread-placement) and (docs/SCHEDULING.md,
+// "The placement of a thread").
+//
+// A set of processors is a `u64`: bit `n` is the processor `n` of
+// `Processor_Report`. A read gives sets that hold only processors that the
+// machine has, and that are never 0. A thread that never got a placement
+// has every processor of the machine in both sets.
+//
+// Who writes decides what a write can do (`thread_placement_after_write`):
+//
+// - A write through 0 (a thread of the calling program) or through a thread
+//   handle with **Control** only **narrows**: a set with a processor that
+//   the set of the thread does not have gives `Bad_Operation`, and nothing
+//   changes. 0 keeps the set that the thread has. `processors_limit` is not
+//   read.
+// - A write through the machine handle with **Schedule** and **Inspect**
+//   gives the two sets, and it alone widens a set. 0 is the default of
+//   each: every processor for the limit, the limit for the set. The part
+//   of the set that is outside the new limit is dropped. As a write of a
+//   `Thread_Schedule` through the machine handle, it always gives each
+//   value: the set 0 is the whole limit, not the set that the thread has,
+//   so it undoes a narrowing that the program of the thread made. A
+//   holder that keeps the set reads the placement first and writes the
+//   set that it read.
+//
+// For each writer, the bits of processors that the machine does not have
+// are dropped, so a writer can give all ones. A set that then has no
+// processor, and a set with no processor inside the limit, give
+// `Bad_Operation`: a thread with no processor never runs, and that is
+// `Stop`, which has its own right.
+//
+// The limit is the most that the set of the thread can be. A new thread,
+// and the first thread of a program that a thread starts, get the limit
+// of the thread that creates them, as their set and as their limit. So a
+// limit that the holder of **Schedule** wrote stays.
+//
+// A thread whose processor left its set leaves that processor at the end
+// of its turn at the latest: the write sends no interrupt.
+//
+// Example: `{processors = 0b0100}` keeps a thread on the processor 2.
+Thread_Placement :: struct {
+	processors:       u64, // Bit n: the processor n can run the thread. 0 in a write: the set that the thread has, or the limit in a write through the machine handle.
+	processors_limit: u64, // The most that `processors` can be. 0 in a write is every processor. Read from a write through the machine handle only.
+}
+#assert(size_of(Thread_Placement) == 16)
+
+// thread_placement_after_write gives the placement that a thread has after
+// a write of `Write_Placement`, or what the write refuses. `written` is the
+// record of the writer, `held` the placement that the thread has, and
+// `machine_processors` the set of the processors that the machine has.
+// `by_machine`: the machine handle names the thread; else the program of
+// the thread or the holder of a thread handle writes.
+//
+// With a refusal, `after` is `held`, and `most` is the set that the
+// refused set had to stay inside: the set of the thread for a write that
+// only narrows, the limit for a set with no processor inside it, and the
+// processors of the machine for a set or a limit that names none of them.
+// The refused value is `written.processors`, or `written.processors_limit`
+// for the refusal `Processors_Limit`.
+//
+// The kernel runs this procedure on its own copy of the record, under the
+// lock that guards the placement of the thread.
+thread_placement_after_write :: proc "contextless" (written, held: Thread_Placement, machine_processors: u64, by_machine: bool) -> (after: Thread_Placement, refusal: Thread_Write_Refusal, most: u64) {
+	if !by_machine {
+		if written.processors == 0 {
+			return held, .None, 0
+		}
+		processors := written.processors & machine_processors
+		if processors == 0 {
+			return held, .Processors, machine_processors
+		}
+		if processors &~ held.processors != 0 {
+			return held, .Processors, held.processors
+		}
+		return {processors = processors, processors_limit = held.processors_limit}, .None, 0
+	}
+	limit := machine_processors
+	if written.processors_limit != 0 {
+		limit = written.processors_limit & machine_processors
+		if limit == 0 {
+			return held, .Processors_Limit, machine_processors
+		}
+	}
+	processors := limit
+	if written.processors != 0 {
+		processors = written.processors & machine_processors
+		if processors == 0 {
+			return held, .Processors, machine_processors
+		}
+		processors &= limit
+		if processors == 0 {
+			return held, .Processors, limit
+		}
+	}
+	return {processors = processors, processors_limit = limit}, .None, 0
 }
 
 // A module record: one module that a loader put in a program (Program_Module).
@@ -1549,8 +1662,8 @@ Fault_Answer_Kind :: enum u64 {
 // program handle with **Debug** of the debugger. A read or a write of the
 // registers or of the breakpoints needs the thread held: its stop count
 // above 0 and its processor
-// left (`Bad_State` before). The two commands of the schedule and the read
-// of the memory need no hold.
+// left (`Bad_State` before). The two commands of the schedule, the two of
+// the placement and the read of the memory need no hold.
 // See [thread control](term:thread-control) and
 // (docs/ARCHITECTURE.md, "The control of a thread").
 Thread_Control_Command :: enum u64 {
@@ -1627,6 +1740,24 @@ Thread_Control_Command :: enum u64 {
 	// so, and gives the count before it; Bad_Address when that page holds
 	// the first byte. Device memory is never read.
 	Read_Memory          = 11,
+	// Writes the Thread_Placement of the thread at the address (size: at
+	// least its size) -> the bytes written. Each set holds only processors
+	// that the machine has, and is never 0. The thread is not held. A
+	// thread handle needs Inspect; the machine handle with Schedule and
+	// Inspect names any thread by its machine number.
+	Read_Placement       = 12,
+	// Reads a Thread_Placement at the address: only the processors of the
+	// set run the thread from now on, also when it runs now: it then
+	// leaves a processor that is not in the set at the end of its turn at
+	// the latest. Through 0 or a thread handle (with Control) the write
+	// only narrows: Bad_Operation for a set with a processor that the set
+	// of the thread does not have, and nothing changes; 0 keeps the set.
+	// The machine handle with Schedule and Inspect names any thread by its
+	// machine number; its write gives the set and the limit, and widens
+	// too. Bad_Operation for a set or a limit with no processor that the
+	// machine has, and for a set with no processor inside the limit
+	// (thread_placement_after_write): nothing changes.
+	Write_Placement      = 13,
 }
 
 // thread_control_rights gives the rights that a thread handle needs for a
@@ -1641,12 +1772,14 @@ Thread_Control_Command :: enum u64 {
 // breakpoints takes no thread handle and no number of an own thread
 // (thread_control_needs_the_debugger). A read of the memory of the program
 // needs Write too: a handle with Inspect alone sees how the thread runs,
-// and never the bytes that its program holds.
+// and never the bytes that its program holds. Control also gives the write
+// of the placement, which only narrows: a holder that can end a thread can
+// also give it fewer processors, which is less.
 thread_control_rights :: proc "contextless" (command: Thread_Control_Command) -> Rights {
 	#partial switch command {
 	case .Write_Registers, .Write_Extended_State, .Read_Memory:
 		return {.Inspect, .Write}
-	case .Write_Schedule:
+	case .Write_Schedule, .Write_Placement:
 		return {.Control}
 	}
 	return {.Inspect}
@@ -1655,16 +1788,19 @@ thread_control_rights :: proc "contextless" (command: Thread_Control_Command) ->
 // thread_control_machine_rights says if a command of Thread_Control also
 // takes the machine handle, with a machine number in place of a thread
 // handle, and gives the rights that the machine handle then needs. The two
-// commands of the schedule only, each with Schedule and Inspect. A read by
+// commands of the schedule and the two of the placement only, each with
+// Schedule and Inspect. A read by
 // machine number is a report of the machine, and each report needs
 // Inspect: it gives values of any thread, and says which machine numbers
 // name a thread. A write through the machine handle gives the three values
 // of the record, also the weight limit: its holder reads the schedule
 // first to keep what it does not change, and it gets the machine numbers
-// from a report. So Schedule with no Inspect names no thread.
+// from a report. So Schedule with no Inspect names no thread. A write of a
+// placement through the machine handle gives the set and the limit, for
+// the same reason.
 thread_control_machine_rights :: proc "contextless" (command: Thread_Control_Command) -> (rights: Rights, taken: bool) {
 	#partial switch command {
-	case .Read_Schedule, .Write_Schedule:
+	case .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement:
 		return {.Schedule, .Inspect}, true
 	}
 	return {}, false
@@ -1673,12 +1809,12 @@ thread_control_machine_rights :: proc "contextless" (command: Thread_Control_Com
 // thread_control_takes_debug_handle says if a command of Thread_Control
 // also takes the program handle with Debug of the program that the caller
 // debugs, with the number of a thread of that program in place of a thread
-// handle: each command but the two of the schedule. A debugger holds,
-// reads and writes a thread; the share of a thread is not a part of
-// debugging.
+// handle: each command but the two of the schedule and the two of the
+// placement. A debugger holds, reads and writes a thread; the share of a
+// thread and its processors are not a part of debugging.
 thread_control_takes_debug_handle :: proc "contextless" (command: Thread_Control_Command) -> bool {
 	#partial switch command {
-	case .None, .Read_Schedule, .Write_Schedule:
+	case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement:
 		return false
 	}
 	return true
@@ -1870,7 +2006,8 @@ THREAD_FLAGS_REQUIRED :: u64(0x202)
 THREAD_FLAGS_ALLOWED :: u64(0x0025_0FD7)
 
 // Which part of a Thread_Registers, of an extended state area, of a
-// Thread_Schedule or of a Thread_Breakpoints a write refused.
+// Thread_Schedule, of a Thread_Breakpoints or of a Thread_Placement a write
+// refused.
 //
 // `Thread_Control` gives `Bad_Operation` for a refused write, and the error
 // record names the refusal and the value. Nothing of the thread changes.
@@ -1890,6 +2027,8 @@ Thread_Write_Refusal :: enum u64 {
 	Breakpoint_Kind     = 12, // The kind of a breakpoint of a Thread_Breakpoints is not a Thread_Breakpoint_Kind.
 	Breakpoint_Length   = 13, // The length of a data breakpoint is not 1, 2, 4 or 8; or the length of an execute breakpoint or of an empty place is not 0.
 	Breakpoint_Address  = 14, // The address of a breakpoint is not below USER_END, is not a multiple of the length of a data breakpoint, or is not 0 in an empty place.
+	Processors          = 15, // The set of processors of a Thread_Placement has no processor that the machine has, has none inside the limit, or, in a write that only narrows, has a processor that the set of the thread does not have: the error record gives the set that it had to stay inside.
+	Processors_Limit    = 16, // The limit of a Thread_Placement, in a write through the machine handle, has no processor that the machine has: the error record gives the processors of the machine.
 }
 
 // thread_registers_refusal says what a write of the registers of a thread

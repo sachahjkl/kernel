@@ -112,7 +112,7 @@ wait_entry_wake :: proc "contextless" (thread: ^Thread, serial: u32) -> bool {
 	}
 	run_unlock(home)
 	if queued {
-		kick(home, preempts)
+		kick(home, thread, preempts)
 	}
 	return counted
 }
@@ -147,7 +147,7 @@ thread_words_wake :: proc "contextless" (thread: ^Thread) {
 	}
 	run_unlock(home)
 	if queued {
-		kick(home, preempts)
+		kick(home, thread, preempts)
 	}
 }
 
