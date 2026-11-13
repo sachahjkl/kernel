@@ -144,7 +144,7 @@ Built in the kernel, not in the console. The console reads a stop report with na
 
 | Command | What it does | What it needs |
 |---|---|---|
-| `debug("life")` | Attaches to the program: the root service gives the console the program handle with the right `Debug` | The command `Debug` of the root ring, then `Fault_Handler_Set` with the handle: built |
+| `debug("clock")` | Attaches to the program: the root service gives the console the program handle with the right `Debug` | The command `Debug` of the root ring, then `Fault_Handler_Set` with the handle: built |
 | `threads()` | A table of the threads of the program: number, state, the procedure and the line of the instruction | `Inspect_Kind.Threads`, then `Read_Registers` of each held thread |
 | `stop(thread)`, `resume(thread)` | Holds a thread, lets it run | `Thread_Control` `Stop`, `Resume`: built |
 | `registers(thread)` | A table of the 16 general registers, `rip` with its name, `rflags` | `Read_Registers`: built |
