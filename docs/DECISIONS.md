@@ -27,7 +27,7 @@ This file is the record of the decisions of the project: who decided what, when,
 8. [Cryptography and randomness](#8-cryptography-and-randomness): D-101 to D-105
 9. [The interface, the fonts, the mark and the design](#9-the-interface-the-fonts-the-mark-and-the-design): D-106 to D-141, D-192, D-193
 10. [The console and the tools](#10-the-console-and-the-tools): D-142 to D-148, D-206, D-225
-11. [The build and the compiler](#11-the-build-and-the-compiler): D-149 to D-162
+11. [The build and the compiler](#11-the-build-and-the-compiler): D-149 to D-162, D-229
 12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194 to D-201, D-207 to D-210, D-222
 13. [The name and the repository](#13-the-name-and-the-repository): D-186 to D-189
 14. [Open questions for the owner](#open-questions-for-the-owner)
@@ -1371,6 +1371,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: none.
 - State: not done yet.
 - Where: `REPRODUCIBLE_BUILD.md`.
+
+### D-229 The build keeps `nasm`
+- 2026-11-13. Decided by: the owner (the condition); the coordinator (the judgement that the condition is not met).
+- Decision: the assembly files stay in the syntax of `nasm`. The assembler of LLVM (`llvm-mc`) is already in the build environment and can replace it, but the change adds constraints for no gain that a reader sees: every comment changes its mark, each memory operand and each macro changes form, the 16-bit and 32-bit start of a processor (`kernel/processor.asm`) goes through the less tested Intel syntax of LLVM, and the host tests still need `nasm`, because the compiler calls it itself for a file `.asm` that a package imports. `nasm` is a small tool, fixed by the flake.
+- Words: "si tu trouves que c'est plus léger ça ne crée pas de la fragilité et que ça simplifie notre dépendance [...] je suis pour [...] c'est juste [la] condition que ça crée pas des contraintes artificielles parce que voilà [si] le code est moins lisible [ou] plus difficile à commenter [...] ça mange pas de pain de dépendre de nasm qui est pas un gros programme"
+- State: in force.
+- Where: `REPRODUCIBLE_BUILD.md`; `MODULE_CONTRACT.md`, section 7.
 
 ## 12. The site and the publication
 
