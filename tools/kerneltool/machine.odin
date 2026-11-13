@@ -1027,6 +1027,11 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] > " + KEYS_HELD_LINE, fails_on = "is lost"},
 	{kind = .Wait, text = "[console] 976"},
+	// The Escape stopped the sandboxed program of probe: a call starts it
+	// again, so that the list of the programs has it for the picture.
+	{kind = .Type, text = "count()"},
+	{kind = .Wait, text = "[probe] host: ready"},
+	{kind = .Wait, text = "[console] 1"},
 	{kind = .Type, text = "where(programs(), \"name\", \"probe\")"},
 	{kind = .Wait, text = "probe  "},
 	{kind = .Shot, text = "isolated"},
