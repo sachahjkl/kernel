@@ -18,7 +18,7 @@ This file is the record of the decisions of the project: who decided what, when,
 ## Groups
 
 1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191, D-205, D-214 to D-217, D-223
-2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213, D-218, D-219, D-224
+2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213, D-218, D-219, D-224, D-230
 3. [The kernel](#3-the-kernel): D-071 to D-083, D-220
 4. [Memory](#4-memory): D-084 to D-088
 5. [The scheduler](#5-the-scheduler): D-089 to D-091, D-226, D-227, D-228
@@ -646,6 +646,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "Plutôt que de commencer des développements et de faire encore plein de trucs, on va se mettre sur pause pour l'instant en termes de développement pour pas charger la mule, pour pas charger l'ordinateur. [...] je voudrais que tu remplisses ces détails un maximum la doc [...] pas besoin de refaire tout le micmac de contrôle de 47 minutes"; on a second pass of the documentation: "Et oui go faire"
 - State: in force.
 - Where: `AGENTS.md`; `FIRST_MILESTONE.md`, "Next steps".
+
+### D-230 The pause ends: the whole queue, in order, written in one go
+- 2026-11-13. Decided by: the owner.
+- Decision: the pause of D-224 ends. The queue is built in its order: the schedule of a live thread, the faults of the QUIC library, the console that draws results, the `switch` of strategies, the debugger, the placement and the share for each budget, the small faults, `manual` that reads Markdown, then the IOMMU, the guests, Linux in a guest and the GPU. The code is written first; the build, the corrections and the reviews come at the end of each batch. The debugger also gets the debug information of a module (variables and types, not only names and lines), and debugging from another machine.
+- Words: "on va faire tout ça avec le fait de pouvoir déboguer j'aimerais bien aussi évidemment que ce soit capable d'exporter les symboles d'un module on les a déjà un petit peu mais les informations du binaire donc c'est à dire les variables enfin tout ce bordel pour qu'on puisse vraiment inspecter l'exécution du programme comme on peut faire dans [un débogueur] traditionnel et câbler ça au fait pouvoir du coup faire du débogage à distance je sais pas moi via le port série ou via une socket [QUIC] [...] fait toute [la liste] dans l'ordre de 1 à 9 et tu fais ça d'une traite dans le sens que tu écris [...] du code et à la fin [tu builds] et tu corriges et tu fais une revue"
+- State: in work.
+- Where: `FIRST_MILESTONE.md`, "Next steps"; `TOOLS.md`, "The debugger: the design".
 
 ## 3. The kernel
 
