@@ -332,7 +332,7 @@ The remote service lets the host of the machine call the exports of services, as
 
 Each program draws its own pixels into memory that it shares with the compositor; the compositor alone owns the display and puts the surfaces together. So a program never draws into another program's window, and the display has one owner.
 
-- **WebGPU library** (designed, not built): the one graphics interface, linked into each program that draws. It has one back end per display type. The first back end is software (P18). Today a program draws with `support/graphics` (fills, lines, text, pictures in software) and `support/interface` (the elements of a window as a draw table, `INTERFACE.md`).
+- **WebGPU library** (designed, not built): the one graphics interface, linked into each program that draws. It has one back end per display type. The first back end is software (P18). Today a program draws with `support/graphics` (fills, lines, text, pictures in software) and `support/interface` (the elements of a window as a draw table, `INTERFACE.md`). The code that draws a draw table into the pixels of a surface runs in the address space of the program in each case: compiled into the program, or, for 23 programs, in the drawing module that they import (`modules/drawing`; `INTERFACE.md`, section 7), one shared copy of the code with the text state of each program in its own copy of the data of the module.
 - **Compositor** (built: `programs/compositor`): a service that owns the display. Each program draws into a surface in shared memory. The compositor combines the surfaces and sends input events to the program that has focus.
 
 ### U9. Base library

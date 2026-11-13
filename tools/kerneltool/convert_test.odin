@@ -41,3 +41,32 @@ rebases_round_trip :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, len(words) < len(offsets), "the bitmap form is shorter than one word per location")
 }
+
+// A segment that is read-only after the load and that no loader writes (no
+// rebase and no slot in its pages) becomes a constant segment; with a
+// rebase or with a slot it keeps its flags. A location at the first byte
+// after the segment is not in it, and a segment of another kind never
+// changes.
+@(test)
+a_segment_that_no_loader_writes_is_only_read :: proc(t: ^testing.T) {
+	after_load := module.Segment_Flags{.Read, .Write, .Read_Only_After_Load}
+	segment := module.Segment{memory_offset = 2 * module.PAGE_SIZE, memory_size = module.PAGE_SIZE, flags = after_load}
+	outside := [?]u64{0, 2 * module.PAGE_SIZE - 8, 3 * module.PAGE_SIZE}
+	slots_outside := [?]module.Slot{{memory_offset = 3 * module.PAGE_SIZE, import_index = 1, export_index = 1}}
+	// No rebase and no slot at all, then some in the other segments only.
+	testing.expect_value(t, segment_flags_after_the_relocations(segment, nil, nil), module.Segment_Flags{.Read})
+	testing.expect_value(t, segment_flags_after_the_relocations(segment, outside[:], slots_outside[:]), module.Segment_Flags{.Read})
+	// A rebase at its first word, and at its last word.
+	first := [?]u64{2 * module.PAGE_SIZE}
+	last := [?]u64{3 * module.PAGE_SIZE - 8}
+	testing.expect_value(t, segment_flags_after_the_relocations(segment, first[:], nil), after_load)
+	testing.expect_value(t, segment_flags_after_the_relocations(segment, last[:], nil), after_load)
+	// A slot.
+	slots_inside := [?]module.Slot{{memory_offset = 2 * module.PAGE_SIZE + 16, import_index = 1, export_index = 1}}
+	testing.expect_value(t, segment_flags_after_the_relocations(segment, outside[:], slots_inside[:]), after_load)
+	// The data and the code of a module keep their flags with no rebase.
+	data := module.Segment{memory_offset = 2 * module.PAGE_SIZE, memory_size = module.PAGE_SIZE, flags = {.Read, .Write}}
+	code := module.Segment{memory_size = module.PAGE_SIZE, flags = {.Read, .Execute}}
+	testing.expect_value(t, segment_flags_after_the_relocations(data, nil, nil), module.Segment_Flags{.Read, .Write})
+	testing.expect_value(t, segment_flags_after_the_relocations(code, nil, nil), module.Segment_Flags{.Read, .Execute})
+}

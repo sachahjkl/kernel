@@ -3903,9 +3903,39 @@ The package allocates nothing: the program gives the draw tables, the text table
 
 The interface package is not a toolkit with objects, callbacks and a tree; its state is the state of the program.
 
+A program that imports the drawing module keeps the elements, the layout and the input of the package, and holds no copy of the difference and of the execution: its window layer calls the two exports of the module.
+
 The design: `docs/INTERFACE.md`, "2. The model: an immediate pass over flat tables".
 
 Do not use: toolkit, widget library, UI framework.
+
+### Library module
+
+A library module is a module that holds code that many programs import, in place of a package that each program compiles into its own file.
+
+A package that 40 programs compile in is 40 copies of the same code with no record of what each program holds. A library module is one file with one hash: the import table of each program names it, the module graph shows who runs it, and a change of its code builds one module. Its exports have descriptions, as each export: the border is coarse, so a call passes whole tables of the caller, by address, with no copy. The code that a program calls many times for one result stays compiled into the program.
+
+A library module has no segment that the loader writes and that is read-only after the load: no table of addresses, and no import. So all its code is shared code at each address, and a starter keeps one prepared module for it, not one for each importer. The kernel tool refuses a library module that breaks this rule. Its writable data is a cache of a fixed size, one copy for each program; the caller still supplies each table and each buffer. Example: the drawing module.
+
+A library module is not a second kind of import: it is a module, and the loader binds it as each import. The root service, the boot program and the call host import nothing: they keep the packages compiled in.
+
+The design: `docs/MODULE_CONTRACT.md`, "A library as a module".
+
+Do not use: shared library, dynamic library, runtime library.
+
+### Drawing module
+
+The drawing module is the module `drawing`: the code that finds the damage between two draw tables and draws the records of a draw table into pixels, for each program that imports it.
+
+It is the first library module. A window calls it two times for a frame: `damage_of_draw_table_7` gives the damage rectangles from the draw table before and the draw table now, and `execute_draw_table_7` draws the records in each rectangle into the pixels of the surface. Each argument is memory of the program, passed by address: the two draw tables, the rectangles, and the pixels, which the module writes in place. The 7 in the names is the version of the draw record.
+
+The module holds the fills, the gradients, the lines, the text of the cells and the text of the interface font, with their blends. It keeps the text settings of the program in its own data: the choice of the font, and the glyph caches of the program, validated at the first draw. It reads the choice of the settings page again at each draw.
+
+The drawing module draws no Picture record and no Text_Grid record: a draw table names a picture and a grid by an address, which the description of an export cannot carry. A program with such a record, and the compositor, keep the interface package compiled in.
+
+The design: `docs/INTERFACE.md`, "7. Where it lives: the elements in each program, the drawing in a module".
+
+Do not use: renderer module, graphics library, render service.
 
 ### Draw record
 

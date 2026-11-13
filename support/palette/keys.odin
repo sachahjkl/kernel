@@ -239,6 +239,11 @@ state_after :: proc "contextless" (state: State, action: Action, chosen: Chosen)
 // text_changed: the typed part changed, and the owner makes the list
 // again for it (list_build, or a list of its own thread). A character past
 // TYPED_CAPACITY is refused: a longer part matches no name.
+//
+// A change of the text ends the wait for a frame (choice_undrawn): the
+// choice that no frame showed was of the list before, and the typed part
+// asks for a new list. The owner makes Enter wait for that list, and its
+// adoption chooses the first entry (Panel.typed_since_list).
 typed_edit :: proc "contextless" (panel: ^Panel, key: Key, character: u8) -> (drawn: bool, text_changed: bool) {
 	edit_key := line_editor.Edit_Key.None
 	#partial switch key {
@@ -264,6 +269,10 @@ typed_edit :: proc "contextless" (panel: ^Panel, key: Key, character: u8) -> (dr
 		return false, false
 	}
 	text_changed = edit_key == .Backspace || edit_key == .Delete || edit_key == .Character
+	if text_changed {
+		panel.choice_undrawn = false
+		panel.typed_since_list = true
+	}
 	return true, text_changed
 }
 

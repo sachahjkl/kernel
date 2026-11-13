@@ -169,13 +169,26 @@ grid_damage :: proc "contextless" (before, now: ^Draw_Table, record: Draw_Record
 // is then the whole surface.
 damage_of_two_pictures :: proc "contextless" (own_before, shown: ^Draw_Table, shown_drawn: bool, now: ^Draw_Table, surface: Rectangle, draw, present: ^Damage) {
 	damage_by_difference(own_before, now, draw)
+	shown_damage: Damage
+	if shown_drawn {
+		damage_by_difference(shown, now, &shown_damage)
+	}
+	damage_to_present(draw, &shown_damage, shown_drawn, surface, present)
+}
+
+// damage_to_present gives what a surface with two pictures presents, from
+// the two differences: draw (the frame now against the picture that the
+// program draws) and shown_damage (the frame now against the picture on the
+// screen; not read when shown_drawn is false: the whole surface is
+// presented). It is apart from damage_of_two_pictures for a window whose
+// differences come from the drawing module (window_drawing.odin): the rule
+// of the present stays in one place.
+damage_to_present :: proc "contextless" (draw, shown_damage: ^Damage, shown_drawn: bool, surface: Rectangle, present: ^Damage) {
 	present^ = draw^
 	if !shown_drawn {
 		damage_add(present, surface)
 		return
 	}
-	shown_damage: Damage
-	damage_by_difference(shown, now, &shown_damage)
 	for rectangle in shown_damage.rectangles[:shown_damage.count] {
 		damage_add(present, rectangle)
 	}

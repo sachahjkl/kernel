@@ -2450,6 +2450,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "interface_through_module: one frame of "},
 	{kind = .Wait, text = " records asked, 16 drawn, the count of the full frame"},
 	{kind = .Wait, text = "interface_through_module: ok, the two draw tables are equal"},
+	// The proof of the same pixels in the machine: one frame drawn by the
+	// package compiled in and by the drawing module, with the text settings
+	// that each of the two loaded.
+	{kind = .Wait, text = " text records, the same bytes: as it must"},
 	{kind = .Shot, text = "interface_module"},
 	{kind = .Close, text = "interface_through_module"},
 	{kind = .Wait, text = "root: interface_through_module stopped"},

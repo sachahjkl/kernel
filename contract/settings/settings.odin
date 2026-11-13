@@ -92,10 +92,10 @@ Description :: struct {
 
 // The description of each setting.
 descriptions := [Setting]Description {
-	.Font           = {"font", "font", {"vector", "spleen", "", ""}, 2},
-	.Subpixel_Order = {"subpixel_order", "subpixel order", {"rgb", "bgr", "none", ""}, 3},
-	.Pointer_Theme  = {"pointer_theme", "pointer theme", {"owner", "system", "", ""}, 2},
-	.Grid_Fit       = {"grid_fit", "grid fit", {"on", "off", "", ""}, 2},
+	.Font           = {"font", "font", {"vector", "spleen", "", ""}, len(Font)},
+	.Subpixel_Order = {"subpixel_order", "subpixel order", {"rgb", "bgr", "none", ""}, len(Subpixel_Order)},
+	.Pointer_Theme  = {"pointer_theme", "pointer theme", {"owner", "system", "", ""}, len(Pointer_Theme)},
+	.Grid_Fit       = {"grid_fit", "grid fit", {"on", "off", "", ""}, len(Grid_Fit)},
 }
 
 // The settings page: what the program `settings` writes and each program
@@ -172,8 +172,25 @@ grid_fit_of :: #force_inline proc "contextless" (choice: Choice) -> Grid_Fit {
 
 // valid gives the value, or the default 0 for a value that the setting does
 // not have (a page or a record of a later version).
+//
+// The count of the values of each setting is a number in the code here, and
+// not a read of `descriptions`: that table holds names, so it has addresses
+// that a loader writes, and a module that only reads a choice (the drawing
+// module) must have no such data (docs/MODULE_CONTRACT.md, "A library as a
+// module").
 valid :: proc "contextless" (setting: Setting, value: u32) -> u32 {
-	return value < descriptions[setting].value_count ? value : 0
+	count: u32
+	switch setting {
+	case .Font:
+		count = len(Font)
+	case .Subpixel_Order:
+		count = len(Subpixel_Order)
+	case .Pointer_Theme:
+		count = len(Pointer_Theme)
+	case .Grid_Fit:
+		count = len(Grid_Fit)
+	}
+	return value < count ? value : 0
 }
 
 // values_differ tells whether two choices have different values. The count

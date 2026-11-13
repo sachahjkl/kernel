@@ -69,7 +69,10 @@ Module_Description :: struct {
 //   imports: the modules that the undefined symbols of the object come from.
 // The module binds each import by (import index, export index). The names
 // are used here only, at build time.
-convert :: proc(name: string, elf: []u8, description: Module_Description, imports: []Import_File) -> (result: []u8, ok: bool) {
+//   slot_symbols: not nil: it receives the name of the symbol of each slot,
+//            one for each slot, for the check of the declarations of the
+//            importer (import_declarations.odin).
+convert :: proc(name: string, elf: []u8, description: Module_Description, imports: []Import_File, slot_symbols: ^[dynamic]string = nil) -> (result: []u8, ok: bool) {
 	exports := description.exports
 	fail :: proc(name: string, format: string, args: ..any) -> ([]u8, bool) {
 		fmt.eprintf("kerneltool: convert %s: ", name)
@@ -304,6 +307,9 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 						return fail(name, "the slot of %s is not in writable data", symbol_name)
 					}
 					append(&slot_records, slot)
+					if slot_symbols != nil {
+						append(slot_symbols, symbol_name)
+					}
 					continue
 				}
 				value = symbol.value
@@ -318,6 +324,12 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 			}
 			append(&rebases, relocation.offset)
 		}
+	}
+	// A segment that the loader writes nowhere is only read. The linker puts
+	// its own table there, which is not copied, so such a segment is often
+	// empty: every program that has the module can then share its pages.
+	for &image in images {
+		image.record.flags = segment_flags_after_the_relocations(image.record, rebases[:], slot_records[1:])
 	}
 	rebase_words := encode_rebases(rebases[:])
 
@@ -397,6 +409,36 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 		return fail(name, "the module that was written is not valid: %v", error)
 	}
 	return output[:], true
+}
+
+// segment_flags_after_the_relocations gives the flags of a segment once
+// each rebase and each slot of the module is known. A segment that is
+// read-only after the load and that holds no rebase and no slot is a
+// segment that no loader writes: it loses Write and Read_Only_After_Load,
+// and is a constant segment. Each other segment keeps its flags.
+//
+// Why it is sound: a loader writes a segment in two ways only, a rebase
+// and a slot, and both lists are complete here. The pages of such a
+// segment are then the same at each base and with each binding, which is
+// what makes a segment a part of the shared code of a module. Its
+// protection in a program does not change: a segment that is read-only
+// after the load was never writable there.
+segment_flags_after_the_relocations :: proc(segment: module.Segment, rebases: []u64, slots: []module.Slot) -> module.Segment_Flags {
+	if .Read_Only_After_Load not_in segment.flags {
+		return segment.flags
+	}
+	first, end := segment.memory_offset, segment.memory_offset + segment.memory_size
+	for offset in rebases {
+		if offset >= first && offset < end {
+			return segment.flags
+		}
+	}
+	for slot in slots {
+		if slot.memory_offset >= first && slot.memory_offset < end {
+			return segment.flags
+		}
+	}
+	return segment.flags - {.Write, .Read_Only_After_Load}
 }
 
 // module_export_name gives the name of an export of a module file.

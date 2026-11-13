@@ -240,7 +240,8 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "compositor: surface clock"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "columns(debug(\"clock\"), \"program described\")"},
-	{kind = .Wait, text = "[console] clock            1"},
+	// Two modules with a debug object: clock and the drawing module it imports.
+	{kind = .Wait, text = "[console] clock            2"},
 	{kind = .Type, text = "columns(hold(0), \"thread state\")"},
 	{kind = .Wait, text = "[console]      0  held"},
 	{kind = .Type, text = "revoke(\"console\", \"machine\")"},
