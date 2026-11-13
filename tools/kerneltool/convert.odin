@@ -26,7 +26,7 @@ Export_Description :: struct {
 	names:      []string, // The name of each parameter.
 	result:     module.Type,
 	about:      string,
-	text:       string, // The documentation text that the module carries: the full comment, with no Markdown mark.
+	text:       string, // The documentation text that the module carries: the full comment, in its Markdown.
 	markdown:   string, // The full comment, as its author wrote it: the site renders it.
 	// What the type of each parameter needs (module.Function.parameter_details):
 	// a Record: the number of the record, from 1, in Module_Description.records;
@@ -58,7 +58,7 @@ Field_Description :: struct {
 // The description of a module: what its source says to a reader, and its exports.
 Module_Description :: struct {
 	about:    string, // One line: the first sentence of the comment of the package.
-	text:     string, // The documentation text that the module carries: the comment of the package, with no Markdown mark.
+	text:     string, // The documentation text that the module carries: the comment of the package, in its Markdown.
 	markdown: string, // The comment of the package, as its author wrote it: the site renders it.
 	exports:  []Export_Description,
 	records:  []Record_Description, // The records that the exports use. Record n + 1 of the module is records[n].

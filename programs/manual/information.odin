@@ -124,8 +124,9 @@ exporters :: proc "c" (name: ^string, result: ^[]information.Export) -> i64 {
 
 // described gives the exports, in each module of the boot image, whose help or documentation holds a text: which modules export a function that does this.
 //
-// The text is compared with the documentation that the module carries: the words of its comment with no Markdown
-// mark. The rows are records [`Export`](information.Export).
+// The text is compared with the line of help of the export, which has no Markdown mark, and with its
+// documentation text, which keeps the marks of its comment: a word between two marks is found, and two words with
+// a mark between them are not. The rows are records [`Export`](information.Export).
 //
 // **Result**: the count of rows.
 @(export, link_name = "described")
@@ -269,7 +270,7 @@ running_count :: proc "contextless" (hash: string, count: int) -> (programs: int
 // overview_build writes the page of the table of all the modules, and
 // writes on the log what it shows.
 overview_build :: proc "contextless" () -> int {
-	line_count, built_count, first_line = 0, 0, 0
+	page_clear()
 	showing_overview = true
 	count := min(information.modules(catalog(), module_rows[:]), len(module_rows))
 	run_count, _ := information.running(machine, catalog(), running_rows[:])

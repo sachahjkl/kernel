@@ -1753,7 +1753,7 @@ Do not use: collection, SDK, libc, static library.
 
 The documentation of a module is the text that the module carries in its file for a reader: one line that says what the module is, a text for the module, and a text for each export.
 
-The build tool takes it from the comments of the source. It is part of the file, so it has the hash of the module: a text cannot describe another version of the code. With the description of each export, it is all that a reader needs to use the module: `help()` in the console and the pages of the site show it.
+The build tool takes it from the comments of the source. It is part of the file, so it has the hash of the module: a text cannot describe another version of the code. With the description of each export, it is all that a reader needs to use the module: `help()` in the console and the pages of the site show it. The one line of the module and the line of help of an export are plain text. A documentation text keeps the Markdown of its comment, and the program `manual` reads it: bold, italics, code, lists, examples and links.
 
 The design: `docs/MODULE_CONTRACT.md`, "The module file".
 
@@ -4177,6 +4177,26 @@ The result is the same bytes as the reference blend: the host test `fast_blend_i
 The design: `docs/FONTS.md`, "Where the time goes, and the fast blend".
 
 Do not use: lookup table (alone), LUT.
+
+### Markdown block
+
+A Markdown block is one unit of the Markdown of a source comment that stands on its own rows: a paragraph, a list item, a fenced block or an example.
+
+The reader of the system (`support/source_comment_markdown`) gives the blocks of a documentation text in the order of the text. A block is a range of bytes of that text, with its kind. A list item has its mark and its depth: 0 for an item of the list, 1 for an item inside it. A fenced block has the word after its opening fence. A block says whether an empty line is before it, so a reader can keep that row. The Markdown spans of a block follow it. Example: the program `manual` starts a row for each block, and draws a band behind the rows of a fenced block and of an example. It is not a block of storage.
+
+The design: `docs/SITE.md`, "The reader of the system".
+
+Do not use: element, node (for this).
+
+### Markdown span
+
+A Markdown span is a run of bytes of a Markdown block with one set of styles: bold, italic, code, link.
+
+A span has no mark: the stars, the backticks and the brackets are outside its range. A span can have several styles: a bold word in the text of a link has two. A span of a link names the bytes of its target. In a paragraph and in a list item, a span can hold a line feed, which a reader shows as one space. In a fenced block and in an example, a span is one line, kept as it is. Example: `manual` draws a bold span in the bold weight, a code span in the font of the cells, and a span of a link in the color of a link.
+
+The design: `docs/SITE.md`, "The reader of the system".
+
+Do not use: run (alone), token, inline.
 
 ## Randomness
 
