@@ -90,6 +90,8 @@ module_builds := [?]Module_Build {
 	{name = "return_fault", source = "programs/return_fault", image = true},
 	{name = "fault_ring", source = "programs/fault_ring", image = true},
 	{name = "debugged", source = "programs/debugged", image = true},
+	{name = "debugger", source = "programs/debugger", image = true},
+	{name = "debug_target", source = "programs/debug_target", image = true},
 	{name = "kernel_events", source = "programs/kernel_events", image = true},
 	{name = "terminal", source = "programs/terminal", image = true},
 	{name = "flood", source = "programs/flood", image = true},

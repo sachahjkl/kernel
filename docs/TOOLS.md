@@ -19,7 +19,8 @@ A developer tool (`GLOSSARY.md`) shows how the system runs. It reads reports of 
 | "What each tool reads" | Each tool, its grant, and the reports that it reads |
 | "The log" | The log of the kernel: its records, its channels and levels, and who reads it |
 | "The program `inspect`" | The window that shows one program live |
-| "Names and lines", "The debugger: the design" | How an address becomes a procedure and a source line, and the debugger that is designed |
+| "Names and lines" | How an address becomes a procedure and a source line |
+| "The debugger", "The debugger: the design" | The debugger service: who can debug which program, its exports, the commands of the console, debugging from another machine; then the reasons of its form and what the kernel gives it |
 | "What `inspect` does not read: the bytes of another program", "The cost" | The limit of the grant, and the price of a sample |
 | "The comments of the sources", "The form of a documented comment" | The rules that the tool checks on every comment, and the form of a comment that the site and the console show |
 | "The commands of the tool" | The commands of `kerneltool`, the parts of the machine test that `kerneltool test` runs alone, the times of a test, and how the tool sends input and waits |
@@ -42,6 +43,7 @@ A tool with no grant to inspect the machine reads nothing. It says so in its win
 | `scheduler` | machine, Inspect and Schedule | `Processor_Report`, `System_Report.strategy`, `Thread_Table_Report` (the machine number of its own threads) |
 | `manual` | machine, Inspect; boot image; replacement table | the flat tables of the modules, `Module_Report` of each slot |
 | `log` | the log records, Read | `op.Log_Record`. It serves `records(after)` and `value_runs(after)` |
+| `debugger` | machine, Inspect; boot image; debug image; the command `Debug` of the root ring | `Program_Report`, `Module_Report` and `Thread_Table_Report` of the program that it debugs; the registers and the memory of that program through its handle with `Debug` ("The debugger"). It serves the exports of the debugger |
 | `inspect` | machine, Inspect; boot image; debug image | `Program_Report`, `Module_Report`, and the four reports below, of the program that the principal chooses. It serves `mappings()`, `threads()` and `modules()` |
 
 ## The log
@@ -119,7 +121,7 @@ The debug object also holds what a debugger shows: the types, the global variabl
 - **One module, one debug object**: the debug object holds the BLAKE3 hash of its module file. A reader uses it only for a loaded module with that hash (`debug_object.describes_module`).
 - **The source of a line**: the debug object holds, for each source file, its path from the root of the repository and the BLAKE3 hash of its content at the build. `debug_object.source_line_of` gives the path, the hash and the line of an instruction. A reader shows the text of the line only from a file with that hash, and says so when the hash differs.
 
-- **Who names**: a program with the grant `Debug_Image` of the root service: `console`, `inspect` and `errors`. The root service maps the debug image read-only into each of them (the fixed range `Debug_Image`). The kernel reads no debug object: its line of the log stays "in module <hash> at offset X".
+- **Who names**: a program with the grant `Debug_Image` of the root service: `console`, `inspect`, `errors` and `debugger`. The root service maps the debug image read-only into each of them (the fixed range `Debug_Image`). The kernel reads no debug object: its line of the log stays "in module <hash> at offset X".
 - **The form of a frame**: `procedure + offset in module (file:line)`. Frame 0 is the instruction. Each next frame is a return address: the procedure and the line are those of the call, the byte before the return address. The offset is the distance of the address from the start of the procedure.
 - **The console**: a call host that stops on a fault prints "error: the instruction is at " and the name of its instruction, then one line "error: frame N: ..." for each frame (`fault_print`). A frame that no procedure of the debug object holds stays `module + offset`.
 - **The program `errors`**: the case of the program `fault` writes its stack trace with the names: "fault::three + 0x8 in fault (programs/fault/main.odin:15), fault::two + 0x... in fault (programs/fault/main.odin:20), ...".
@@ -134,58 +136,174 @@ Lines of the machine test, after the console called the module `probe`, which te
 [console] error: frame 2: entry + 0x224d in host (support/system/service.odin:337)
 ```
 
-## The debugger: the design
+## The debugger
 
-A debugger stops a program where its author asks, shows its threads, registers and stack, and runs it one instruction at a time. The kernel has each part that a debugger needs: the grant, the delivery of the debug exceptions, the breakpoints and the read of the memory of another program. The commands of the console are not built: this section is their design.
+A debugger stops a program where its author asks, shows its threads, its registers, its stack and its variables, and runs it one instruction at a time. The debugger of the system is a service, the program `debugger`. Each command of the debugger is an export of that service, and each export gives a table of records: the console, a window and a developer on another machine call the same exports.
 
-Built in the kernel, not in the console. The console reads a stop report with names. `Thread_Control` stops, reads and writes a thread (`Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`), reads and writes its breakpoints, and reads the memory of its program. A debugger needed four more things of the kernel, which the last part of this section gives, each with its reason and its contract; the console commands use them, and a window can come later over the same commands. The program `debugged` tests them (`kerneltool test debugger`).
+The code is `programs/debugger` (the service), `support/debugging` (the parts with no kernel operation: the path of a value, the walk of the frames, the place of a breakpoint, the location of a variable, the text of a value), `contract/debug_object` (the reader of the debug objects) and `programs/console/debugger_commands.odin` (the short names). The kernel part is in `ARCHITECTURE.md`, "The debugger of a program"; the reasons of the form are in "The debugger: the design" below.
+
+### The service
+
+- **Its start.** The root service starts `debugger` when a caller asks for a connection to it: `connect("debugger")`, or the first command of the debugger in the console. It has no window.
+- **Its grants.** Serve (its exports); Debugger (the command `Debug` of the root ring, and no other command); Inspect (the thread report and the module report of a program); Debug_Image (the debug objects); Image (the name of each module, from its hash).
+- **How it debugs.** The service is the debugger of the program for the kernel: its main thread is the debug handler, so each breakpoint and each single step of the program is a fault record of that thread. It reads the threads and the module records with `Inspect`, the registers and the memory with `Thread_Control`, and the names, the lines, the types and the variables in the debug object of each module, by the hash of the module. It writes no byte in the program.
+- **One program at a time.** The service debugs one program, for one caller. A second `attach` while it does gets the error `Full` (`Debugged_Programs`). Each export but `attach` acts only for the caller that attached.
+- **The end of the debugging.** `detach()`; the end of the connection of the caller, or of the caller; the revocation of the grant `debug` of the caller; the stop of the program. The kernel then removes the breakpoints, clears the trap flag that the debugger wrote, and resumes each thread that the debugger held.
+- **The log.** One line for each attach, for each stop of a thread at a breakpoint or a watch ("debugger: the thread 0 of clock stopped: breakpoint 1"), and for each end of a debugging.
+
+### Who can debug which program
+
+The root service gives the debug access: the handle of the program with the right `Debug`, and no other right. The service `debugger` asks for it with the command `Debug` of the root ring, on behalf of one of its callers: it names the call ring of the connection of that caller. The root service made that connection, so it knows the caller, and it applies the rule to the caller, not to the service. Only the program with the grant Debugger sends the command.
+
+The rule compares two sets of grants. It names no program:
+
+1. **The caller acts for the principal whose session runs the program.** The caller holds the grant to act for the principal, and the program is in the session of the same principal (`PRINCIPALS.md`). A program of the machine does not debug a program of a named principal, and a program of one principal does not debug a program of another.
+2. **Each grant of the program is a grant that the caller holds.** A debugger acts with each handle of the program that it debugs and reads each byte of it, so the right `Debug` on a program is each grant of that program. The grants of the program are those that the root service gave it at its start, which the root service keeps in the state of the program that runs (`Started.role` in `programs/root/main.odin`): the rule reads no table by the name of a program, so it holds for a program that comes from a disk as for a program of the boot image.
+3. **A revoked grant is not a grant that the caller holds.** After `revoke("console", "machine")`, the console does not debug a program that has a right of the machine.
+4. **A grant whose access is of one program alone refuses for each caller.** Two programs with such a grant do not hold the same thing. Serve: a service holds what its callers lent it and what it keeps for them. Network: an endpoint names its own remote and its own ports. Connect: the services that a program can connect to are its own list.
+
+What follows from the rule:
+
+| Program | The answer for the console |
+|---|---|
+| A program with no grant (`debug_target`) | Given |
+| A program whose grants the console holds (`clock`: Inspect) | Given |
+| A program with the grant Store (`notes`) | Given: the console holds Store. A private store is named by the program and by the principal of its session, so the debugger reads data of that principal only |
+| A service (`storage`, `monitor`, `settings`) | Refused: the grant Serve |
+| A program with an endpoint of the network (`fetch`, `quic_echo`) | Refused: the grant Network |
+| A device service, the compositor, a terminal | Refused: the grant System_Part, which the root service gives to the parts of the system that it starts by itself, and which no caller holds |
+| A program with a grant that the console does not hold (Schedule, Events, Principals) | Refused: that grant |
+
+A refusal is an error record of the kind `No_Grant` with the unit `Debug_Access`; `found` is 1 + the number of the grant that refuses, in the enumeration `Grant` of the root service, and the root service writes the name of that grant on the log. The other refusals: `No_Grant`, `Acts_For_Principal` (rule 1); `Absent`, `Programs` (no program has the name); `Full`, `Debugged_Programs` (another caller debugs the program).
+
+The grant is a record of the root service: `debug` in `grants()`, a grant of the caller. `revoke` ends each handle that came from it, and the kernel ends the debugging with the last handle. The handle also ends when the connection of the caller to the service ends, and when the caller stops. After `detach()`, the service tells the root service that the debugging ended, with the same command.
+
+The creator of a program also has the right `Debug` on the handle that the creation gave it (`ARCHITECTURE.md`, "The debugger of a program"). The root service gives the right to no program at its start.
+
+### The exports of the service
+
+Each export gives a table, or a negative number with an error record. A caller that does not act for the principal gets `No_Grant` (`Acts_For_Principal`). The reference of each export, with its parameters and its errors, is its comment in `programs/debugger/exports.odin`.
+
+| Export | What it gives |
+|---|---|
+| `attach(program)` | One row: the program, its slot, its threads, its modules, and how many modules have a debug object |
+| `detach()` | One row: the program, the breakpoints that the debugger had, the threads that it held |
+| `threads()` | One row for each thread: its number, its state (`ready`, `waiting`, `held`, `stopped`), and for a thread that is held or stopped its instruction, with its module, its procedure, its offset, its file and its line |
+| `hold(thread)`, `release(thread)` | Hold one thread; let one thread run. The row of the thread |
+| `continue_all()` | Write the breakpoints in each thread, then let each thread run. One row for each thread |
+| `registers(thread)` | 18 rows: the 16 general registers, `rip` with its procedure and its line, `rflags` with the flags that are set |
+| `stack(thread)` | One row for each frame: the frame number, the module, the procedure, the offset, the file, the line, the frame pointer, the return address |
+| `locals(thread, frame)` | One row for each parameter and each local variable that is visible at the instruction of the frame: its name, its role, its type, its value or "not readable", its location |
+| `value(thread, frame, path)` | One variable or one global by a path: one row for each field of a record, each element of an array or of a slice, or one row for a value with no part. Each row: the name, the type, the value, the address |
+| `source(thread, frame)` | One row: the line number, the path of the file, and the hash of the file at the build. The system holds no source text |
+| `break_at(place)` | An execute breakpoint at a procedure (`fault::three`) or at a file and a line (`programs/fault/main.odin:15`). One row for each breakpoint |
+| `watch(place, length)` | A data breakpoint on 1, 2, 4 or 8 bytes that the program writes, at an address or at a global. One row for each breakpoint |
+| `breaks()`, `break_remove(number)` | The breakpoints of the debugger; remove one |
+| `step(thread)` | One instruction. The row of the thread at its new instruction |
+| `step_line(thread)` | Instructions until the source line changes, 4096 at most. The row of the thread |
+| `memory(place, count)` | At most 4096 bytes from an address or from a global, 16 in each row: the address, the bytes in hexadecimal, their printable characters |
+| `events()` | One row for each stop of a thread since the last call: the thread, the kind (`breakpoint N`, `watch N`, `step`, `int3`, `int1`), the instruction, its module, its procedure, its offset, its file and its line |
+| `wait_stop(milliseconds)` | Wait for the next stop, at most the given time and 60 seconds, then the rows of `events()` |
+
+**The errors.** Each failure is an error record (`MODULE_CONTRACT.md`, section 8):
+
+| The failure | Kind, unit | Result |
+|---|---|---|
+| The caller attached to no program | `Absent`, `Debugged_Programs` | -2 |
+| The service debugs a program already | `Full`, `Debugged_Programs` | -3 |
+| The root service or the kernel refused | The record of the root service, or `Refused` with the status | -4 |
+| No thread has the number; the thread is not held | `Absent`, `Threads`; `Absent`, `Held_Threads` | -5 |
+| The module of the address has no debug object | `Absent`, `Debug_Objects` | -6 |
+| The stack has no frame with the number | `Absent`, `Stack_Frames` | -7 |
+| No variable and no global has the name, or the variable is not readable at this instruction | `Absent`, `Readable_Variables` | -8 |
+| The text is not a path; a step of the path names nothing | `Bad_Byte`; `Bad_Value` | -9 |
+| No procedure and no line has the place | `Absent`, `Source_Places` | -10 |
+| No breakpoint is free; the number names no breakpoint | `Full`, `Breakpoints`; `Absent`, `Breakpoints` | -11 |
+| The program does not map the address; a count or a length that the export does not take | `Bad_Address`; `Bad_Value`; `Not_Multiple` | -12 |
+| The program stopped, or the debug access ended | `Absent`, `Programs` | -13 |
+| Two programs that run have the name and the module | `Bad_Value`, `Programs` | -14 |
+| A text argument is too long | `Too_Long`, `Bytes` | -15 |
+
+**The stops.** A thread that reaches a breakpoint, that writes watched bytes or that ends a step waits for the debugger: `release`, `step` or `continue_all` lets it run. After an execute breakpoint the instruction of the thread is the one of the breakpoint, which did not run; `release` runs it once, and the breakpoint stays. After a watch and after a step, the instruction is the next one. The service takes each stop when it comes, keeps 32 of them for `events()`, and writes one line of the log. A caller learns of a stop with `wait_stop`, with no loop of `events()`.
+
+**The breakpoints.** The debugger has four breakpoints, for execute breakpoints and watches together: they are the debug registers of a thread. The service writes them in each thread of the program when one is set or removed, and at `continue_all()`; a thread that the program makes later has none until then. A thread that runs is held for the write, then released. A watch does not see an access that the kernel makes for the program.
+
+**A step.** The service writes the trap flag in the registers of the thread and lets it run; the record of the step comes after one instruction, and the service clears the flag at the next stop of the thread. A thread that waits in the kernel runs its next instruction only when its wait ends: `step` waits 5 seconds at most, then gives the row of a thread that runs, and the stop comes later as an event. `step_line` enters a procedure that the line calls.
+
+**One program in two places.** The service finds the reports of the program by its name and by the hash of its module, which the root service gives with the handle. When two programs that run have that name and that module, the service cannot tell which one its handle names: the attach is refused (`Bad_Value`, `Programs`). The kernel gives no slot for a program handle; a result of `Handle_State` that gives it would end this limit.
 
 ### The commands of the console
 
-| Command | What it does | What it needs |
-|---|---|---|
-| `debug("clock")` | Attaches to the program: the root service gives the console the program handle with the right `Debug` | The command `Debug` of the root ring, then `Fault_Handler_Set` with the handle: built |
-| `threads()` | A table of the threads of the program: number, state, the procedure and the line of the instruction | `Inspect_Kind.Threads`, then `Read_Registers` of each held thread |
-| `stop(thread)`, `resume(thread)` | Holds a thread, lets it run | `Thread_Control` `Stop`, `Resume`: built |
-| `registers(thread)` | A table of the 16 general registers, `rip` with its name, `rflags` | `Read_Registers`: built |
-| `stack(thread)` | The frames from `rbp`, each with its procedure and its line | `Read_Memory` for the words of the stack: built; the debug image |
-| `locals(thread, frame)` | A table of the parameters and the local variables that live at the instruction of the frame: name, type, value or "not readable" | The variable table and the type table of the debug object; `Read_Registers`; `Read_Memory` |
-| `value(thread, frame, "pair.next")` | One variable or one global, with its fields, the elements of its array, the name of its enumeration value | The same, and the global table |
-| `source(thread, frame)` | The source lines around the instruction of the frame | The file table of the debug object with the hash of each file; the source files, where the debugger has them |
-| `break("fault::three")`, `break("programs/fault/main.odin:15")` | A breakpoint at the first offset of the procedure, or at the first row of the line table with that file and line | The debug object (a search by name, a search by line); `Write_Breakpoints`: built |
-| `step(thread)` | One instruction: the trap flag in `rflags`, then the answer `Resume` | `Write_Registers` (the trap flag is allowed) and the delivery of the trap to the debugger: built |
-| `continue()` | Resumes each held thread | `Resume`: built |
-| `memory(address, count)` | The bytes, in the form of the hex view of `inspect` | `Read_Memory`: built |
-| `detach()` | Removes each breakpoint, clears the trap flag, resumes each thread, closes the handle | The end of the debugging (`Fault_Handler_Set` with `end` 1, or the close of the handle): built |
+Each command is an export of the service under a short name (`bound_call`, `CONSOLE.md`): the console connects to `debugger` when it has no connection to it, calls the export, and draws the table as it draws each table. The console holds no state of the debugging. The same exports are also commands with their full names after `connect("debugger")`: `debugger.threads()`.
 
-The console already has a command `stop`, which stops a whole program by its name. The command that holds one thread needs a name of its own when it is built.
+| Command | Export | Why another name |
+|---|---|---|
+| `debug("clock")` | `attach` | The word for the act |
+| `detach()` | `detach` | |
+| `threads()`, `registers(thread)`, `stack(thread)`, `locals(thread, frame)`, `value(thread, frame, path)`, `source(thread, frame)` | The same names | |
+| `hold(thread)` | `hold` | `stop` stops a whole program by its name |
+| `resume(thread)` | `release` | `release` closes a handle of the console |
+| `continue_all()` | `continue_all` | |
+| `break_at(place)`, `watch(place, length)`, `breaks()`, `break_remove(number)` | The same names | |
+| `step(thread)`, `step_line(thread)` | The same names | |
+| `debug_memory(place, count)` | `memory` | `memory` gives the memory of the machine |
+| `events()`, `wait_stop(milliseconds)` | The same names | |
+
+A table of the debugger is a table as any other: `columns(stack(0), "frame procedure line")`, `where(locals(0, 1), "name", "total")`.
+
+```
+> debug("debug_target")
+> break_at("debug_target::add_step")
+> wait_stop(60000)
+> columns(stack(0), "frame procedure")
+frame  procedure
+    0  debug_target::add_step
+    1  debug_target::count_rounds
+    2  debug_target::run_rounds
+> value(0, 0, "debug_target::shape.size")
+> step(0)
+> detach()
+```
 
 ### The variables and the types
 
-The data is built: the debug object of each module holds its types, its global variables and the variables of each procedure (`MODULE_CONTRACT.md`, "The types and the variables"). The commands that show them are not built.
-
-- **The object of a module.** The debugger takes the hash of each module of the program from the module report, and uses only the debug object with that hash. With no such object it shows addresses, and says that the module has no debug object.
-- **A variable of the innermost frame.** The debugger takes the variables of the procedure that holds `rip` (`debug_object.variable_range_of_offset`), keeps those that are visible at `rip` (`debug_object.variable_at`), and reads each value by its variable location: a register of the register image, or memory at a register plus an offset. A variable whose range there is of the kind `Not_Readable` is shown as "not readable". A variable of a procedure that the compiler put inside its caller is shown only where it has a value. The debugger computes no location that the table does not give.
+- **The object of a module.** The service takes the hash of each module of the program from the module report, and uses only the debug object with that hash. With no such object it shows the module and the offset of an address, and an export that needs the object gets `Absent`, `Debug_Objects`.
+- **A variable of the innermost frame.** The service takes the variables of the procedure that holds the instruction (`debug_object.variable_range_of_offset`), keeps those that are visible there (`debug_object.variable_at`), and reads each value by its variable location: a register of the register image, or memory at a register plus an offset. A variable whose range there is of the kind `Not_Readable` is shown as "not readable". The service computes no location that the table does not give.
 - **A variable of a frame of a caller.** The instruction is the byte before the return address. Only the frame pointer of that frame is known, so only a variable location from the frame pointer is read; each other one is shown as "not readable in this frame".
-- **A value by its type.** The debugger reads the bytes of the size of the type and shows them by the kind: an integer, a boolean, a float, the address of a pointer, the fields of a record (`debug_object.field_of_type`), the elements of an array, the name of an enumeration value, the bytes of a string (a second read of memory, with a bound). It follows a pointer only when asked, and bounds the depth of a type that names itself.
+- **Before a procedure set its frame pointer.** At the first instruction of a procedure, and after its `push rbp`, the frame pointer is still the one of the caller. A variable location from the frame pointer is shown there as "not readable: the procedure did not set its frame pointer yet".
+- **A path.** A name, then steps: `.field`, `[number]`, `^` (`pair.next^.first`, `table[3]`). The name is a variable that is visible at the instruction of the frame, else a global. A global is named with its package (`debug_target::rounds`); a name with `::` needs no held thread. As in the language, the field of a pointer to a record is the field of the record. A path has 8 steps at most.
+- **A value by its type.** An integer in decimal; a boolean; a float as its bits in hexadecimal ("float bits 0x3ff8000000000000"), because the system has no code that writes a float in decimal; a pointer and the address of a procedure as an address, with the procedure or the global that holds it, and `nil` for 0; an enumeration by the name of its value, or its number with "(no name)"; a record as `{field = value, ...}`, 8 fields and 3 records deep at most; an array as `[value, ...]`, 8 elements at most, then its count; a string by a second read of memory, 64 bytes at most, with "." for a byte that is not printable; a slice as its count and its address; each other type as its size. The service follows a pointer only when the path asks.
 - **A global.** Its address is the address where the module is mapped plus the address of the global table (`debug_object.global_by_name`).
-- **The stack.** Each procedure that the compiler wrote keeps the frame pointer: the word at `rbp` is the frame pointer of the caller and the word at `rbp` + 8 is the return address. The walk needs no table. It ends at a frame pointer of 0, at an address that the program does not map, at a frame pointer that is not above the one before it, or after a fixed count of frames. A procedure of an assembler file can keep no frame pointer: the walk skips its caller or ends there.
-- **The source lines.** The debugger shows a line only from a source file whose BLAKE3 hash is the hash of the file table (`debug_object.source_line_of`). With another hash it shows the path and the line number, and says that the source changed since the build. The debug object holds no source text.
+- **The stack.** Each procedure that the compiler wrote keeps the frame pointer: the word at `rbp` is the frame pointer of the caller and the word at `rbp` + 8 is the return address. The walk needs no table. It ends at a frame pointer of 0, at one that is not a multiple of 8, at an address that the program does not map, at a frame pointer that is not above the one before it, at a return address of 0, or after 32 frames. At the first instruction of a procedure the return address is the word at the stack pointer, and after its `push rbp` the word above it: the service knows the start of the procedure from the debug object. A procedure of an assembler file can keep no frame pointer: the walk skips its caller or ends there.
+- **The source lines.** The debug object holds, for each source file, its path and the BLAKE3 hash of its content at the build (`debug_object.source_line_of`). It holds no source text, and the system has no source file: `source` gives the path, the line and the hash. A reader that has the sources shows the line only from a file with that hash.
 
 ### Debugging from another machine
 
 Debugging from another machine needs no mechanism of its own.
 
-- **The commands are exports.** The commands of the debugger are exports of a debugger service. The console calls them, and a window can call the same exports.
-- **The service `remote` carries them.** `remote` already carries a call of an export over QUIC from another machine to a program that holds the grant (`QUIC.md`, section 7). A debugger on another machine calls the exports of the debugger service through it. The grant of the debugger service decides who debugs what, as for a local caller; the connection adds no right.
-- **Where the debug objects are.** They stay on the machine of the developer, or in the debug image of the debugged machine. The debugger service reads a debug object by the hash of the module. A caller on another machine can also ask for raw values (registers, bytes of memory, the hash of each module) and name them with its own debug objects, by the same hash.
+- **The service `remote` carries the exports.** `remote` carries a call of an export over QUIC from another machine to a service that it can connect to (`QUIC.md`, section 7). `debugger` is one of them. On the host, `kerneltool call <key> "debugger.attach(\"clock\")"` calls an export against a machine that `kerneltool run` started, and prints its table.
+- **Who the caller is.** The caller is `remote`: the root service applies the rule of "Who can debug which program" to `remote`, with the principal of the session of `remote`. `remote` holds the grant to act for the principal, and no grant that a program can share with it: so a developer on another machine debugs a program with no grant, in the session where `remote` runs. A program with a private store, with a right of the machine, with the boot image or with an endpoint of the network is refused to `remote`, and so is each service. The connection adds no right, and `revoke("remote", "acts_for_principal")` ends the debug access of the host.
+- **The time of a call.** `remote` ends a call that takes more than 5 seconds. A caller on another machine gives `wait_stop` a shorter time, or reads `events()` after the line of the stop in the log.
+- **The source line.** `kerneltool call` prints, after a table whose record has the fields `path`, `line` and `hash`, the text of each line from the file of the repository, only when the file has that hash: "source: programs/debug_target/main.odin:79: ...". With another hash it says that the file changed since the build. A path that is absolute, that has a part `..` or that names a file of the compiler is not read.
+- **Where the debug objects are.** In the debug image of the debugged machine: the service names each address there. A caller on another machine can also read raw values (`registers`, `memory`) and name them with its own debug objects, by the hash of the module.
+
+### The test
+
+`kerneltool test debugger` runs two machines. The first one is the contract of the kernel (the program `debugged`). The second one is the commands: the console starts the program `debug_target`, which has no grant and values that the test knows, and waits for exact rows: a breakpoint by a procedure name and by a file and a line, the frames of the stack, a local variable of a caller, the fields of a record inside a record, an element of an array, the name of an enumeration value, a text, one step, one line, a watch of a global, and the detach. Then the refusals: a service, a device service, and a program with the grant Store after the grant store of the console was revoked. Then the same exports from the host through `remote`, with the source line that the tool reads in the repository. The parts with no kernel operation have host tests (`support/debugging`).
+
+## The debugger: the design
+
+The reasons of the form of the debugger. What is built is in "The debugger" above.
+
+- **The commands are exports of a service, not code of the console.** A window, another program and a developer on another machine then use the debugger with no second implementation, and each result is a table that the caller combines with the generic commands of the console.
 - **The serial port is not used.** The serial port is the log of the kernel. A second protocol on it would be a second way into the machine, with no grant and no connection that proves who calls.
+- **The debugger injects no thread and no code into the program**, and writes no byte in its code: the kernel gives it the four parts below, each a right, a command or an argument of an operation that exists.
 
 ### What the kernel gives a debugger
 
 Four additions, each a right, a command or an argument of an operation that exists: the count of operations does not change. Each one is built; its rules, its locks and its interleavings are in `ARCHITECTURE.md`, "The debugger of a program".
 
-1. **Who may debug whom.** Property 20, line 2: "Debug access is a handle to one program. The principal grants it". The grant is a right of a program handle, `Debug`, and a command of the root ring, `Debug` (a name). The root service gives the handle of the program with `Debug`, and no other right, only to a caller that acts for the principal whose session runs that program (`PRINCIPALS.md`): never a program of another principal, and principal 0 does not debug the programs of a named principal. A debugger acts with each handle of the program that it debugs and reads each byte of it, so the right `Debug` on a program is each grant of that program. The rule of the root service (`debug_allowed_for` in `programs/root/main.odin`): the program has a row in the grant table (`grants_of`), and each of its grants is a grant that the caller holds itself. So the caller gains nothing that the root service did not give it, and a program with no row is refused: each program of the system that the root service starts by itself, and each new program until its row says what it holds. The grant is a record of the root service, visible in `grants()` as `debug` and revocable: `revoke` ends each handle that came from it, and the kernel ends the debugging with the last handle. Two holders have `Debug` on a program, and no other: the caller that the root service gives it to by this command, and the creator of the program, on the handle that the creation gave it, as it has the memory that it maps in that program (the test program `debugged` debugs its own children so). The root service gives the right to no program at its start. A thread of the program is named by its number and this handle.
+1. **Who may debug whom.** Property 20, line 2: "Debug access is a handle to one program". The grant is a right of a program handle, `Debug`, and a command of the root ring, `Debug` (a name). The root service gives the handle of the program with `Debug`, and no other right, to the debugger service, on behalf of a caller, by one rule over the grants of the program and of the caller ("Who can debug which program"). Two holders have `Debug` on a program, and no other: the debugger service, by this command, and the creator of the program, on the handle that the creation gave it, as it has the memory that it maps in that program (the test program `debugged` debugs its own children so). A thread of the program is named by its number and this handle.
 2. **The faults of the debugged program go to the debugger.** A program names one of its own threads as its fault handler (`ARCHITECTURE.md`, "The fault ring"). The fourth argument of `Fault_Handler_Set` is a program handle with `Debug`: then the handler thread of the caller receives the faults of the kinds `Debug` and `Breakpoint` of that program, before the handler of the program itself, and `Fault_Answer` takes the same handle, with the answer `Resume` only. The ring stays in the thread record of the handler: the debugger pays for it. When the debugging ends (a detach, the end of the handler thread or of its program, the close or the revocation of the handle, the stop of the debugged program), the kernel removes the breakpoints of each thread, clears the trap flag that the debugger wrote, takes back the stops that the debugger made, and resumes each thread that waits for its answer: a debugger that ends never holds and never stops the debugged program. The debugger injects no thread and no code into the program.
 3. **Breakpoints, with no write to the code.** The code of a module is shared: each program of the module maps the same pages without Write (`MODULE_CONTRACT.md`, "Shared code"). A byte `CC` in those pages would stop each program of the module. `Memory_Protect` only takes rights away, and refuses an object that another program names (`Object_Shared`). A private copy of one page for one program needs a page of a mapping that differs from its memory object: the kernel keeps the state of a page in the slots of the object, not in the mapping, so that is a new structure of the kernel. The least addition is the debug registers of the processor: two commands of `Thread_Control`, `Read_Breakpoints` (Inspect) and `Write_Breakpoints` (only the debugger of the program, through its handle with `Debug`), with four breakpoints for each thread (`op.Thread_Breakpoints`): an execute breakpoint at an instruction, or a data breakpoint on 1, 2, 4 or 8 bytes that the thread writes, or reads or writes. The kernel checks that each address is below `USER_END`, writes only the local enable bits of `DR7`, and loads `DR0` to `DR3` and `DR7` at the switch to a thread that has them (one flag of the thread: the others pay one test). An execute breakpoint is a `Debug` fault before the instruction; the record gives the debug status in its error code (`op.DEBUG_STATUS_BREAKPOINTS`, `op.DEBUG_STATUS_STEP`), so the debugger knows which breakpoint; the answer `Resume` sets the resume flag, so the instruction runs once. A breakpoint is of one thread: it never appears in another program. The limit: four breakpoints for each thread, and a thread that the program makes later has none until the debugger sets them.
 4. **The bytes of the debugged program.** No report reads the memory of another program (section "What `inspect` does not read"). A command of `Thread_Control`, `Read_Memory` (Inspect and Write: a thread handle with Inspect only sees the thread, it does not read secrets), copies at most 4096 bytes of the program of the thread, from the pages that the program maps, can read and that have a frame (no read gives a frame to a page). It gives the count of bytes before the first page that is not so, and `Bad_Address` when that page holds the first byte or the range is not below `USER_END`.
@@ -318,7 +436,7 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `extended_state` | The three machines of the extended state |
 | `return_fault` | The machine of the return to a program |
 | `fault_ring` | The machine of the fault ring |
-| `debugger` | The machine of the debugger of a program |
+| `debugger` | The two machines of the debugger: the contract of the kernel, then the commands of the service `debugger` |
 | `kernel_events` | The machine of the kernel events |
 | `shortage` | The machine of the shortage of frames |
 | `principals` | The two machines of the principals |

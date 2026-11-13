@@ -161,6 +161,7 @@ driver_start :: proc "contextless" (device_number: u32, kind: Driver = DRIVER_BL
 	}
 	driver.is_driver = true
 	driver.device = place
+	driver.role = {.System_Part}
 	driver.granted = {.Log}
 	copy(driver.name[:len(driver.name) - 1], kind.name)
 	system.log_in("devices", .Info, "root: started ", system.Module_Name{kind.name}, " for the device at the place ", u64(device_number), " of the bus")

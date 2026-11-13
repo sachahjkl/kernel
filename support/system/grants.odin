@@ -132,15 +132,25 @@ Root_Command :: enum u32 {
 	// Principal_Unlock starts the session of the principal with the number
 	// values[4]: `unlock` opened its sealed keys with the passphrase.
 	Principal_Unlock = 13,
-	// Debug gives the caller the handle of the program with this name, with
-	// the right Debug only: the caller becomes its debugger with
-	// `debug_attach` (docs/TOOLS.md, "The debugger: the design"). The root
-	// service gives it only to a caller that acts for the principal whose session
-	// runs that program, and only for a program whose grants the caller
-	// holds itself: a debugger acts with each handle of the program that it
-	// debugs. values[0] of the
-	// completion is the handle. The grant is `debug` in `Grants`; `Revoke`
-	// ends each handle that came from it, and the debugging with them.
+	// Debug gives the debugger service the handle of the program with this
+	// name, with the right Debug only, on behalf of one of its callers:
+	// values[4] is the call ring of the connection of that caller, as the
+	// service names it. The service becomes the debugger of the program
+	// with `debug_attach` (docs/TOOLS.md, "The debugger"). The root service
+	// gives the handle only when the caller acts for the principal whose
+	// session runs that program, and when each grant of the program is a
+	// grant that the caller holds itself: a debugger acts with each handle
+	// of the program that it debugs. A service, and a program with an
+	// endpoint of the network, are refused for each caller.
+	// The completion: values[0] the handle, values[1..4] the hash of the
+	// file of the program, values[5] its principal. A refusal has the kind
+	// `No_Grant` with the unit `Debug_Access`, and `found` is 1 + the grant
+	// that refuses. The grant is `debug` in `Grants`, a grant of the
+	// caller; `Revoke` ends each handle that came from it, and the
+	// debugging with them. With values[5] not 0, the service says that it
+	// ended the debugging of the program for that caller: the root service
+	// forgets the debug access. Only the program with the grant Debugger
+	// sends this command.
 	Debug = 14,
 }
 

@@ -138,7 +138,7 @@ sandbox_free :: proc "contextless" () -> (sandbox: ^Sandbox, number: int) {
 }
 image_memory: system.Handle
 
-COMMAND_CAPACITY :: 192
+COMMAND_CAPACITY :: 256
 LOADED_CAPACITY :: 8
 
 // A module that the console loaded.
@@ -309,7 +309,7 @@ commands_start :: proc "contextless" () {
 	//
 	// Errors: no module has the name; the module is loaded already; it
 	// exports no command (`start` runs a program); no room for its commands
-	// (192 commands, 8 modules); the hash differs from the boot image; the
+	// (256 commands, 8 modules); the hash differs from the boot image; the
 	// loader refuses the file, with the stage and the reason.
 	command("load", {.Text}, .Record, "load a module here: direct calls", load_module)
 	// Loads a module of the boot image into a new sandboxed program, a call
@@ -598,6 +598,7 @@ commands_start :: proc "contextless" () {
 	// It runs in the second thread, so the list on the screen stays. The
 	// bounds that it measures: (docs/CONSOLE.md, "4. The bounds, and the cost of one key").
 	command("measure_completion", {}, .Table, "measure one key of the completion list", measure_completion)
+	debugger_commands_start()
 	tables_start()
 }
 

@@ -567,7 +567,7 @@ The path of the image through the start:
 
 1. The boot program reads the file, if the volume has it, after its last allocation that can stop the start, and does not verify it: no code comes from it. A file that is absent, empty, over 32 MiB or that fails to read gives a start with no names.
 2. The kernel checks the range of pages, reads none of its bytes, and gives it to the root service as a memory object with Read. A refused range is one line of the log, never a stop.
-3. The root service maps it read-only at the fixed range `Debug_Image` in each program with the grant `Debug_Image`: today `console`, `inspect` and `errors`. A program finds it with `system.debug_image_of`, and the object of a module with `system.debug_object_of`.
+3. The root service maps it read-only at the fixed range `Debug_Image` in each program with the grant `Debug_Image`: today `console`, `inspect`, `errors` and `debugger`. A program finds it with `system.debug_image_of`, and the object of a module with `system.debug_object_of`.
 
 The debug image is not part of the boot image. So the boot image, the system description and the measures of the trusted boot are the same bytes with and without it, and a change of a debug object changes no signature and no measure. Its pages are memory of the boot: no budget pays for them, and they stay taken for the whole run of the machine.
 
@@ -1571,9 +1571,61 @@ The debugging ends when the debugger detaches, when its debug handler thread end
 
 It is not a developer tool, which reads reports and never the bytes of a program. It is not ptrace: no program becomes the parent or the tracer of another, and no signal exists.
 
-The design: `docs/ARCHITECTURE.md`, "The debugger of a program"; `docs/TOOLS.md`, "The debugger: the design".
+The design: `docs/ARCHITECTURE.md`, "The debugger of a program"; `docs/TOOLS.md`, "The debugger".
 
 Do not use: tracer, attach to a process.
+
+### Debugger service
+
+The debugger service is the program `debugger`: the one debugger of the system for the programs that the root service starts, whose exports are the commands of a debugger.
+
+It asks the root service for the debug access to a program on behalf of one of its callers, becomes the debugger of that program for the kernel, and gives each fact of the debugging as a table: the threads, the registers, the frames of the stack, the variables, the breakpoints, the stops. The console calls its exports under short names (`debug("clock")`, `stack(0)`), a window can call the same exports, and a developer on another machine calls them through the service `remote`. It debugs one program at a time, for one caller.
+
+It is not the program `debugged`, which is the test of the contract of the kernel and debugs its own children. It is not a developer tool: a developer tool reads reports and never the bytes of a program.
+
+Example: `kerneltool call <key> "debugger.attach(\"debug_target\")"`, then `"debugger.threads()"`.
+
+The design: `docs/TOOLS.md`, "The debugger".
+
+Do not use: debug server, debug agent, gdbserver, debug stub.
+
+### Debug access
+
+The debug access is the handle of one program with the right **Debug**, which the root service gives to the debugger service on behalf of a caller.
+
+The root service gives it by one rule over grants, with no name of a program: the caller acts for the principal whose session runs the program; each grant that the program received at its start is a grant that the caller holds and that was not revoked from it; and a grant whose access is of one program alone (a service, an endpoint of the network, a list of services to connect to) refuses for each caller. So a program with no grant can be debugged, and a service cannot. The access is the grant `debug` of the caller in `grants()`: `revoke` ends it, and so does the end of the connection of the caller to the debugger service.
+
+It is not the right Debug of the creator of a program, which the kernel gives on the handle of the creation.
+
+Example: `debug("storage")` in the console is refused with `No_Grant`, `Debug_Access`: the grant Serve of the program refuses it.
+
+The design: `docs/TOOLS.md`, "Who can debug which program".
+
+Do not use: debug permission, ptrace scope, debug privilege.
+
+### Watch
+
+A watch is a data breakpoint that the debugger service sets on 1, 2, 4 or 8 bytes of the debugged program: a thread that writes one of them stops after the instruction of the write.
+
+It takes one of the four breakpoints of the debugger, as an execute breakpoint does. It names its bytes by an address or by the path of a global. It does not see an access that the kernel makes for the program.
+
+Example: `watch("debug_target::rounds", 8)`, then `wait_stop(60000)` gives a row with the kind `watch 0` and the procedure that wrote the count.
+
+The design: `docs/TOOLS.md`, "The exports of the service".
+
+Do not use: watchpoint, data watch, memory breakpoint.
+
+### Value path
+
+A value path is the text that names one value of a debugged program: the name of a variable or of a global, then steps to one of its parts.
+
+A step is `.field` (a field of a record), `[number]` (an element of an array or of a slice, from 0) or `^` (the value that a pointer points to). The name is a variable that is visible at the instruction of a frame, else a global; a global has its package in its name, and then needs no held thread. As in the language, the field of a pointer to a record is the field of the record. A path has 8 steps at most.
+
+Example: `pair.next^.first`, `table[3]`, `debug_target::shape.size`.
+
+The design: `docs/TOOLS.md`, "The variables and the types".
+
+Do not use: expression, watch expression, selector, accessor.
 
 ### Debug handler
 

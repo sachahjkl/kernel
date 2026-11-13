@@ -46,8 +46,8 @@
 //   10.0.2.2 only. The program refuses any other grant: a grant that admits
 //   each address lets each machine of the network call as the principal.
 // - **Connect**: a ring to the root service for `Connect` and `Disconnect`,
-//   to the services of `callable_of`: compositor, date, inspect, log,
-//   manual, monitor, settings and storage. A call to another service fails
+//   to the services of `callable_of`: compositor, date, debugger, inspect,
+//   log, manual, monitor, settings and storage. A call to another service fails
 //   with the refusal of the root service.
 // - **Acts_For_Principal**: a service gives the caller what it holds for
 //   all callers, as it does for the console: the host is the principal at
@@ -221,7 +221,7 @@ Service_Connection :: struct {
 	count:         u64, // The calls through this connection.
 }
 
-SERVICE_CONNECTION_CAPACITY :: 8 // The services of callable_of("remote") in the root service, and room for more.
+SERVICE_CONNECTION_CAPACITY :: 12 // The 9 services of callable_of("remote") in the root service, and room for more.
 
 service_connections: [SERVICE_CONNECTION_CAPACITY]Service_Connection
 

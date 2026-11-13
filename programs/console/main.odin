@@ -37,7 +37,8 @@
 // sort(where(programs(), "state", "waiting"), "name")
 // ```
 //
-// **The commands of the console itself** (`commands.odin`, `tables.odin`):
+// **The commands of the console itself** (`commands.odin`, `tables.odin`,
+// `debugger_commands.odin`):
 //
 // - Modules: `modules()`, `load(name)` (a direct call: the module runs with
 //   the memory and the handles of the console), `isolate(name)` (an
@@ -48,6 +49,10 @@
 // - Programs: `programs()` (the export `monitor.programs`, under a short
 //   name), `program_modules()`, `start(name)`, `stop(name)`,
 //   `grants(name)`, `revoke(name, grant)`.
+// - The debugger: `debug(program)`, `break_at(place)`, `stack(thread)`,
+//   `locals(thread, frame)`, `step(thread)`, `detach()` and the others:
+//   each one is an export of the service `debugger` under a short name
+//   (docs/CONSOLE.md, "The commands of the debugger").
 // - Principals: `principal_create(name)`, `lock()`, `principals()`.
 // - Replacements: `replace(module, other)`, `replacements()`.
 // - Tables: `where`, `sort`, `join`, `columns`, `first`, `skip`, `rows`,
