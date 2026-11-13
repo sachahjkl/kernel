@@ -2397,8 +2397,8 @@ Program_Report :: struct {
 // the parameter of the entry.
 //
 // The record has 16 handles and 24 values of 64 bits. Its starter writes
-// it, and the kernel maps it read-write at `CONTEXT_ADDRESS` before the
-// first thread runs. A program finds each thing at a **fixed place**: the
+// it and maps it read-write at `CONTEXT_ADDRESS` before the first thread
+// runs (the kernel does both for the root service, which has no starter). A program finds each thing at a **fixed place**: the
 // index of a handle or of a value is its role. So a program needs no name,
 // no path and no parser to find what it was given:
 // `ctx.handles[CONTEXT_LOG]` is its log, and a handle that its starter did
