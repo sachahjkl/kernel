@@ -725,7 +725,7 @@ palette_line_ended :: proc "contextless" () {
 		}
 		if !writer.fits {
 			outcome = .Shown_In_Console
-			writer.count = 0
+			writer = {buffer = area[:]} // No run goes to the panel.
 		}
 	}
 	if outcome == .Shown_In_Console {

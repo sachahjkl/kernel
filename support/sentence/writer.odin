@@ -110,6 +110,15 @@ writer_reset :: proc "contextless" (writer: ^Writer) {
 	writer^ = {buffer = writer.buffer}
 }
 
+// writer_take_back removes the end of the text, back to `count` bytes: a
+// part that the caller wrote and does not keep. It does nothing when a byte
+// was dropped: the text then keeps its end, and its mark says the count.
+writer_take_back :: proc "contextless" (writer: ^Writer, count: int) {
+	if writer.dropped == 0 && !writer.marked && count >= 0 && count <= writer.count {
+		writer.count = count
+	}
+}
+
 // write_unsigned writes a number in decimal, with at least `minimum_digits`
 // digits, `pad` before it.
 write_unsigned :: proc "contextless" (writer: ^Writer, value: u64, minimum_digits := 1, pad: u8 = '0') {

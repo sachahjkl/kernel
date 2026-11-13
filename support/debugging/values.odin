@@ -122,7 +122,7 @@ address_write :: proc "contextless" (writer: ^sentence.Writer, ctx: ^Value_Conte
 	named := writer.count
 	ctx.namer.write(ctx.namer.state, writer, address)
 	if writer.count == named && writer.dropped == 0 {
-		writer.count = before // No name: the parenthesis leaves.
+		sentence.writer_take_back(writer, before) // No name: the parenthesis leaves.
 		return
 	}
 	sentence.write_part(writer, ")")

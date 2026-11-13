@@ -382,37 +382,37 @@ Result_Writer :: struct {
 
 // result_run adds one run of a line. A byte that the font does not draw
 // becomes "?".
-result_run :: proc "contextless" (writer: ^Result_Writer, part: Run_Part, text: string) {
+result_run :: proc "contextless" (result: ^Result_Writer, part: Run_Part, text: string) {
 	rest := text
-	for len(rest) > 0 && writer.fits {
+	for len(rest) > 0 && result.fits {
 		taken := min(len(rest), 255)
-		writer.column += taken
-		if writer.count + 2 + taken > len(writer.buffer) || writer.column > RESULT_COLUMN_CAPACITY || writer.lines >= RESULT_LINE_CAPACITY {
-			writer.fits = false
+		result.column += taken
+		if result.count + 2 + taken > len(result.buffer) || result.column > RESULT_COLUMN_CAPACITY || result.lines >= RESULT_LINE_CAPACITY {
+			result.fits = false
 			return
 		}
-		writer.buffer[writer.count] = u8(part)
-		writer.buffer[writer.count + 1] = u8(taken)
+		result.buffer[result.count] = u8(part)
+		result.buffer[result.count + 1] = u8(taken)
 		for index in 0 ..< taken {
 			value := rest[index]
-			writer.buffer[writer.count + 2 + index] = value >= 32 && value <= 126 ? value : '?'
+			result.buffer[result.count + 2 + index] = value >= 32 && value <= 126 ? value : '?'
 		}
-		writer.count += 2 + taken
+		result.count += 2 + taken
 		rest = rest[taken:]
 	}
 }
 
 // result_line_end ends the line.
-result_line_end :: proc "contextless" (writer: ^Result_Writer) {
-	if !writer.fits || writer.count + 2 > len(writer.buffer) || writer.lines >= RESULT_LINE_CAPACITY {
-		writer.fits = false
+result_line_end :: proc "contextless" (result: ^Result_Writer) {
+	if !result.fits || result.count + 2 > len(result.buffer) || result.lines >= RESULT_LINE_CAPACITY {
+		result.fits = false
 		return
 	}
-	writer.buffer[writer.count] = u8(Run_Part.End_Line)
-	writer.buffer[writer.count + 1] = 0
-	writer.count += 2
-	writer.lines += 1
-	writer.column = 0
+	result.buffer[result.count] = u8(Run_Part.End_Line)
+	result.buffer[result.count + 1] = 0
+	result.count += 2
+	result.lines += 1
+	result.column = 0
 }
 
 // candidates_copy copies the candidate area of a table and checks the
