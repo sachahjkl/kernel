@@ -4,7 +4,7 @@ import "support:display"
 
 KEY_CAPACITY :: 16 // The keys of one frame.
 FOCUS_ORDER_CAPACITY :: 64 // The elements that can take the focus in one frame.
-KEY_TAB :: 0x0F
+KEY_TAB :: 0x0F // The code of the key Tab: it moves the focus (Shift+Tab: back).
 
 // A number that names one element from one frame to the next.
 Element_Identity :: distinct u64
@@ -42,10 +42,11 @@ identity_with :: proc "contextless" (base: Element_Identity, index: int) -> Elem
 	return Element_Identity(hash | 1)
 }
 
+// One key that went down in a frame, from a display event.
 Key_Press :: struct {
-	code:      u32,
-	character: u8,
-	modifiers: u32,
+	code:      u32, // The code of the key, as the input service gives it.
+	character: u8, // The character of the key, or 0.
+	modifiers: u32, // The keys Shift, Control and Alt that were down.
 	taken:     bool, // An element took the key: no other element takes it.
 }
 
@@ -55,8 +56,8 @@ Input :: struct {
 	pointer_known:        bool, // The pointer is over the surface, or a button is held.
 	pressed, released:    bool, // The left button went down, or up, in this frame.
 	button_held:          bool, // The left button is down: the display gives the state, the input needs the change.
-	keys:                 [KEY_CAPACITY]Key_Press,
-	key_count:            int,
+	keys:                 [KEY_CAPACITY]Key_Press, // The keys of the frame, in order.
+	key_count:            int, // The keys in use.
 }
 
 // input_add adds one display event to the input of a frame. It gives false
@@ -104,17 +105,17 @@ Interface_State :: struct {
 	// The order of the elements that can take the focus, in the last frame:
 	// Tab and Shift+Tab follow it.
 	focus_order:   [FOCUS_ORDER_CAPACITY]Element_Identity,
-	focus_count:   int,
+	focus_count:   int, // The entries of `focus_order` in use.
 }
 
 // One frame: the table that it fills, the state, the input of the frame.
 Frame :: struct {
-	table:         ^Draw_Table,
-	state:         ^Interface_State,
-	input:         ^Input,
-	under_pointer: Element_Identity,
-	focus_order:   [FOCUS_ORDER_CAPACITY]Element_Identity,
-	focus_count:   int,
+	table:         ^Draw_Table, // The table of this frame.
+	state:         ^Interface_State, // The state from the frame before; the frame writes the state for the next one.
+	input:         ^Input, // The input of this frame.
+	under_pointer: Element_Identity, // The element under the pointer in this frame, so far.
+	focus_order:   [FOCUS_ORDER_CAPACITY]Element_Identity, // The elements that can take the focus in this frame, so far.
+	focus_count:   int, // The entries of `focus_order` in use.
 	// Two elements with one identity in this frame: both would show the
 	// focus and take a press. The caller makes them two with identity_with.
 	identity_collisions: int,
@@ -163,7 +164,7 @@ frame_end :: proc "contextless" (frame: ^Frame) {
 Element_Result :: struct {
 	activated:     bool, // Pressed and released on it, or Enter or Space with the focus.
 	focused:       bool, // It has the focus.
-	under_pointer: bool,
+	under_pointer: bool, // The pointer is over it.
 	changed:       bool, // A text input: the text changed. A list: the choice changed.
 }
 

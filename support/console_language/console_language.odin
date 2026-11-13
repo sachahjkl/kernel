@@ -7,7 +7,7 @@
 // The package has no state, calls no allocator and makes no kernel call:
 // each procedure reads a text and writes into memory of the caller. It
 // reads a line that is not finished: a text with no end quote, a name the
-// person still types, any byte. It never stops at a fault: a byte that the
+// input still types, any byte. It never stops at a fault: a byte that the
 // language does not take is one token of the kind Unknown.
 package console_language
 
@@ -28,24 +28,27 @@ Token_Kind :: enum u8 {
 
 // A token: its kind and its bytes, text[start:end].
 Token :: struct {
-	kind:  Token_Kind,
-	start: int,
-	end:   int,
+	kind:  Token_Kind, // What the bytes are.
+	start: int, // The first byte.
+	end:   int, // The byte after the last.
 }
 
-OPERATOR_BYTES :: "+-*/%=(),:.{}"
+OPERATOR_BYTES :: "+-*/%=(),:.{}" // The bytes that are an operator alone.
 
 // A line that is finished: no name is still being typed.
 NO_CARET :: -1
 
+// name_first says if a byte can start a name: a letter or '_'.
 name_first :: proc "contextless" (character: u8) -> bool {
 	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character == '_'
 }
 
+// digit says if a byte is a decimal digit.
 digit :: proc "contextless" (character: u8) -> bool {
 	return character >= '0' && character <= '9'
 }
 
+// operator_byte says if a byte is one of OPERATOR_BYTES.
 operator_byte :: proc "contextless" (character: u8) -> bool {
 	operators := OPERATOR_BYTES
 	for index in 0 ..< len(operators) {
@@ -129,20 +132,22 @@ token_next :: proc "contextless" (text: string, position: int) -> Token {
 
 // What a name is for the console that shows the line.
 Name_Role :: enum u8 {
-	Unknown  = 0,
+	Unknown  = 0, // The console knows no such name.
 	Function = 1, // A command, or an export of a module or of a service.
 	Record   = 2, // A command that makes a record: its name is a type.
 	Module   = 3, // A module or a service.
-	Variable = 4,
+	Variable = 4, // A variable of the console.
 }
 
 // The console gives the roles of its names. The package keeps no table of
 // names: the names change with each module that the console loads.
 Name_Lookup :: struct {
-	data:    rawptr,
-	role_of: proc "contextless" (data: rawptr, name: string) -> Name_Role,
+	data:    rawptr, // The state of the console.
+	role_of: proc "contextless" (data: rawptr, name: string) -> Name_Role, // Gives the role of a name.
 }
 
+// role_of gives the role of a name through a lookup. A lookup with no
+// procedure knows no name.
 role_of :: proc "contextless" (lookup: Name_Lookup, name: string) -> Name_Role {
 	return lookup.role_of == nil ? .Unknown : lookup.role_of(lookup.data, name)
 }
@@ -173,8 +178,8 @@ run_add :: proc "contextless" (runs: []terminal.Code_Run, count: int, start, end
 // has no run, and its text is whole.
 //
 // A name that is a command or a module has its color at once, while the
-// person types it. A name that is nothing that the console knows is marked
-// Unknown only after the person typed a byte after it: a name that ends at
+// input types it. A name that is nothing that the console knows is marked
+// Unknown only after the input typed a byte after it: a name that ends at
 // the caret or at the end of the line is still being typed, and has no
 // run. A text with no end quote is Text_Unfinished, not an error.
 line_runs :: proc "contextless" (text: string, first: int, caret: int, lookup: Name_Lookup, runs: []terminal.Code_Run) -> int {

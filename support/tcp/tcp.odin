@@ -1,18 +1,39 @@
-package tcp
-
-// The connections of one program: a table of records of fixed size, with
-// the buffers in one block of memory that the caller gives: the caller
-// supplies all the memory.
+// The TCP library: the connections of one program, as a table of records of
+// fixed size, with the buffers in one block of memory that the caller gives:
+// the caller supplies all the memory.
 // The library allocates nothing and calls no kernel operation; one call,
 // step, reads a batch of segments, runs the timers and writes the segments
 // to send. docs/NETWORK.md has the rules and their sources.
+//
+// Who uses it: the HTTP server (`programs/server`), the program `fetch`
+// and the tests of TCP. The program gets its segments from a segment
+// endpoint of the network service and gives `step` the time of its clock;
+// the library holds no time and no thread of its own. The parts:
+//
+// - `Table`, `table_init`: the connections and their buffers.
+// - `connect`, `write`, `read`, `close`, `abort`: what the program asks.
+// - `step`, `Incoming`, `Output`, `Event`: one turn of the library.
+// - `Connection`, `State`: one connection, which the program can read.
+// - `Header`, `header_read`, `header_write` (`segment.odin`): the segment.
+//
+// ```odin
+// deadline, count := tcp.step(&table, incoming[:arrived], system.nanoseconds() / 1000, &output, events[:])
+// for event in events[:count] {
+// 	if .Readable in event.kinds {
+// 		got, _ := tcp.read(&table, int(event.connection), buffer[:])
+// 	}
+// }
+// ```
+//
+// See (docs/NETWORK.md, "The TCP library").
+package tcp
 
 import "contract:blake3"
 import "contract:errors"
 
 RTO_INITIAL :: 1_000_000 // Microseconds before the first retransmission (RFC 6298 2.1).
 RTO_LEAST :: 200_000 // Not the 1 s of RFC 6298 2.4: the round trips of the link are under 1 ms.
-RTO_MOST :: 60_000_000
+RTO_MOST :: 60_000_000 // The longest retransmission timeout: 60 s (RFC 6298 2.5).
 RETRIES :: 8 // Timeouts in a row that end a connection.
 DELAYED_ACK :: 40_000 // The most that an ACK waits.
 TIME_WAIT :: 10_000_000 // 2 MSL, with an MSL of 5 s for one link.
@@ -23,19 +44,22 @@ SYN_RECEIVED_RETRIES :: 3 // Timeouts of a SYN, ACK that end a passive open: 1 +
 ANSWER_LIMIT :: 10 // The ACKs that answer segments out of the window, and the challenge ACKs, of one connection...
 ANSWER_PERIOD :: 1_000_000 // ...in this time.
 
+// The state of a connection: the states of RFC 9293, section 3.3.2. LISTEN
+// is no state of a record: the table has a listen port.
 State :: enum u8 {
 	Closed       = 0, // The record is free when it also has no event and no RST to send.
-	Syn_Sent     = 1,
-	Syn_Received = 2,
-	Established  = 3,
-	Fin_Wait_1   = 4,
-	Fin_Wait_2   = 5,
-	Closing      = 6,
-	Time_Wait    = 7,
-	Close_Wait   = 8,
-	Last_Ack     = 9,
+	Syn_Sent     = 1, // An active open sent its SYN, and waits for the SYN, ACK of the remote.
+	Syn_Received = 2, // A SYN arrived on the listen port; this side sent its SYN, ACK, and waits for the ACK.
+	Established  = 3, // Data goes both ways.
+	Fin_Wait_1   = 4, // This side closed and sent its FIN; it waits for its ACK.
+	Fin_Wait_2   = 5, // The remote acknowledged the FIN of this side; this side waits for the FIN of the remote, at most FIN_WAIT_2.
+	Closing      = 6, // Both sides sent a FIN at the same time; this side waits for the ACK of its own.
+	Time_Wait    = 7, // Both FINs are acknowledged; the record waits TIME_WAIT, so that an old segment does not reach a new connection.
+	Close_Wait   = 8, // The remote sent its FIN; the program can still write, then close.
+	Last_Ack     = 9, // The program closed after the FIN of the remote; this side waits for the ACK of its FIN.
 }
 
+// What a step tells the program about a connection.
 Event_Kind :: enum u8 {
 	Opened      = 0, // An active open reached Established.
 	Accepted    = 1, // A passive open reached Established: a new connection of the listen port.
@@ -47,31 +71,35 @@ Event_Kind :: enum u8 {
 	Timed_Out   = 7, // RETRIES timeouts in a row: the library sent a RST. The record is free after this event.
 	Refused     = 8, // The remote answered the SYN with a RST. The record is free after this event.
 }
+// The events of one connection in one step.
 Event_Kinds :: bit_set[Event_Kind;u16]
 
 // Event says what happened to one connection in one step.
 Event :: struct {
-	connection: u32,
-	kinds:      Event_Kinds,
-	reserved:   u16,
+	connection: u32, // The index of the connection in the table.
+	kinds:      Event_Kinds, // What happened.
+	reserved:   u16, // 0.
 }
 #assert(size_of(Event) == 8)
 
 // A range of sequence numbers that arrived after a hole: [first, end).
 Range :: struct {
-	first: u32,
-	end:   u32,
+	first: u32, // The first sequence number of the range.
+	end:   u32, // The sequence number after its last byte.
 }
 
 // Connection is the record of one connection. The program reads and can
 // change each field. Times are microseconds of the clock of the caller.
+//
+// A record is free when its state is Closed and it has no event and no RST
+// to send (`available`). 424 bytes.
 Connection :: struct {
-	state:                 State,
+	state:                 State, // Where the connection is in RFC 9293.
 	passive:               bool, // A SYN from the remote opened it.
 	closed_by_remote:      bool, // The FIN of the remote came before this side closed.
 	fin_queued:            bool, // The program closed: a FIN follows the data.
 	fin_sent:              bool, // The FIN at fin_sequence was sent at least one time.
-	fin_acknowledged:      bool,
+	fin_acknowledged:      bool, // The remote acknowledged the FIN of this side.
 	fin_waiting:           bool, // A FIN arrived after a hole, at receive_fin.
 	ack_now:               bool, // Send an ACK at the next step.
 	reset_pending:         bool, // Send a RST at the next step.
@@ -81,73 +109,73 @@ Connection :: struct {
 	in_recovery:           bool, // Fast recovery, until recover is acknowledged.
 	syn_acknowledged:      bool, // The remote acknowledged the SYN of this side.
 	events:                Event_Kinds, // The events that the next step reports.
-	local_port:            u16,
-	remote_port:           u16,
+	local_port:            u16, // The TCP port of this side.
+	remote_port:           u16, // The TCP port of the remote.
 	mss:                   u16, // The bytes of data in one segment: the least of the two MSS.
-	remote_address:        u32,
+	remote_address:        u32, // The IPv4 address of the remote.
 
 	// Send: SND.UNA, SND.NXT, SND.WND, SND.WL1, SND.WL2 of RFC 9293.
-	initial_send:          u32,
-	send_unacknowledged:   u32,
-	send_next:             u32,
+	initial_send:          u32, // ISS: the sequence number of the SYN of this side.
+	send_unacknowledged:   u32, // SND.UNA: the first byte that the remote did not acknowledge.
+	send_next:             u32, // SND.NXT: the next byte to send.
 	send_most:             u32, // The highest SND.NXT: a segment before it is a retransmission.
-	send_window:           u32,
-	send_window_most:      u32,
-	window_sequence:       u32,
-	window_acknowledgment: u32,
+	send_window:           u32, // SND.WND: the window that the remote gave, in bytes.
+	send_window_most:      u32, // The largest window that the remote gave.
+	window_sequence:       u32, // SND.WL1: the sequence number of the segment that gave the window.
+	window_acknowledgment: u32, // SND.WL2: its acknowledgment number.
 	send_start:            u32, // The place of the byte at send_unacknowledged in the send buffer.
 	send_length:           u32, // The bytes of the send buffer from send_unacknowledged, sent or not.
-	fin_sequence:          u32,
+	fin_sequence:          u32, // The sequence number of the FIN of this side.
 
 	// Receive: IRS, RCV.NXT of RFC 9293, and the right edge of the window.
-	initial_receive:       u32,
-	receive_next:          u32,
+	initial_receive:       u32, // IRS: the sequence number of the SYN of the remote.
+	receive_next:          u32, // RCV.NXT: the next byte expected from the remote.
 	receive_edge:          u32, // receive_next + the window that the last segment gave. It never moves back.
 	receive_start:         u32, // The place of the first byte that the program did not read.
 	receive_ready:         u32, // The bytes in order that the program did not read.
-	receive_fin:           u32,
+	receive_fin:           u32, // The sequence number of a FIN that arrived after a hole (fin_waiting).
 	unacknowledged_bytes:  u32, // The bytes in order since the last ACK.
 	acks_owed:             u32, // One ACK for each segment after a hole, also in one batch (RFC 5681 4.2).
-	range_count:           u32,
-	ranges:                [RANGE_CAPACITY]Range,
+	range_count:           u32, // The entries of `ranges` in use.
+	ranges:                [RANGE_CAPACITY]Range, // The data that arrived after a hole, by sequence number.
 
 	// Congestion (RFC 5681, RFC 6582), in bytes.
-	congestion_window:     u32,
-	slow_start_threshold:  u32,
-	recover:               u32,
-	duplicate_acks:        u32,
+	congestion_window:     u32, // cwnd: the bytes in flight that the congestion control allows.
+	slow_start_threshold:  u32, // ssthresh: under it the window grows by slow start.
+	recover:               u32, // The highest sequence number sent when fast recovery started (RFC 6582).
+	duplicate_acks:        u32, // Duplicate ACKs in a row: three start a fast retransmit.
 
 	// Timers: the time when each one ends. 0: off.
-	retransmit_at:         u64,
-	ack_at:                u64,
-	persist_at:            u64,
+	retransmit_at:         u64, // The retransmission timer.
+	ack_at:                u64, // The delayed ACK.
+	persist_at:            u64, // The next probe of a zero window.
 	end_at:                u64, // TIME-WAIT, or FIN-WAIT-2: the end of the record.
 
 	// The round trip (RFC 6298), in microseconds.
-	smoothed_rtt:          u64,
-	rtt_variance:          u64,
-	rto:                   u64,
-	rtt_last:              u64,
-	rtt_start:             u64,
-	rtt_sequence:          u32,
+	smoothed_rtt:          u64, // SRTT.
+	rtt_variance:          u64, // RTTVAR.
+	rto:                   u64, // RTO: from RTO_LEAST to RTO_MOST.
+	rtt_last:              u64, // The last round trip measured.
+	rtt_start:             u64, // When the timed segment was sent.
+	rtt_sequence:          u32, // The sequence number after the timed segment.
 	backoff:               u32, // Timeouts in a row.
-	probe_backoff:         u32,
+	probe_backoff:         u32, // Probes of a zero window in a row: each doubles the time to the next.
 	probes_unanswered:     u32, // Probes of a zero window with no segment of the remote after them.
 	out_of_window_answers: u32, // Answers to segments out of the window in the period that starts at out_of_window_answers_period_start.
-	out_of_window_answers_period_start: u64,
-	rtt_samples:           u32,
+	out_of_window_answers_period_start: u64, // The start of the period of ANSWER_LIMIT.
+	rtt_samples:           u32, // The round trips measured.
 
-	// What happened, for the program and for a person.
-	opened_at:             u64,
-	established_at:        u64,
-	closed_at:             u64,
+	// What happened, for the program and for a reader of its log.
+	opened_at:             u64, // When the open started.
+	established_at:        u64, // When it reached Established. 0: never.
+	closed_at:             u64, // When it ended. 0: it runs.
 	bytes_sent:            u64, // Bytes of data that the remote acknowledged.
 	bytes_received:        u64, // Bytes of data that arrived in order.
-	segments_sent:         u64,
-	segments_received:     u64,
+	segments_sent:         u64, // Segments that this side sent.
+	segments_received:     u64, // Segments of the remote that the connection took.
 	retransmissions:       u64, // Segments sent again: after a timeout, a fast retransmit or a partial ACK.
-	timeouts:              u64,
-	fast_retransmits:      u64,
+	timeouts:              u64, // Retransmission timeouts.
+	fast_retransmits:      u64, // Fast retransmits after three duplicate ACKs.
 	probes:                u64, // Probes of a zero window.
 	zero_windows:          u64, // Times that the remote gave a window of 0.
 	duplicates:            u64, // Segments with nothing new: old data, or out of the window.
@@ -157,21 +185,25 @@ Connection :: struct {
 #assert(size_of(Connection) == 424)
 
 // Table is the connection table of one program.
+//
+// The caller gives the memory: the records and the buffers. `table_init`
+// fills it; the program then sets `listen_port` for a server, or
+// `port_first` and `port_count` for a client, from its grant.
 Table :: struct {
-	connections:      []Connection,
+	connections:      []Connection, // The records.
 	buffers:          []u8, // len(connections) * (send_size + receive_size) bytes.
-	send_size:        u32,
-	receive_size:     u32,
-	local_address:    u32,
+	send_size:        u32, // The bytes of the send buffer of each connection.
+	receive_size:     u32, // The bytes of the receive buffer of each connection.
+	local_address:    u32, // The IPv4 address of this side.
 	listen_port:      u16, // 0: no passive open.
 	remote_limit:     u16, // The open connections of one remote address that a passive open accepts. 0: no limit.
 	port_first:       u16, // The local TCP ports of an active open: a block of port_count.
-	port_count:       u16,
-	port_next:        u16,
+	port_count:       u16, // The ports of the block.
+	port_next:        u16, // The port that the next active open tries first.
 	mss:              u16, // The MSS that this side gives. 0: MSS_LOCAL.
 	has_initial:      bool, // The next initial sequence number is `initial`, not RFC 6528.
-	reserved:         u8,
-	initial:          u32,
+	reserved:         u8, // 0.
+	initial:          u32, // With has_initial: the next initial sequence number, for a test.
 	secret:           [32]u8, // The secret of the initial sequence numbers (RFC 6528).
 
 	// Segments that no connection took.

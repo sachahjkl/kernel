@@ -1,8 +1,8 @@
 // The system description (docs/TRUSTED_BOOT.md): the one canonical list of
 // what a boot volume starts. It names the kernel, then each module and each
 // resource of the boot image, in the order of the boot image, each with its
-// kind, its size and its BLAKE3 hash. The signing key of the person who
-// owns the machine signs its hash; the boot program verifies the signature
+// kind, its size and its BLAKE3 hash. The signing key of the owner of the
+// machine signs its hash; the boot program verifies the signature
 // and each hash before it starts the kernel, and the root service checks
 // the boot image against it again before it starts the first program.
 //
@@ -18,20 +18,30 @@
 //
 // The reader refuses every other form, so one system has one description
 // and one hash: an unused field is zero, a name has zero bytes after it.
+//
+// Who uses it: the build tool writes the description and signs it; the boot
+// program checks the kernel and the boot image against it (`kernel_check`,
+// `image_check`); the root service checks the boot image again. The parts:
+//
+// - `Header`, `Entry`, `Entry_Kind`, `entries`: the file.
+// - `signed_message`, `SIGNATURE_LABEL`, `TEST_PUBLIC_KEY`: the signature.
+// - `Check`, `Check_Fault`, `fault_sentences`: the result of a check.
+//
+// See [system description](term:system-description).
 package system_description
 
 import "contract:blake3"
 import info "contract:boot_info"
 
 MAGIC :: u64(0x5243534544535953) // The bytes "SYSDESCR".
-VERSION :: 1
-NAME_SIZE :: info.IMAGE_NAME_SIZE
+VERSION :: 1 // The version of the format. A reader refuses another.
+NAME_SIZE :: info.IMAGE_NAME_SIZE // The bytes of a name: the names of the boot image.
 // A bound for the reader: a boot image of today has about 90 entries.
 ENTRY_CAPACITY :: 4096
 
-PUBLIC_KEY_SIZE :: 32
-SIGNATURE_SIZE :: 64
-SIGNED_MESSAGE_SIZE :: 64
+PUBLIC_KEY_SIZE :: 32 // The bytes of an Ed25519 public key.
+SIGNATURE_SIZE :: 64 // The bytes of an Ed25519 signature.
+SIGNED_MESSAGE_SIZE :: 64 // The bytes that the key signs: the label (32 bytes), then the hash of the description (32 bytes).
 // The first 32 bytes of the signed message, with zero bytes after it. A
 // signing key can sign other things later (grants, a newer format): the
 // label keeps a signature of one of them from being taken for another.
@@ -51,25 +61,32 @@ KERNEL_ENTRY_NAME :: "kernel"
 // that it signs is not trusted, and the boot display says so.
 TEST_PUBLIC_KEY :: [PUBLIC_KEY_SIZE]u8{0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64, 0x07, 0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07, 0x51, 0x1a}
 
+// What one entry of the description names.
 Entry_Kind :: enum u32 {
-	None     = 0,
-	Kernel   = 1,
-	Module   = 2,
-	Resource = 3,
+	None     = 0, // Not valid: the reader refuses it.
+	Kernel   = 1, // The kernel module file: entry 0, and no other.
+	Module   = 2, // A module of the boot image.
+	Resource = 3, // A resource of the boot image: a file that is not a module.
 }
 
+// The first 16 bytes of the description.
 Header :: struct {
-	magic:       u64,
-	version:     u32,
-	entry_count: u32,
+	magic:       u64, // `MAGIC`.
+	version:     u32, // `VERSION`.
+	entry_count: u32, // The entries after the header: at least 1, at most `ENTRY_CAPACITY`.
 }
 #assert(size_of(Header) == 16)
 
+// One file that the boot volume starts: the kernel, a module or a
+// resource. 80 bytes.
+//
+// Example: `{name = "kernel", kind = .Kernel, size = <bytes of the kernel
+// file>, hash = <its BLAKE3 hash>}` is entry 0.
 Entry :: struct {
 	name:     [NAME_SIZE]u8, // The name of the entry of the boot image, or of the kernel module; zero bytes after it.
-	kind:     Entry_Kind,
+	kind:     Entry_Kind, // Kernel for entry 0, then the modules, then the resources.
 	reserved: u32, // Zero.
-	size:     u64,
+	size:     u64, // The bytes of the file.
 	hash:     blake3.Hash, // The BLAKE3 hash of the bytes of the file.
 }
 #assert(size_of(Entry) == 80)
@@ -77,29 +94,35 @@ Entry :: struct {
 // Why a check failed. Each fault names one entry of the description,
 // except Not_Valid, Image_Not_Valid and Count_Differs.
 Check_Fault :: enum u32 {
-	None                = 0,
+	None                = 0, // Each entry agrees.
 	Not_Valid           = 1, // The description does not follow its format.
 	Image_Not_Valid     = 2, // The tables of the boot image do not fit in it, or its two last resources are not the description and its signature.
 	Count_Differs       = 3, // The boot image has more or fewer entries than the description lists.
-	Name_Differs        = 4,
+	Name_Differs        = 4, // The entry of the boot image at this place has another name.
 	Kind_Differs        = 5, // A module of the description is a resource of the boot image, or the reverse.
-	Size_Differs        = 6,
+	Size_Differs        = 6, // The file has another size.
 	Hash_Differs        = 7, // The bytes of the file have another hash.
 	Stated_Hash_Differs = 8, // The entry of the boot image states another hash: the loader gives that hash to the program as its identity.
 	Outside_Image       = 9, // The entry of the boot image points outside the image.
 }
 
 // The result of a check: zero when each entry agrees.
+//
+// The boot program shows it on the boot display and stops; the root service
+// writes the name of the entry, its sentence and the two hashes on the log,
+// and fails its start.
 Check :: struct {
-	fault:         Check_Fault,
+	fault:         Check_Fault, // Why the check failed. None: it passed.
 	index:         u32, // The entry of the description, from 0 (the kernel).
 	name:          [NAME_SIZE]u8, // The name in the description.
 	expected_size: u64, // From the description; for Count_Differs, the count of the description.
 	found_size:    u64, // From the boot image or the kernel file; for Count_Differs, the count of the image.
-	expected_hash: blake3.Hash,
+	expected_hash: blake3.Hash, // The hash in the description.
 	found_hash:    blake3.Hash, // For Stated_Hash_Differs, the hash that the entry of the image states.
 }
 
+// The words of each fault for a line of the log or of the boot display. The
+// sentences that start with a verb follow the name of the entry.
 @(rodata)
 fault_sentences := [Check_Fault]string {
 	.None                = "each entry agrees with the system description",

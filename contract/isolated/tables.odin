@@ -21,10 +21,20 @@ import "base:intrinsics"
 // caller reads it, trusts it only up to the capacity, and copies the
 // records back into its own memory (tables_return).
 
+// The field of a Table or Bytes parameter in the argument record of an
+// isolated call: where the records are, how many, and how many fit.
+//
+// The caller writes it (`encode`); the receiver reads it as hostile input
+// (`decode`): `start`, `count` and `capacity` must name records inside the
+// call region or inside the lent object. After the export the receiver
+// writes `count` of an Append table back. 32 bytes.
+//
+// Example: a Read table of 3 records of 16 bytes in the call region at the
+// offset 256: `{start = 256, count = 3, capacity = 3, memory_handle = 0}`.
 Table_Field :: struct {
 	start:         u64, // The offset of the records: in the call region, or in the memory object.
-	count:         u64,
-	capacity:      u64,
+	count:         u64, // The records of the table: on entry for Read and Change, the new count after an Append. Bytes for a Bytes parameter.
+	capacity:      u64, // The records that fit: the callee of an Append table writes no record at or after it.
 	memory_handle: u64, // 0: the call region. Else: a lent memory object, as the receiver names it.
 }
 #assert(size_of(Table_Field) == 32)
@@ -36,15 +46,15 @@ Table_Argument :: struct {
 	records:      []u8,
 	count:        u64, // In records. After tables_return: the count that the callee gave, for an Append table.
 	memory_handle: u64, // Not 0: the records are in this memory object, as the receiver names it (system.lend writes it), from memory_start.
-	memory_start: u64,
+	memory_start: u64, // With `memory_handle`: the offset of the records in the object.
 	region_start: u64, // Written by encode: the offset of the copy in the call region.
 }
 
 // A memory object of a table argument that the receiver maps for the time
 // of the export: see export_serve of support/system.
 Table_Mapping :: struct {
-	parameter: int,
-	handle:    u32,
+	parameter: int, // The number of the parameter, from 0: its place is `TABLE_ADDRESS + parameter * TABLE_SPAN`.
+	handle:    u32, // The memory object, as the receiver names it.
 	start:     u64, // The offset of the records in the object.
 	size:      u64, // The bytes of the records that the export can reach: the capacity, or the count of a Read or Change table.
 	writable:  bool, // Change and Append.
@@ -135,9 +145,11 @@ Region_Range :: struct {
 }
 REGION_RANGE_CAPACITY :: module.PARAMETER_CAPACITY + 3 // The parameters, the argument record, a result and the error record.
 
+// The ranges of the call region that one call names so far: `decode` adds
+// each one with `region_range_add`, which refuses an overlap.
 Region_Ranges :: struct {
 	ranges: [REGION_RANGE_CAPACITY]Region_Range,
-	count:  int,
+	count:  int, // The entries of `ranges` in use.
 }
 
 // region_range_add adds a range, and gives false with an error record of
@@ -259,7 +271,7 @@ counts_store :: proc "contextless" (function: module.Function, call: ^Call, regi
 
 // Return_Problem: what tables_return found wrong in the answer of the callee.
 Return_Problem :: enum u32 {
-	None            = 0,
+	None            = 0, // The answer is good: the records are copied.
 	Count_Smaller   = 1, // An Append table: the callee gave a count smaller than the count on entry.
 	Bad_Region      = 2, // The argument record is not in the call region.
 	Bad_Description = 3, // The record of a table parameter has no valid description.

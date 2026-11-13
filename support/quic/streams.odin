@@ -9,7 +9,7 @@ package quic
 // The rules of this layer:
 // - Only bidirectional streams, and only the client opens them. A server
 //   gives the client a limit of streams (MAX_STREAMS) equal to its free
-//   records, so each stream that the client may open has a record. A server
+//   records, so each stream that the client can open has a record. A server
 //   that opened streams too would take records that the limit promised.
 // - A frame that names a stream of the client that the client did not open
 //   yet opens it, and each lower stream of the client that is not open yet
@@ -29,48 +29,50 @@ STREAM_BUFFER_SIZE :: 65536 // The bytes of a stream in each direction that wait
 // The control frames of one stream, which a packet carries and which go
 // again when the packet is lost.
 Stream_Control :: enum u8 {
-	Max_Stream_Data,
-	Reset_Stream,
-	Stop_Sending,
+	Max_Stream_Data, // A new limit of the data of the stream for the peer.
+	Reset_Stream, // This side ends its sending.
+	Stop_Sending, // This side asks the peer to end its sending.
 }
 
 // The state of one stream, without its buffers: a new stream clears this
 // part only.
 Stream_State :: struct {
-	in_use:              bool,
-	identifier:          u64,
+	in_use:              bool, // The record holds an open stream.
+	identifier:          u64, // The stream identifier: 0, 4, 8... for the streams of the client.
 	// Sending: the bytes that the application wrote, in the ring send by
 	// offset.
-	send_length:         u64,
-	send_next:           u64,
-	send_again:          Range_Set,
-	send_acknowledged:   Range_Set,
+	send_length:         u64, // The bytes that the application wrote, from offset 0.
+	send_next:           u64, // The first offset that was never sent.
+	send_again:          Range_Set, // Offsets of lost packets, to send again.
+	send_acknowledged:   Range_Set, // Offsets that the peer acknowledged.
 	send_finish:         bool, // The application wrote its last byte.
-	finish_sent:         bool,
-	finish_acknowledged: bool,
+	finish_sent:         bool, // A STREAM frame with FIN was sent.
+	finish_acknowledged: bool, // The peer acknowledged it.
 	send_limit:          u64, // The MAX_STREAM_DATA of the peer.
 	reset_sent:          bool, // This side ended its sending with RESET_STREAM: at a STOP_SENDING of the peer, or at a call of the application.
-	reset_code:          u64,
-	reset_acknowledged:  bool,
+	reset_code:          u64, // The application error code of that reset.
+	reset_acknowledged:  bool, // The peer acknowledged it.
 	// Receiving: the bytes of the peer, in the ring receive by offset.
-	received:            Range_Set,
-	read_offset:         u64,
+	received:            Range_Set, // The offsets of the peer that came.
+	read_offset:         u64, // The first offset that the application did not read.
 	receive_limit:       u64, // The MAX_STREAM_DATA that this side gave.
-	highest_received:    u64,
-	has_final_size:      bool,
-	final_size:          u64,
-	reset_received:      bool,
-	peer_reset_code:     u64,
+	highest_received:    u64, // The end of the data of the peer so far: its largest offset plus 1.
+	has_final_size:      bool, // The peer gave the end of the stream.
+	final_size:          u64, // Its bytes in all.
+	reset_received:      bool, // The peer ended its sending with RESET_STREAM.
+	peer_reset_code:     u64, // Its application error code.
 	end_read:            bool, // The application read the end of the peer: its last byte, or its reset.
-	stop_sending_sent:   bool,
-	stop_sending_code:   u64,
-	pending_controls:    bit_set[Stream_Control],
+	stop_sending_sent:   bool, // This side sent STOP_SENDING.
+	stop_sending_code:   u64, // Its application error code.
+	pending_controls:    bit_set[Stream_Control], // The control frames that wait to be sent.
 }
 
+// One stream record of the table of the caller: its state and its two
+// buffers of 64 KiB.
 Stream :: struct {
 	using state: Stream_State,
-	send:        [STREAM_BUFFER_SIZE]u8,
-	receive:     [STREAM_BUFFER_SIZE]u8,
+	send:        [STREAM_BUFFER_SIZE]u8, // The bytes that this side sends, by offset modulo the size.
+	receive:     [STREAM_BUFFER_SIZE]u8, // The bytes of the peer, by offset modulo the size.
 }
 
 // stream_of gives the record of an open stream, or nil.

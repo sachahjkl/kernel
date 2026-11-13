@@ -11,6 +11,29 @@
 //
 // The ChaCha20 is the code of Odin's core:crypto that the system took
 // (support/cryptography, docs/CRYPTOGRAPHY.md), checked against RFC 8439.
+//
+// Who uses it: each program that draws random bytes. A program seeds its
+// generator from its context (`generator_from_context`), where its starter
+// wrote a seed; the root service gathers its own seed (`entropy_gather`,
+// `entropy.odin`). The parts:
+//
+// - `Generator`, `generator_seed`, `generator_from_context`: the state.
+// - `fill`, `fill_for_a_key`: the draws.
+// - `seed_for_a_child`, `values_with_seed`: the seed of a program that this
+//   one starts, or of another thread.
+// - `reseed`: mix fresh bytes into the key.
+// - `Seed_Strength`, `Entropy_Report`, `entropy_gather`: the gathering of
+//   the root service.
+//
+// ```odin
+// generator: random.Generator
+// random.generator_from_context(&generator, ctx) or_return
+// key: [32]u8
+// random.fill_for_a_key(&generator, key[:], .Processor, &error) or_return
+// ```
+//
+// See [random generator](term:random-generator),
+// [random seed](term:random-seed) and [seed strength](term:seed-strength).
 package random
 
 import "base:intrinsics"
@@ -20,10 +43,10 @@ import "support:system"
 import "support:cryptography/chacha20"
 import crypto "support:cryptography/compatibility_crypto"
 
-SEED_SIZE :: 32
-REFILL_BLOCKS :: 13
-REFILL_SIZE :: REFILL_BLOCKS * 64
-BUFFER_SIZE :: REFILL_SIZE - SEED_SIZE
+SEED_SIZE :: 32 // The bytes of a seed and of a key of ChaCha20.
+REFILL_BLOCKS :: 13 // The blocks of 64 bytes of ChaCha20 of one refill: 832 bytes.
+REFILL_SIZE :: REFILL_BLOCKS * 64 // The bytes of one refill.
+BUFFER_SIZE :: REFILL_SIZE - SEED_SIZE // The bytes served from one refill: 800, after the next key.
 
 // A zero Generator is not seeded: a draw from it stops the program (a
 // check), so that no program draws numbers from a known key.
@@ -34,13 +57,13 @@ BUFFER_SIZE :: REFILL_SIZE - SEED_SIZE
 // seed_for_a_child of the first. A draw that finds the generator in use by
 // another draw stops the program with a sentence that says so.
 Generator :: struct {
-	key:       [SEED_SIZE]u8,
-	buffer:    [BUFFER_SIZE]u8,
+	key:       [SEED_SIZE]u8, // The key of the next refill.
+	buffer:    [BUFFER_SIZE]u8, // The bytes of the last refill; a served byte is zero.
 	available: int, // Bytes of the buffer not served: they are its last ones.
-	seeded:    bool,
+	seeded:    bool, // A seed was given: a draw is allowed.
 	strength:  Seed_Strength, // The strength of the seed of the system from which this seed comes.
 	in_use:    bool, // A draw runs: a second draw at the same time is refused.
-	refills:   u64,
+	refills:   u64, // The refills since the seed.
 	served:    u64, // Bytes served since the seed.
 }
 

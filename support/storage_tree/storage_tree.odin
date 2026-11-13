@@ -17,30 +17,49 @@
 // One Work is one tree; the trees of one commit share one Pool. A tree
 // inside a tree is the Pointer in an entry: the caller finishes the inner
 // tree first, and puts its new root in the entry of the outer one.
+//
+// The parts:
+//
+// - `Work`, `Pool`, `Shape`: one tree of a commit, and the slots of its
+//   nodes.
+// - `get`, `first_from`: the reads.
+// - `put`, `remove`, `finish`: the changes and the commit.
+// - `Walk`, `walk_tree`: the walk of a whole tree, for the open of a disk.
+// - `Source`, `Writer`: the blocks, from the caller.
+//
+// ```odin
+// work := storage_tree.Work{pool = &pool, source = &source, shape = storage_tree.TREE_SHAPE, root = store_block.tree}
+// existed := storage_tree.put(&work, key[:], entry_bytes[:], replace = true)
+// root := storage_tree.finish(&work, &writer)
+// ```
+//
+// See [tree](term:tree) and (docs/STORAGE.md).
 package storage_tree
 
 import format "contract:store"
 
+// The names of the format of the disk that this package uses.
 BLOCK_SIZE :: format.BLOCK_SIZE
 HEADER_SIZE :: format.TREE_HEADER_SIZE
 DEPTH_LIMIT :: format.TREE_DEPTH_LIMIT
-Block :: [BLOCK_SIZE]u8
+Block :: [BLOCK_SIZE]u8 // One block of the disk: one node.
 Pointer :: format.Pointer
 
 // The size of the keys and of the values of a tree. The disk has one
 // shape; the host tests use it too.
 Shape :: struct {
-	key_size:        int,
-	value_size:      int,
-	leaf_capacity:   int,
-	branch_capacity: int,
+	key_size:        int, // The bytes of a key.
+	value_size:      int, // The bytes of the value of a leaf record.
+	leaf_capacity:   int, // The records of a leaf.
+	branch_capacity: int, // The records of a branch.
 }
 
-TREE_SHAPE :: Shape{size_of(format.Entry_Name), size_of(format.Entry), format.LEAF_CAPACITY, format.BRANCH_CAPACITY}
-KEY_SIZE_LIMIT :: size_of(format.Entry_Name)
+TREE_SHAPE :: Shape{size_of(format.Entry_Name), size_of(format.Entry), format.LEAF_CAPACITY, format.BRANCH_CAPACITY} // The shape of the trees of the disk.
+KEY_SIZE_LIMIT :: size_of(format.Entry_Name) // The largest key of a shape: the walk keeps the last key in this many bytes.
 
+// What a read of a block gave.
 Read :: enum {
-	Good,
+	Good, // The block has the check of its Pointer.
 	Wrong, // The block does not have the check of its Pointer, or the Pointer names no block of the disk.
 	Device, // The device reported an error.
 }
@@ -48,19 +67,21 @@ Read :: enum {
 // The source of the nodes: it reads one block and compares it with the
 // check of its Pointer.
 Source :: struct {
-	read: proc "contextless" (source: ^Source, pointer: Pointer, into: ^Block) -> Read,
-	data: rawptr,
+	read: proc "contextless" (source: ^Source, pointer: Pointer, into: ^Block) -> Read, // Reads the block of `pointer` into `into`, and checks it.
+	data: rawptr, // The state of the caller, for `read`.
 }
 
 // The writer of a commit: it writes one block to a free block and gives
 // its Pointer, or a Pointer with no block when it cannot.
 Writer :: struct {
-	write: proc "contextless" (writer: ^Writer, bytes: ^Block) -> Pointer,
-	data:  rawptr,
+	write: proc "contextless" (writer: ^Writer, bytes: ^Block) -> Pointer, // Writes the block to a free block of the disk.
+	data:  rawptr, // The state of the caller, for `write`.
 }
 
+// Why an operation on a tree failed. The first failure of a commit stays in
+// its pool, and each later operation does nothing (`failed`).
 Failure :: enum {
-	None,
+	None, // No failure.
 	Device, // A read failed on the device.
 	Wrong, // A node has a wrong check: `failed_block` names it.
 	Damaged, // A node breaks a rule of the format (its magic, its level, its count, the order of its keys): `failed_block` names it.
@@ -68,16 +89,18 @@ Failure :: enum {
 	Write, // The writer gave no block.
 }
 
+// What a slot of the pool holds.
 Slot_State :: enum u8 {
-	Free,
+	Free, // Nothing: the slot can take a node.
 	Clean, // A copy of a node of the disk, for reading.
 	Dirty, // A node that the commit writes.
 }
 
+// One node in the pool.
 Slot :: struct {
-	bytes:    Block,
+	bytes:    Block, // The bytes of the node.
 	original: Pointer, // The node of the disk that it copies. No block: a new node.
-	state:    Slot_State,
+	state:    Slot_State, // Free, clean or dirty.
 }
 
 // The slots of the nodes of one commit, for the trees of one store. A
@@ -85,25 +108,30 @@ Slot :: struct {
 // of the service, a part of a remove of 64 entries, about 200.
 POOL_CAPACITY :: 512
 
+// The nodes of one commit, for all the trees that it changes: about 2 MiB,
+// which the caller keeps.
 Pool :: struct {
-	slots:          [POOL_CAPACITY]Slot,
+	slots:          [POOL_CAPACITY]Slot, // The nodes read or changed by the commit.
 	released:       [POOL_CAPACITY]Pointer, // Nodes of the disk that the trees stop naming.
-	released_count: int,
+	released_count: int, // The entries of `released` in use.
 	written:        int, // The nodes that finish wrote.
-	failure:        Failure,
-	failed_block:   u64,
+	failure:        Failure, // The first failure of the commit.
+	failed_block:   u64, // The block that the failure names, or 0.
 }
 
 // One tree of a commit: its shape and its root, a Pointer of the disk or a
 // reference to a dirty slot. A root with no block and a check of 0: the
 // tree is empty.
 Work :: struct {
-	pool:   ^Pool,
-	source: ^Source,
-	shape:  Shape,
-	root:   Pointer,
+	pool:   ^Pool, // The slots of the commit.
+	source: ^Source, // Where the nodes of the disk come from.
+	shape:  Shape, // The sizes of the records: TREE_SHAPE for the disk.
+	root:   Pointer, // The root of the tree: of the disk, or a reference to a dirty slot.
 }
 
+// pool_reset frees each slot of a pool, for a new commit: the released
+// blocks, the count of written nodes and the failure go back to zero. The
+// dirty nodes of a commit that was dropped are forgotten.
 pool_reset :: proc "contextless" (pool: ^Pool) {
 	for &slot in pool.slots {
 		slot.state = .Free
@@ -124,10 +152,14 @@ pool_trim :: proc "contextless" (pool: ^Pool) {
 	}
 }
 
+// failed says if an operation of the commit of a tree failed: its pool
+// keeps the failure.
 failed :: proc "contextless" (work: ^Work) -> bool {
 	return work.pool.failure != .None
 }
 
+// fail records the first failure of a commit, and the block that it names.
+// A later failure does not replace it.
 fail :: proc "contextless" (work: ^Work, failure: Failure, block: u64 = 0) {
 	if work.pool.failure == .None {
 		work.pool.failure = failure
@@ -138,27 +170,34 @@ fail :: proc "contextless" (work: ^Work, failure: Failure, block: u64 = 0) {
 // ---------------------------------------------------------------------
 // The layout of a node.
 
+// header gives the header of a node.
 header :: #force_inline proc "contextless" (bytes: ^Block) -> ^format.Tree_Header {
 	return (^format.Tree_Header)(bytes)
 }
 
+// record_size gives the bytes of a record of a node: the key and the value
+// for a leaf (level 0), the key and a Pointer for a branch.
 record_size :: #force_inline proc "contextless" (shape: Shape, level: u32) -> int {
 	return shape.key_size + (level == 0 ? shape.value_size : size_of(Pointer))
 }
 
+// capacity_of gives the records that a node of a level holds.
 capacity_of :: #force_inline proc "contextless" (shape: Shape, level: u32) -> int {
 	return level == 0 ? shape.leaf_capacity : shape.branch_capacity
 }
 
+// record_at gives the bytes of the record n of a node.
 record_at :: #force_inline proc "contextless" (bytes: ^Block, shape: Shape, index: int) -> []u8 {
 	size := record_size(shape, header(bytes).level)
 	return bytes[HEADER_SIZE + index * size:][:size]
 }
 
+// key_at gives the key of the record n of a node.
 key_at :: #force_inline proc "contextless" (bytes: ^Block, shape: Shape, index: int) -> []u8 {
 	return record_at(bytes, shape, index)[:shape.key_size]
 }
 
+// value_at gives the value of the record n of a leaf.
 value_at :: #force_inline proc "contextless" (bytes: ^Block, shape: Shape, index: int) -> []u8 {
 	return record_at(bytes, shape, index)[shape.key_size:]
 }
@@ -180,6 +219,7 @@ compare :: proc "contextless" (a, b: []u8) -> int {
 	return len(a) < len(b) ? -1 : len(a) > len(b) ? 1 : 0
 }
 
+// copy_bytes copies bytes, the shorter of the two lengths.
 copy_bytes :: #force_inline proc "contextless" (to, from: []u8) {
 	copy(to, from)
 }
@@ -208,18 +248,23 @@ node_valid :: proc "contextless" (bytes: ^Block, shape: Shape) -> bool {
 // ---------------------------------------------------------------------
 // Slots.
 
+// reference gives the Pointer that names a dirty slot: no block, and the
+// number of the slot plus 1 in the check.
 reference :: #force_inline proc "contextless" (slot: int) -> Pointer {
 	return {block = 0, check = u64(slot) + 1}
 }
 
+// is_reference says if a Pointer names a slot of the pool, not a block.
 is_reference :: #force_inline proc "contextless" (pointer: Pointer) -> bool {
 	return pointer.block == 0 && pointer.check != 0
 }
 
+// is_empty says if a Pointer names no node: an empty tree.
 is_empty :: #force_inline proc "contextless" (pointer: Pointer) -> bool {
 	return pointer.block == 0 && pointer.check == 0
 }
 
+// slot_take gives a free slot of the pool, or -1 with the failure Full.
 slot_take :: proc "contextless" (work: ^Work) -> int {
 	for &slot, index in work.pool.slots {
 		if slot.state == .Free {
@@ -305,6 +350,7 @@ slot_free :: proc "contextless" (work: ^Work, index: int) {
 	work.pool.slots[index].state = .Free
 }
 
+// bytes_of gives the bytes of the node in a slot.
 bytes_of :: #force_inline proc "contextless" (work: ^Work, index: int) -> ^Block {
 	return &work.pool.slots[index].bytes
 }
@@ -732,22 +778,24 @@ finish :: proc "contextless" (work: ^Work, writer: ^Writer) -> Pointer {
 // each leaf. A node that visit_node refuses is not read.
 
 Walk :: struct {
-	source:       ^Source,
-	shape:        Shape,
-	stack:        [DEPTH_LIMIT]Block,
+	source:       ^Source, // Where the nodes come from.
+	shape:        Shape, // The sizes of the records.
+	stack:        [DEPTH_LIMIT]Block, // One node of each level of the path.
 	visit_node:   proc "contextless" (walk: ^Walk, pointer: Pointer) -> bool,
 	visit_record: proc "contextless" (walk: ^Walk, key: []u8, value: []u8),
-	data:         rawptr,
-	failure:      Failure,
-	failed_block: u64,
-	nodes:        u64,
-	records:      u64,
+	data:         rawptr, // The state of the caller, for the two visits.
+	failure:      Failure, // Why the walk stopped. None: it saw the whole tree.
+	failed_block: u64, // The block that the failure names.
+	nodes:        u64, // The nodes that the walk read.
+	records:      u64, // The records of the leaves that it saw.
 	// The last key that the walk saw: the keys of the whole tree are in
 	// order, each one once, else the tree is damaged.
 	last_key:     [KEY_SIZE_LIMIT]u8,
 	has_last:     bool,
 }
 
+// walk_tree walks the tree of a root: each node once, in the order of the
+// keys, with the two visits of the walk. An empty tree is no failure.
 walk_tree :: proc "contextless" (walk: ^Walk, root: Pointer) -> Failure {
 	walk.failure = .None
 	walk.has_last = false

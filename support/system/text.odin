@@ -40,9 +40,22 @@ error_details_rest_text :: sentence.error_details_rest_text
 
 // log writes one line on the log of the kernel. A program with no handle to
 // the log writes nothing.
+//
+// The line has the level `Info` and no channel. Each part is a text or a
+// value: a number, a `Hex`, a `Size`, a `Duration`, a `Hash`, a
+// `Module_Name` or a status; a reader of the log shows each value in the
+// color of its kind.
+//
+// ```odin
+// system.log("console: loaded ", system.Module_Name{"manual"}, " in ", system.Duration{spent, .Microseconds})
+// ```
 log :: proc "contextless" (parts: ..Part) {
 	log_in("", .Info, ..parts)
 }
+
+// The bytes of the buffer of `log_in`: the longest line that it gives to
+// the kernel in one `Log` call.
+LOG_PART_SIZE :: 512
 
 // log_in writes one text on the log, in a channel and with a level. The
 // channel is a short name with no space: at most 16 characters. The kernel
@@ -55,8 +68,15 @@ log :: proc "contextless" (parts: ..Part) {
 // Each part that is a value (part_kind) goes with its value run, so that the
 // log record keeps its kind. A line with more than LOG_CALL_RUN_LIMIT values
 // keeps the runs of its first values; the text is the same either way.
-LOG_PART_SIZE :: 512
-
+//
+// A control byte of a part becomes "?" (`log_control_bytes_replace`). A
+// program with no log handle writes nothing; the kernel refuses a line above
+// the log limit of the budget, and the line is lost: `budget_used` counts
+// the lines that the kernel refused.
+//
+// ```odin
+// system.log_in("storage", .Warning, "storage: the block ", block, " has a wrong check")
+// ```
 log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Part) {
 	handle := context_record().handles[op.CONTEXT_LOG]
 	if handle == 0 {

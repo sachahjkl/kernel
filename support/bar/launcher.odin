@@ -1,10 +1,10 @@
 // The launcher: the panel in the middle of the screen that a key opens. The
-// person types a part of a name, and the list has the names of `names` that
+// input types a part of a name, and the list has the names of `names` that
 // contain it. The compositor draws the panel and starts the chosen program
 // as the menu of the programs does.
 package bar
 
-TYPED_CAPACITY :: 16 // The longest part that a person types.
+TYPED_CAPACITY :: 16 // The longest part that the input types.
 
 // filter puts in matches the indexes in `names` of the names that contain
 // typed: first the names that start with typed, then the others, each group

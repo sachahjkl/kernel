@@ -21,6 +21,23 @@
 //
 // When the root service revokes the grant, the handles of the connection
 // end: a call gives Gone, and the program continues.
+//
+// Who uses it: each program with the grant `Store` (the console, the notes,
+// the settings, the tests of the storage service). The parts:
+//
+// - `Client`, `open`, `connected`, `call`: the connection.
+// - `read`, `write`, `remove` and the pending changes (`write_range`,
+//   `set_size`, `commit`): the objects.
+// - `open_tree`, `close_tree`, `add`, `list`, `rename`: the trees and the
+//   places.
+// - `versions`, `version`, `compare`, `restore`: the versions.
+// - `share`, `unshare`, `open_handles`, `open_store`: the shares and the
+//   other stores.
+// - `usage`, `error_text`: the counts of the store and the sentence of an
+//   error record.
+//
+// See [storage service](term:storage-service), [place](term:place) and
+// [private store](term:private-store).
 package storage
 
 import "contract:errors"
@@ -57,19 +74,22 @@ ERROR_EXISTS :: -11 // The tree has an entry with this name already.
 ERROR_PLACE :: -12 // The place is not a place of this connection, or the connection reads only.
 ERROR_PENDING :: -13 // The object has no pending change on this connection, or another change of the object came first.
 
+// One connection to the storage service, in the memory of the program. One
+// thread uses it at a time: a call uses the call region whole.
 Client :: struct {
-	ring_memory:   system.Handle,
-	region_memory: system.Handle,
-	service:       system.Handle,
-	calls:         ring.Ring,
-	region:        []u8,
-	file:          []u8,
-	tag:           u32,
-	gone:          bool,
+	ring_memory:   system.Handle, // The memory of the call ring.
+	region_memory: system.Handle, // The memory of the call region.
+	service:       system.Handle, // The program of the storage service, with Read: its state.
+	calls:         ring.Ring, // The call ring, mapped.
+	region:        []u8, // The call region, mapped.
+	file:          []u8, // The file of the storage service: the descriptions of its exports.
+	tag:           u32, // The tag of the last call.
+	gone:          bool, // The connection ended: each call gives Gone.
 }
 
+// The result of a call of this client, beside the result of the export.
 Status :: enum {
-	Ok,
+	Ok, // The export ran and answered a number that is not negative.
 	Gone, // The connection ended: the grant was revoked, or the storage service stopped.
 	Refused, // The storage service refused the call: see isolated.Status.
 	Damaged, // The storage service has the object and cannot give its bytes: a block has a wrong check, or the disk gave an error.
@@ -77,6 +97,9 @@ Status :: enum {
 	Too_Small, // The bytes do not fit in the buffer of the caller: the count of the bytes is the result.
 }
 
+// open opens the connection that the root service gave in the context of
+// this program. ok is false for a program with no grant of a store, or a
+// file of the service that is not a valid module.
 open :: proc "contextless" (ctx: ^system.Context) -> (client: Client, ok: bool) {
 	client.ring_memory = ctx.handles[GRANT_RING]
 	client.region_memory = ctx.handles[GRANT_REGION]
@@ -331,7 +354,8 @@ open_tree :: proc "contextless" (client: ^Client, place: Place, name: string, er
 }
 
 // open_store gives a place on the root of another store, for a caller
-// that may name it (the export open_store).
+// that can name it (the export open_store): a caller that acts for the
+// principal. Another caller gets Failed with ERROR_ACTS_FOR_PRINCIPAL.
 open_store :: proc "contextless" (client: ^Client, store: string, error: ^errors.Error_Record = nil) -> (opened: Place, status: Status) {
 	arguments := [1]isolated.Argument{{text = transmute([]u8)store}}
 	result: i64
@@ -346,8 +370,8 @@ close_tree :: proc "contextless" (client: ^Client, place: Place, error: ^errors.
 	return status
 }
 
-ENTRY_OBJECT :: 1
-ENTRY_TREE :: 2
+ENTRY_OBJECT :: 1 // The kind of an entry that is an object: `store.Entry_Kind.Object`.
+ENTRY_TREE :: 2 // The kind of an entry that is a tree: `store.Entry_Kind.Tree`.
 
 // One entry that add makes: its name, at an offset of the bytes of the
 // names, and its kind (ENTRY_OBJECT: an empty object; ENTRY_TREE: an empty
@@ -359,6 +383,12 @@ Add_Row :: struct {
 }
 
 // add makes up to 256 entries under a place in one commit: all or none.
+//
+// ```odin
+// names := "draftsnotes"
+// rows := [2]storage.Add_Row{{0, 6, storage.ENTRY_TREE}, {6, 5, storage.ENTRY_OBJECT}}
+// generation, status := storage.add(&client, storage.ROOT, rows[:], transmute([]u8)names)
+// ```
 add :: proc "contextless" (client: ^Client, place: Place, rows: []Add_Row, names: []u8, error: ^errors.Error_Record = nil) -> (generation: i64, status: Status) {
 	arguments: [3]isolated.Argument
 	arguments[0].integer = u64(place)
@@ -374,7 +404,7 @@ Listed :: struct {
 	name_count:  i64,
 	kind:        i64, // ENTRY_OBJECT or ENTRY_TREE.
 	size:        i64, // The bytes of an object, the entries of a tree.
-	generation:  i64,
+	generation:  i64, // The commit of the last change of the entry.
 }
 
 // list gives a page of the entries of the tree of a place, after the name
@@ -405,9 +435,9 @@ rename :: proc "contextless" (client: ^Client, place: Place, name: string, to_pl
 // The answer of the export share: the number of the share and its two
 // handles, as this program names them.
 Shared :: struct {
-	share:  i64,
-	ring:   i64,
-	region: i64,
+	share:  i64, // The number of the share, for `unshare`.
+	ring:   i64, // The handle of the call ring of the new connection.
+	region: i64, // The handle of its call region.
 }
 
 // share makes a new connection whose root is the tree of a place, and
@@ -460,14 +490,15 @@ unshare :: proc "contextless" (client: ^Client, number: i64, error: ^errors.Erro
 
 // The counts of the store of a connection: the row of the export usage.
 Usage :: struct {
-	objects:  i64,
-	trees:    i64,
-	versions: i64,
-	blocks:   i64,
-	limit:    i64,
-	removing: i64,
+	objects:  i64, // The objects of the store.
+	trees:    i64, // The trees inside the tree of the store.
+	versions: i64, // The versions of all the objects.
+	blocks:   i64, // The blocks that the store holds.
+	limit:    i64, // The most blocks of the store, as its grant gives it.
+	removing: i64, // The trees that wait in the removal queue.
 }
 
+// usage gives the counts of the store of the connection.
 usage :: proc "contextless" (client: ^Client) -> (counts: Usage, status: Status) {
 	bytes: []u8
 	_, bytes, status = call(client, "usage", nil)
@@ -485,10 +516,10 @@ error_text :: proc "contextless" (writer: ^system.Writer, client: ^Client, error
 
 // One state of an object, as the export versions gives it: its row.
 Version :: struct {
-	generation: i64,
+	generation: i64, // The commit of the state: the name of the version.
 	time:       i64, // Milliseconds since the format of the disk.
 	date:       i64, // Seconds since 1970 (UTC). 0: not known.
-	bytes:      i64,
+	bytes:      i64, // The size of the object in that state.
 	own_blocks: i64, // The blocks that only this state holds.
 	current:    i64, // 1: the current version.
 }
@@ -536,13 +567,13 @@ version :: proc "contextless" (client: ^Client, place: Place, name: string, gene
 // One range of bytes that differ between two states: the row of the export
 // compare.
 Byte_Range :: struct {
-	first: i64,
-	count: i64,
+	first: i64, // The first byte that differs.
+	count: i64, // The bytes of the range.
 }
 
 // compare copies into `into` the ranges of bytes that differ between two
-// states of an object (two generations). total is the count of all the
-// ranges: more than len(rows) when they did not fit.
+// states of an object (two generations). The ranges that do not fit in
+// `into` are not given.
 compare :: proc "contextless" (client: ^Client, place: Place, name: string, first: i64, second: i64, into: []Byte_Range, error: ^errors.Error_Record = nil) -> (rows: []Byte_Range, status: Status) {
 	arguments := [4]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = u64(first)}, {integer = u64(second)}}
 	bytes: []u8

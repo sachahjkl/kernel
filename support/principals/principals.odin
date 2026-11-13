@@ -6,12 +6,25 @@
 // No allocator and no kernel operation: the host tests run each procedure
 // (principals_test.odin). The root service, `unlock` and the console use
 // the same procedures.
+//
+// The parts:
+//
+// - `name_problem`, `passphrase_problem`: the rules of a name and of a
+//   passphrase, with a sentence for each refusal.
+// - `name_pack`, `name_unpack`: a name in three values of a ring record.
+// - `store_name_write`, `store_name_principal`: the name of the store of a
+//   program in the session of a principal.
+// - `Principal_File`, `file_encode`, `file_decode`,
+//   `file_additional_data`: the file of `unlock`.
+//
+// See [principal](term:principal), [named principal](term:named-principal)
+// and [passphrase](term:passphrase).
 package principals
 
 // Principal 0 is the machine. Its record exists at each boot, and its
 // session needs no unlock.
 MACHINE :: 0
-MACHINE_NAME :: "machine"
+MACHINE_NAME :: "machine" // The name of principal 0.
 // The records that the root service holds: principal 0 and one named
 // principal. Several named principals on one machine are not built.
 PRINCIPAL_CAPACITY :: 2
@@ -19,8 +32,8 @@ PRINCIPAL_CAPACITY :: 2
 // The bytes of the name of a principal: three values of a ring record, with
 // a zero byte after it.
 NAME_LIMIT :: 23
-PASSPHRASE_LEAST :: 8
-PASSPHRASE_LIMIT :: 128
+PASSPHRASE_LEAST :: 8 // The fewest bytes of a passphrase.
+PASSPHRASE_LIMIT :: 128 // The most bytes of a passphrase.
 
 // The context values of the program `unlock`. 0 to 4 are the roles that the
 // root service gives (the store: 3).
@@ -32,13 +45,13 @@ VALUE_NAME :: 6 // 6, 7 and 8: the name, 24 bytes with zero bytes after it.
 // with other parameters is refused: no file names its own cost.
 DERIVATION_MEMORY_KIBIBYTES :: 19 * 1024
 DERIVATION_PASSES :: 2
-DERIVATION_MEMORY_PAGES :: DERIVATION_MEMORY_KIBIBYTES / 4
+DERIVATION_MEMORY_PAGES :: DERIVATION_MEMORY_KIBIBYTES / 4 // The pages of 4096 bytes that the derivation needs.
 
-SALT_SIZE :: 16
-NONCE_SIZE :: 12
-TAG_SIZE :: 16
-KEY_SIZE :: 32
-PUBLIC_KEY_SIZE :: 32
+SALT_SIZE :: 16 // The bytes of the salt of Argon2id.
+NONCE_SIZE :: 12 // The bytes of the nonce of the seal (ChaCha20-Poly1305).
+TAG_SIZE :: 16 // The bytes of the tag of the seal.
+KEY_SIZE :: 32 // The bytes of the key that Argon2id derives.
+PUBLIC_KEY_SIZE :: 32 // The bytes of an Ed25519 or X25519 public key.
 // The two secret keys, sealed together: the Ed25519 seed (to sign grants)
 // and the X25519 scalar (to unlock documents).
 SECRET_KEYS_SIZE :: 64
@@ -46,8 +59,8 @@ SECRET_KEYS_SIZE :: 64
 // The file of a named principal: the object FILE_OBJECT in the store of
 // `unlock`. The offsets, in bytes; each number is little-endian.
 FILE_OBJECT :: "principal"
-FILE_MAGIC :: "PRINCIPL"
-FILE_FORMAT :: u32(1)
+FILE_MAGIC :: "PRINCIPL" // The first 8 bytes of the file.
+FILE_FORMAT :: u32(1) // The format number of the file. A file of another number is refused.
 OFFSET_MAGIC :: 0 // 8 bytes.
 OFFSET_FORMAT :: 8 // u32.
 OFFSET_MEMORY :: 12 // u32: the KiB of Argon2id.
@@ -62,30 +75,37 @@ OFFSET_NONCE :: OFFSET_SALT + SALT_SIZE // 124.
 // additional data of the seal: a change of the name, of a public key, of the
 // salt or of a parameter makes the open fail.
 OFFSET_SEALED :: OFFSET_NONCE + NONCE_SIZE // 136.
-SEALED_SIZE :: SECRET_KEYS_SIZE + TAG_SIZE
+SEALED_SIZE :: SECRET_KEYS_SIZE + TAG_SIZE // The sealed keys and their tag: 80 bytes.
 FILE_SIZE :: OFFSET_SEALED + SEALED_SIZE // 216.
 #assert(FILE_SIZE == 216)
 
+// The file of a named principal, decoded: what `unlock` keeps in its store.
+// `file_encode` writes it in 216 bytes; `file_decode` reads them as hostile
+// input and refuses each other form.
 Principal_File :: struct {
-	name:               [NAME_LIMIT]u8,
-	name_length:        int,
-	signing_public_key: [PUBLIC_KEY_SIZE]u8,
-	unlock_public_key:  [PUBLIC_KEY_SIZE]u8,
-	salt:               [SALT_SIZE]u8,
-	nonce:              [NONCE_SIZE]u8,
-	sealed:             [SEALED_SIZE]u8,
+	name:               [NAME_LIMIT]u8, // The name of the principal.
+	name_length:        int, // The bytes of the name.
+	signing_public_key: [PUBLIC_KEY_SIZE]u8, // The Ed25519 public key that verifies its grants.
+	unlock_public_key:  [PUBLIC_KEY_SIZE]u8, // The X25519 public key that seals its documents.
+	salt:               [SALT_SIZE]u8, // The salt of Argon2id.
+	nonce:              [NONCE_SIZE]u8, // The nonce of the seal.
+	sealed:             [SEALED_SIZE]u8, // The two secret keys, sealed, and the tag.
 }
 
+// Why `file_decode` refused a file. The sentence of each one is in
+// `file_problem_sentences`.
 File_Problem :: enum u8 {
-	None,
-	Wrong_Size,
-	Wrong_Magic,
-	Wrong_Format,
-	Other_Parameters,
-	Bad_Name,
-	Bytes_After_Name,
+	None, // The file is valid.
+	Wrong_Size, // Not 216 bytes.
+	Wrong_Magic, // It does not start with FILE_MAGIC.
+	Wrong_Format, // Another format number.
+	Other_Parameters, // Other parameters of Argon2id than DERIVATION_MEMORY_KIBIBYTES and DERIVATION_PASSES.
+	Bad_Name, // The name breaks `name_problem`.
+	Bytes_After_Name, // A byte after the name is not zero.
 }
 
+// The sentence of each problem of a file, for the window of `unlock` and the
+// log.
 @(rodata)
 file_problem_sentences := [File_Problem]string {
 	.None             = "",
@@ -97,13 +117,15 @@ file_problem_sentences := [File_Problem]string {
 	.Bytes_After_Name = "the file has bytes that are not zero after the name",
 }
 
+// Why a name of a principal is refused: the result of `name_problem`.
 Name_Problem :: enum u8 {
-	None,
-	Empty,
-	Too_Long,
-	Bad_Byte,
+	None, // The name is valid.
+	Empty, // No byte.
+	Too_Long, // More than NAME_LIMIT bytes.
+	Bad_Byte, // A byte that is not a letter, a digit, '-', '_' or '.'.
 }
 
+// The sentence of each problem of a name.
 @(rodata)
 name_problem_sentences := [Name_Problem]string {
 	.None     = "",
@@ -132,13 +154,15 @@ name_problem :: proc "contextless" (name: string) -> Name_Problem {
 	return .None
 }
 
+// Why a passphrase is refused: the result of `passphrase_problem`.
 Passphrase_Problem :: enum u8 {
-	None,
-	Too_Short,
-	Too_Long,
-	Bad_Byte,
+	None, // The passphrase is valid.
+	Too_Short, // Fewer than PASSPHRASE_LEAST bytes.
+	Too_Long, // More than PASSPHRASE_LIMIT bytes.
+	Bad_Byte, // A byte that is not printable.
 }
 
+// The sentence of each problem of a passphrase.
 @(rodata)
 passphrase_problem_sentences := [Passphrase_Problem]string {
 	.None      = "",

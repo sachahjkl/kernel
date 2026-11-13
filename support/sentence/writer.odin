@@ -1,9 +1,25 @@
-// Text for a person, with no allocator and no kernel operation: a Writer
+// Text for a reader, with no allocator and no kernel operation: a Writer
 // fills a buffer that the caller owns, and the sentences of the error
 // records (docs/MODULE_CONTRACT.md, section 8) and of the descriptions of
 // the exports are written with it. A program compiles it in through
 // support/system; the kernel tool compiles it on the host, so a sentence
 // of the host is the sentence of the machine.
+//
+// The parts:
+//
+// - `Writer`, `write_part`, `written`, `format`: text in a buffer, with the
+//   cut mark when it does not fit.
+// - `Part`, `Hex`, `Size`, `Duration`, `Hash`, `Module_Name`: the values that
+//   a text holds, each with its kind for the log.
+// - `error_text`, `kernel_error_text`, `export_error_text`,
+//   `ring_error_text` (`error.odin`): the sentence of an error record.
+// - `write_type`, `write_rights`, `write_parameter_type` (`describe.odin`):
+//   the types of an export.
+//
+// ```odin
+// buffer: [128]u8
+// text := sentence.format(buffer[:], "loaded ", u64(count), " modules in ", sentence.Duration{spent, .Microseconds})
+// ```
 package sentence
 
 import "contract:cut_mark"
@@ -13,7 +29,7 @@ import "contract:value_kinds"
 // Text without an allocator: a Part is a string or a value with a kind, and
 // format writes parts in a buffer.
 
-Hex :: distinct u64
+Hex :: distinct u64 // A number written in 16 hexadecimal digits: an address.
 Size :: value_kinds.Size
 Duration :: value_kinds.Duration
 Hash :: value_kinds.Hash
@@ -57,14 +73,15 @@ part_kind :: proc "contextless" (part: Part) -> value_kinds.Value_Kind {
 	return .None
 }
 
+// The digits of a number in hexadecimal, lower case.
 HEX_DIGITS :: [16]u8{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'}
 
 // A writer fills its buffer, and counts the bytes that the buffer cannot
 // hold: written ends the text with the cut mark (contract:cut_mark) when it
 // dropped some. A text is never cut in silence (docs/ARCHITECTURE.md).
 Writer :: struct {
-	buffer:         []u8,
-	count:          int,
+	buffer:         []u8, // The memory of the text, from the caller.
+	count:          int, // The bytes of the text in `buffer`.
 	dropped:        int, // The bytes that did not fit.
 	marked:         bool, // written ended the text with the cut mark.
 	mark_start:     int, // When marked: the bytes of the text before the mark.
@@ -72,6 +89,8 @@ Writer :: struct {
 	dropped_marked: int, // When marked: dropped when the mark was written.
 }
 
+// write_bytes adds bytes to the text: the bytes that do not fit are
+// counted, not written.
 write_bytes :: proc "contextless" (writer: ^Writer, bytes: []u8) {
 	// After the mark, each byte is a missing byte: written counts it in the
 	// mark again.
@@ -91,6 +110,8 @@ writer_reset :: proc "contextless" (writer: ^Writer) {
 	writer^ = {buffer = writer.buffer}
 }
 
+// write_unsigned writes a number in decimal, with at least `minimum_digits`
+// digits, `pad` before it.
 write_unsigned :: proc "contextless" (writer: ^Writer, value: u64, minimum_digits := 1, pad: u8 = '0') {
 	digits: [20]u8
 	count := 0
@@ -107,6 +128,7 @@ write_unsigned :: proc "contextless" (writer: ^Writer, value: u64, minimum_digit
 	write_bytes(writer, digits[len(digits) - count:])
 }
 
+// write_hex writes the low `digit_count` hexadecimal digits of a number.
 write_hex :: proc "contextless" (writer: ^Writer, value: u64, digit_count := 16) {
 	alphabet := HEX_DIGITS
 	for i in 0 ..< digit_count {
@@ -114,6 +136,9 @@ write_hex :: proc "contextless" (writer: ^Writer, value: u64, digit_count := 16)
 	}
 }
 
+// write_part writes one part: a string as it is, a number in decimal, a
+// `Hex` in 16 digits, a size or a duration with its unit, a hash in 64
+// digits, a status as its number.
 write_part :: proc "contextless" (writer: ^Writer, part: Part) {
 	switch value in part {
 	case string:
@@ -163,6 +188,8 @@ written :: proc "contextless" (writer: ^Writer) -> string {
 	return string(writer.buffer[:writer.count])
 }
 
+// format writes parts in a buffer and gives the text, with the cut mark
+// when it does not fit. The text lives in `buffer`.
 format :: proc "contextless" (buffer: []u8, parts: ..Part) -> string {
 	writer := Writer {
 		buffer = buffer,

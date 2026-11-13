@@ -1,6 +1,6 @@
 package line_editor
 
-// The history: the last lines that the person entered, in a ring of bytes.
+// The history: the last lines that the input entered, in a ring of bytes.
 // A line takes its own length, not LINE_CAPACITY: short lines leave room
 // for more of them. A line never wraps at the end of the ring: when it
 // does not fit before the end, it starts at the first byte, and the bytes
@@ -10,12 +10,13 @@ package line_editor
 // lines are long: 16384 bytes hold 256 lines of 64 bytes, or 81 lines of
 // 200 bytes. The oldest lines go first.
 HISTORY_LINE_CAPACITY :: 256
-HISTORY_BYTE_CAPACITY :: 16384
+HISTORY_BYTE_CAPACITY :: 16384 // The bytes of the ring of the history.
 
+// The history of one line, in the memory of the caller.
 History :: struct {
-	bytes:         [HISTORY_BYTE_CAPACITY]u8,
+	bytes:         [HISTORY_BYTE_CAPACITY]u8, // The ring of the bytes of the lines.
 	starts:        [HISTORY_LINE_CAPACITY]u64, // The count of bytes written before each line.
-	lengths:       [HISTORY_LINE_CAPACITY]u16,
+	lengths:       [HISTORY_LINE_CAPACITY]u16, // The bytes of each line.
 	bytes_written: u64, // Since the start, with the bytes that a line left unused at the end.
 	lines_written: u64, // Since the start.
 }

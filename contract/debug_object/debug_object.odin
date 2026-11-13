@@ -23,28 +23,41 @@
 //   Strings                                 header.string_size bytes
 //
 // and no other byte. The reader refuses every other form (check).
+//
+// Who uses it: the kernel tool writes the debug objects (`encode`) into the
+// debug image; the program `errors`, the console and the developer tools
+// read them through `system.Debug_Names` to name the frames of a stop
+// report (`check`, `place_of`).
+//
+// Example: the frame `0x0040_1234` of a stop report, in the module at
+// 0x0040_0000, is the offset 0x1234; `place_of` gives `{procedure =
+// "fault::three", offset_in_procedure = 8, file = "programs/fault/main.odin",
+// line = 15}`.
+//
+// See [debug object](term:debug-object) and [debug image](term:debug-image).
 package debug_object
 
 import "base:intrinsics"
 
 MAGIC :: u64(0x4A424F4755424544) // The bytes "DEBUGOBJ".
-VERSION :: 1
+VERSION :: 1 // The version of the format. A reader refuses another.
 
 // The bounds of a reader. The console module of today has about 210
 // procedures and 270 KiB of code.
 PROCEDURE_CAPACITY :: 1 << 20
-FILE_CAPACITY :: 1 << ROW_FILE_BITS
-LINE_CAPACITY :: 1 << 24
-STRING_CAPACITY :: 1 << 26
+FILE_CAPACITY :: 1 << ROW_FILE_BITS // The files: what the file part of a row holds.
+LINE_CAPACITY :: 1 << 24 // The rows of the line table.
+STRING_CAPACITY :: 1 << 26 // The bytes of the strings: 64 MiB.
 
+// The first 64 bytes of a debug object.
 Header :: struct {
-	magic:           u64,
-	version:         u32,
-	procedure_count: u32,
+	magic:           u64, // MAGIC.
+	version:         u32, // VERSION.
+	procedure_count: u32, // The records of the procedure table.
 	module_hash:     [32]u8, // The BLAKE3 hash of the module file that this object describes.
 	file_count:      u32, // With the file 0.
-	line_count:      u32,
-	string_size:     u32,
+	line_count:      u32, // The rows of the line table.
+	string_size:     u32, // The bytes of the strings.
 	reserved:        u32, // Zero.
 }
 #assert(size_of(Header) == 64)
@@ -54,7 +67,7 @@ Procedure :: struct {
 	start:         u32, // The offset of its first instruction in the memory of the module.
 	size:          u32, // Bytes, 1 at least. Two procedures never overlap.
 	name_offset:   u32, // In the strings.
-	name_count:    u16,
+	name_count:    u16, // The bytes of the name.
 	// The first package_count bytes of the name are its package, then
 	// "::" and the name of the procedure in the package. 0: the name has no
 	// package (an export, a procedure of an assembler file).
@@ -67,7 +80,7 @@ Procedure :: struct {
 // the Odin compiler.
 File :: struct {
 	path_offset: u32, // In the strings.
-	path_count:  u32,
+	path_count:  u32, // The bytes of the path.
 }
 #assert(size_of(File) == 8)
 
@@ -80,13 +93,13 @@ File :: struct {
 // a debug object, and a module has far fewer than 4096 source files and
 // no file has a million lines. The tool refuses a module past either bound.
 Line :: struct {
-	offset: u32,
+	offset: u32, // The offset in the memory of the module where the row starts.
 	place:  u32, // The file in the high ROW_FILE_BITS bits, the line (from 1; 0 only with the file 0) in the others.
 }
 #assert(size_of(Line) == 8)
 
-ROW_FILE_BITS :: 12
-ROW_LINE_BITS :: 32 - ROW_FILE_BITS
+ROW_FILE_BITS :: 12 // The bits of the file in a row: 4096 files.
+ROW_LINE_BITS :: 32 - ROW_FILE_BITS // The bits of the line in a row: about a million lines.
 ROW_LINE_LIMIT :: u32(1) << ROW_LINE_BITS // The lines of a row are below it.
 
 // row_place gives the word of a row for a file and a line, both inside
@@ -95,20 +108,22 @@ row_place :: proc "contextless" (file: u32, line: u32) -> u32 {
 	return file << ROW_LINE_BITS | line & (ROW_LINE_LIMIT - 1)
 }
 
+// row_file gives the file of a row.
 row_file :: proc "contextless" (row: Line) -> u32 {
 	return row.place >> ROW_LINE_BITS
 }
 
+// row_line gives the line of a row.
 row_line :: proc "contextless" (row: Line) -> u32 {
 	return row.place & (ROW_LINE_LIMIT - 1)
 }
 
 // Why a check refused a debug object.
 Fault :: enum u32 {
-	None               = 0,
+	None               = 0, // The object is whole.
 	Too_Small          = 1, // Shorter than its header.
 	Not_A_Debug_Object = 2, // Another magic number.
-	Version            = 3,
+	Version            = 3, // Another version.
 	Too_Many           = 4, // A count over its capacity.
 	Size_Differs       = 5, // The size of the file is not the size of its tables.
 	Reserved           = 6, // A field that must be zero is not.
@@ -122,6 +137,7 @@ Fault :: enum u32 {
 	Line_End           = 14, // The last row has a file.
 }
 
+// The sentence of each fault, for the log and the console.
 @(rodata)
 fault_sentences := [Fault]string {
 	.None               = "the debug object is whole",
@@ -145,11 +161,11 @@ fault_sentences := [Fault]string {
 // that has them reads each record with no fault; only check proves the
 // order and the names.
 Tables :: struct {
-	header:     Header,
-	procedures: []Procedure,
-	files:      []File,
-	lines:      []Line,
-	strings:    []u8,
+	header:     Header, // A copy of the header.
+	procedures: []Procedure, // The procedure table, in the object.
+	files:      []File, // The file table, in the object.
+	lines:      []Line, // The line table, in the object.
+	strings:    []u8, // The strings, in the object.
 }
 
 // tables gives the tables of an object, after a check of its header and of
@@ -291,7 +307,7 @@ Place :: struct {
 	package_count:       int, // The bytes of its package in `procedure`.
 	offset_in_procedure: u64, // The offset less the start of the procedure.
 	file:                string, // "": no source line.
-	line:                u32,
+	line:                u32, // The line, from 1. 0: no source line.
 }
 
 // place_of names an offset of the module: the procedure that holds it, and
@@ -345,11 +361,11 @@ place_of :: proc "contextless" (object: []u8, offset: u64) -> (place: Place) {
 // The parts of a debug object that encode receives. The names and the
 // paths are offsets into `strings`.
 Encode_Parts :: struct {
-	module_hash: [32]u8,
-	procedures:  []Procedure,
+	module_hash: [32]u8, // The hash of the module file.
+	procedures:  []Procedure, // By their start.
 	files:       []File, // With the file 0, all zero.
-	lines:       []Line,
-	strings:     []u8,
+	lines:       []Line, // By their offset; the last one with the file 0.
+	strings:     []u8, // The names and the paths.
 }
 
 // encoded_size gives the bytes of the object of these parts.

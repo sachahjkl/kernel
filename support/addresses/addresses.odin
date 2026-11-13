@@ -12,14 +12,15 @@ import op "contract:operation"
 // module record that holds its address.
 Kind :: enum u8 {
 	Memory           = 0, // Memory of the program: its stacks, its tables, what it made.
-	Module_Code      = 1,
-	Module_Constants = 2,
-	Module_Data      = 3,
+	Module_Code      = 1, // The executable pages of a module.
+	Module_Constants = 2, // The read-only pages of a module.
+	Module_Data      = 3, // The writable pages of a module.
 	Thread_Area      = 4, // The thread record and the kernel ring of a thread.
 	Device           = 5, // A framebuffer, boot data, the registers of a device.
 	Shared           = 6, // Memory that another program or handle also names: a ring, a region.
 }
 
+// The name of each kind in a developer tool.
 @(rodata)
 KIND_NAMES := [Kind]string {
 	.Memory           = "memory",
@@ -42,6 +43,9 @@ module_of :: proc "contextless" (address: u64, modules: []op.Module_Record) -> (
 	return -1, 0
 }
 
+// kind_of gives the kind of a mapping: Device, Thread_Area, a part of a
+// module when a module record holds its address (by its flags), Shared, or
+// Memory.
 kind_of :: proc "contextless" (mapping: op.Program_Mapping, modules: []op.Module_Record) -> Kind {
 	switch {
 	case .Device in mapping.flags:
@@ -84,8 +88,8 @@ near_export :: proc "contextless" (file: []u8, base: u64, address: u64) -> (name
 
 // One part of the band of an address space: a mapping, or a folded gap.
 Segment :: struct {
-	x:       int,
-	width:   int,
+	x:       int, // Pixels from the left of the band.
+	width:   int, // Pixels.
 	mapping: int, // The index of the mapping. -1: a folded gap.
 }
 

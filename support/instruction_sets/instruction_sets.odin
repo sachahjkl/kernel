@@ -7,32 +7,39 @@
 //
 // CPUID is slow in a virtual machine (an exit to the host): a program reads
 // the facts once, at its start, and keeps the result.
+//
+// See [usable instruction set](term:usable-instruction-set) and
+// (docs/SIMD.md).
 package instruction_sets
 
+// One instruction set of the x86-64 processor. A set before Popcnt uses the
+// vector registers: it is usable only when the kernel saves them.
 Instruction_Set :: enum u8 {
-	Sse,
-	Sse2,
-	Sse3,
-	Ssse3,
-	Sse4_1,
-	Sse4_2,
-	Aes,
-	Pclmulqdq,
-	Avx,
-	F16c,
-	Fma,
-	Avx2,
-	Avx512_F,
-	Avx512_Dq,
-	Avx512_Cd,
-	Avx512_Bw,
-	Avx512_Vl,
+	Sse, // SSE: the xmm registers.
+	Sse2, // SSE2: integers in the xmm registers. Every x86-64 processor has it.
+	Sse3, // SSE3.
+	Ssse3, // SSSE3: the byte shuffle.
+	Sse4_1, // SSE4.1.
+	Sse4_2, // SSE4.2.
+	Aes, // AES-NI: the rounds of AES.
+	Pclmulqdq, // The carry-less multiplication.
+	Avx, // AVX: the ymm registers.
+	F16c, // The conversions of half floats.
+	Fma, // The fused multiply-add.
+	Avx2, // AVX2: integers in the ymm registers.
+	Avx512_F, // AVX-512 Foundation: the zmm and opmask registers.
+	Avx512_Dq, // AVX-512 doublewords and quadwords.
+	Avx512_Cd, // AVX-512 conflict detection.
+	Avx512_Bw, // AVX-512 bytes and words.
+	Avx512_Vl, // AVX-512 on the xmm and ymm registers.
 	Popcnt, // From here: general registers only.
-	Bmi1,
-	Bmi2,
+	Bmi1, // Bit manipulation 1.
+	Bmi2, // Bit manipulation 2.
 }
+// A set of instruction sets: what a program can use.
 Instruction_Sets :: bit_set[Instruction_Set; u32]
 
+// The name of each set, as the manuals of the processor write it.
 @(rodata)
 instruction_set_names := [Instruction_Set]string {
 	.Sse       = "SSE",
@@ -59,26 +66,27 @@ instruction_set_names := [Instruction_Set]string {
 
 // One bit of XCR0 for each state component that the kernel can save.
 State_Component :: enum u8 {
-	X87                = 0,
-	Sse                = 1,
+	X87                = 0, // The registers of the x87 unit.
+	Sse                = 1, // The xmm registers and MXCSR.
 	Avx                = 2, // The high halves of ymm0 to ymm15.
 	Opmask             = 5, // k0 to k7.
 	Zmm_High_Halves    = 6, // The high halves of zmm0 to zmm15.
 	Zmm_High_Registers = 7, // zmm16 to zmm31.
 }
+// A set of state components: the bits of XCR0.
 State_Components :: bit_set[State_Component; u64]
 
-AVX_COMPONENTS :: State_Components{.Sse, .Avx}
-AVX_512_COMPONENTS :: State_Components{.Sse, .Avx, .Opmask, .Zmm_High_Halves, .Zmm_High_Registers}
+AVX_COMPONENTS :: State_Components{.Sse, .Avx} // The components that AVX needs saved.
+AVX_512_COMPONENTS :: State_Components{.Sse, .Avx, .Opmask, .Zmm_High_Halves, .Zmm_High_Registers} // The components that AVX-512 needs saved.
 
 // What the processor says, as it said it: the decoding is a pure procedure
 // (usable_from), which the host tests.
 Processor_Facts :: struct {
-	highest_leaf:   u32,
-	leaf_1_ecx:     u32,
-	leaf_1_edx:     u32,
-	leaf_7_ebx:     u32,
-	leaf_7_ecx:     u32,
+	highest_leaf:   u32, // CPUID leaf 0, EAX: the highest leaf.
+	leaf_1_ecx:     u32, // CPUID leaf 1, ECX.
+	leaf_1_edx:     u32, // CPUID leaf 1, EDX.
+	leaf_7_ebx:     u32, // CPUID leaf 7, subleaf 0, EBX. 0 when the highest leaf is below 7.
+	leaf_7_ecx:     u32, // CPUID leaf 7, subleaf 0, ECX.
 	// XCR0, read only when CPUID says OSXSAVE: without it, xgetbv is an
 	// invalid opcode. Zero then.
 	extended_control_register_0: u64,
@@ -110,6 +118,8 @@ LEAF_7_EBX_AVX512_CD :: 1 << 28
 LEAF_7_EBX_AVX512_BW :: 1 << 30
 LEAF_7_EBX_AVX512_VL :: 1 << 31
 
+// processor_identification_read is the instruction CPUID of a leaf and a
+// subleaf.
 processor_identification_read :: asm(leaf: u32, subleaf: u32) -> (a, b, c, d: u32) [
 	leaf -> a    = %eax,
 	b            = %ebx,
@@ -120,6 +130,8 @@ processor_identification_read :: asm(leaf: u32, subleaf: u32) -> (a, b, c, d: u3
 	cpuid
 }
 
+// extended_control_register_read is the instruction XGETBV: the extended
+// control register `number`. It is an invalid opcode without OSXSAVE.
 extended_control_register_read :: asm(number: u32) -> (low, high: u32) [
 	number = %ecx,
 	low    = %eax,

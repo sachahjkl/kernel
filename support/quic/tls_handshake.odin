@@ -175,7 +175,7 @@ Tls_Handshake :: struct {
 	server_public_key:             [ED25519_KEY_SIZE]u8, // The server: its own public key; the client: the key that the server proved.
 	// The client: the key that a server presented and that is not the
 	// pinned key (alert bad_certificate). A public value: the caller says
-	// which key came, so that a person sees a stale pin at once.
+	// which key came, so that a reader sees a stale pin at once.
 	refused_server_public_key:     [ED25519_KEY_SIZE]u8,
 	handshake_keys_ready:          bool,
 	application_keys_ready:        bool,

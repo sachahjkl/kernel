@@ -73,18 +73,25 @@ image_entry_of :: proc "contextless" (image: []u8, hash: [32]u8) -> ^info.Image_
 }
 
 // A grant: a handle that a new program receives, and the rights of its copy.
+//
+// `program_start` gives each grant with `give` at its index of the context;
+// a zero handle is no grant. Example, in the root service:
+// `grants[system.GRANT_MACHINE] = {machine, {.Inspect, .Stop}}`.
 Grant :: struct {
-	handle: Handle,
-	rights: Rights,
+	handle: Handle, // A handle of the starter. 0: no grant at this index.
+	rights: Rights, // The rights of the copy: at most the rights of `handle`.
 }
 
 // A part of a memory object at an address of a program.
+//
+// `program_start` maps each one in the new program before its start: a
+// starter gives a fixed range this way.
 Mapping :: struct {
-	memory:     Handle,
-	address:    u64,
+	memory:     Handle, // The memory object, with the rights of `flags`.
+	address:    u64, // The address in the new program.
 	first:      u64, // The first page of the memory object.
 	page_count: u64, // 0: all pages from first.
-	flags:      op.Map_Flags,
+	flags:      op.Map_Flags, // The access of the pages.
 }
 
 PREPARED_CAPACITY :: 64 // Two parts for each module: the code, and the fixed part for one base.
@@ -99,9 +106,9 @@ PREPARED_CAPACITY :: 64 // Two parts for each module: the code, and the fixed pa
 //          one base and one binding.
 //   All:   each segment: the copy of a module that has no table.
 Module_Part :: enum u8 {
-	All,
-	Code,
-	Fixed,
+	All, // Each segment, for one program.
+	Code, // The segments with no Write, shared by every program.
+	Fixed, // The segments read-only after the load, for one base and one binding.
 }
 
 // A prepared module: a memory object that holds one part of a module as the
@@ -113,12 +120,12 @@ Module_Part :: enum u8 {
 // Read and Execute only, so no program writes it.
 Prepared :: struct {
 	hash:    [32]u8, // The hash of the module file.
-	part:    Module_Part,
+	part:    Module_Part, // Which segments the memory object holds.
 	base:    u64, // Fixed: the address of the module in each program that maps it.
 	binding: [32]u8, // Fixed: what its slots hold (binding_of): zero for a module with no import.
 	first:   u64, // The offset in the module of the first page of the memory object.
 	memory:  Handle, // 0: the place is free.
-	pages:   u64,
+	pages:   u64, // The pages of the memory object.
 }
 
 // The prepared modules of a program that starts programs. The zero value is
@@ -126,7 +133,7 @@ Prepared :: struct {
 // each prepared module. A prepared module stays while a program maps it:
 // each start closes the ones that no program maps.
 Prepared_Modules :: struct {
-	lock:    Lock,
+	lock:    Lock, // The threads of the owner that start programs take it.
 	modules: [PREPARED_CAPACITY]Prepared,
 }
 
@@ -138,20 +145,20 @@ Load_Source :: struct {
 	replacements: []module.Replacement, // From the party that starts the program. The program cannot change them.
 }
 
-MODULE_SPACE_CAPACITY :: op.PROGRAM_MODULE_CAPACITY
+MODULE_SPACE_CAPACITY :: op.PROGRAM_MODULE_CAPACITY // The modules of one space: the module records that the kernel keeps for one program.
 IMPORT_CAPACITY :: 8 // The imports of one module that this loader binds.
 
 // One module that a loader put in a program: a place of a module space.
 Placed :: struct {
 	hash:          [32]u8, // The module that is loaded.
 	replaces:      [32]u8, // Zero, or the hash of the import that a replacement changed to this module.
-	file:          []u8,
+	file:          []u8, // The file of the module, in the load source.
 	original:      []u8, // The file of the module that this one replaces: the names of the exports that a slot uses.
-	base:          u64,
+	base:          u64, // The address of the module in the program.
 	users:         u32, // The modules that import it, and each load of it by the caller. 0: the place is free.
 	loading:       bool, // Its imports are not all loaded: a module that imports it now makes a cycle.
-	mapped:        bool,
-	import_count:  u8,
+	mapped:        bool, // Its segments are mapped in the program.
+	import_count:  u8, // The entries of `import_places` in use.
 	import_places: [IMPORT_CAPACITY]u8, // The place of each import.
 }
 
@@ -160,12 +167,14 @@ Placed :: struct {
 Module_Space :: struct {
 	program:     Handle, // 0: this program.
 	budget:      Handle, // Pays for the memory of the modules. 0: the budget of this program.
-	source:      Load_Source,
+	source:      Load_Source, // Where the imports come from.
 	next:        u64, // Where the next module goes.
 	modules:     [MODULE_SPACE_CAPACITY]Placed,
 	prepared:    ^Prepared_Modules, // Not nil: each module maps its shared code from this table. nil: each module is a copy of its own.
 }
 
+// cycles gives the cycle counter of the processor (`rdtsc`), with no kernel
+// entry. `nanoseconds` turns it into a time.
 cycles :: #force_inline proc "contextless" () -> u64 {
 	return u64(intrinsics.read_cycle_counter())
 }
@@ -931,7 +940,7 @@ file_error_names := [module.Error]string {
 	.Bad_Export      = "an export is not valid",
 }
 
-// load_error_text writes a load error for a person: one line or more, each
+// load_error_text writes a load error for a reader: one line or more, each
 // one ended by a line feed. The record has the names: the text needs no
 // other data.
 load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Error) {

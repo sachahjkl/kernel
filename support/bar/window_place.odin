@@ -3,8 +3,8 @@ package bar
 // The places of the windows on the screen. The compositor moves the windows;
 // these procedures hold no state, so a host test checks each edge.
 //
-// A window is on the grid of GRID pixels. Wherever a person puts it, a part
-// of its title stays on the screen: the person can always take it again,
+// A window is on the grid of GRID pixels. Wherever the input puts it, a part
+// of its title stays on the screen: the input can always take it again,
 // and bring its close button back. Without that part, a window that went
 // past an edge could never come back: the menu of the windows only brings
 // a window to the front.
@@ -15,15 +15,17 @@ TITLE_KEPT :: GRID // The pixels of the title that stay on the screen, at least.
 // The frame of a window, around its surface: the compositor draws it.
 Window_Frame :: struct {
 	outer_width:  int, // The surface and the two borders.
-	border:       int,
+	border:       int, // The border on each side, in pixels.
 	close_size:   int, // The close button, at the right end of the title.
-	title_height: int,
+	title_height: int, // The height of the title bar.
 }
 
+// grid_floor gives the place on the grid at or before a place.
 grid_floor :: proc "contextless" (place: int) -> int {
 	return place - place %% GRID
 }
 
+// grid_ceiling gives the place on the grid at or after a place.
 grid_ceiling :: proc "contextless" (place: int) -> int {
 	return -grid_floor(-place)
 }
@@ -48,7 +50,7 @@ window_place_kept :: proc "contextless" (x, y: int, frame: Window_Frame, screen_
 	return
 }
 
-// dragged_window_place gives the place of a window that a person drags: the
+// dragged_window_place gives the place of a window that the input drags: the
 // pointer is at (pointer_x, pointer_y) and holds the window at (held_x,
 // held_y) from its corner. The place is the nearest point of the grid, then
 // kept on the screen.

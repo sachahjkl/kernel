@@ -8,20 +8,20 @@ import "support:system"
 // memory: the table of the frame that it builds, the table of the frame on
 // its surface, the interface state and the input of the next frame.
 Window_Drawing :: struct {
-	now:    Draw_Table,
+	now:    Draw_Table, // The table of the frame that the program builds.
 	before: Draw_Table, // What the surface shows (its first picture). Empty before the first frame.
 	// A surface with two pictures: the table of its second picture. The
 	// program draws in one picture while the compositor shows the other, so
 	// each picture shows its own older frame.
 	before_second: Draw_Table,
-	drawn_second:  bool,
-	state:  Interface_State,
-	input:  Input,
+	drawn_second:  bool, // The second picture shows `before_second`.
+	state:  Interface_State, // The focus and the element under the pointer, from frame to frame.
+	input:  Input, // The input of the next frame.
 	drawn:  bool, // The surface shows the table before.
 	// The measures of the last frame, in nanoseconds.
 	build_time, difference_time, draw_time: u64,
 	build_start: u64, // When the frame that is built now started.
-	damage: Damage,
+	damage: Damage, // The damage of the last frame.
 }
 
 // window_drawing_of makes the drawing of a window with tables in the

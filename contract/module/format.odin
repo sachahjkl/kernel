@@ -11,49 +11,74 @@
 // Record 0 of an indexed table is the empty record, so index 0 means "none".
 // This package allocates no memory: the boot program, the kernel and the
 // build tool use the same code.
+//
+// Who uses it: the build tool writes modules; the boot program checks the
+// kernel and the root service; the kernel loads the root service;
+// `support/system` loads every other module; the console, the program
+// `manual` and the site read the descriptions of the exports. The parts:
+//
+// - `Header`, `Table_Kind`, `Table_Entry`: the frame of a file.
+// - `Segment`, `Import`, `Slot`, `Export`, the rebase table: what a loader
+//   reads (`load.odin`: `validate`, `rebase`, `bind`).
+// - `Function`, `Type`, `Direction`, `Record`, `Field`, `Table_Place`: the
+//   call form of an export (docs/MODULE_CONTRACT.md, section 4).
+// - `Documentation`: the help of the module and of each export.
+// - `Load_Error`, `Load_Stage`, `Difference` (`error.odin`) and `Error`
+//   (`load.odin`): why a load failed.
+//
+// See [module](term:module) and [export](term:export).
 package module
 
 MAGIC :: u64(0x0000_454C_5544_4F4D) // The bytes "MODULE", then two zero bytes.
-VERSION :: 1
-PAGE_SIZE :: 4096
-HASH_SIZE :: 32
+VERSION :: 1 // The version of the format that this code reads and writes. A file of another version is refused.
+PAGE_SIZE :: 4096 // The alignment of each segment in the file and in memory: one page of the processor.
+HASH_SIZE :: 32 // The bytes of a BLAKE3 hash: the name of a module.
 
 // The feature bits that this code understands. A file that sets another bit
 // in Header.must_understand is refused.
 UNDERSTOOD_FEATURES :: u64(0)
 
+// The processor whose instructions the segments hold. A loader refuses a
+// module of another machine (`Error.Unknown_Machine`).
 Machine :: enum u32 {
-	None   = 0,
-	X86_64 = 1,
+	None   = 0, // No machine: refused.
+	X86_64 = 1, // The 64-bit x86 processor.
 }
 
+// The first 48 bytes of a module file. A loader reads it first and refuses
+// the file when one field is not one that it takes (`validate`).
+//
+// Example: the header of a program starts with the bytes "MODULE", the
+// version 1, the machine `X86_64`, and `entry_export` the index of its
+// export `main`.
 Header :: struct {
-	magic:           u64,
-	version:         u32,
+	magic:           u64, // `MAGIC`.
+	version:         u32, // `VERSION`.
 	header_size:     u32, // The table directory starts at this offset.
-	must_understand: u64,
-	machine:         Machine,
+	must_understand: u64, // Feature bits: a reader refuses a file with a bit outside `UNDERSTOOD_FEATURES`.
+	machine:         Machine, // The processor of the code.
 	table_count:     u32, // The number of entries of the table directory.
 	memory_size:     u64, // The size of the address range of the loaded module.
 	entry_export:    u32, // An index in the export table. 0: the module has no entry.
-	reserved:        u32,
+	reserved:        u32, // 0.
 }
 #assert(size_of(Header) == 48)
 
 // The number of a table is its index in the table directory.
 Table_Kind :: enum u32 {
-	None          = 0,
-	Segments      = 1,
-	Imports       = 2,
-	Slots         = 3,
-	Exports       = 4,
-	Rebases       = 5,
-	Functions     = 6,
-	Strings       = 7,
-	Documentation = 8,
-	Records       = 9,
-	Fields        = 10,
+	None          = 0, // The entry 0 of the directory: no table.
+	Segments      = 1, // `Segment` records: the bytes to map.
+	Imports       = 2, // `Import` records: the modules that this one calls.
+	Slots         = 3, // `Slot` records: the places that receive the address of an imported export.
+	Exports       = 4, // `Export` records: the entry points that other modules call.
+	Rebases       = 5, // The rebase table: words, not records.
+	Functions     = 6, // `Function` records: the call form of each export.
+	Strings       = 7, // The string table: bytes.
+	Documentation = 8, // `Documentation` records: the help of the module and of each export.
+	Records       = 9, // `Record` records: the descriptions of the records that the exports take and give.
+	Fields        = 10, // `Field` records: the fields of those records.
 }
+// The tables that this version of the format knows.
 TABLE_COUNT :: len(Table_Kind)
 
 // A table can gain fields at the end of its record: record_size says how
@@ -61,55 +86,77 @@ TABLE_COUNT :: len(Table_Kind)
 // know, and reads the bytes that the file does not have as zero.
 Table_Entry :: struct {
 	offset:      u64, // From the start of the file.
-	count:       u32,
-	record_size: u32,
+	count:       u32, // The records of the table, record 0 included; bytes for the string table.
+	record_size: u32, // The bytes of one record in this file: at least the bytes that the reader needs, or the reader reads zeros.
 }
 #assert(size_of(Table_Entry) == 16)
 
+// The access of a segment once loaded. A loader never maps a segment with
+// `Write` and `Execute`: the kernel refuses such a mapping.
 Segment_Flag :: enum u32 {
-	Read                 = 0,
-	Write                = 1,
-	Execute              = 2,
+	Read                 = 0, // The module reads the bytes.
+	Write                = 1, // The module writes the bytes: its data.
+	Execute              = 2, // The bytes are instructions.
 	Read_Only_After_Load = 3, // The loader writes it (rebases, slots), then removes Write.
 }
+// The flags of one `Segment`.
 Segment_Flags :: bit_set[Segment_Flag;u32]
 
+// One run of bytes of the module that a loader maps, with one access.
 // memory_offset and memory_size are multiples of PAGE_SIZE. The bytes of
 // memory after file_size are zero.
+//
+// Example: the code of a module is a segment with `flags = {.Read,
+// .Execute}`, `memory_offset = 0`; its data a segment with `{.Read, .Write}`
+// after it.
 Segment :: struct {
-	file_offset:   u64,
-	file_size:     u64,
-	memory_offset: u64,
-	memory_size:   u64,
-	flags:         Segment_Flags,
-	reserved:      u32,
+	file_offset:   u64, // Where the bytes start in the file: a multiple of PAGE_SIZE.
+	file_size:     u64, // The bytes in the file: at most memory_size.
+	memory_offset: u64, // From the base of the module in memory.
+	memory_size:   u64, // The bytes of addresses of the segment.
+	flags:         Segment_Flags, // Its access.
+	reserved:      u32, // 0.
 }
 #assert(size_of(Segment) == 40)
 
 // One imported module, named by the BLAKE3 hash of its file.
+//
+// A loader finds the file in its load source by this hash, and refuses a
+// file whose hash is another (`Load_Stage.Read`). A replacement can change the
+// hash that an import names before the load (`Replacement`).
 Import :: struct {
-	hash: [HASH_SIZE]u8,
+	hash: [HASH_SIZE]u8, // The BLAKE3 hash of the whole file of the module.
 }
 
 // One import slot: 8 bytes of memory that receive the address of an export.
+//
+// The loader writes there the address of the export `export_index` of the
+// module `import_index`, then maps the segment without `Write` when it is
+// `Read_Only_After_Load`.
 Slot :: struct {
-	memory_offset: u64,
-	import_index:  u32,
-	export_index:  u32,
+	memory_offset: u64, // The place of the 8 bytes, from the base of the module.
+	import_index:  u32, // An index in the import table, from 1.
+	export_index:  u32, // An index in the export table of that module, from 1.
 }
 #assert(size_of(Slot) == 16)
 
+// One export: a procedure of the module that another module or the loader
+// calls. Its index is its number in the module: an import slot and an error
+// record name it by that index. See [export](term:export).
 Export :: struct {
 	code_offset: u64, // The memory offset of the first instruction.
 	function:    u32, // An index in the function table.
-	reserved:    u32,
+	reserved:    u32, // 0.
 }
 #assert(size_of(Export) == 16)
 
 // The type of a parameter or of a result of an export, in the call form
 // (docs/MODULE_CONTRACT.md, section 4).
+//
+// The site shows each member as a wire form. A description that names a type
+// outside this list is refused by `isolated.record_size`.
 Type :: enum u8 {
-	None    = 0,
+	None    = 0, // No parameter, or no result: an export with the result None gives nothing.
 	Integer = 1, // A signed integer of 64 bits, in a register.
 	Text    = 2, // The address of a slice record {address, count} of UTF-8 bytes.
 	// A Text result: the caller gives one more argument after the parameters,
@@ -167,9 +214,9 @@ Direction :: enum u8 {
 // address. address is aligned on the alignment of the record. count and
 // capacity are in records (in bytes for Bytes).
 Table_Place :: struct {
-	address:  u64,
-	count:    u64,
-	capacity: u64,
+	address:  u64, // The first record.
+	count:    u64, // The records of the table: see `Direction` for who changes it.
+	capacity: u64, // The records that fit at `address`.
 }
 #assert(size_of(Table_Place) == 24)
 
@@ -179,17 +226,17 @@ PARAMETER_CAPACITY :: 6 // The integer registers of the call form.
 // console reads it. The loader does not.
 Function :: struct {
 	name_offset:           u32, // In the string table.
-	name_count:            u32,
+	name_count:            u32, // The bytes of the name.
 	about_offset:          u32, // One line of help, in the string table.
-	about_count:           u32,
+	about_count:           u32, // The bytes of the line of help.
 	parameter_names:       [PARAMETER_CAPACITY]u32, // The name of each parameter, in the string table.
-	parameter_count:       u8,
-	result:                Type,
-	parameters:            [PARAMETER_CAPACITY]Type,
-	parameter_name_counts: [PARAMETER_CAPACITY]u8,
-	reserved:              [2]u8,
+	parameter_count:       u8, // At most PARAMETER_CAPACITY.
+	result:                Type, // The type of the result: None, Integer, Text, Record or Table.
+	parameters:            [PARAMETER_CAPACITY]Type, // The type of each parameter, in the order of the registers.
+	parameter_name_counts: [PARAMETER_CAPACITY]u8, // The bytes of the name of each parameter.
+	reserved:              [2]u8, // 0.
 	text_offset:           u32, // The documentation text of the export, in the string table.
-	text_count:            u32,
+	text_count:            u32, // The bytes of the documentation text.
 	parameter_details:     [PARAMETER_CAPACITY]u32, // What the type of each parameter needs: Type says what it is.
 	result_detail:         u32, // A Record or Table result: the index of the description of the record.
 	// Not 0: the export gives an error record (contract/errors), and this is
@@ -203,7 +250,7 @@ Function :: struct {
 	// (Read) for each other parameter. A file with records of 96 bytes has
 	// the direction Read for each parameter.
 	parameter_directions:  [PARAMETER_CAPACITY]Direction,
-	reserved3:             [2]u8,
+	reserved3:             [2]u8, // 0.
 }
 #assert(size_of(Function) == 104)
 
@@ -212,13 +259,16 @@ HANDLE_CAPACITY :: 16 // The handles that one call lends: its Handle parameters,
 
 // The description of a record: a parameter or a result of the type Record.
 // Record 0 of the record table is the empty record.
+//
+// Example: the description of `errors.Error_Record` is the record
+// "Error_Record" of 56 bytes, with seven Integer fields of 8 bytes.
 Record :: struct {
 	name_offset: u32, // In the string table.
-	name_count:  u32,
+	name_count:  u32, // The bytes of the name.
 	size:        u32, // In bytes: at most RECORD_SIZE_LIMIT.
 	first_field: u32, // An index in the field table. The fields of a record follow each other.
-	field_count: u32,
-	reserved:    u32,
+	field_count: u32, // The fields of the record.
+	reserved:    u32, // 0.
 }
 #assert(size_of(Record) == 24)
 
@@ -231,17 +281,17 @@ Record :: struct {
 // order of their offsets, and no two fields share a byte.
 Field :: struct {
 	name_offset: u32, // In the string table.
-	name_count:  u32,
+	name_count:  u32, // The bytes of the name.
 	offset:      u32, // From the start of the record, in bytes.
-	type:        Type,
+	type:        Type, // Integer, Handle or Text.
 	unsigned:    bool, // An Integer: true for an unsigned integer, false for a signed one.
-	reserved:    [2]u8,
+	reserved:    [2]u8, // 0.
 	detail:      u32, // An Integer: its size in bytes, 0 for 8. A Handle: the rights that the callee needs. A Text: its size in bytes.
-	reserved2:   u32,
+	reserved2:   u32, // 0.
 }
 #assert(size_of(Field) == 24)
 
-// The documentation of the module, for a person. Record 1 of the
+// The documentation of the module, for a reader. Record 1 of the
 // documentation table is the documentation of the module. No loader reads it.
 //
 // A documentation text is UTF-8 bytes. A line feed ends a line. A line is a
@@ -253,9 +303,9 @@ Field :: struct {
 // its backticks (docs/TOOLS.md, "The form of a documented comment").
 Documentation :: struct {
 	about_offset: u32, // One line, in the string table: what the module is.
-	about_count:  u32,
+	about_count:  u32, // The bytes of the line.
 	text_offset:  u32, // The documentation text, in the string table.
-	text_count:   u32,
+	text_count:   u32, // The bytes of the text.
 }
 #assert(size_of(Documentation) == 16)
 
@@ -266,7 +316,7 @@ Documentation :: struct {
 //   an odd word    is a bitmap: bit n (1 to 63) set means "rebase the
 //                  location at cursor + 8 * (n - 1)"; then the cursor
 //                  advances by 63 locations.
-REBASE_WORD_SIZE :: 8
-REBASE_BITMAP_LOCATIONS :: 63
+REBASE_WORD_SIZE :: 8 // The bytes of one word of the rebase table, and of one location that it names.
+REBASE_BITMAP_LOCATIONS :: 63 // The locations that one bitmap word names: its bits 1 to 63.
 
 // The string table is bytes. Its byte 0 is zero, so that offset 0 is no name.

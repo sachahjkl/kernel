@@ -7,6 +7,9 @@ package compatibility_endian
 
 import "base:intrinsics"
 
+// The loads (`unchecked_get_`) and the stores (`unchecked_put_`) of 32 and
+// 64 bits, little-endian (`le`) or big-endian (`be`), at the first bytes of
+// a slice that holds them.
 unchecked_get_u32le :: #force_inline proc "contextless" (b: []byte) -> u32 {
 	return intrinsics.unaligned_load((^u32)(raw_data(b)))
 }

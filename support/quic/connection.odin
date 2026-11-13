@@ -34,7 +34,7 @@ SENT_PACKET_LIMIT :: 64 // The ack-eliciting packets of one space that wait for 
 CONGESTION_WINDOW :: 12000
 PACKET_THRESHOLD :: 3 // RFC 9002, section 6.1.1.
 TIME_THRESHOLD_NUMERATOR :: 9 // RFC 9002, section 6.1.2: 9/8 of the round-trip time.
-TIME_THRESHOLD_DENOMINATOR :: 8
+TIME_THRESHOLD_DENOMINATOR :: 8 // See TIME_THRESHOLD_NUMERATOR.
 GRANULARITY :: 1000 // Microseconds: RFC 9002, section 6.1.2.
 INITIAL_ROUND_TRIP_TIME :: 333_000 // Microseconds: RFC 9002, section 6.2.2.
 ACK_DELAY_EXPONENT_OF_THIS_SIDE :: 3 // The default of RFC 9000, section 18.2: not sent.
@@ -42,7 +42,7 @@ MAX_ACK_DELAY_OF_THIS_SIDE :: 25_000 // Microseconds: the default of RFC 9000, s
 ACK_RANGES_SEND_LIMIT :: 16 // The ranges of one ACK frame that this side sends.
 ACK_RANGES_READ_LIMIT :: 64 // The ranges of one ACK frame of the peer that this side acts on; the others are read and skipped.
 PROBE_PACKETS :: 2 // RFC 9002, section 6.2.4: one or two probes at a probe timeout.
-NO_DEADLINE :: max(u64)
+NO_DEADLINE :: max(u64) // No timer runs: connection_deadline gives it.
 // Microseconds from the start of a client, or from the first authentic
 // Initial at a server, to the end of the handshake. Anyone can make an
 // authentic Initial (its keys come from a public value), so a record that
@@ -50,87 +50,94 @@ NO_DEADLINE :: max(u64)
 // the idle timeout.
 HANDSHAKE_TIME_LIMIT :: 10_000_000
 
+// The state of a connection. It goes from Idle to Handshake, Connected,
+// then Closing or Draining, then Closed; a failure of the handshake or a
+// timeout goes to Closed.
 Connection_State :: enum u8 {
 	Idle, // Not started.
-	Handshake,
+	Handshake, // The handshake of TLS runs.
 	Connected, // The handshake of TLS is complete.
 	Closing, // This side sent CONNECTION_CLOSE: it answers each datagram with it, for three probe timeouts.
 	Draining, // The peer sent CONNECTION_CLOSE: this side sends nothing, for three probe timeouts.
-	Closed,
+	Closed, // The connection ended: the record can serve again.
 }
 
 // The frames that are not data, which a packet carries and which go again
 // when the packet is lost.
 Control_Frame :: enum u8 {
-	Handshake_Done,
-	Max_Data,
+	Handshake_Done, // A server: the handshake is confirmed.
+	Max_Data, // The limit of the data of the connection that this side gives the peer.
 	Max_Streams, // The limit of streams that this side gives the peer: a server, when a stream of the client ended.
 	Streams_Blocked, // A client that cannot open a stream for the limit of the server.
-	Path_Response,
+	Path_Response, // The answer to a PATH_CHALLENGE of the peer.
 }
 
 // One ack-eliciting packet that waits for an acknowledgement: what it
 // carried, to send it again when it is lost.
 Sent_Packet :: struct {
-	in_use:        bool,
-	packet_number: u64,
-	time_sent:     u64,
-	size:          u64,
-	crypto_offset: u64,
-	crypto_length: u64,
+	in_use:        bool, // The place holds a packet.
+	packet_number: u64, // Its number in its space.
+	time_sent:     u64, // Microseconds.
+	size:          u64, // Its bytes: they count in the bytes in flight.
+	crypto_offset: u64, // The handshake bytes that it carried: the first offset.
+	crypto_length: u64, // The count of those bytes. 0: none.
 	// One STREAM frame at most: its stream, its range, its end.
-	stream_identifier: u64,
-	stream_offset:     u64,
-	stream_length:     u64,
-	stream_finish:     bool,
-	controls:          bit_set[Control_Frame],
+	stream_identifier: u64, // The stream of the STREAM frame.
+	stream_offset:     u64, // Its first offset.
+	stream_length:     u64, // Its bytes. 0 with no STREAM frame, or with an empty FIN.
+	stream_finish:     bool, // It carried the end of the stream.
+	controls:          bit_set[Control_Frame], // The control frames that it carried.
 	// The control frames of one stream at most.
-	stream_controls:            bit_set[Stream_Control],
-	stream_controls_identifier: u64,
+	stream_controls:            bit_set[Stream_Control], // The control frames of that stream.
+	stream_controls_identifier: u64, // The stream of those control frames.
 }
 
 // The handshake bytes of one level: the bytes that TLS gave to send (kept
 // until the end: they are small), and the bytes of the peer, given to TLS in
 // order.
 Crypto_Stream :: struct {
-	send:              [CRYPTO_BUFFER_SIZE]u8,
-	send_length:       u64,
+	send:              [CRYPTO_BUFFER_SIZE]u8, // The bytes that TLS gave to send.
+	send_length:       u64, // Their count.
 	send_next:         u64, // The first byte that was never sent.
 	send_again:        Range_Set, // Bytes of lost packets.
-	send_acknowledged: Range_Set,
-	receive:           [CRYPTO_BUFFER_SIZE]u8,
-	received:          Range_Set,
+	send_acknowledged: Range_Set, // Bytes that the peer acknowledged.
+	receive:           [CRYPTO_BUFFER_SIZE]u8, // The bytes of the peer, by offset.
+	received:          Range_Set, // The offsets of the peer that came.
 	delivered:         u64, // The bytes before this offset went to TLS.
 }
 
+// One packet number space (RFC 9000, section 12.3): the Initial, the
+// Handshake or the application packets, with their keys, their numbers and
+// their acknowledgements.
 Packet_Number_Space :: struct {
-	keys_installed:                bool,
-	discarded:                     bool,
-	send_keys:                     Packet_Keys,
-	receive_keys:                  Packet_Keys,
-	next_packet_number:            u64,
+	keys_installed:                bool, // The keys of the level are known.
+	discarded:                     bool, // The keys were dropped: the space sends and takes nothing more.
+	send_keys:                     Packet_Keys, // The keys of the packets of this side.
+	receive_keys:                  Packet_Keys, // The keys of the packets of the peer.
+	next_packet_number:            u64, // The number of the next packet of this side.
 	// The packets of the peer.
-	received:                      Range_Set,
-	has_received:                  bool,
-	largest_received:              u64,
-	largest_received_time:         u64,
-	ack_needed:                    bool,
+	received:                      Range_Set, // The numbers that came.
+	has_received:                  bool, // A packet of the peer came.
+	largest_received:              u64, // The largest number that came.
+	largest_received_time:         u64, // When it came, in microseconds.
+	ack_needed:                    bool, // An ACK frame waits to be sent.
 	ack_eliciting_unacknowledged:  int, // Ack-eliciting packets of the peer since the last ACK frame.
-	ack_deadline:                  u64,
+	ack_deadline:                  u64, // When the ACK frame must go, in microseconds.
 	// The packets of this side.
-	sent:                          [SENT_PACKET_LIMIT]Sent_Packet,
-	ack_eliciting_in_flight:       int,
-	has_acknowledged:              bool,
-	largest_acknowledged:          u64,
+	sent:                          [SENT_PACKET_LIMIT]Sent_Packet, // The packets that wait for an acknowledgement.
+	ack_eliciting_in_flight:       int, // Their count.
+	has_acknowledged:              bool, // The peer acknowledged a packet.
+	largest_acknowledged:          u64, // The largest number that the peer acknowledged.
 	loss_time:                     u64, // 0: no packet waits for the time threshold.
-	last_ack_eliciting_sent_time:  u64,
+	last_ack_eliciting_sent_time:  u64, // When the last ack-eliciting packet went: the probe timeout starts there.
 	probes:                        int, // Probe packets to send after a probe timeout.
 	// The numbers below this one are refused: the set of received numbers
-	// forgot their ranges, and such a packet may have been processed.
+	// forgot their ranges, and such a packet can have been processed.
 	packet_number_floor:           u64,
-	crypto:                        Crypto_Stream,
+	crypto:                        Crypto_Stream, // The handshake bytes of the level.
 }
 
+// What the caller chooses for a connection.
 Connection_Configuration :: struct {
 	// The role, the application protocol, the Ed25519 key of a server or the
 	// pinned key of a client, the least seed strength. The connection writes
@@ -139,96 +146,112 @@ Connection_Configuration :: struct {
 	idle_timeout_milliseconds: u64, // 0: no idle timeout from this side.
 }
 
+// One QUIC connection: the whole state, in memory of the caller (some
+// hundreds of KiB). One thread uses it at a time.
+//
+// ```odin
+// connection_start_client(&connection, streams[:], &configuration, &cryptography, &generator, now, &error) or_return
+// for connection.state != .Closed {
+// 	for {
+// 		length := connection_datagram_send(&connection, buffer[:], now)
+// 		if length == 0 {
+// 			break
+// 		}
+// 		// ... send buffer[:length] ...
+// 	}
+// 	// ... wait for a datagram, or for connection_deadline(&connection) ...
+// }
+// ```
 Connection :: struct {
-	configuration:                     Connection_Configuration,
-	cryptography:                      ^Cryptography,
-	generator:                         ^random.Generator,
-	state:                             Connection_State,
-	tls:                               Tls_Handshake,
-	tls_started:                       bool,
-	spaces:                            [Encryption_Level]Packet_Number_Space,
-	local_connection_id:               [CONNECTION_ID_SIZE]u8,
-	peer_connection_id:                [CONNECTION_ID_LIMIT]u8,
-	peer_connection_id_length:         int,
+	configuration:                     Connection_Configuration, // A copy of the configuration.
+	cryptography:                      ^Cryptography, // The cryptography module of the program.
+	generator:                         ^random.Generator, // The random generator of the thread.
+	state:                             Connection_State, // Where the connection is.
+	tls:                               Tls_Handshake, // The state of the TLS handshake.
+	tls_started:                       bool, // A server: TLS started at the first Initial.
+	spaces:                            [Encryption_Level]Packet_Number_Space, // One space for each level: Initial, Handshake, application.
+	local_connection_id:               [CONNECTION_ID_SIZE]u8, // The identifier that this side chose.
+	peer_connection_id:                [CONNECTION_ID_LIMIT]u8, // The identifier of the peer.
+	peer_connection_id_length:         int, // Its bytes.
 	peer_connection_id_known:          bool, // A client: the server chose its identifier.
 	// The Destination Connection ID of the first Initial of the client: the
 	// Initial keys come from it. After a Retry it is the Source Connection
 	// ID of the Retry (RFC 9001, section 5.2).
 	original_destination_connection_id: [CONNECTION_ID_LIMIT]u8,
-	original_destination_connection_id_length: int,
+	original_destination_connection_id_length: int, // Its bytes.
 	// A Retry (retry.odin). A client: the one Retry that it took. A server:
 	// the record of a client that came back with a valid token.
 	retried:                           bool,
 	retry_first_destination_connection_id: [CONNECTION_ID_LIMIT]u8, // The identifier that the client chose first, before the Retry.
-	retry_first_destination_connection_id_length: int,
+	retry_first_destination_connection_id_length: int, // Its bytes.
 	retry_source_connection_id:        [CONNECTION_ID_LIMIT]u8, // The Source Connection ID of the Retry.
-	retry_source_connection_id_length: int,
+	retry_source_connection_id_length: int, // Its bytes.
 	retry_token:                       [RETRY_TOKEN_LIMIT]u8, // A client: the token that each later Initial carries.
-	retry_token_length:                int,
-	local_parameters:                  Transport_Parameters,
-	peer_parameters:                   Transport_Parameters,
-	peer_parameters_applied:           bool,
-	handshake_confirmed:               bool,
+	retry_token_length:                int, // Its bytes.
+	local_parameters:                  Transport_Parameters, // The parameters that this side sends.
+	peer_parameters:                   Transport_Parameters, // The parameters of the peer.
+	peer_parameters_applied:           bool, // The parameters of the peer took effect.
+	handshake_confirmed:               bool, // RFC 9001, section 4.1.2.
 	address_validated:                 bool, // A server: a Handshake packet of the client came. A client: always.
-	client_received_handshake_ack:     bool,
-	bytes_received:                    u64,
-	bytes_sent:                        u64,
-	bytes_in_flight:                   u64,
+	client_received_handshake_ack:     bool, // A client: an ACK of a Handshake packet came.
+	bytes_received:                    u64, // The bytes of the datagrams of the peer: the anti-amplification limit of a server.
+	bytes_sent:                        u64, // The bytes of the datagrams of this side.
+	bytes_in_flight:                   u64, // The bytes of the packets that wait for an acknowledgement.
 	// The round-trip time (RFC 9002, section 5), in microseconds.
-	has_round_trip_sample:             bool,
-	latest_round_trip:                 u64,
-	smoothed_round_trip:               u64,
-	round_trip_variation:              u64,
-	min_round_trip:                    u64,
-	probe_timeout_count:               u32,
-	last_sent_time:                    u64,
+	has_round_trip_sample:             bool, // A round trip was measured.
+	latest_round_trip:                 u64, // latest_rtt.
+	smoothed_round_trip:               u64, // smoothed_rtt.
+	round_trip_variation:              u64, // rttvar.
+	min_round_trip:                    u64, // min_rtt.
+	probe_timeout_count:               u32, // pto_count: the probe timeouts in a row.
+	last_sent_time:                    u64, // When this side last sent a datagram.
 	// The idle timeout, in microseconds.
-	idle_timeout:                      u64,
-	last_activity:                     u64,
-	ack_eliciting_sent_since_receive:  bool,
+	idle_timeout:                      u64, // The least of the two idle timeouts. 0: none.
+	last_activity:                     u64, // The last packet of the peer, or the first ack-eliciting packet of this side after it.
+	ack_eliciting_sent_since_receive:  bool, // This side sent an ack-eliciting packet since the last packet of the peer.
 	// The streams (streams.odin): the table of the caller, and the counts
 	// of the streams that each side opened.
-	streams:                           []Stream,
-	streams_opened_by_peer:            u64,
-	streams_opened_by_this_side:       u64,
-	streams_limit_given:               u64, // The MAX_STREAMS that this side gave the peer: the streams that the peer may open in all.
-	peer_max_streams_bidirectional:    u64,
+	streams:                           []Stream, // The records of the streams, from the caller.
+	streams_opened_by_peer:            u64, // The streams that the peer opened.
+	streams_opened_by_this_side:       u64, // The streams that this side opened.
+	streams_limit_given:               u64, // The MAX_STREAMS that this side gave the peer: the streams that the peer can open in all.
+	peer_max_streams_bidirectional:    u64, // The MAX_STREAMS that the peer gave.
 	stream_send_turn:                  int, // The record whose stream sends first in the next packet: each stream gets its turn.
 	// Flow control of the connection: the data of all streams.
-	peer_max_data:                     u64,
+	peer_max_data:                     u64, // The MAX_DATA that the peer gave.
 	data_sent_total:                   u64, // The new bytes that this side sent, on all streams.
-	receive_window:                    u64,
+	receive_window:                    u64, // The bytes that this side lets the peer send ahead of what the application read.
 	receive_max_data:                  u64, // The MAX_DATA that this side gave.
 	data_received_total:               u64, // The largest offset of each stream of the peer, summed.
 	data_consumed_total:               u64, // The bytes of the peer that the application read, or that a reset of the peer dropped.
 	peer_max_ack_delay:                u64, // Microseconds.
-	peer_ack_delay_exponent:           u64,
-	pending_controls:                  bit_set[Control_Frame],
-	path_response:                     [PATH_DATA_SIZE]u8,
+	peer_ack_delay_exponent:           u64, // The ack_delay_exponent of the peer.
+	pending_controls:                  bit_set[Control_Frame], // The control frames that wait to be sent.
+	path_response:                     [PATH_DATA_SIZE]u8, // The data of the PATH_CHALLENGE to answer.
 	// The close.
-	close_error_code:                  u64,
-	close_frame_type:                  u64,
-	close_is_application:              bool,
+	close_error_code:                  u64, // The error code of the CONNECTION_CLOSE.
+	close_frame_type:                  u64, // The frame type that caused it (a transport close).
+	close_is_application:              bool, // The close is of the application (frame type 0x1D).
 	// The first bytes of the reason phrase of the CONNECTION_CLOSE of the
 	// peer: a program logs them, to tell why a foreign stack closed.
 	close_reason_of_peer:              [CLOSE_REASON_KEPT]u8,
-	close_reason_of_peer_length:       int,
-	closed_by_peer:                    bool,
-	closed_by_idle_timeout:            bool,
-	closed_by_handshake_timeout:       bool,
+	close_reason_of_peer_length:       int, // Its bytes.
+	closed_by_peer:                    bool, // The peer sent CONNECTION_CLOSE.
+	closed_by_idle_timeout:            bool, // The idle timeout ended the connection.
+	closed_by_handshake_timeout:       bool, // HANDSHAKE_TIME_LIMIT ended the connection.
 	ended_at:                          u64, // The time at which connection_time_passes ended the connection: with last_activity, a program shows how long an idle end took.
-	handshake_deadline:                u64,
+	handshake_deadline:                u64, // The end of HANDSHAKE_TIME_LIMIT.
 	// Set while the frames of one packet are read: data of the packet had no
 	// place in a range set, so the packet is not acknowledged.
 	packet_data_dropped:               bool,
-	close_to_send:                     bool,
+	close_to_send:                     bool, // A CONNECTION_CLOSE waits to be sent.
 	// The closing state answers the 1st, 2nd, 4th, 8th... datagram of the
 	// peer, not each one: a third party that knows the identifier and
 	// forges the address of the client makes few answers (RFC 9000,
 	// section 10.2.1).
 	close_datagrams_received:          u64,
-	close_next_answer:                 u64,
-	close_deadline:                    u64,
+	close_next_answer:                 u64, // The count of datagrams at which the next answer goes.
+	close_deadline:                    u64, // The end of the closing or draining state.
 	// Private memory: the copy of a datagram that came, and the frames of
 	// the packets of a datagram to send.
 	datagram_copy:                     [DATAGRAM_LIMIT]u8,
@@ -267,7 +290,7 @@ connection_start_client :: proc "contextless" (connection: ^Connection, streams:
 // connection_start_server prepares a server for one client: the handshake
 // starts at the first Initial packet of the client, whose Destination
 // Connection ID gives the Initial keys. streams is memory of the caller,
-// never a stack: the client may open as many streams at one time.
+// never a stack: the client can open as many streams at one time.
 connection_start_server :: proc "contextless" (connection: ^Connection, streams: []Stream, configuration: ^Connection_Configuration, cryptography: ^Cryptography, generator: ^random.Generator, now: u64, error: ^errors.Error_Record) -> bool {
 	connection_reset(connection, streams, configuration, cryptography, generator, now)
 	connection.configuration.tls.role = .Server
@@ -296,6 +319,8 @@ connection_seed_strength_check :: proc "contextless" (configuration: ^Connection
 	return true
 }
 
+// connection_reset makes a record a new connection: all zero, with the
+// streams, the configuration, the cryptography and the generator.
 @(private)
 connection_reset :: proc "contextless" (connection: ^Connection, streams: []Stream, configuration: ^Connection_Configuration, cryptography: ^Cryptography, generator: ^random.Generator, now: u64) {
 	connection^ = {}

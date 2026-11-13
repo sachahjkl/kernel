@@ -24,20 +24,20 @@ import "contract:ring"
 // this program started, or a connection to a service.
 Call_Connection :: struct {
 	program:       Handle, // The call host or the service: its state says if it stopped.
-	ring_memory:   Handle,
-	region_memory: Handle,
+	ring_memory:   Handle, // The memory of the call ring.
+	region_memory: Handle, // The memory of the call region.
 	files_memory:  Handle, // A call host: the page of the list of its files.
-	calls:         ring.Ring,
-	region:        []u8,
-	tag:           u32,
+	calls:         ring.Ring, // The call ring, mapped in this program.
+	region:        []u8, // The call region, mapped in this program.
+	tag:           u32, // The tag of the last call: each call takes the next one, and its completion must have it.
 }
 
 // What an isolated call gives besides its integer result.
 Call_Status :: enum u32 {
-	Ok           = 0,
+	Ok           = 0, // The export ran and did not fail: the integer result is not negative.
 	Lend_Failed  = 1, // A handle of the arguments could not be lent: `lend` says why.
 	No_Room      = 2, // The arguments do not fit in the call region: isolated.room_missing says which table.
-	Ring_Full    = 3,
+	Ring_Full    = 3, // The call ring had no room for the command.
 	Stopped      = 4, // The other program stopped during the call.
 	Refused      = 5, // The other program gave a status that is not Ok: Bad_Export, Bad_Arguments, Bad_Handle. The error record has its refusal.
 	Wrong_Answer = 6, // The other program gave a count of a table that is smaller than the count on entry. The error record names the parameter.

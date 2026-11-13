@@ -20,6 +20,8 @@ rights_text :: proc "contextless" (writer: ^Writer, value: i64) {
 	}
 }
 
+// object_name gives the name of an object kind from an error record, or "an
+// unknown kind of object" for a number out of `op.Object_Kind`.
 @(private = "file")
 object_name :: proc "contextless" (value: i64) -> string {
 	return value >= 0 && value <= i64(max(op.Object_Kind)) ? op.OBJECT_KIND_NAMES[op.Object_Kind(value)] : "an unknown kind of object"

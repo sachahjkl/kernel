@@ -10,19 +10,21 @@ package web
 
 LARGE_SIZE :: 1 << 20 // The bytes of the page /large and of a body to /sink.
 HEAD_LIMIT :: 2048 // The bytes of the head of a request or a response, at most.
-FNV_START :: 0xCBF2_9CE4_8422_2325
+FNV_START :: 0xCBF2_9CE4_8422_2325 // The offset basis of FNV-1a of 64 bits: the hash of no byte.
 
+// The methods of the test of TCP.
 Method :: enum u8 {
-	None = 0,
-	Get  = 1,
-	Post = 2,
+	None = 0, // A response, or a method that the test does not use.
+	Get  = 1, // GET: a page.
+	Post = 2, // POST: a body to /sink.
 }
 
+// The head of a request or of a response of the test of TCP.
 Head :: struct {
 	size:           int, // The bytes of the head, with the empty line at its end.
-	method:         Method,
-	path:           [64]u8,
-	path_length:    int,
+	method:         Method, // A request: its method.
+	path:           [64]u8, // A request: its path.
+	path_length:    int, // The bytes of the path.
 	status:         int, // A response: its status code.
 	content_length: int, // -1: the head has no Content-Length.
 	close:          bool, // "Connection: close".
@@ -33,12 +35,15 @@ pattern :: #force_inline proc "contextless" (offset: int) -> u8 {
 	return u8(offset * 7 + offset >> 11)
 }
 
+// pattern_fill writes the bytes of the page /large from an offset.
 pattern_fill :: proc "contextless" (buffer: []u8, offset: int) {
 	for &byte, index in buffer {
 		byte = pattern(offset + index)
 	}
 }
 
+// fnv adds bytes to an FNV-1a hash of 64 bits: start from FNV_START. Each
+// side of the test computes it over a body and compares.
 fnv :: proc "contextless" (hash: u64, bytes: []u8) -> u64 {
 	hash := hash
 	for byte in bytes {
@@ -78,11 +83,14 @@ head_end_from :: proc "contextless" (bytes: []u8, scanned_length: int) -> int {
 	return 0
 }
 
+// lower gives the lower case of an ASCII letter.
 @(private)
 lower :: proc "contextless" (byte: u8) -> u8 {
 	return byte >= 'A' && byte <= 'Z' ? byte + 32 : byte
 }
 
+// same_name says if a line starts with a name of a field, in any case.
+// The name is lower case.
 @(private)
 same_name :: proc "contextless" (line: []u8, name: string) -> bool {
 	if len(line) < len(name) {
@@ -96,6 +104,7 @@ same_name :: proc "contextless" (line: []u8, name: string) -> bool {
 	return true
 }
 
+// number reads a decimal number with spaces around it.
 @(private)
 number :: proc "contextless" (bytes: []u8) -> (value: int, ok: bool) {
 	digits := 0
@@ -159,6 +168,8 @@ head_read :: proc "contextless" (bytes: []u8) -> (head: Head, ok: bool) {
 }
 
 @(private)
+// first_line reads the first line of a head: a request line or a status
+// line.
 first_line :: proc "contextless" (head: ^Head, line: []u8) -> bool {
 	if same_name(line, "http/1.1 ") || same_name(line, "http/1.0 ") {
 		status, ok := number(line[9:])
@@ -188,6 +199,7 @@ first_line :: proc "contextless" (head: ^Head, line: []u8) -> bool {
 	return true
 }
 
+// path gives the path of a request head.
 path :: proc "contextless" (head: ^Head) -> string {
 	return string(head.path[:head.path_length])
 }

@@ -8,22 +8,22 @@ import "support:text_shaping"
 // The fonts that the package can measure (docs/FONTS.md, section 12.6).
 // Cells_8x16: the grid of the font of the cells, 8 x 16 pixels at scale 1;
 // the vector font of the system and Spleen 8x16 both draw on it, as the
-// setting of the person chooses. Interface: the proportional font of the
+// setting `font` chooses. Interface: the proportional font of the
 // names, titles, labels, buttons and lists (B612), when the program has it
 // (Draw_Table.interface_font) and the setting is the vector font; else a
 // text of this kind is measured and drawn in the font of the cells. A text
 // is always measured in the font that will draw it.
 Font_Kind :: enum u8 {
-	Cells_8x16,
-	Interface,
+	Cells_8x16, // The font of the cells: each character is one cell wide.
+	Interface, // The proportional interface font.
 }
 
 // A font and a size. scale: 1, 2 or 3 times the native size (docs/DESIGN.md,
 // section 5); 0 means 1.
 Font :: struct {
-	kind:   Font_Kind,
-	scale:  u8,
-	weight: Font_Weight,
+	kind:   Font_Kind, // Which font.
+	scale:  u8, // 1, 2 or 3; 0 is 1.
+	weight: Font_Weight, // Regular or bold.
 }
 
 // The weight of a text. Bold draws at scale 1 only (the titles of the
@@ -31,14 +31,14 @@ Font :: struct {
 // In the font of the cells the width does not change: the cells are the
 // same. In the interface font the bold weight has its own advances.
 Font_Weight :: enum u8 {
-	Regular,
-	Bold,
+	Regular, // The normal weight.
+	Bold, // The bold weight: at scale 1 only.
 }
 
-FONT_BOLD :: Font{weight = .Bold}
+FONT_BOLD :: Font{weight = .Bold} // The font of the cells, bold.
 
 FONT_LARGE :: Font{scale = 3} // The one number of a card.
-FONT_MEDIUM :: Font{scale = 2}
+FONT_MEDIUM :: Font{scale = 2} // The font of the cells at twice its size.
 
 // The interface font: the names, the labels, the buttons, the lists, the
 // captions; its bold weight: the titles of the cards.
@@ -52,13 +52,15 @@ INTERFACE_TEXT_LIMIT :: 256
 // the font at scale 3 is far smaller.
 INK_MARGIN_LIMIT :: 16
 
+// font_scale gives the scale of a font, from 1 to 3: 0 is 1, and a scale
+// above 3 is 3.
 font_scale :: proc "contextless" (font: Font) -> int {
 	return clamp(int(font.scale), 1, 3)
 }
 
 // font_in_use gives the font that draws a text of a table: an Interface
 // text is in the font of the cells when the table has no interface font,
-// when the setting of the person is Spleen 8x16, or when the text is longer
+// when the setting of the owner is Spleen 8x16, or when the text is longer
 // than INTERFACE_TEXT_LIMIT.
 font_in_use :: proc "contextless" (table: ^Draw_Table, font: Font, text_length: int) -> Font {
 	used := font
@@ -165,11 +167,20 @@ line_height :: proc "contextless" (font: Font) -> int {
 }
 
 // A short text that a caller builds from parts, in its own memory.
+//
+// ```odin
+// builder: interface.Text_Builder
+// interface.text_put(&builder, "pages: ")
+// interface.text_put_number(&builder, pages)
+// interface.draw_text(frame.table, x, y, interface.text_of(&builder), color)
+// ```
 Text_Builder :: struct {
-	bytes: [128]u8,
-	count: int,
+	bytes: [128]u8, // The text.
+	count: int, // The bytes in use.
 }
 
+// text_put adds a text to a builder. The bytes that do not fit in its 128
+// bytes are dropped.
 text_put :: proc "contextless" (builder: ^Text_Builder, part: string) {
 	count := min(len(part), len(builder.bytes) - builder.count)
 	copy(builder.bytes[builder.count:], part[:count])
@@ -188,6 +199,7 @@ text_put_number :: proc "contextless" (builder: ^Text_Builder, value: u64, minim
 	text_put(builder, string(digits[len(digits) - count:]))
 }
 
+// text_of gives the text of a builder. It is valid while the builder is.
 text_of :: proc "contextless" (builder: ^Text_Builder) -> string {
 	return string(builder.bytes[:builder.count])
 }

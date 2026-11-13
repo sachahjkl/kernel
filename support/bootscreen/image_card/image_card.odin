@@ -17,6 +17,7 @@ package image_card
 import info "contract:boot_info"
 import module "contract:module"
 
+// What a file of the boot image is: the kind sets its color and its row.
 File_Kind :: enum u8 {
 	Program, // A module with an entry export: a program starts from it.
 	No_Entry, // A module with no entry export: other modules import it.
@@ -27,13 +28,13 @@ File_Kind :: enum u8 {
 // this count stay in the count and the bytes of their kind, with no part
 // and no tile.
 FILE_CAPACITY :: 512
-TILE_CAPACITY :: 128
+TILE_CAPACITY :: 128 // The names that get a tile; the other files are counted after the last tile of their kind.
 
 // The rows of names under the strip. Each kind needs one row at least.
 NAME_ROW_COUNT :: 4
 #assert(NAME_ROW_COUNT >= len(File_Kind))
 
-STRIP_LEAST_WIDTH :: 2
+STRIP_LEAST_WIDTH :: 2 // The fewest pixels of the part of a file in the strip, so that each file is seen.
 // The part of the failed file is wider than the others can be at their
 // least, so that its color is seen.
 FAILED_LEAST_WIDTH :: 4
@@ -41,47 +42,54 @@ FAILED_LEAST_WIDTH :: 4
 // A name is drawn in the font of the cells: each character is one cell.
 CELL_WIDTH :: 8
 TILE_PADDING :: 4 // On each side of the name, inside its tile.
-TILE_GAP :: 4
+TILE_GAP :: 4 // Pixels between two tiles.
 
+// One file of the image, as the layout places it.
 File :: struct {
 	name:        string, // Points into the image: valid while the image is.
-	size:        u64,
-	kind:        File_Kind,
+	size:        u64, // Its bytes.
+	kind:        File_Kind, // What it is.
 	failed:      bool, // The file has the name of the file that failed its check.
-	strip_x:     int,
+	strip_x:     int, // The x of its part in the strip.
 	strip_width: int, // 0: the file has no part in the strip.
 }
 
+// One kind of file: its counts and where its rows are.
 Kind_Summary :: struct {
 	count:     int, // Every file of the kind, also the ones after FILE_CAPACITY.
-	bytes:     u64,
+	bytes:     u64, // The bytes of every file of the kind.
 	first:     int, // The files of the kind are Layout.files[first:end].
-	end:       int,
-	first_row: int,
+	end:       int, // See first.
+	first_row: int, // Its first row of names.
 	row_count: int, // 0 when the kind has no file.
 	named:     int, // The files of the kind that have a tile.
 	more_row:  int, // The place of the count of the files with no tile.
-	more_x:    int,
+	more_x:    int, // Its x.
 }
 
+// The tile of one name in the rows of names.
 Name_Tile :: struct {
 	file:  int, // An index in Layout.files.
-	row:   int,
+	row:   int, // The row of names.
 	x:     int, // From the left of the names.
-	width: int,
+	width: int, // Pixels.
 }
 
+// The places of the card of the boot image: the strip, the rows of names
+// and their tiles. `layout_place` computes them; the boot display draws
+// them.
 Layout :: struct {
 	// By kind, then by size with the largest first, then in the order of
 	// the image.
 	files:      [FILE_CAPACITY]File,
-	file_count: int,
-	kinds:      [File_Kind]Kind_Summary,
-	tiles:      [TILE_CAPACITY]Name_Tile,
-	tile_count: int,
+	file_count: int, // The entries of `files` in use.
+	kinds:      [File_Kind]Kind_Summary, // The summary of each kind.
+	tiles:      [TILE_CAPACITY]Name_Tile, // The tiles of the names.
+	tile_count: int, // The entries of `tiles` in use.
 	valid:      bool, // The tables of the image are valid.
 }
 
+// layout_reset empties a layout.
 layout_reset :: proc "contextless" (layout: ^Layout) {
 	layout.file_count = 0
 	layout.kinds = {}
@@ -151,6 +159,8 @@ file_goes_before :: proc "contextless" (kind: File_Kind, size: u64, other: ^File
 }
 
 @(private)
+// entry_name gives the name of an entry of the image: its bytes before the
+// first zero.
 entry_name :: proc "contextless" (entry: ^info.Image_Entry) -> string {
 	count := 0
 	for count < len(entry.name) && entry.name[count] != 0 {
@@ -181,6 +191,9 @@ kind_ranges :: proc "contextless" (layout: ^Layout) {
 }
 
 @(private)
+// least_width gives the fewest pixels of the part of a file in the strip:
+// FAILED_LEAST_WIDTH for the failed file, else STRIP_LEAST_WIDTH, at most
+// `width`.
 least_width :: proc "contextless" (file: ^File, width: int) -> int {
 	return min(file.failed ? FAILED_LEAST_WIDTH : STRIP_LEAST_WIDTH, width)
 }

@@ -18,19 +18,21 @@ import "contract:blake3"
 //       (1 to LINE_CAPACITY), then its bytes (32 to 126 each)
 //   the end: the BLAKE3 hash of each byte before it (32 bytes)
 
-HISTORY_FILE_MAGIC :: "LHST"
-HISTORY_FILE_VERSION :: 1
-HISTORY_FILE_HEADER_SIZE :: 16
-HISTORY_FILE_HASH_SIZE :: blake3.HASH_SIZE
+HISTORY_FILE_MAGIC :: "LHST" // The first 4 bytes of the file.
+HISTORY_FILE_VERSION :: 1 // The version of the file. A file of another version is refused.
+HISTORY_FILE_HEADER_SIZE :: 16 // The bytes before the lines.
+HISTORY_FILE_HASH_SIZE :: blake3.HASH_SIZE // The bytes of the hash at the end.
 // One block of the storage service. The newest lines that fit in it are
 // kept: about 120 lines of 30 bytes.
 HISTORY_FILE_SIZE_LIMIT :: 4096
 
+// Why a history file is refused. The program then starts with an empty
+// history, and says so.
 History_File_Problem :: enum u8 {
-	None           = 0,
+	None           = 0, // The file is valid.
 	Too_Short      = 1, // Fewer bytes than a header and a hash.
-	Wrong_Magic    = 2,
-	Wrong_Version  = 3,
+	Wrong_Magic    = 2, // It does not start with HISTORY_FILE_MAGIC.
+	Wrong_Version  = 3, // Another version.
 	Wrong_Hash     = 4, // A byte changed after the write.
 	Too_Many_Lines = 5, // More lines than the history holds.
 	Wrong_Size     = 6, // The count of bytes of the lines is not the bytes between the header and the hash.
@@ -39,6 +41,7 @@ History_File_Problem :: enum u8 {
 	Wrong_Count    = 9, // The lines end before or after the count of lines.
 }
 
+// The words of each problem, for the line that the program writes.
 @(rodata)
 history_file_problem_texts := [History_File_Problem]string {
 	.None           = "no problem",
@@ -53,11 +56,13 @@ history_file_problem_texts := [History_File_Problem]string {
 	.Wrong_Count    = "its count of lines is wrong",
 }
 
+// u32_write writes a number of 32 bits, little-endian.
 @(private)
 u32_write :: proc "contextless" (bytes: []u8, value: u32) {
 	bytes[0], bytes[1], bytes[2], bytes[3] = u8(value), u8(value >> 8), u8(value >> 16), u8(value >> 24)
 }
 
+// u32_read reads a number of 32 bits, little-endian.
 @(private)
 u32_read :: proc "contextless" (bytes: []u8) -> u32 {
 	return u32(bytes[0]) | u32(bytes[1]) << 8 | u32(bytes[2]) << 16 | u32(bytes[3]) << 24

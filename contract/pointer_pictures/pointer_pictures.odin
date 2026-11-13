@@ -12,50 +12,54 @@
 //
 // A reader does not trust the file: validate checks each offset, count and
 // pixel once, and the reads after it need no check.
+//
+// See [pointer theme file](term:pointer-theme-file),
+// [pointer picture](term:pointer-picture) and [hot spot](term:hot-spot).
 package pointer_pictures
 
 MAGIC :: u64(0x535245544E494F50) // The bytes "POINTERS".
-VERSION :: 1
-HEADER_SIZE :: 512
-SHAPE_ENTRY_SIZE :: 16
-PICTURE_ENTRY_SIZE :: 32
-PIXEL_ALIGNMENT :: 64
-NAME_CAPACITY :: 32
-LICENSE_CAPACITY :: 32
-ATTRIBUTION_CAPACITY :: 400
-SIZE_COUNT_LIMIT :: 8
-FRAME_COUNT_LIMIT :: 256
+VERSION :: 1 // The version of the format. A reader refuses another.
+HEADER_SIZE :: 512 // The bytes of `Header`.
+SHAPE_ENTRY_SIZE :: 16 // The bytes of `Shape_Entry`.
+PICTURE_ENTRY_SIZE :: 32 // The bytes of `Picture_Entry`.
+PIXEL_ALIGNMENT :: 64 // The pixels start on a multiple of 64 bytes.
+NAME_CAPACITY :: 32 // The bytes of the name of a theme.
+LICENSE_CAPACITY :: 32 // The bytes of the SPDX identifier of the license.
+ATTRIBUTION_CAPACITY :: 400 // The bytes of the attribution.
+SIZE_COUNT_LIMIT :: 8 // The nominal sizes of one shape.
+FRAME_COUNT_LIMIT :: 256 // The frames of the animation of one shape.
 PICTURE_SIDE_LIMIT :: 256 // The largest width, height and nominal size.
 DELAY_LIMIT :: 60_000 // Milliseconds: the longest frame of an animation.
-SHAPE_COUNT_LIMIT :: 256
-PICTURE_COUNT_LIMIT :: 1 << 16
+SHAPE_COUNT_LIMIT :: 256 // The shapes of one file.
+PICTURE_COUNT_LIMIT :: 1 << 16 // The pictures of one file.
 
 // The names of the pointer theme files in the resource table of the boot
 // image (kerneltool pointers). The compositor takes the first one that the
 // boot image has: the theme of the owner when the build had its input.
-RESOURCE_OF_THE_OWNER :: "pointers_posy"
-RESOURCE_OF_THE_SYSTEM :: "pointers_system"
+RESOURCE_OF_THE_OWNER :: "pointers_posy" // The theme of the owner.
+RESOURCE_OF_THE_SYSTEM :: "pointers_system" // The theme of the system.
+// The order in which the compositor looks for a theme.
 @(rodata)
 RESOURCE_PREFERENCE := [?]string{RESOURCE_OF_THE_OWNER, RESOURCE_OF_THE_SYSTEM}
 
 // The pointer shapes of the system. Zero is the arrow: a zero record asks
 // for the default. A new shape is a new number at the end.
 Pointer_Shape :: enum u32 {
-	Arrow                        = 0,
-	Text                         = 1,
-	Pointing_Hand                = 2,
-	Move                         = 3,
-	Grab                         = 4,
-	Grabbing                     = 5,
-	Wait                         = 6,
-	Busy_With_Arrow              = 7,
-	Forbidden                    = 8,
-	Help                         = 9,
-	Crosshair                    = 10,
-	Resize_Left_Right            = 11,
-	Resize_Up_Down               = 12,
-	Resize_Top_Left_Bottom_Right = 13,
-	Resize_Top_Right_Bottom_Left = 14,
+	Arrow                        = 0, // The default: point at a thing.
+	Text                         = 1, // Over a text that the input can choose or edit.
+	Pointing_Hand                = 2, // Over a link or a button.
+	Move                         = 3, // Over a thing that moves when dragged.
+	Grab                         = 4, // Over a thing that the input can take.
+	Grabbing                     = 5, // While the input holds a thing.
+	Wait                         = 6, // The program cannot take input now.
+	Busy_With_Arrow              = 7, // The program works, and takes input.
+	Forbidden                    = 8, // The action under the pointer is not allowed.
+	Help                         = 9, // Over a thing that has help.
+	Crosshair                    = 10, // A precise place: a picker of pixels.
+	Resize_Left_Right            = 11, // Over a border that resizes left and right.
+	Resize_Up_Down               = 12, // Over a border that resizes up and down.
+	Resize_Top_Left_Bottom_Right = 13, // Over a corner that resizes on that diagonal.
+	Resize_Top_Right_Bottom_Left = 14, // Over a corner that resizes on that diagonal.
 }
 
 // The name of each shape, as the manifest, the log and the compositor
@@ -98,15 +102,16 @@ shape_name :: proc "contextless" (number: u32) -> string {
 	return SHAPE_NAMES[Pointer_Shape(number)]
 }
 
+// The first 512 bytes of a pointer theme file.
 Header :: struct {
-	magic:         u64,
-	version:       u32,
-	shape_count:   u32,
-	picture_count: u32,
-	reserved:      u32,
+	magic:         u64, // MAGIC.
+	version:       u32, // VERSION.
+	shape_count:   u32, // The shape entries.
+	picture_count: u32, // The picture entries.
+	reserved:      u32, // 0.
 	pixel_offset:  u64, // From the start of the file: the first multiple of 64 after the tables.
 	pixel_size:    u64, // Bytes of pixels, to the end of the file.
-	file_size:     u64,
+	file_size:     u64, // The bytes of the file.
 	theme_name:    [NAME_CAPACITY]u8, // ASCII 32 to 126, then zero bytes.
 	license:       [LICENSE_CAPACITY]u8, // An SPDX identifier.
 	attribution:   [ATTRIBUTION_CAPACITY]u8, // Who made the pictures, the source, and what the tool changed.
@@ -116,17 +121,18 @@ Header :: struct {
 // picture table from first_picture, the frames of the smallest size first.
 Shape_Entry :: struct {
 	shape:         u32, // A number of Pointer_Shape.
-	first_picture: u32,
-	size_count:    u32,
-	frame_count:   u32,
+	first_picture: u32, // The first picture entry of the shape.
+	size_count:    u32, // The nominal sizes, 1 to SIZE_COUNT_LIMIT.
+	frame_count:   u32, // The frames of each size, 1 to FRAME_COUNT_LIMIT.
 }
 
+// One picture: one frame of one shape at one nominal size.
 Picture_Entry :: struct {
-	nominal_size:       u32,
-	width:              u32,
-	height:             u32,
-	hot_spot_x:         u32,
-	hot_spot_y:         u32,
+	nominal_size:       u32, // The size that the theme names: 24, 32, 48.
+	width:              u32, // Pixels, at most PICTURE_SIDE_LIMIT.
+	height:             u32, // Pixels, at most PICTURE_SIDE_LIMIT.
+	hot_spot_x:         u32, // The pixel that points, from the left: below width.
+	hot_spot_y:         u32, // The pixel that points, from the top: below height.
 	delay_milliseconds: u32, // To the next frame. 0 for a shape with one frame.
 	pixel_offset:       u64, // From pixel_offset of the header.
 }
@@ -546,7 +552,7 @@ KIND_SENTENCES := [Problem_Kind]string {
 	.Not_Premultiplied    = "has a channel above its alpha",
 }
 
-// sentence writes a problem as one line for a person, for example
+// sentence writes a problem as one line for a reader, for example
 // "the picture table, entry 3: hot_spot_x is not a pixel of the picture
 // (value 40, limit 31)". It gives the part of buffer that it wrote.
 sentence :: proc "contextless" (problem: Problem, buffer: []u8) -> string {

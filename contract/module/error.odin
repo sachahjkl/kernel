@@ -3,13 +3,13 @@ package module
 // The error of a load: a record that the caller of a loader owns. Zero is
 // "no error". It is data, not text: a program in any language reads it,
 // and a call host gives it to its caller in the call region. A loader fills
-// it when a load fails; the caller writes it for a person.
+// it when a load fails; the caller writes it as a sentence for its reader.
 
 NAME_SIZE :: 32 // The bytes of a name of a module or of an export. Zero bytes after the name.
 
 // The stage of the load that failed.
 Load_Stage :: enum u32 {
-	None  = 0,
+	None  = 0, // No error: the load did not fail.
 	Find  = 1, // Find the file of a module: the load source has no file with its hash.
 	Read  = 2, // Read the file: it does not have the hash that names it, or its tables are not valid (`file_error`).
 	Cycle = 3, // A module imports itself through its imports. Only a replacement can make a cycle: an import names a hash.
@@ -22,13 +22,16 @@ Load_Stage :: enum u32 {
 
 // What differs between the description of an export in the module that an
 // import names (expected) and in the module of its replacement (found).
+//
+// `functions_compare` gives it, and the loader writes it in
+// `Load_Error.difference` at the stage `Check`.
 Difference :: enum u32 {
-	None            = 0,
+	None            = 0, // The two descriptions agree.
 	Missing_Export  = 1, // The module of the replacement has no export with the name.
 	Parameter_Count = 2, // expected.detail and found.detail are the counts.
 	Parameter_Type  = 3, // Parameter `parameter` has another type.
 	Parameter_Detail = 4, // Parameter `parameter`: a Handle with other rights, or another Record.
-	Result_Type     = 5,
+	Result_Type     = 5, // The result has another type.
 	Result_Detail   = 6, // A Record or Table result with another record.
 	Error_Record    = 7, // One gives an error record and the other does not, or the two records differ.
 	Parameter_Direction = 8, // Parameter `parameter`: a Table or Bytes with another direction.
@@ -38,11 +41,11 @@ Difference :: enum u32 {
 // count), the direction of a Table or Bytes parameter, and the name of a
 // Record.
 Described :: struct {
-	type:      Type,
-	direction: Direction,
+	type:      Type, // The type of the parameter or of the result.
+	direction: Direction, // A Table or Bytes parameter: its direction.
 	_:         [2]u8,
-	detail: u32,
-	record: [NAME_SIZE]u8,
+	detail: u32, // The detail of the type: the rights of a Handle, the index of a record, or a count of parameters.
+	record: [NAME_SIZE]u8, // A Record or a Table: the name of its record; zero bytes after it.
 }
 
 // A module, as the load source names it.
@@ -51,8 +54,16 @@ Named :: struct {
 	name: [NAME_SIZE]u8, // Zero: the load source gives no name to the hash.
 }
 
+// Why a load failed: the stage, the module, the import, and the fact that
+// the stage found. A loader fills it (`system.Module_Space`, a call host); a
+// caller writes it as text (`system.load_error_text`). The fields that a
+// stage does not use are zero. See [load error](term:load-error).
+//
+// Example: a module whose import has no file in the load source gives
+// `{stage = .Find, module = <the importer>, imported = <the hash of the
+// import>}`.
 Load_Error :: struct {
-	stage:       Load_Stage,
+	stage:       Load_Stage, // The stage that failed. None: no error.
 	status:      u32, // Map, Unmap: the status of the kernel operation.
 	file_error:  Error, // Read: what is not valid in the file; None when the hash differs.
 	difference:  Difference, // Check.
@@ -70,7 +81,8 @@ Load_Error :: struct {
 	found:       Described, // Check: in the module of the replacement.
 }
 
-// name_set copies a name into a field of a record.
+// name_set copies a name into a field of a record. A name longer than
+// `NAME_SIZE - 1` bytes is cut, so that a zero byte always ends it.
 name_set :: proc "contextless" (field: ^[NAME_SIZE]u8, name: string) {
 	field^ = {}
 	for index in 0 ..< min(len(name), NAME_SIZE - 1) {
@@ -90,7 +102,7 @@ name_get :: proc "contextless" (field: ^[NAME_SIZE]u8) -> string {
 // functions_compare compares the description of two exports in two
 // modules: the same parameters with the same types, the same result, equal
 // records, and the same rights for each handle. The names of the
-// parameters and the help are for a person: they can differ. It gives the
+// parameters and the help are for a reader: they can differ. It gives the
 // first difference, and its two sides.
 functions_compare :: proc "contextless" (file: []u8, index: u32, other_file: []u8, other_index: u32) -> (difference: Difference, parameter: u32, expected, found: Described) {
 	a, has_a := function(file, index)

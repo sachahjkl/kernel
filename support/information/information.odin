@@ -12,8 +12,8 @@ import "support:system"
 // gives the same functions another source later. The zero value is a
 // catalog with no module and no replacement.
 Catalog :: struct {
-	image:        []u8,
-	replacements: []module.Replacement,
+	image:        []u8, // The files, in the form of the boot image.
+	replacements: []module.Replacement, // The replacements of the machine.
 }
 
 // replacement_of gives the module that a loader gives in place of an
@@ -30,9 +30,9 @@ replacement_of :: proc "contextless" (catalog: Catalog, hash: [32]u8) -> (to: [3
 // An item of the catalog: a name, a hash, and the file. The file is empty
 // when the catalog names bytes outside itself.
 Item :: struct {
-	name: string,
-	hash: [32]u8,
-	file: []u8,
+	name: string, // The name of the entry of the catalog.
+	hash: [32]u8, // The hash that the entry states.
+	file: []u8, // The bytes of the file. Empty: the entry names bytes outside the catalog.
 }
 
 // item gives item `index` of the catalog, from 0. ok is false after the
@@ -117,7 +117,7 @@ text_put :: proc "contextless" (field: []u8, text: string) {
 	_, _, _ = cut_mark.apply(field, count, len(text) - count)
 }
 
-// described_export says if export `index` has a description that a person
+// described_export says if export `index` has a description that a caller
 // can call: each export but the entry, with a name.
 described_export :: proc "contextless" (file: []u8, index: u32) -> (function: module.Function, ok: bool) {
 	head, _ := module.header(file)
@@ -212,12 +212,14 @@ handles :: proc "contextless" (catalog: Catalog, right: op.Right, rows: []Export
 // What an export must have to be a row.
 @(private)
 Export_Filter :: struct {
-	name:     string,
-	words:    string,
-	right:    op.Right,
-	by_right: bool,
+	name:     string, // Not empty: only the export with this name.
+	words:    string, // Not empty: only the exports whose help holds these words.
+	right:    op.Right, // With by_right: only the exports that take a handle with this right.
+	by_right: bool, // `right` filters.
 }
 
+// export_rows writes the rows of the exports of one module (`name`) or of
+// each module of the catalog, that pass the filter.
 @(private)
 export_rows :: proc "contextless" (catalog: Catalog, name: string, filter: Export_Filter, rows: []Export) -> (count: int, problem: Problem) {
 	if name != "" {

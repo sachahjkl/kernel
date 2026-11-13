@@ -9,6 +9,7 @@ import "contract:glyph_cache"
 import "support:mark"
 import "support:text_shaping"
 
+// The programs that the menu of the programs offers, in its order.
 @(rodata)
 names := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "fault", "temple", "rings", "threads", "workers", "rights", "origin", "budget", "limits", "processors", "flow", "crowd", "clock", "randomness", "flood", "tally", "manual", "frames", "disk", "notes", "imports", "net", "remote", "server", "inspect", "locks", "errors", "scheduler", "interface_elements", "vector_glyphs", "interface_font", "pointers", "settings", "tables", "interface_through_module", "address_space", "cryptography_vectors", "quic_echo", "extended_state", "return_fault", "fault_ring", "kernel_events"}
 
@@ -16,12 +17,12 @@ names := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life
 LABEL :: "programs" // The text of the button that opens the menu of the programs.
 CHARACTER_WIDTH :: 8 // The font of the cells.
 START :: 80 // After the mark of the system.
-PADDING :: 8
+PADDING :: 8 // Pixels on each side of the text of a button.
 HEIGHT :: 32 // The height of the bar.
-BUTTON_Y :: 4
-BUTTON_HEIGHT :: 24
+BUTTON_Y :: 4 // The top of a button in the bar.
+BUTTON_HEIGHT :: 24 // The height of a button.
 LINE_HEIGHT :: 24 // One line of a menu.
-BORDER :: 1
+BORDER :: 1 // The border of a menu, in pixels.
 TITLE :: 40 // The title of a menu, as the title of a card.
 COLUMNS :: 2 // The menu of the programs has two columns of names.
 COLUMN_LEAST :: 120 // The title of the menu fits.
@@ -69,9 +70,9 @@ layout_of :: proc "contextless" (cache: ^glyph_cache.Cache) -> (layout: Layout) 
 // system was: the heron at a cell size of 1, 24 by 24 pixels, at the height
 // of the buttons. It ends before START.
 MARK_X :: 16
-MARK_Y :: BUTTON_Y
-MARK_CELL_SIZE :: 1
-MARK_SIZE :: mark.HERON_GRID_SIZE * MARK_CELL_SIZE
+MARK_Y :: BUTTON_Y // The top of the mark.
+MARK_CELL_SIZE :: 1 // One pixel for each cell of the heron.
+MARK_SIZE :: mark.HERON_GRID_SIZE * MARK_CELL_SIZE // The side of the mark: 24 pixels.
 #assert(MARK_X + MARK_SIZE <= START && MARK_Y + MARK_SIZE <= HEIGHT)
 
 // rows gives the lines of one column of the menu of the programs.
@@ -189,9 +190,9 @@ windows_line_center :: proc "contextless" (layout: Layout, index: int) -> (cente
 
 // A button of the bar.
 Bar_Button :: enum u8 {
-	None,
-	Programs,
-	Windows,
+	None, // No button: the pointer is elsewhere.
+	Programs, // The button that opens the menu of the programs.
+	Windows, // The button that opens the menu of the windows.
 }
 
 // button_at gives the button of the bar at a point.

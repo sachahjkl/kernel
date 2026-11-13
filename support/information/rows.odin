@@ -30,9 +30,9 @@ Module :: struct {
 // described(), handles().
 Export :: struct {
 	module:    [32]u8, // The module that exports it.
-	name:      [32]u8,
+	name:      [32]u8, // The name of the export.
 	number:    i64, // The index of the export in its module, from 1.
-	parameters: i64,
+	parameters: i64, // The count of its parameters, from 0 to 6.
 	result:    [8]u8, // "Integer", "Text", "Record", "Table", or empty.
 	rights:    [40]u8, // The rights that the export asks of the handles that it takes: in a Handle parameter or in a Handle field of a Record parameter.
 	signature: [112]u8, // "name(parameter: Type, ...) -> Type". A longer signature ends with "...".
@@ -51,7 +51,7 @@ Import :: struct {
 // One row for each slot of a module: slots(). A slot receives the address
 // of one export of one import when the loader binds the module.
 Slot :: struct {
-	module:       [32]u8,
+	module:       [32]u8, // The module of the slot.
 	number:       i64, // The index of the slot, from 1.
 	import_index: i64, // The import, from 1.
 	export_index: i64, // The export of that import, from 1.
@@ -61,13 +61,13 @@ Slot :: struct {
 
 // One row for each segment of a module: segments().
 Segment :: struct {
-	module:        [32]u8,
+	module:        [32]u8, // The module of the segment.
 	number:        i64, // The index of the segment, from 1.
 	kind:          [24]u8, // "code", "constants", "constants after load" or "data".
-	memory_offset: i64,
-	memory_size:   i64,
-	file_offset:   i64,
-	file_size:     i64,
+	memory_offset: i64, // From the base of the module.
+	memory_size:   i64, // The bytes of addresses.
+	file_offset:   i64, // From the start of the file.
+	file_size:     i64, // The bytes in the file; the rest is zero.
 }
 
 // One row for each module that runs in a program, from the module records
@@ -100,7 +100,7 @@ Edge :: struct {
 // replacements().
 Replacement :: struct {
 	from:      [32]u8, // The name of the module that an import names, in the catalog.
-	from_hash: [64]u8,
+	from_hash: [64]u8, // Its hash, in hexadecimal.
 	to:        [32]u8, // The name of the module that a loader gives in its place.
-	to_hash:   [64]u8,
+	to_hash:   [64]u8, // Its hash, in hexadecimal.
 }

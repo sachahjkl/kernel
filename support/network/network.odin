@@ -12,6 +12,13 @@
 // Numbers are in the order of the machine; the frame holds them in network
 // order (the first byte is the high byte). An IPv4 address is a u32:
 // 10.0.2.15 is 0x0A00020F.
+//
+// Who uses it: the network service (`programs/network`), which parses each
+// frame of the frame service with `parse` and writes the frames of its
+// endpoints with the `_write` procedures, and keeps the tables of
+// `tables.odin` (the refused frames, the admitted remotes, the neighbors).
+//
+// See [network service](term:network-service) and (docs/NETWORK.md).
 package network
 
 import "contract:datagram"
@@ -20,32 +27,32 @@ import "contract:ring"
 import "support:system"
 
 Hardware :: [6]u8 // A hardware address of Ethernet.
-BROADCAST :: Hardware{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+BROADCAST :: Hardware{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF} // The hardware address of each device of the link.
 
-ETHERNET_HEADER :: 14
+ETHERNET_HEADER :: 14 // Two hardware addresses and the kind.
 IPV4_HEADER :: 20 // With no options: the header that this library writes.
-UDP_HEADER :: 8
+UDP_HEADER :: 8 // The header of UDP.
 TCP_HEADER :: 20 // With no option.
-ICMP_HEADER :: 8
-ARP_SIZE :: 28
+ICMP_HEADER :: 8 // The header of an ICMP echo.
+ARP_SIZE :: 28 // An ARP message of Ethernet and IPv4.
 FRAME_LEAST :: 60 // A shorter frame gets zero bytes at its end.
 MTU :: 1500 // The bytes of IPv4 in one frame.
 UDP_DATA :: ETHERNET_HEADER + IPV4_HEADER + UDP_HEADER // The place of the data of a UDP datagram that this library writes.
-ICMP_DATA :: ETHERNET_HEADER + IPV4_HEADER + ICMP_HEADER
+ICMP_DATA :: ETHERNET_HEADER + IPV4_HEADER + ICMP_HEADER // The place of the data of an echo that this library writes.
 IPV4_DATA :: ETHERNET_HEADER + IPV4_HEADER // The place of a segment in a frame that this library writes.
 UDP_DATA_LIMIT :: MTU - IPV4_HEADER - UDP_HEADER // 1472: no fragment.
-ICMP_DATA_LIMIT :: MTU - IPV4_HEADER - ICMP_HEADER
+ICMP_DATA_LIMIT :: MTU - IPV4_HEADER - ICMP_HEADER // 1472: the data of one echo with no fragment.
 
-KIND_IPV4 :: 0x0800
-KIND_ARP :: 0x0806
-PROTOCOL_ICMP :: 1
-PROTOCOL_UDP :: 17
-PROTOCOL_TCP :: 6
-ICMP_ECHO_REPLY :: 0
-ICMP_ECHO_REQUEST :: 8
-ARP_REQUEST :: 1
-ARP_REPLY :: 2
-TTL :: 64
+KIND_IPV4 :: 0x0800 // The kind of an Ethernet frame of IPv4.
+KIND_ARP :: 0x0806 // The kind of an Ethernet frame of ARP.
+PROTOCOL_ICMP :: 1 // The protocol number of ICMP in IPv4.
+PROTOCOL_UDP :: 17 // The protocol number of UDP.
+PROTOCOL_TCP :: 6 // The protocol number of TCP.
+ICMP_ECHO_REPLY :: 0 // The type of an echo reply.
+ICMP_ECHO_REQUEST :: 8 // The type of an echo request.
+ARP_REQUEST :: 1 // The operation of an ARP request.
+ARP_REPLY :: 2 // The operation of an ARP reply.
+TTL :: 64 // The time to live of each packet that this library writes.
 
 // The error of a frame is a record of the datagram contract, because the
 // network service gives it to programs, and an error must inform the
@@ -54,53 +61,58 @@ Layer :: datagram.Layer
 Problem_Kind :: datagram.Problem_Kind
 Problem :: datagram.Problem
 
+// What a frame holds, as `parse` found it.
 Packet_Kind :: enum u8 {
-	None = 0,
-	Arp  = 1,
-	Icmp = 2,
-	Udp  = 3,
-	Tcp  = 4,
+	None = 0, // Nothing that the library takes.
+	Arp  = 1, // An ARP message.
+	Icmp = 2, // An ICMP echo.
+	Udp  = 3, // A UDP datagram.
+	Tcp  = 4, // A TCP segment.
 }
 
 // What parse found in a frame. data is a part of the frame.
 Packet :: struct {
-	kind:             Packet_Kind,
-	destination:      Hardware,
-	source:           Hardware,
+	kind:             Packet_Kind, // What the frame holds.
+	destination:      Hardware, // The hardware address of the receiver.
+	source:           Hardware, // The hardware address of the sender.
 	// ARP.
 	operation:        u16,
-	sender_hardware:  Hardware,
-	target_hardware:  Hardware,
-	sender_address:   u32,
-	target_address:   u32,
+	sender_hardware:  Hardware, // ARP: the hardware address of the sender.
+	target_hardware:  Hardware, // ARP: the hardware address asked or answered.
+	sender_address:   u32, // ARP: the IPv4 address of the sender.
+	target_address:   u32, // ARP: the IPv4 address asked.
 	// IPv4.
 	source_address:   u32,
-	destination_address: u32,
-	ttl:              u8,
+	destination_address: u32, // IPv4: the receiver.
+	ttl:              u8, // IPv4: the time to live.
 	// ICMP echo.
 	icmp_kind:        u8,
-	identifier:       u16,
-	sequence:         u16,
+	identifier:       u16, // ICMP echo: the identifier.
+	sequence:         u16, // ICMP echo: the sequence number.
 	// UDP and TCP.
 	source_port:      u16,
-	destination_port: u16,
+	destination_port: u16, // UDP and TCP: the port of the receiver.
 	data:             []u8, // UDP: the data. TCP: the whole segment, with its header.
-	tcp_flags:        u8,
+	tcp_flags:        u8, // TCP: the control bits.
 }
 
+// read_16 reads a number of 16 bits in network order.
 read_16 :: #force_inline proc "contextless" (bytes: []u8, offset: int) -> u16 {
 	return u16(bytes[offset]) << 8 | u16(bytes[offset + 1])
 }
 
+// read_32 reads a number of 32 bits in network order.
 read_32 :: #force_inline proc "contextless" (bytes: []u8, offset: int) -> u32 {
 	return u32(bytes[offset]) << 24 | u32(bytes[offset + 1]) << 16 | u32(bytes[offset + 2]) << 8 | u32(bytes[offset + 3])
 }
 
+// write_16 writes a number of 16 bits in network order.
 write_16 :: #force_inline proc "contextless" (bytes: []u8, offset: int, value: u16) {
 	bytes[offset] = u8(value >> 8)
 	bytes[offset + 1] = u8(value)
 }
 
+// write_32 writes a number of 32 bits in network order.
 write_32 :: #force_inline proc "contextless" (bytes: []u8, offset: int, value: u32) {
 	bytes[offset] = u8(value >> 24)
 	bytes[offset + 1] = u8(value >> 16)
@@ -164,6 +176,7 @@ parse :: proc "contextless" (frame: []u8) -> (packet: Packet, problem: Problem) 
 	return packet, {kind = .Unsupported, layer = .Ethernet, offset = 12, value = u32(kind)}
 }
 
+// arp_parse reads the ARP message of a frame.
 @(private)
 arp_parse :: proc "contextless" (frame: []u8, packet: Packet) -> (Packet, Problem) {
 	packet := packet
@@ -195,6 +208,7 @@ arp_parse :: proc "contextless" (frame: []u8, packet: Packet) -> (Packet, Proble
 	return packet, {}
 }
 
+// ipv4_parse reads the IPv4 header of a frame, then its ICMP, UDP or TCP.
 @(private)
 ipv4_parse :: proc "contextless" (frame: []u8, packet: Packet) -> (Packet, Problem) {
 	packet := packet
@@ -245,6 +259,7 @@ ipv4_parse :: proc "contextless" (frame: []u8, packet: Packet) -> (Packet, Probl
 	return packet, {kind = .Unsupported, layer = .Ipv4, offset = B + 9, value = u32(frame[B + 9])}
 }
 
+// icmp_parse reads an ICMP echo.
 @(private)
 icmp_parse :: proc "contextless" (message: []u8, offset: int, packet: Packet) -> (Packet, Problem) {
 	packet := packet
@@ -265,6 +280,7 @@ icmp_parse :: proc "contextless" (message: []u8, offset: int, packet: Packet) ->
 	return packet, {}
 }
 
+// udp_parse reads a UDP datagram.
 @(private)
 udp_parse :: proc "contextless" (datagram: []u8, offset: int, packet: Packet) -> (Packet, Problem) {
 	packet := packet
@@ -451,6 +467,7 @@ hardware_write :: proc "contextless" (writer: ^system.Writer, address: Hardware)
 	}
 }
 
+// The name of each layer, for the line of a refused frame.
 @(rodata)
 layer_names := [Layer]string {
 	.None     = "frame",
@@ -462,6 +479,7 @@ layer_names := [Layer]string {
 	.Tcp      = "tcp",
 }
 
+// The words of each problem kind, for the line of a refused frame.
 @(rodata)
 problem_names := [Problem_Kind]string {
 	.None         = "no problem",
@@ -487,7 +505,7 @@ layer_name :: proc "contextless" (layer: Layer) -> string {
 	return layer_names[layer] if layer <= max(Layer) else "frame"
 }
 
-// problem_write writes a problem as one sentence for a person:
+// problem_write writes a problem as one sentence for a reader:
 // "ipv4, byte 24: the checksum is 0x1234, the bytes give 0xabcd".
 problem_write :: proc "contextless" (writer: ^system.Writer, problem: Problem) {
 	put :: proc "contextless" (writer: ^system.Writer, text: string) {

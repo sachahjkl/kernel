@@ -14,6 +14,14 @@
 // A record that is all zero is valid: its card shows that the fact is
 // not known yet. This package uses no kernel operation: package collect
 // fills Data.
+//
+// ```odin
+// data: bootscreen.Data
+// collect.data(&data, machine) // Fills it from the reports of the kernel.
+// bootscreen.draw(canvas, &data)
+// ```
+//
+// See [boot display](term:boot-display).
 package bootscreen
 
 import info "contract:boot_info"
@@ -26,45 +34,49 @@ import op "contract:operation"
 import "base:intrinsics"
 
 WIDTH :: 976 // The size that the display needs.
-HEIGHT :: 700
-PROCESSOR_ROWS :: 16
-PROGRAM_ROWS :: 12
+HEIGHT :: 700 // Pixels.
+PROCESSOR_ROWS :: 16 // The processors that the card of the processors shows.
+PROGRAM_ROWS :: 12 // The programs that the card of the programs shows.
 
+// The state of the start, which the title of the display says.
 State :: enum {
 	Running, // The machine starts.
 	Ready, // The desktop runs.
-	Failed,
+	Failed, // The start stopped: `Data.message` says why.
 }
 
 // The steps of the start, in their order. The program that draws says
 // which step the machine does now: the steps before it are done.
 Step :: enum {
-	Firmware,
+	Firmware, // The firmware runs the boot program.
 	Kernel_Module, // The boot program loads the kernel module.
-	Boot_Image,
-	Memory_Map,
+	Boot_Image, // The boot program loads the boot image and checks it.
+	Memory_Map, // The boot program reads the memory map.
 	Kernel, // The boot program ends the firmware and jumps.
-	Processors,
-	Root,
-	Input,
-	Compositor,
-	Desktop,
+	Processors, // The kernel starts the other processors.
+	Root, // The root service starts.
+	Input, // The root service starts the input service.
+	Compositor, // The root service starts the compositor.
+	Desktop, // The root service starts the desktop.
 }
 
+// One row of the card of the programs.
 Program :: struct {
-	slot:   u64,
-	report: op.Program_Report,
+	slot:   u64, // The program slot.
+	report: op.Program_Report, // Its report.
 }
 
+// What the display shows: the reports of the kernel, the boot image and the
+// state of the start. The zero value is valid.
 Data :: struct {
-	boot:            op.Boot_Report,
-	machine:         op.System_Report,
-	processors:      [PROCESSOR_ROWS]op.Processor_Report,
+	boot:            op.Boot_Report, // The boot record.
+	machine:         op.System_Report, // The memory and the counts.
+	processors:      [PROCESSOR_ROWS]op.Processor_Report, // The first processors.
 	programs:        [PROGRAM_ROWS]Program, // By slot.
-	program_count:   int,
+	program_count:   int, // The entries of `programs` in use.
 	program_total:   int, // All the programs: programs has the first ones.
 	image:           []u8, // The boot image.
-	processor_name:  [48]u8,
+	processor_name:  [48]u8, // The name that the processor gives of itself.
 	message:         string, // What the machine does now.
 	failed_name:     string, // The file that failed the check of its hash: the card of the boot image names it.
 	state:           State,
@@ -72,17 +84,21 @@ Data :: struct {
 	red_first:       bool, // The pixels of the canvas have red in the low byte.
 }
 
-LINE :: graphics.LINE_HEIGHT
-MARGIN :: graphics.CARD_GAP
+LINE :: graphics.LINE_HEIGHT // One line of text.
+MARGIN :: graphics.CARD_GAP // The gap around the cards.
 
+// The order of the channels of the canvas of the draw that runs: the boot
+// program draws on a framebuffer that can have red in the low byte.
 @(private)
 red_first: bool
 
+// tone gives a color in the order of the channels of the canvas.
 @(private)
 tone :: #force_inline proc "contextless" (color: graphics.Color) -> graphics.Color {
 	return red_first ? color >> 16 & 0xFF | color & 0xFF00 | color << 16 & 0xFF0000 : color
 }
 
+// fill paints a rectangle in a color, in the order of the canvas.
 @(private)
 fill :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, color: graphics.Color) {
 	graphics.fill(canvas, x, y, width, height, tone(color))
@@ -90,10 +106,11 @@ fill :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, c
 
 // A short text that the display builds from parts.
 Text :: struct {
-	bytes: [120]u8,
-	count: int,
+	bytes: [120]u8, // The text; the bytes that do not fit are dropped.
+	count: int, // The bytes in use.
 }
 
+// put adds a text.
 put :: proc "contextless" (text: ^Text, part: string) {
 	for index in 0 ..< len(part) {
 		if text.count < len(text.bytes) {
@@ -113,6 +130,7 @@ put_name :: proc "contextless" (text: ^Text, name: []u8) {
 	}
 }
 
+// put_number adds a number in decimal, with at least minimum_digits digits.
 put_number :: proc "contextless" (text: ^Text, value: u64, minimum_digits := 1) {
 	digits: [20]u8
 	count := 0
@@ -126,6 +144,7 @@ put_number :: proc "contextless" (text: ^Text, value: u64, minimum_digits := 1) 
 	}
 }
 
+// put_hex adds the low `digits` hexadecimal digits of a number.
 put_hex :: proc "contextless" (text: ^Text, value: u64, digits: int) {
 	characters := "0123456789abcdef"
 	for index := digits - 1; index >= 0; index -= 1 {
@@ -171,6 +190,7 @@ put_size :: proc "contextless" (text: ^Text, bytes: u64) {
 	}
 }
 
+// show draws a text and empties it. It gives the x after the text.
 @(private)
 show :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: ^Text, color: graphics.Color) -> int {
 	after := write(canvas, x, y, string(text.bytes[:text.count]), color)
@@ -178,6 +198,8 @@ show :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: ^Text, col
 	return after
 }
 
+// write draws a text in the font of the cells, in the order of the canvas.
+// It gives the x after the text.
 @(private)
 write :: proc "contextless" (canvas: graphics.Canvas, x, y: int, characters: string, color: graphics.Color) -> int {
 	order := graphics.text_state.order
@@ -228,8 +250,8 @@ stripes_of_screen :: proc "contextless" (order: graphics.Subpixel_Order) -> grap
 	return order
 }
 
-CARD_TITLE :: graphics.CARD_TITLE
-CARD_MARGIN :: graphics.CARD_MARGIN
+CARD_TITLE :: graphics.CARD_TITLE // The height of the title of a card.
+CARD_MARGIN :: graphics.CARD_MARGIN // The margin inside a card.
 
 // The interface font of the boot display (docs/DESIGN.md, section 5): the
 // root service gives it after it validated the caches of the boot image
@@ -239,6 +261,8 @@ CARD_MARGIN :: graphics.CARD_MARGIN
 // binary.
 boot_interface_font: ^display.Interface_Font
 
+// interface_font_use gives the display the interface font that the root
+// service validated. nil: the font of the cells for each text.
 interface_font_use :: proc "contextless" (font: ^display.Interface_Font) {
 	boot_interface_font = font
 }
@@ -299,7 +323,7 @@ fact :: proc "contextless" (canvas: graphics.Canvas, y: int, name: string, value
 	show(canvas, FACT_VALUE, y, value, color)
 }
 
-FACT_VALUE :: 120
+FACT_VALUE :: 120 // The x of the value of a fact, in its card.
 
 // processor_name reads the name that the processor gives of itself.
 processor_name :: proc "contextless" () -> (name: [48]u8) {
@@ -340,6 +364,7 @@ stage_color :: proc "contextless" (name: []u8, index: int) -> graphics.Color {
 	return graphics.shade(graphics.COLOR_KERNEL, shades[index & 3])
 }
 
+// The words of each step, for the message of the display.
 @(private, rodata)
 step_names := [Step]string {
 	.Firmware      = "the firmware",
@@ -358,19 +383,20 @@ step_names := [Step]string {
 // strip, the rows of names by kind, the line of the check and the line of
 // the trust. Package image_card computes the places.
 IMAGE_STRIP_HEIGHT :: 12
-IMAGE_ROWS_Y :: 20
-IMAGE_ROW_PITCH :: 18
+IMAGE_ROWS_Y :: 20 // The y of the first row of names, in the card.
+IMAGE_ROW_PITCH :: 18 // The distance between two rows of names.
 IMAGE_LABEL_ROOM :: 80 // The name of a kind: "resources" takes 9 cells.
 IMAGE_COUNT_RIGHT :: 128 // The count of a kind ends here: 4 digits after the name.
 IMAGE_BYTES_RIGHT :: 208 // The bytes of a kind end here.
 IMAGE_NAMES_X :: 216 // The tiles of the names start here.
-IMAGE_CHECK_Y :: 96
-IMAGE_TRUST_Y :: 114
+IMAGE_CHECK_Y :: 96 // The y of the line of the check.
+IMAGE_TRUST_Y :: 114 // The y of the line of the trust.
 
 // The layout is large for a stack: one copy serves each draw of the program.
 @(private)
 image_layout: image_card.Layout
 
+// The name of each kind of file of the boot image.
 @(private, rodata)
 image_kind_names := [image_card.File_Kind]string {
 	.Program  = "programs",
@@ -378,6 +404,7 @@ image_kind_names := [image_card.File_Kind]string {
 	.Resource = "resources",
 }
 
+// The color of each kind of file of the boot image.
 @(private, rodata)
 image_kind_colors := [image_card.File_Kind]graphics.Color {
 	.Program  = graphics.COLOR_PROGRAM,

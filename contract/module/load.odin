@@ -2,19 +2,24 @@ package module
 
 import "base:intrinsics"
 
+// What is not valid in a module file: the result of `header`, `validate` and
+// `rebase`, and `Load_Error.file_error` at the stage `Read`. A loader maps no
+// byte of a file that gives another value than `None`.
 Error :: enum u32 {
-	None            = 0,
-	Too_Small       = 1,
-	Bad_Magic       = 2,
-	Unknown_Version = 3,
-	Unknown_Feature = 4,
-	Unknown_Machine = 5,
-	Bad_Table       = 6,
+	None            = 0, // The file is valid for this check.
+	Too_Small       = 1, // The file is shorter than a `Header`.
+	Bad_Magic       = 2, // The file does not start with `MAGIC`: it is not a module.
+	Unknown_Version = 3, // The version is not `VERSION`.
+	Unknown_Feature = 4, // `must_understand` has a bit outside `UNDERSTOOD_FEATURES`.
+	Unknown_Machine = 5, // The machine is not `X86_64`.
+	Bad_Table       = 6, // A table is not inside the file, or the rebase table has records that are not words of 8 bytes.
+	// A segment is not on pages, is outside `memory_size`, has more bytes in the file than in memory, is not
+	// inside the file, or is executable and written by the loader.
 	Bad_Segment     = 7,
-	Bad_Rebase      = 8,
-	Bad_Slot        = 9,
-	Bad_Import      = 10,
-	Bad_Export      = 11,
+	Bad_Rebase      = 8, // A location of the rebase table is not in a segment that the loader can write.
+	Bad_Slot        = 9, // No check gives it today: `bind` reports a slot that is not valid at the stage Bind.
+	Bad_Import      = 10, // No check gives it today.
+	Bad_Export      = 11, // `entry_export` is not an index of the export table.
 }
 
 // read copies a T from file at offset. It gives zero when the range is not in file.
@@ -28,6 +33,8 @@ read :: proc "contextless" (file: []u8, offset: u64, $T: typeid, size := u64(siz
 	return value, true
 }
 
+// header reads the header of a module and checks its magic, its version,
+// its features and its machine. A loader calls `validate`, which calls it.
 header :: proc "contextless" (file: []u8) -> (value: Header, error: Error) {
 	ok: bool
 	value, ok = read(file, 0, Header)
@@ -57,6 +64,8 @@ table :: proc "contextless" (file: []u8, kind: Table_Kind) -> Table_Entry {
 	return entry
 }
 
+// count gives the records of a table, record 0 included: the indexes from 1
+// to `count - 1` name records. 0: the file has no such table.
 count :: proc "contextless" (file: []u8, kind: Table_Kind) -> u32 {
 	return table(file, kind).count
 }
@@ -73,6 +82,16 @@ record :: proc "contextless" (file: []u8, kind: Table_Kind, index: u32, $T: type
 
 // validate checks all that a loader relies on before it maps a module:
 // the header, the range of each table, and the range of each segment.
+//
+// It does not check the slots, the imports or the descriptions: `bind` and
+// the readers of descriptions check what they read. A file from a store or
+// from another program is hostile input: call it first.
+//
+// ```odin
+// if module.validate(file) != .None {
+// 	return .Bad_Operation
+// }
+// ```
 validate :: proc "contextless" (file: []u8) -> Error {
 	head, error := header(file)
 	if error != .None {
@@ -168,6 +187,8 @@ rebase_range :: proc "contextless" (file: []u8, memory: []u8, load_address: uint
 	return .None
 }
 
+// rebase_location adds base to one location, when it is between first and
+// end. A location outside a writable segment is `Bad_Rebase` in every case.
 @(private)
 rebase_location :: proc "contextless" (file: []u8, memory: []u8, memory_offset: u64, base: u64, first, end: u64) -> Error {
 	if !writable(file, memory_offset) {
@@ -182,6 +203,11 @@ rebase_location :: proc "contextless" (file: []u8, memory: []u8, memory_offset: 
 }
 
 // export_address gives the address of an export of a module that is loaded at base.
+// ok is false for the index 0, an index that the file does not have, or a
+// code offset outside the module.
+//
+// Example: `module.export_address(file, op.PROGRAM_BASE, head.entry_export)`
+// gives the entry of a program.
 export_address :: proc "contextless" (file: []u8, base: uintptr, export_index: u32) -> (address: uintptr, ok: bool) {
 	if export_index == 0 {
 		return 0, false
@@ -198,16 +224,20 @@ export_address :: proc "contextless" (file: []u8, base: uintptr, export_index: u
 // where. When a replacement applies, `named` is the file of the module that
 // the import names: a slot names an export by its index in that file.
 Bound_Import :: struct {
-	file:  []u8,
-	base:  uintptr,
+	file:  []u8, // The file of the module that is loaded for the import.
+	base:  uintptr, // Its address in the program that runs it.
 	named: []u8, // nil: `file` is the module that the import names.
 }
 
 // A replacement: where a module imports the module `from`, the loader loads
 // the module `to` (docs/MODULE_CONTRACT.md, "Replacement of an import").
+//
+// The party that starts a program gives the replacements; the loader checks
+// that each export that a slot uses has the same description in `to`
+// (`functions_compare`). 64 bytes. See [replacement](term:replacement).
 Replacement :: struct {
-	from: [HASH_SIZE]u8,
-	to:   [HASH_SIZE]u8,
+	from: [HASH_SIZE]u8, // The hash that an import names.
+	to:   [HASH_SIZE]u8, // The hash of the module that the loader loads in its place.
 }
 #assert(size_of(Replacement) == 64)
 
@@ -419,7 +449,7 @@ field_integer :: proc "contextless" (record: []u8, item: Field) -> i64 {
 // field_integer_fits says if an Integer field holds a value: a signed field
 // of n bytes holds -2^(8n-1) ..< 2^(8n-1), an unsigned one 0 ..< 2^(8n). An
 // unsigned field of 8 bytes holds each value as its bits. A caller that
-// writes a value of a person refuses one that does not fit.
+// writes a value from the input refuses one that does not fit.
 field_integer_fits :: proc "contextless" (item: Field, value: i64) -> bool {
 	size := field_size(item.type, item.detail)
 	if item.type != .Integer || size == 0 || size == 8 {

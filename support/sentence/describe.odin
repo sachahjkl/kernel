@@ -3,9 +3,10 @@ package sentence
 import module "contract:module"
 import op "contract:operation"
 
-// The text of a description: what a program shows to a person about the
+// The text of a description: what a program shows to a reader about the
 // types of an export (module.Function).
 
+// The name of each right, as `op.Right` names it.
 @(rodata)
 right_names := [op.Right]string {
 	.Give    = "Give",
@@ -23,6 +24,7 @@ right_names := [op.Right]string {
 	.Events   = "Events",
 }
 
+// The name of each object kind in a description.
 @(rodata)
 object_names := [op.Object_Kind]string {
 	.None      = "no object",
@@ -89,6 +91,7 @@ write_type :: proc "contextless" (writer: ^Writer, file: []u8, type: module.Type
 	}
 }
 
+// The name of each direction of a table parameter.
 @(rodata)
 direction_names := [module.Direction]string {
 	.Read   = "Read",

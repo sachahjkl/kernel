@@ -72,6 +72,23 @@
 // against the size of the call region (decode).
 //
 // This package allocates no memory and calls no kernel operation.
+//
+// Who uses it: `support/system` on the side of the caller (`system.call_isolated`
+// and the connections to services) and on the side of the receiver (the
+// call host `programs/host` and each service that serves its own exports).
+// The parts:
+//
+// - `encode` and `decode`: the argument record, on each side.
+// - `Argument`, `Slice`, `Call`, `Lent`: what the two sides hold.
+// - `Table_Field`, `Table_Argument`, `table_encode`, `tables_return`: the
+//   tables and the bytes (`tables.odin`).
+// - `Status`: the status of a completion of a call.
+// - `Service_Command` and the `CALLER_` constants: how the root service
+//   connects a caller to a service.
+// - `GRANT_RING`, `GRANT_REGION`, the `VALUE_` constants: the context of a
+//   call host.
+//
+// See [isolated call](term:isolated-call) and [call host](term:call-host).
 package isolated
 
 import "contract:errors"
@@ -90,7 +107,7 @@ GRANT_REGION :: 1 // Memory: the call region.
 VALUE_FILE_ADDRESS :: 0 // Where the caller mapped the files.
 VALUE_FILE_SIZE :: 1 // The size of the files, in bytes, from FILE_ADDRESS.
 VALUE_REPLACEMENT_OFFSET :: 2 // The offset of the replacement records, from FILE_ADDRESS.
-VALUE_REPLACEMENT_COUNT :: 3
+VALUE_REPLACEMENT_COUNT :: 3 // The count of the replacement records, at most `system.REPLACEMENT_CAPACITY`.
 
 FILE_ADDRESS :: fixed_addresses.MODULE_FILES_ADDRESS // Where a caller maps the files of the module in the call host.
 // Where a receiver maps the memory object of table parameter n for the
@@ -100,6 +117,8 @@ FILE_ADDRESS :: fixed_addresses.MODULE_FILES_ADDRESS // Where a caller maps the 
 TABLE_ADDRESS :: fixed_addresses.MODULE_TABLES_ADDRESS
 TABLE_SPAN :: u64(16) << 30 // The most bytes of one table in a memory object: 16 GiB.
 #assert(module.PARAMETER_CAPACITY * TABLE_SPAN <= fixed_addresses.RANGE_SPAN)
+// The pages of the call region that a caller makes for one connection: 64
+// KiB, for the argument record, the bytes of its texts and a result.
 REGION_PAGES :: 16
 
 // A service that serves its own exports receives calls in the same form. It
@@ -126,11 +145,11 @@ REGION_PAGES :: 16
 //               principal, and can see what the service holds for all
 //               callers. A caller without it sees what is its own only.
 SERVICE_CONNECTION_CAPACITY :: 8 // The callers of one service.
-CALLER_AMOUNT_MASK :: u64(1) << 48 - 1
-CALLER_PRINCIPAL_SHIFT :: 48
+CALLER_AMOUNT_MASK :: u64(1) << 48 - 1 // The bits of the amount in values[6]: bits 0 to 47.
+CALLER_PRINCIPAL_SHIFT :: 48 // The first bit of the number of the principal in values[6].
 CALLER_PRINCIPAL_LIMIT :: u64(1) << 15 // The numbers of principals that the field holds: 0 to 32767.
-CALLER_PRINCIPAL_MASK :: (CALLER_PRINCIPAL_LIMIT - 1) << CALLER_PRINCIPAL_SHIFT
-CALLER_ACTS_FOR_PRINCIPAL :: u64(1) << 63
+CALLER_PRINCIPAL_MASK :: (CALLER_PRINCIPAL_LIMIT - 1) << CALLER_PRINCIPAL_SHIFT // The bits of the number of the principal in values[6]: bits 48 to 62.
+CALLER_ACTS_FOR_PRINCIPAL :: u64(1) << 63 // The bit of values[6] set when the caller acts for its principal.
 
 // caller_principal gives the number of the principal that a grant of
 // values[6] names.
@@ -141,6 +160,10 @@ caller_principal :: proc "contextless" (grant: u64) -> u64 {
 // caller_grant_make gives values[6] from its three parts. An amount or a
 // number of a principal out of its field is cut to the field: the root
 // service, the one writer, never gives one.
+//
+// Example: `caller_grant_make(4096, 1, false)` is the grant of 4096 (blocks,
+// for the storage service) to a caller of the principal 1 that does not act
+// for that principal.
 caller_grant_make :: proc "contextless" (amount: u64, principal: u64, acts_for_principal: bool) -> u64 {
 	grant := amount & CALLER_AMOUNT_MASK | (principal & (CALLER_PRINCIPAL_LIMIT - 1)) << CALLER_PRINCIPAL_SHIFT
 	if acts_for_principal {
@@ -149,15 +172,23 @@ caller_grant_make :: proc "contextless" (amount: u64, principal: u64, acts_for_p
 	return grant
 }
 
+// What the root service tells a service about one connection, as the kind of
+// a command record of the service ring. The service answers each one with a
+// completion; the values of the command are in the comment above
+// `SERVICE_CONNECTION_CAPACITY`.
 Service_Command :: enum u32 {
-	None       = 0,
+	None       = 0, // Not a command: the service refuses it.
 	Connect    = 1, // The service maps the two memory objects, and serves the calls of the call ring.
 	Disconnect = 2, // The service unmaps them and closes the two handles.
 	Grant      = 3, // The grant of the connection of the call ring changes to values[6]: a revocation, for example.
 }
 
+// The status of a completion of the call ring: the kind of the completion
+// record. With `Ok` the values are the results of the export; the integer
+// result can still be negative, and then the error record of the export says
+// why.
 Status :: enum u32 {
-	Ok            = 0,
+	Ok            = 0, // The export ran. values[0] and values[1]: its integer results; values[2] and values[3]: its float results.
 	Bad_Export    = 1, // The module has no export with this index, or the export has no description.
 	Bad_Arguments = 2, // The argument record, or one of its slices, is not in the call region.
 	Bad_Handle    = 3, // A handle of the argument record did not come through the call ring, or it lacks a right of the description.
@@ -168,9 +199,13 @@ Status :: enum u32 {
 }
 
 // In the call region, `start` is an offset. In a program, it is an address.
+//
+// It is the form of a Text argument in the argument record, and of the
+// buffer of a Text or Table result. A receiver checks that `start + count`
+// is inside the call region before it reads a byte (`decode`). 16 bytes.
 Slice :: struct {
-	start: u64,
-	count: u64,
+	start: u64, // An offset in the call region, or an address in a program.
+	count: u64, // Bytes; for the buffer of a Table result, records.
 }
 #assert(size_of(Slice) == 16)
 
@@ -178,7 +213,7 @@ Slice :: struct {
 // says which field has the value.
 Argument :: struct {
 	integer: u64, // An Integer. A Handle: the handle, as the receiver names it.
-	text:    []u8,
+	text:    []u8, // A Text: the bytes, which `encode` copies into the call region.
 	record:  []u8, // The bytes of a Record: the size of its description.
 	table:   Table_Argument, // A Table or Bytes.
 }
@@ -197,13 +232,13 @@ Call :: struct {
 	slices:     [module.PARAMETER_CAPACITY]Slice, // slices[n]: the slice record of a Text.
 	records:    [module.PARAMETER_CAPACITY][module.RECORD_SIZE_LIMIT / 8]u64, // records[n]: the copy of a Record.
 	lent:       [module.HANDLE_CAPACITY]Lent, // The handles to prove before the call, and to close after it.
-	lent_count: int,
+	lent_count: int, // The entries of `lent` in use.
 	result:     Slice, // A Record result: its place in the call region, as offsets.
 	error:      Slice, // The place of the error record in the call region, as offsets. count 0: the export has none.
 	places:        [module.PARAMETER_CAPACITY]module.Table_Place, // places[n]: the table place of a Table or Bytes, in memory of the receiver.
 	count_offsets: [module.PARAMETER_CAPACITY]u64, // An Append place: the offset of its count in the call region.
 	mappings:      [module.PARAMETER_CAPACITY]Table_Mapping, // The memory objects to map before the call.
-	mapping_count: int,
+	mapping_count: int, // The entries of `mappings` in use.
 }
 
 // The largest argument record: 6 table fields, a buffer and an error record.
@@ -211,6 +246,10 @@ ARGUMENT_RECORD_LIMIT :: module.PARAMETER_CAPACITY * size_of(Table_Field) + size
 
 ERROR_RECORD_SIZE :: 56 // contract/errors: Error_Record.
 
+// field_size gives the bytes of the field of one parameter type in the
+// argument record: 8 for an Integer, a Record and a Handle, 16 for a Text
+// (a `Slice`), 32 for a Table and Bytes (a `Table_Field`). 0: a type that has
+// no field, which `record_size` refuses.
 field_size :: proc "contextless" (type: module.Type) -> u64 {
 	switch type {
 	case .Integer, .Record, .Handle:
@@ -263,12 +302,16 @@ record_size :: proc "contextless" (function: module.Function) -> (size: u64, ok:
 	return size, true
 }
 
+// store writes a value at an offset of the call region, with no alignment.
+// The caller checked that the bytes are inside the region.
 @(private)
 store :: proc "contextless" (region: []u8, offset: u64, value: $T) {
 	value := value
 	intrinsics.mem_copy_non_overlapping(raw_data(region[offset:]), &value, size_of(T))
 }
 
+// load reads a value at an offset of the call region, with no alignment.
+// The caller checked that the bytes are inside the region.
 @(private)
 load :: proc "contextless" (region: []u8, offset: u64, $T: typeid) -> (value: T) {
 	intrinsics.mem_copy_non_overlapping(&value, raw_data(region[offset:]), size_of(T))

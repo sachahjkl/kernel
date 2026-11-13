@@ -35,6 +35,8 @@ compare_constant_time :: proc "contextless" (a, b: []byte) -> int {
 	return compare_byte_ptrs_constant_time(raw_data(a), raw_data(b), n)
 }
 
+// compare_byte_ptrs_constant_time gives 1 when n bytes at a and at b are
+// equal, else 0, in a time that does not depend on the bytes.
 @(optimization_mode = "none")
 compare_byte_ptrs_constant_time :: proc "contextless" (a, b: ^byte, n: int) -> int {
 	x := ([^]byte)(a)[:n]
@@ -65,6 +67,8 @@ COMPACT_IMPLS :: false
 // (ed25519.private_key_generate) say false.
 HAS_RAND_BYTES :: false
 
+// rand_bytes stops the program: a module of this system draws its bytes
+// from support/random, never from here.
 rand_bytes :: proc "contextless" (dst: []byte) {
 	ensure_contextless(false, "cryptography: no system entropy source here: draw from support/random")
 }

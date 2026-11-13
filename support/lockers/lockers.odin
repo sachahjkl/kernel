@@ -23,13 +23,14 @@ ROLE_MEASURE :: 0
 ROLE_CHURN :: 1
 CHURN_THREADS :: 4 // The threads that a churn locker can have at one time.
 
-LOCKER_CAPACITY :: 4
+LOCKER_CAPACITY :: 4 // The lockers that `locks` starts.
 FAULT_PAGES :: 256 // The pages of one memory object in the measure of the pages on first use.
 // The locker maps each such object at this address: the page tables of the
 // range exist after the first one, and the budget pays for them one time.
 // It is outside the band of the addresses that the system fixes.
 FAULT_ADDRESS :: fixed_addresses.OWN_CHOICE_START + 0x0000_0600_0000_0000
 
+// The work of a locker for one command.
 Mode :: enum u32 {
 	Wait    = 0, // Do nothing until the next command.
 	Entries = 1, // Enter the kernel with one cheap operation on an own object, as often as possible.
@@ -43,9 +44,9 @@ LARGE_PAGES :: 600 // Three list pages: the kernel takes the frames of the list 
 // `command`; the locker writes the result, then adds 1 to `done`.
 Slot :: struct #align (64) {
 	command:       u32, // The locker waits on this word.
-	mode:          Mode,
+	mode:          Mode, // The work of the command.
 	start:         u64, // Milliseconds since boot (the time page).
-	end:           u64,
+	end:           u64, // The time when the locker stops the work.
 	done:          u32, // `locks` waits on this word. The locker adds 1 when it is ready, then for each command.
 	_:             u32,
 	count:         u64, // Entries: the operations. Faults: the pages written for the first time.
@@ -54,8 +55,10 @@ Slot :: struct #align (64) {
 	budget_after:  u64, // The same, after the command: each page returned.
 }
 
+// The memory that `locks` shares with its lockers: one slot for each
+// locker, each on its own lines of the cache.
 Board :: struct {
-	slots: [LOCKER_CAPACITY]Slot,
+	slots: [LOCKER_CAPACITY]Slot, // Slot n is the locker n.
 }
 
 #assert(size_of(Board) <= 4096)

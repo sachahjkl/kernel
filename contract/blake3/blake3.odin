@@ -8,33 +8,46 @@
 // by side, one chunk in each lane of an SSE2 register
 // (chunks_side_by_side_amd64.odin, docs/SIMD.md). The scalar form here is the
 // reference, and the code of every other part of the tree.
+//
+// Who uses it: the boot program and the root service (the system
+// description), the loaders (the name of a module is the hash of its file),
+// the storage service (the hash of an object, `subtree_chaining_value`), the
+// glyph caches and the debug objects.
+//
+// Example: `blake3.hash(file)` is the name of a module in the boot image.
 package blake3
 
 import "base:intrinsics"
 
-HASH_SIZE :: 32
-BLOCK_SIZE :: 64
-CHUNK_SIZE :: 1024
+HASH_SIZE :: 32 // The bytes of a hash.
+BLOCK_SIZE :: 64 // The bytes of one block of the compression.
+CHUNK_SIZE :: 1024 // The bytes of one chunk: 16 blocks, a leaf of the tree.
 
+// A hash of 32 bytes.
 Hash :: [HASH_SIZE]u8
 
+// The domain flags of a compression (the BLAKE3 specification, section 2.1).
 @(private)
 Flag :: enum u32 {
-	Chunk_Start = 0,
-	Chunk_End   = 1,
-	Parent      = 2,
-	Root        = 3,
+	Chunk_Start = 0, // The first block of a chunk.
+	Chunk_End   = 1, // The last block of a chunk.
+	Parent      = 2, // A parent node of the tree.
+	Root        = 3, // The root: its output is the hash.
 }
 
+// The flags of one compression.
 @(private)
 Flags :: bit_set[Flag;u32]
 
+// The initial value: the one of SHA-256.
 @(private)
 INITIAL_VALUE :: [8]u32{0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19}
 
+// The permutation of the words of the message between two rounds.
 @(private)
 MESSAGE_PERMUTATION :: [16]int{2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8}
 
+// The rounds of one compression.
 @(private)
 ROUND_COUNT :: 7
 
@@ -147,6 +160,8 @@ subtree_value_of_chunk_values :: #force_inline proc "contextless" (values: [][8]
 	return values[0]
 }
 
+// parent_block gives the message of a parent node: the two chaining
+// values of its children.
 @(private)
 parent_block :: proc "contextless" (left, right: [8]u32) -> (block: [16]u32) {
 	for i in 0 ..< 8 {
@@ -156,6 +171,7 @@ parent_block :: proc "contextless" (left, right: [8]u32) -> (block: [16]u32) {
 	return
 }
 
+// first_half gives the first 8 words of a state: the chaining value.
 @(private)
 first_half :: proc "contextless" (state: [16]u32) -> (half: [8]u32) {
 	for i in 0 ..< 8 {
@@ -190,6 +206,9 @@ chunk_value :: proc "contextless" (chunk: []u8, chunk_counter: u64, last_flags: 
 	}
 }
 
+// compress is the compression function of BLAKE3: 7 rounds over a block,
+// with the chaining value, the counter, the bytes of the block and the
+// flags. It gives the whole state; the chaining value is its first half.
 @(private)
 compress :: proc "contextless" (value: [8]u32, block: [16]u32, counter: u64, block_size: u32, flags: Flags) -> [16]u32 {
 	initial := INITIAL_VALUE
@@ -237,6 +256,8 @@ compress :: proc "contextless" (value: [8]u32, block: [16]u32, counter: u64, blo
 	return state
 }
 
+// mix is the quarter-round G of the specification, on four words of the
+// state and two words of the message.
 @(private)
 mix :: #force_inline proc "contextless" (state: ^[16]u32, a, b, c, d: int, x, y: u32) {
 	state[a] = state[a] + state[b] + x
@@ -249,6 +270,7 @@ mix :: #force_inline proc "contextless" (state: ^[16]u32, a, b, c, d: int, x, y:
 	state[b] = rotate_right(state[b] ~ state[c], 7)
 }
 
+// rotate_right rotates the bits of a word to the right.
 @(private)
 rotate_right :: #force_inline proc "contextless" (value: u32, count: u32) -> u32 {
 	return value >> count | value << (32 - count)

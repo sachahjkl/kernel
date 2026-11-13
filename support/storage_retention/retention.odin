@@ -10,13 +10,18 @@
 // version that the rule keeps stays kept until it changes zone.
 package storage_retention
 
-KEEP_ALL_MILLISECONDS :: 10 * 60 * 1000
-HOUR_MILLISECONDS :: 60 * 60 * 1000
-DAY_MILLISECONDS :: 24 * HOUR_MILLISECONDS
+KEEP_ALL_MILLISECONDS :: 10 * 60 * 1000 // The age under which each version is kept: 10 minutes.
+HOUR_MILLISECONDS :: 60 * 60 * 1000 // The bucket of the zone of the hours, and its end at one day.
+DAY_MILLISECONDS :: 24 * HOUR_MILLISECONDS // The bucket of the zone of the days.
 
 // keeps says, for the times of the versions of one object, the oldest
 // first, which versions the rule keeps at the time `now`. keep has the
 // length of times. It gives the count of the versions to thin.
+//
+// Example: versions 5, 20 and 50 minutes old, the two older ones in the
+// same hour from the format: the version of 5 minutes is kept (under 10
+// minutes), and of the two others the newest of the hour (20 minutes) is
+// kept; `thinned` is 1.
 keeps :: proc "contextless" (times: []u64, now: u64, keep: []bool) -> (thinned: int) {
 	last_hour, last_day := max(u64), max(u64) // The bucket of the last version kept in each zone.
 	for index := len(times) - 1; index >= 0; index -= 1 {

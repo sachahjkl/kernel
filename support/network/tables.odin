@@ -11,10 +11,12 @@ import "contract:datagram"
 // (the datagrams that reached its local port from a remote that its grant
 // does not name).
 Problem_Table :: struct {
-	rows:  [datagram.Problem_Kind][datagram.Layer]datagram.Problem_Row,
-	count: u64,
+	rows:  [datagram.Problem_Kind][datagram.Layer]datagram.Problem_Row, // One row for each kind in each layer.
+	count: u64, // All the refused frames.
 }
 
+// problem_count counts one refused frame in its row, and keeps it as the
+// last one. A kind or a layer out of its enumeration counts in the row None.
 problem_count :: proc "contextless" (table: ^Problem_Table, found: datagram.Problem, scope: datagram.Problem_Scope) {
 	kind := found.kind if found.kind <= max(datagram.Problem_Kind) else .None
 	layer := found.layer if found.layer <= max(datagram.Layer) else .None
@@ -63,17 +65,18 @@ problem_rows :: proc "contextless" (own: ^Problem_Table, machine: ^Problem_Table
 // place: with 60 s and ">=", a live remote loses it.
 ADMITTED_IDLE :: 2 * 60_000
 
+// One remote that an endpoint admitted: a client of a listen grant.
 Admitted_Remote :: struct {
-	address:   u32,
-	port:      u16,
-	used:      bool,
+	address:   u32, // Its IPv4 address.
+	port:      u16, // Its port.
+	used:      bool, // The place holds a remote.
 	time:      u64, // Milliseconds: the last segment of this remote, in or out (TCP), or the last datagram that came from it (UDP).
 	// UDP: the bytes of the datagrams that came from this remote and that
 	// went to it, and whether the program said that the remote proved its
 	// address (the command Validate).
 	bytes_in:  u64,
-	bytes_out: u64,
-	validated: bool,
+	bytes_out: u64, // See bytes_in.
+	validated: bool, // See bytes_in.
 }
 
 // A UDP listen grant sends to a remote that did not prove its address at
@@ -81,6 +84,7 @@ Admitted_Remote :: struct {
 // section 8.1, which the network service holds without knowing QUIC.
 AMPLIFICATION_FACTOR :: 3
 
+// The admitted remotes of one endpoint.
 Admitted :: [datagram.ADMITTED_CAPACITY]Admitted_Remote
 
 // admitted_find says if a remote is admitted, and takes now as the time of
@@ -168,6 +172,7 @@ admitted_validate :: proc "contextless" (table: ^Admitted, address: u32, port: u
 	return false
 }
 
+// saturating_add adds two counts, and stops at the largest number.
 @(private)
 saturating_add :: proc "contextless" (left, right: u64) -> u64 {
 	return left > max(u64) - right ? max(u64) : left + right
@@ -199,18 +204,20 @@ source_valid :: proc "contextless" (address: u32, local: u32, mask: u32) -> bool
 	return true
 }
 
-ARP_CAPACITY :: 16
+ARP_CAPACITY :: 16 // The neighbors that the network service remembers.
 
 // One address of the link and its hardware address.
 Neighbor :: struct {
-	address:  u32,
-	hardware: Hardware,
-	known:    bool,
+	address:  u32, // The IPv4 address.
+	hardware: Hardware, // Its hardware address, when known.
+	known:    bool, // An answer came: hardware is valid. false: a request waits.
 	time:     u64, // When the answer came, in milliseconds.
 }
 
+// The neighbors of the network service: its table of ARP.
 Neighbors :: [ARP_CAPACITY]Neighbor
 
+// What an answer of ARP did to the table of the neighbors.
 Learned :: enum u8 {
 	Not_Asked, // No request of this service waits for this address: the answer is not taken.
 	Updated, // The address was in the table: its hardware address is the new one.
@@ -219,6 +226,8 @@ Learned :: enum u8 {
 	Full, // Each entry is in use by a request that waits: the answer is not taken.
 }
 
+// neighbor_find gives the hardware address of an address of the link, when
+// the table knows it.
 neighbor_find :: proc "contextless" (table: ^Neighbors, address: u32) -> (hardware: Hardware, ok: bool) {
 	for &item in table {
 		if item.known && item.address == address {

@@ -5,7 +5,7 @@ import "support:system"
 
 // What is wrong in a module file, or in a question.
 Problem_Kind :: enum u32 {
-	None      = 0,
+	None      = 0, // No problem.
 	No_Module = 1, // The catalog has no module with this name or this hash.
 	Header    = 2, // module.header refused the header: `header` says why.
 	Table     = 3, // A table of the directory is not inside the file, or the rebase table has records of another size.
@@ -20,6 +20,7 @@ Problem_Kind :: enum u32 {
 	Direction = 12, // A direction of a parameter is not Read, Change or Append, or a parameter that is not a Table or Bytes has one.
 }
 
+// The name of each problem kind in a row (`Module.problem`).
 @(rodata)
 problem_names := [Problem_Kind]string {
 	.None      = "",
@@ -37,6 +38,8 @@ problem_names := [Problem_Kind]string {
 	.Direction = "direction",
 }
 
+// The name of each table in a row (`Module.place`): "header" for the header
+// and the directory.
 @(rodata)
 table_names := [module.Table_Kind]string {
 	.None          = "header",
@@ -54,7 +57,7 @@ table_names := [module.Table_Kind]string {
 
 // An error value with its detail. kind None: no problem.
 Problem :: struct {
-	kind:   Problem_Kind,
+	kind:   Problem_Kind, // What is wrong.
 	header: module.Error, // Header: what module.header found.
 	table:  module.Table_Kind, // The table of the bad record. None: the header or the directory.
 	index:  u32, // The record of that table, from 0.
@@ -63,7 +66,7 @@ Problem :: struct {
 	limit:  u64, // The rule: the value must be below this limit.
 }
 
-// problem_write writes a problem as one sentence for a person:
+// problem_write writes a problem as one sentence for a reader:
 // "tally: table Functions, record 3, byte 4120: a text is not inside the
 // string table: 5000 is not below 4096".
 problem_write :: proc "contextless" (writer: ^system.Writer, name: string, problem: Problem) {

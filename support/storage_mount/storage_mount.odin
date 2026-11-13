@@ -11,7 +11,7 @@ import format "contract:store"
 import block_tree "support:storage_object"
 import tree "support:storage_tree"
 
-BLOCK_SIZE :: format.BLOCK_SIZE
+BLOCK_SIZE :: format.BLOCK_SIZE // The bytes of one block of the disk.
 SCRATCH_BLOCKS :: format.OBJECT_FANOUT + 2 // The blocks of data of one object node, read in one request.
 
 // The source of the blocks of a disk: the storage service reads them
@@ -28,13 +28,17 @@ Block_Reader :: struct {
 	// `index` of its object. nil: storage_object.block_value. The kernel
 	// tool gives the value that it computed before, as for check.
 	value: proc "contextless" (reader: ^Block_Reader, number: u64, index: u64, bytes: ^block_tree.Block) -> format.Block_Value,
-	data: rawptr,
+	data: rawptr, // The state of the caller.
 }
 
+// check_of_block gives the check of the bytes of a block: from the reader
+// when it has its own, else the first 8 bytes of their BLAKE3 hash.
 check_of_block :: proc "contextless" (reader: ^Block_Reader, number: u64, bytes: []u8) -> u64 {
 	return reader.check != nil ? reader.check(reader, number, bytes) : format.check(bytes)
 }
 
+// value_of_block gives the value of a block of data at the block `index` of
+// its object: from the reader when it has its own, else computed.
 value_of_block :: proc "contextless" (reader: ^Block_Reader, number: u64, index: u64, bytes: ^block_tree.Block) -> format.Block_Value {
 	return reader.value != nil ? reader.value(reader, number, index, bytes) : block_tree.block_value(bytes, index)
 }
@@ -43,14 +47,18 @@ value_of_block :: proc "contextless" (reader: ^Block_Reader, number: u64, index:
 // support/storage_tree.
 Reader_Source :: struct {
 	using source: tree.Source,
-	reader:       ^Block_Reader,
-	disk_size:    u64,
+	reader:       ^Block_Reader, // Where the blocks come from.
+	disk_size:    u64, // The blocks of the disk: a Pointer at or past it is Wrong.
 }
 
+// reader_source makes the source of the nodes of a disk.
 reader_source :: proc "contextless" (reader: ^Block_Reader, disk_size: u64) -> Reader_Source {
 	return {source = {read = reader_source_read}, reader = reader, disk_size = disk_size}
 }
 
+// reader_source_read reads one node and compares it with the check of its
+// Pointer. The blocks 0 and 1 (the roots) and a block past the disk are
+// Wrong: no Pointer names them.
 reader_source_read :: proc "contextless" (source: ^tree.Source, pointer: format.Pointer, into: ^tree.Block) -> tree.Read {
 	from := (^Reader_Source)(source)
 	if pointer.block < 2 || pointer.block >= from.disk_size {
@@ -68,18 +76,22 @@ reader_source_read :: proc "contextless" (source: ^tree.Source, pointer: format.
 // with it.
 Object_Source :: struct {
 	using source: block_tree.Source,
-	reader:       ^Block_Reader,
-	disk_size:    u64,
+	reader:       ^Block_Reader, // Where the blocks come from.
+	disk_size:    u64, // The blocks of the disk.
 }
 
+// object_source makes the source of the block trees of a disk.
 object_source :: proc "contextless" (reader: ^Block_Reader, disk_size: u64) -> Object_Source {
 	return {source = {read_node = object_source_read_node, read_block = object_source_read_block, value = object_source_value}, reader = reader, disk_size = disk_size}
 }
 
+// object_source_value is the `value` of an object source.
 object_source_value :: proc "contextless" (source: ^block_tree.Source, number: u64, index: u64, bytes: ^block_tree.Block) -> format.Block_Value {
 	return value_of_block((^Object_Source)(source).reader, number, index, bytes)
 }
 
+// object_source_read_node reads one object node and compares it with the
+// check of its Pointer.
 object_source_read_node :: proc "contextless" (source: ^block_tree.Source, pointer: format.Pointer, into: ^block_tree.Block) -> block_tree.Read {
 	from := (^Object_Source)(source)
 	if pointer.block < 2 || pointer.block >= from.disk_size {
@@ -92,6 +104,8 @@ object_source_read_node :: proc "contextless" (source: ^block_tree.Source, point
 	return check_of_block(from.reader, pointer.block, into[:]) == pointer.check ? .Good : .Wrong
 }
 
+// object_source_read_block reads one block of data with no check: its
+// check is its value, which the caller compares.
 object_source_read_block :: proc "contextless" (source: ^block_tree.Source, number: u64, into: ^block_tree.Block) -> block_tree.Read {
 	from := (^Object_Source)(source)
 	if number < 2 || number >= from.disk_size {
@@ -104,13 +118,14 @@ object_source_read_block :: proc "contextless" (source: ^block_tree.Source, numb
 // The counts of one store, as its store block keeps them and as the walk
 // finds them.
 Store_Counts :: struct {
-	objects:        u64,
-	trees:          u64,
-	current_blocks: u64,
-	node_blocks:    u64,
-	removing:       u64,
+	objects:        u64, // `format.Store_Block.objects`.
+	trees:          u64, // `format.Store_Block.trees`.
+	current_blocks: u64, // `format.Store_Block.current_blocks`.
+	node_blocks:    u64, // `format.Store_Block.node_blocks`.
+	removing:       u64, // `format.Store_Block.removing`.
 }
 
+// store_counts_of gives the counts that a store block keeps.
 store_counts_of :: proc "contextless" (block: ^format.Store_Block) -> Store_Counts {
 	return {objects = block.objects, trees = block.trees, current_blocks = block.current_blocks, node_blocks = block.node_blocks, removing = block.removing}
 }
@@ -118,14 +133,14 @@ store_counts_of :: proc "contextless" (block: ^format.Store_Block) -> Store_Coun
 // What the open knows of a disk. The storage service keeps it while it
 // runs; the tool makes one for each image.
 State :: struct {
-	root:          format.Root,
+	root:          format.Root, // The root that the open uses.
 	root_place:    u64, // 0 or 1: the place of the root on the disk.
 	disk_size:     u64, // The blocks of the disk that the service uses.
 	// The store block of each store, with the counts that the walk found in
 	// place of the counts on the disk: the service starts from them.
 	store_blocks:  [format.STORE_CAPACITY]format.Store_Block,
 	in_use:        [format.DISK_BLOCKS_LIMIT / 64]u64, // Bit n: block n is named by the root.
-	in_use_count:  u64,
+	in_use_count:  u64, // The blocks in use.
 	// The reference count of each block that the root names: for an object
 	// node or a block of data, the object nodes, the entries and the
 	// versions that name it; 1 for a store block, a node, an index and a
@@ -151,7 +166,7 @@ State :: struct {
 	store_faulty:  [format.STORE_CAPACITY]bool,
 	store_damaged: [format.STORE_CAPACITY]bool, // Its store block or a node of one of its trees is wrong.
 	store_damaged_objects: [format.STORE_CAPACITY]u64, // Objects with a wrong object node or a wrong block of data.
-	scratch:       [SCRATCH_BLOCKS * BLOCK_SIZE]u8,
+	scratch:       [SCRATCH_BLOCKS * BLOCK_SIZE]u8, // The blocks of one read.
 	// One object node for each level of the block tree that the walk is
 	// in: a level reads its children into the node of the level below.
 	object_nodes:  [format.OBJECT_LEVEL_LIMIT]format.Object_Node,
@@ -163,16 +178,19 @@ State :: struct {
 	store_walk:    Store_Walk,
 }
 
+// What the open of a disk found: the counts, the damage, which root it
+// used, and the faults of the engine. The service writes it on the log at
+// its start; the tests of a loss of power check it.
 Mount :: struct {
-	generation:      u64,
-	stores:          u64,
-	objects:         u64,
+	generation:      u64, // The generation of the root that the open uses.
+	stores:          u64, // The stores of the root.
+	objects:         u64, // The objects of all the stores.
 	trees:           u64, // The trees inside the trees of the stores.
 	removing:        u64, // The trees in the removal queues.
 	checked:         u64, // Blocks read and compared with their check.
-	wrong:           u64,
-	damaged_objects: u64,
-	damaged_stores:  u64,
+	wrong:           u64, // Blocks with a wrong check, or that break a rule of the format.
+	damaged_objects: u64, // Objects with a wrong object node or a wrong block of data.
+	damaged_stores:  u64, // Stores whose store block or a node of a tree is wrong.
 	needs_format:    bool, // No commit followed the first root: the disk holds no object, the caller formats it.
 	first_cut:       bool, // The disk had only a first root with a wrong check: a format that a stop cut.
 	older:           bool, // The newest root named a wrong block and the root before it names none: the root before it is used.
@@ -185,8 +203,8 @@ Mount :: struct {
 	// block of one name that the root names two times, a block named from
 	// two stores, and a store whose counts are not the counts of what it
 	// names (its blocks, its objects, its trees, the entries of a tree).
-	named_twice:          u64,
-	named_by_two_stores:  u64,
+	named_twice:          u64, // Blocks of one name that the root names two times.
+	named_by_two_stores:  u64, // Blocks named from two stores.
 	stores_with_wrong_count: u64, // Stores walked whole whose count of blocks, or a count of the store block or of an entry, is wrong.
 	reference_overflow:   u64, // Blocks with more names than a count holds.
 	stores_recounted:     u64, // Stores whose count in the root differs from the recount: the open takes the recount.
@@ -228,20 +246,25 @@ reference :: proc "contextless" (state: ^State, number: u64, store_index: int, r
 	return false
 }
 
+// wrong_block says if a block was read and found wrong.
 wrong_block :: proc "contextless" (state: ^State, number: u64) -> bool {
 	return number < format.DISK_BLOCKS_LIMIT && state.wrong_blocks[number / 64] >> (number % 64) & 1 != 0
 }
 
+// wrong_block_set records that a block is wrong.
 wrong_block_set :: proc "contextless" (state: ^State, number: u64) {
 	if number < format.DISK_BLOCKS_LIMIT {
 		state.wrong_blocks[number / 64] |= 1 << (number % 64)
 	}
 }
 
+// damaged_under says if the block tree under a block has a wrong block.
 damaged_under :: proc "contextless" (state: ^State, number: u64) -> bool {
 	return number < format.DISK_BLOCKS_LIMIT && state.damaged_under[number / 64] >> (number % 64) & 1 != 0
 }
 
+// damaged_under_set records that the block tree under a block has a wrong
+// block.
 damaged_under_set :: proc "contextless" (state: ^State, number: u64) {
 	if number < format.DISK_BLOCKS_LIMIT {
 		state.damaged_under[number / 64] |= 1 << (number % 64)
@@ -425,8 +448,9 @@ mark :: proc "contextless" (state: ^State, number: u64, value: bool) -> bool {
 	return true
 }
 
+// What a read of blocks gave.
 Read :: enum {
-	Good,
+	Good, // Each block has its check.
 	Wrong, // A block does not have the check of its Pointer, or a Pointer names no block of the disk.
 	Device, // The device reported an error.
 }
@@ -483,17 +507,17 @@ single :: proc "contextless" (state: ^State, reader: ^Block_Reader, pointer: for
 
 // The walk of one store, for the visits of the walks of its trees.
 Store_Walk :: struct {
-	state:       ^State,
-	reader:      ^Block_Reader,
-	source:      Reader_Source,
-	result:      ^Mount,
-	store_index: int,
+	state:       ^State, // The state of the open.
+	reader:      ^Block_Reader, // Where the blocks come from.
+	source:      Reader_Source, // The source of the nodes of its trees.
+	result:      ^Mount, // The result of the open.
+	store_index: int, // The cell of the store in the root.
 	named:       u64, // The distinct blocks of the store.
-	counts:      Store_Counts,
+	counts:      Store_Counts, // What the walk counted.
 	nesting:     int, // The level of the tree that is walked: 0 for the tree of the store.
 	in_removals: bool, // The walk is in the removal queue: its entries are trees to free.
 	complete:    bool, // Each block of the store was read: its counts are known.
-	device:      bool,
+	device:      bool, // The device reported an error.
 	broken:      bool, // A node or an entry breaks a rule: the store is damaged.
 	entry_count_wrong: bool, // An entry of a tree gives another count of entries than its tree has.
 }
@@ -542,6 +566,10 @@ walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^fo
 	return true
 }
 
+// walk_store walks the store of a cell of the root: its store block, its
+// tree, its removal queue, the block trees and the versions of its objects.
+// It counts each block, and compares the counts with the store block. false:
+// the device failed.
 walk_store :: proc "contextless" (state: ^State, reader: ^Block_Reader, store: ^format.Store_Entry, index: int, result: ^Mount) -> bool {
 	named: u64
 	switch single(state, reader, store.store, index, result, &named) {

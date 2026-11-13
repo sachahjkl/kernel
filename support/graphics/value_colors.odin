@@ -19,6 +19,10 @@ Value_Kind_Color :: struct {
 	light_percent: u32, // shade of the accent on the light page of the site.
 }
 
+// The color of each kind of value of the log: a number and a size in the
+// color of memory, and so on. `value_kind_color` reads it: the program `log`
+// draws each value with it, and the site takes the color of each kind from
+// it.
 @(rodata)
 value_kind_colors := [value_kinds.Value_Kind]Value_Kind_Color {
 	.None      = {},

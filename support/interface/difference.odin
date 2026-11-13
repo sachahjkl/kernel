@@ -8,8 +8,8 @@ DAMAGE_CAPACITY :: 8 // The rectangles that one frame keeps, as the compositor d
 // Damage: the rectangles of a surface that changed between two frames. The
 // caller gives the memory of the rectangles.
 Damage :: struct {
-	rectangles: [DAMAGE_CAPACITY]Rectangle,
-	count:      int,
+	rectangles: [DAMAGE_CAPACITY]Rectangle, // The rectangles; no two of them touch.
+	count:      int, // The rectangles in use.
 }
 
 // damage_add records that a rectangle changed. Rectangles that touch become

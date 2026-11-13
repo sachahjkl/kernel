@@ -21,7 +21,7 @@
 // full, the program waits for the terminal.
 //
 // The input goes the other way, in the completion queue of the terminal
-// ring: one record for each key that the person presses (Input). The
+// ring: one record for each key that the input presses (Input). The
 // program edits its line: the terminal does not know what a line of input
 // is. The program shows the line with an Edit record; the terminal draws it
 // after the last line, with a cursor.
@@ -34,6 +34,26 @@
 // The ring keeps at most RING_CAPACITY records that the terminal did not
 // read, of RUN_LIMIT bytes at most: the program never writes over text
 // that the terminal did not read.
+//
+// Who uses it: the console and each program that the root service starts
+// with a terminal (`open`, `write`, `edit`, `key`), and the program
+// `terminal` (the reading side: `List_Keeping`, `hint_form_choose`). The
+// parts:
+//
+// - `Kind`, `Input`, `Style`, `Tone`, `Flag`: the records of the ring.
+// - `Terminal`, `open`, `write`, `line`, `status`, `edit`, `hint`, `key`,
+//   `clear`: the side of the program.
+// - `Code_Kind`, `Code_Run`, `Code_Runs` (`code_runs.odin`): the colors of a
+//   line of code.
+// - `List_Row`, `List_Shown`, `List_Keeping`: the completion list, as the
+//   terminal keeps it.
+//
+// ```odin
+// terminal := terminal_records.open(ctx) or_return
+// terminal_records.line(&terminal, {text = "ready: "}, {text = "3", style = {tone = .Number}})
+// ```
+//
+// See [terminal](term:terminal) and [terminal ring](term:terminal-ring).
 package terminal_records
 
 import "contract:cut_mark"
@@ -49,15 +69,15 @@ GRANT_PROGRAM :: 1 // For the terminal only: the program that writes, with the r
 
 // The values of the context of the terminal itself.
 VALUE_NAME :: 0 // 4 values: the name of the program. It is the title of the window.
-VALUE_COLUMNS :: 4
-VALUE_ROWS :: 5
+VALUE_COLUMNS :: 4 // The columns of the window, at most COLUMNS_LIMIT.
+VALUE_ROWS :: 5 // The rows of the window, at most ROWS_LIMIT.
 VALUE_MEASURE :: 6 // 1: the window shows the rates of the program.
-COLUMNS_LIMIT :: 104
-ROWS_LIMIT :: 32
+COLUMNS_LIMIT :: 104 // The most columns of a terminal window.
+ROWS_LIMIT :: 32 // The most rows of a terminal window.
 
-RING_CAPACITY :: 4096
+RING_CAPACITY :: 4096 // The records of each queue of the terminal ring.
 TEXT_PAGES :: 1024 // 4 MiB. A power of two.
-TEXT_SIZE :: TEXT_PAGES * system.PAGE_SIZE
+TEXT_SIZE :: TEXT_PAGES * system.PAGE_SIZE // The bytes of the text region.
 RUN_LIMIT :: 256 // The bytes of the text of one record.
 #assert(RING_CAPACITY * RUN_LIMIT <= TEXT_SIZE / 2)
 
@@ -70,7 +90,7 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           total; 0 removes the status.
 //   Clear   The terminal forgets all the lines.
 //   Edit    The line that the program changes: the line of input of the
-//           person, or a line that says what the program does now. The
+//           input, or a line that says what the program does now. The
 //           terminal shows it after the last line. A new one replaces the
 //           one before. tag: the count of bytes of its text. values[0]: a
 //           Style. values[1]: the place of the cursor, in bytes from the
@@ -93,7 +113,7 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           of its text: the name, then what the name is. values[0]: the
 //           number of the row, below LIST_ROWS. values[1]: the bytes of the
 //           name. values[2], values[3]: the places of the name that matched
-//           what the person typed (bit n: byte n of the name; values[2]
+//           what the input typed (bit n: byte n of the name; values[2]
 //           holds bytes 0 to 63).
 //   List    The completion list that the terminal shows over its text, at
 //           the edit line: the rows that List_Row gave before. values[0]:
@@ -115,15 +135,15 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 // of the font (under 32, over 126) as '?': the text of these records comes
 // from the descriptions of other programs.
 Kind :: enum u32 {
-	None     = 0,
-	Text     = 1,
-	Status   = 2,
-	Clear    = 3,
-	Edit     = 4,
-	Hint     = 5,
-	List_Row  = 6,
-	List      = 7,
-	Code_Runs = 8,
+	None     = 0, // Not a record: the terminal skips it.
+	Text     = 1, // A run of text.
+	Status   = 2, // The status line.
+	Clear    = 3, // Forget all the lines.
+	Edit     = 4, // The edit line.
+	Hint     = 5, // The hint line.
+	List_Row  = 6, // One row of the next completion list.
+	List      = 7, // Show the completion list.
+	Code_Runs = 8, // The runs of code of the next record of a target.
 }
 
 // A new kind of record, or a new field, is a new version. 2: the kind
@@ -131,41 +151,43 @@ Kind :: enum u32 {
 // Style.reserved: a program of version 1 writes 0 there, the kind None.
 TERMINAL_RECORD_VERSION :: 2
 
-NO_CURSOR :: max(u64)
-NO_CHOICE :: max(u64)
+NO_CURSOR :: max(u64) // An Edit record with no cursor.
+NO_CHOICE :: max(u64) // A List record with no chosen row.
 LIST_ROWS :: 8 // The rows of a completion list.
 
 // The kind of a completion record: what the terminal gives to the program.
-//   Key     The person pressed a key. tag: the code of the key
+//   Key     A key was pressed. tag: the code of the key
 //           (display.KEY_*). values[0]: its character, or 0. values[1]:
-//           the modifiers that the person held (display.MODIFIER_*).
+//           the modifiers that were held (display.MODIFIER_*).
 //           Control-R gives the character 'r' with MODIFIER_CONTROL.
 // The terminal keeps the keys Page Up and Page Down: they move its view.
 // If the program does not read and the queue is full, the newest keys are
 // lost: the terminal never waits for a program.
 Input :: enum u32 {
-	None = 0,
-	Key  = 1,
+	None = 0, // Not a record: the program skips it.
+	Key  = 1, // A key was pressed.
 }
 
+// One key, as `key` gives it to the program.
 Key :: struct {
-	code:      u32,
-	character: u8,
-	modifiers: u32,
+	code:      u32, // The code of the key (display.KEY_*).
+	character: u8, // Its character in ASCII, or 0.
+	modifiers: u32, // The modifiers held (display.MODIFIER_*).
 }
 
 // What a run of text is. The terminal chooses the color of each tone.
 Tone :: enum u8 {
-	Default = 0,
-	Dim     = 1,
-	Strong  = 2,
-	Good    = 3,
-	Warning = 4,
-	Bad     = 5,
-	Accent  = 6,
-	Number  = 7,
+	Default = 0, // Plain text.
+	Dim     = 1, // Text of less weight: a unit, a note.
+	Strong  = 2, // Text of more weight: a title.
+	Good    = 3, // A success: a check that passed.
+	Warning = 4, // Something to look at.
+	Bad     = 5, // A failure.
+	Accent  = 6, // A name that the reader looks for.
+	Number  = 7, // A number.
 }
 
+// A flag of the style of a run.
 Flag :: enum u8 {
 	End_Line = 0, // The line ends after this run.
 	Color    = 1, // The run has its own color: Style.color, not the color of its tone.
@@ -176,18 +198,18 @@ Flag :: enum u8 {
 // The color of a run: Style.color with the flag Color; if not, the color of
 // its code kind when the kind has one; if not, the color of its tone.
 Style :: struct {
-	tone:     Tone,
-	flags:    bit_set[Flag;u8],
+	tone:     Tone, // What the run is.
+	flags:    bit_set[Flag;u8], // End_Line, Color, Reverse.
 	code:     Code_Kind, // A Text record: what the run is in a line of code (code_runs.odin).
-	reserved: u8,
+	reserved: u8, // 0.
 	color:    u32, // Red, green, blue: 0xRRGGBB.
 }
 #assert(size_of(Style) == 8)
 
 // A terminal, as the program that writes sees it.
 Terminal :: struct {
-	ring:    ring.Ring,
-	text:    []u8,
+	ring:    ring.Ring, // The terminal ring: this program writes its commands.
+	text:    []u8, // The text region.
 	written: u64, // The bytes that the program wrote since the start.
 }
 
@@ -221,8 +243,8 @@ open :: proc "contextless" (ctx: ^system.Context, error: ^errors.Error_Record = 
 
 // A run of text and its style.
 Run :: struct {
-	text:  string,
-	style: Style,
+	text:  string, // The bytes; a run longer than RUN_LIMIT is several records.
+	style: Style, // Its style.
 }
 
 // write gives runs of text to the terminal. The terminal has all of them
@@ -296,14 +318,15 @@ edit :: proc "contextless" (terminal: ^Terminal, text: string, cursor: u64 = NO_
 // A form of a hint line, and the part of it that the terminal marks: the
 // first byte and the count of bytes.
 Hint_Form :: enum u8 {
-	Long  = 0,
-	Short = 1,
+	Long  = 0, // The long form: the whole signature.
+	Short = 1, // The short form, for a narrow terminal.
 }
 
+// One form of a hint: its text and its marked part.
 Hint_Text :: struct {
-	text:         string,
-	marked_start: int,
-	marked_count: int,
+	text:         string, // The text of the form.
+	marked_start: int, // The first byte that the terminal marks.
+	marked_count: int, // The bytes that it marks.
 }
 
 // hint sets the line under the edit line: a long form, a short form ("" if
@@ -358,26 +381,29 @@ list_show :: proc "contextless" (terminal: ^Terminal, row_count: int, chosen: u6
 // List with no new rows shows empty rows, never the rows of a list before,
 // which can come from another program of the same terminal.
 List_Row :: struct {
-	text:        [RUN_LIMIT]u8,
-	length:      int,
-	name_length: int,
-	matched:     [2]u64,
+	text:        [RUN_LIMIT]u8, // The name, then what the name is.
+	length:      int, // The bytes of `text` in use.
+	name_length: int, // The bytes of the name, at the start of `text`.
+	matched:     [2]u64, // Bit n: byte n of the name matched what the input typed.
 	code:        Code_Runs, // The runs of code of the row, checked against its text. None: the row is plain.
 }
 
+// The completion list that the terminal shows now.
 List_Shown :: struct {
-	rows:      [LIST_ROWS]List_Row,
-	row_count: int,
+	rows:      [LIST_ROWS]List_Row, // The rows.
+	row_count: int, // The rows in use. 0: no list.
 	chosen:    int, // -1: no row is chosen.
 	first:     int, // The place of the first row in all the names.
 	total:     int, // All the names: more than row_count shows a scroll mark.
 	anchor:    int, // The byte of the edit line where the name starts.
 }
 
+// What the terminal keeps of the completion lists: the rows of the next
+// list, and the list that it shows.
 List_Keeping :: struct {
 	next:         [LIST_ROWS]List_Row, // The rows given since the last List.
 	pending:      [LIST_ROWS]Code_Runs, // The runs that the next List_Row of each row takes.
-	shown:        List_Shown,
+	shown:        List_Shown, // The list on the screen.
 	runs_refused: u64, // The lists of runs that were refused: each one left its row plain.
 }
 
@@ -453,7 +479,7 @@ record_text :: proc "contextless" (text: string, buffer: ^[RUN_LIMIT]u8) -> stri
 	return string(buffer[:marked])
 }
 
-// key gives the next key that the person pressed. false: no key waits.
+// key gives the next key that was pressed. false: no key waits.
 // A program waits for a key with system.wait_records on
 // terminal.ring.completions.
 key :: proc "contextless" (terminal: ^Terminal) -> (pressed: Key, ok: bool) {
@@ -465,11 +491,14 @@ key :: proc "contextless" (terminal: ^Terminal) -> (pressed: Key, ok: bool) {
 	}
 }
 
+// clear tells the terminal to forget all the lines.
 clear :: proc "contextless" (terminal: ^Terminal) {
 	push(terminal, ring.Record{kind = u32(Kind.Clear)})
 	system.wake_reader(&terminal.ring.commands)
 }
 
+// append writes bytes in the text region after the bytes written before,
+// and starts again at its first byte after its last.
 @(private)
 append :: proc "contextless" (terminal: ^Terminal, text: string) {
 	place := int(terminal.written % TEXT_SIZE)
