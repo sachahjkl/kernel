@@ -923,7 +923,7 @@ Do not use: quantum.
 
 A weight is a number from 1 to 1024 of a thread: its share of a processor against the other threads of its queue, under a strategy with weights.
 
-The weight is set when the thread is created, and a write of the thread schedule changes it while the thread lives. 0 is the weight limit of the thread, which is 1024, the full weight, unless it was lowered: a program that gives no weight gets the most. A program sets the weight of its threads up to their weight limit, never above it, so never above a thread with no weight. The processor limit of the budget stays above any weight: a strategy only orders the time that the budget gives.
+The weight is set when the thread is created: 0 is the weight limit of the creating thread, which is 1024, the full weight, unless it was lowered, so a program that gives no weight gets the most. A write of the thread schedule changes it while the thread lives. A program only lowers the weight of a thread that lives; only the holder of the right **Schedule** on the machine raises it. The processor limit of the budget stays above any weight: a strategy only orders the time that the budget gives.
 
 The design: `docs/SCHEDULING.md`, "Weights and requests: a field at thread creation" and "The schedule of a live thread".
 
@@ -951,7 +951,7 @@ Do not use: min_vruntime.
 
 The lag of a thread, under EEVDF, is the average virtual time of its queue minus its own virtual time: what the thread is owed.
 
-A positive lag makes the thread eligible. The lag is kept across a wait: above 0 within two requests (at least one tick), below 0 within the longest turn at the weight of the thread, a bound with no request in it. The thread also keeps the weight that the lag was taken with, and the wake places it with that weight: a weight written during the wait changes nothing of what the thread owes. So a thread that slept is neither punished nor paid for its sleep without limit, and a write of its schedule takes nothing away that it owes.
+A positive lag makes the thread eligible. The lag is kept across a wait, within a bound of two requests (at least one tick), so a thread that slept is neither punished nor paid for its sleep without limit.
 
 Do not use: debt, credit.
 
@@ -967,7 +967,7 @@ Do not use: runnable (for this).
 
 A request is the processor time that a thread asks for at each turn under EEVDF, in microseconds: 1 to 100 000, and 0 is 3000.
 
-The request sets the virtual deadline, not the share: a short request makes the thread run sooner and more often, for shorter turns. Its cost, more switches, is in the time of the thread, which its budget pays. A write of the thread schedule changes it while the thread lives.
+The request sets the virtual deadline, not the share: a short request makes the thread run sooner and more often, for shorter turns. Its cost, more switches, is in the time of the thread, which its budget pays. A write of the thread schedule changes it while the thread lives: a program only lowers it, and the holder of the right **Schedule** on the machine also raises it.
 
 The design: `docs/SCHEDULING.md`, "Weights and requests: a field at thread creation".
 
@@ -981,11 +981,11 @@ It is the policy of scheduling that a program holds: the program chooses the val
 
 Who can read and write it:
 
-- a program, for its own threads, by number;
-- the holder of a thread handle: **Inspect** reads, **Control** writes, because a holder that can end a thread can also give it a smaller share;
-- the holder of the machine handle with **Schedule** and **Inspect**, for any thread, by its machine number. Only this holder writes the weight limit.
+- a program, for its own threads, by number: its write only lowers the weight and the request;
+- the holder of a thread handle: **Inspect** reads, **Control** writes, and that write only lowers too, because a holder that can end a thread can also give it a smaller share;
+- the holder of the machine handle with **Schedule** and **Inspect**, for any thread, by its machine number. Only this holder raises a weight or a request, and only it writes the weight limit.
 
-A write keeps what the thread owes to the other threads, and never makes larger what it is owed. So a thread gains nothing by writing its own thread schedule again and again. It is not the placement of a thread on the processors, and not a share for a budget: neither is built.
+A write that lowers leaves the place of the thread in its queue as it is. A raise starts the thread again as a new thread for its strategy: what it owed and what it was owed are gone. A program chooses the moment of its writes, so with a raise it could keep a place that it got under a small weight; with one direction only, no sequence of writes gets back what a write gave up. It is not the placement of a thread on the processors, and not a share for a budget: neither is built.
 
 Example: `{weight = 256, request = 500}` gives a thread a quarter of the share of a thread of the full weight, and turns of 500 microseconds under EEVDF.
 
@@ -997,7 +997,7 @@ Do not use: scheduling parameters, scheduling attributes, priority.
 
 A weight limit is the most that the weight of one thread can be: a number from 1 to 1024, and 1024, the full weight, for a thread that nobody limited.
 
-It makes a lowered weight last. Without it, the program of a thread writes the full weight back in one operation, and the holder of the right **Schedule** decides nothing. Only a write of the thread schedule through the machine handle with **Schedule** and **Inspect** sets the limit; a weight above the new limit becomes the limit in the same write. A write of a program for its own thread, or through a thread handle, does not read the limit of the record, and its weight is refused above the limit of the thread (`Bad_Operation`). A new thread gets the weight limit of the thread that creates it, and the first thread of a new program gets the limit of the thread that starts it: a program does not leave a limit by a new thread. The limit is a value of each thread: a thread created just before a write of the limit keeps the old one until the holder writes it too.
+It makes a lowered weight last across the creation of threads. A program only lowers the weight of a thread that lives, but a new thread starts with a weight of its own: without a limit, a program leaves a lowered weight by a new thread. Only a write of the thread schedule through the machine handle with **Schedule** and **Inspect** sets the limit; a weight above the new limit becomes the limit in the same write. A write of a program for its own thread, or through a thread handle, does not read the limit of the record; it only lowers the weight, so it never passes the limit. A new thread gets the weight limit of the thread that creates it, and the first thread of a new program gets the limit of the thread that starts it: a program does not leave a limit by a new thread. The limit is a value of each thread: a thread created just before a write of the limit keeps the old one until the holder writes it too.
 
 It is not a share for a program: a program under a limit that creates more threads has more threads of that weight.
 
@@ -1457,7 +1457,7 @@ Who can act on a thread:
 
 - a program acts on its own threads, by number or by handle;
 - a thread of another program needs a thread handle that the program received with `Handle_Give`, with **Inspect** for a hold and for each read, and **Inspect** and **Write** for a write of the registers, because such a write lets its holder choose the code that the thread runs;
-- **Control**, the right to end a thread, gives none of these: a handle given so that another program can end a thread does not become a grant to read it. It gives only the write of the thread schedule.
+- **Control**, the right to end a thread, gives none of these: a handle given so that another program can end a thread does not become a grant to read it. It gives only the write of the thread schedule, which only lowers.
 
 The four commands of the registers need a held thread, else `Bad_State`. A write is copied once into the kernel, checked whole, and refused whole if one field is wrong (`Bad_Operation`, with the refused field in the error record): a thread never gets a frame that the processor refuses.
 

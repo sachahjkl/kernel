@@ -26,8 +26,10 @@
 // lose no thread; the schedule of a thread of another program is read and
 // written through the machine handle; a weight limit that the machine
 // handle wrote holds against the writes of the thread and against its new
-// threads; the lag that the kernel reports for a held thread never grows
-// by a write, and a lag below 0 stays the same.
+// threads; a write of the program never raises a weight or a request; the
+// lag that the kernel reports for a held thread stays the same after a
+// write of the program, and is 0 after a raise through the machine
+// handle.
 //
 // The program needs the machine with the rights Inspect and Schedule.
 //
@@ -242,20 +244,28 @@ threads_of :: proc "contextless" (slot, serial: u64) -> bool {
 
 // machine_number_is_this_thread says if a machine number names the calling
 // thread. A name of a program does not say it: two programs can have one
-// name. The thread writes a request by its own number, which names a
-// thread of this program only, and reads it by the machine number: two
-// times, with two values that come from the clock. Then it writes the
-// defaults back.
+// name. The thread lowers its request by one microsecond by its own
+// number, which names a thread of this program only, and reads the new
+// value by the machine number: two times. A write of a program only
+// lowers a request, so each try costs two microseconds of the request;
+// for its own thread the machine handle then writes the schedule of the
+// start back.
 machine_number_is_this_thread :: proc "contextless" (candidate: u64) -> bool {
 	number := system.thread_record().number
-	own := true
-	for round in 0 ..< 2 {
-		marker := u32(50_001 + (system.nanoseconds() + u64(round) * 7919) % 49_000)
-		own &&= system.thread_schedule_write(0, number, {request = marker}) == .Ok
+	start, start_status := system.thread_schedule_read(0, number)
+	own := start_status == .Ok && start.request > 2
+	for round in u32(1) ..= 2 {
+		if !own {
+			break
+		}
+		own = system.thread_schedule_write(0, number, {request = start.request - round}) == .Ok
 		schedule, status := system.thread_schedule_read(machine, candidate)
-		own &&= status == .Ok && schedule.request == marker
+		own &&= status == .Ok && schedule.request == start.request - round
 	}
-	system.thread_schedule_write(0, number, {})
+	if own {
+		// The weight is the same: no raise, the thread keeps its place.
+		own = system.thread_schedule_write(machine, candidate, start) == .Ok
+	}
 	return own
 }
 
@@ -835,6 +845,8 @@ OWN_REQUEST :: 700
 Own_Schedule :: struct {
 	created: op.Thread_Schedule, // What the thread read first: the values of its creation.
 	written: op.Thread_Schedule, // What it read after it wrote half the weight and the request 0.
+	last:    op.Thread_Schedule, // What it read after the two refused writes.
+	weight_raise, request_raise: system.Status, // Its writes of the weight and of the request of its creation.
 	statuses_right: bool,
 }
 
@@ -842,17 +854,23 @@ own_schedule: Own_Schedule
 
 own_schedule_run :: proc "c" (parameter: rawptr) -> ! {
 	number := system.thread_record().number
-	read_status, write_status, again_status: system.Status
+	read_status, write_status, again_status, last_status: system.Status
 	own_schedule.created, read_status = system.thread_schedule_read(0, number)
-	write_status = system.thread_schedule_write(0, number, {weight = OWN_WEIGHT / 2})
+	// The request 0 keeps the request of the thread.
+	write_status = system.thread_schedule_write(0, number, {weight = OWN_WEIGHT / 2, request = OWN_REQUEST / 2})
 	own_schedule.written, again_status = system.thread_schedule_read(0, number)
-	own_schedule.statuses_right = read_status == .Ok && write_status == .Ok && again_status == .Ok
+	// A program only lowers: the values of the creation are refused now.
+	own_schedule.weight_raise = system.thread_schedule_write(0, number, {weight = OWN_WEIGHT})
+	own_schedule.request_raise = system.thread_schedule_write(0, number, {request = OWN_REQUEST})
+	own_schedule.last, last_status = system.thread_schedule_read(0, number)
+	own_schedule.statuses_right = read_status == .Ok && write_status == .Ok && again_status == .Ok && last_status == .Ok
 	system.thread_stop()
 }
 
-// own_schedules: a thread reads the schedule of its creation, writes
-// another one and reads it; the first thread of the program reads the
-// defaults.
+// own_schedules: a thread reads the schedule of its creation, lowers its
+// weight and its request and reads them; its writes of the values of its
+// creation are refused and change nothing; the first thread of the
+// program reads the defaults.
 own_schedules :: proc "contextless" () -> bool {
 	own_schedule = {}
 	thread, status := system.thread_start(own_schedule_run, nil, weight = OWN_WEIGHT, request = OWN_REQUEST)
@@ -861,11 +879,13 @@ own_schedules :: proc "contextless" () -> bool {
 	}
 	system.thread_wait(thread)
 	first, first_status := system.thread_schedule_read(0, system.thread_record().number)
+	lowered := op.Thread_Schedule{weight = OWN_WEIGHT / 2, request = OWN_REQUEST / 2, weight_limit = op.WEIGHT_FULL}
 	as_it_must := own_schedule.statuses_right && first_status == .Ok
 	as_it_must &&= own_schedule.created == op.Thread_Schedule{weight = OWN_WEIGHT, request = OWN_REQUEST, weight_limit = op.WEIGHT_FULL}
-	as_it_must &&= own_schedule.written == op.Thread_Schedule{weight = OWN_WEIGHT / 2, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL}
+	as_it_must &&= own_schedule.written == lowered && own_schedule.last == lowered
+	as_it_must &&= own_schedule.weight_raise == .Bad_Operation && own_schedule.request_raise == .Bad_Operation
 	as_it_must &&= first == op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL}
-	system.log("scheduler: a thread created with the weight ", u64(OWN_WEIGHT), " and the request ", u64(OWN_REQUEST), " us read its own schedule: weight ", u64(own_schedule.created.weight), ", request ", u64(own_schedule.created.request), " us; after it wrote the weight ", u64(OWN_WEIGHT / 2), " and the request 0: weight ", u64(own_schedule.written.weight), ", request ", u64(own_schedule.written.request), " us; the first thread: weight ", u64(first.weight), ", request ", u64(first.request), as_it_must ? string(" us: as it must") : string(" us: WRONG"))
+	system.log("scheduler: a thread created with the weight ", u64(OWN_WEIGHT), " and the request ", u64(OWN_REQUEST), " us read its own schedule: weight ", u64(own_schedule.created.weight), ", request ", u64(own_schedule.created.request), " us; after it lowered them to ", u64(OWN_WEIGHT / 2), " and ", u64(OWN_REQUEST / 2), " us: weight ", u64(own_schedule.written.weight), ", request ", u64(own_schedule.written.request), " us; its own writes of the weight ", u64(OWN_WEIGHT), " and of the request ", u64(OWN_REQUEST), " us: ", op.STATUS_NAMES[own_schedule.weight_raise], " and ", op.STATUS_NAMES[own_schedule.request_raise], ", and the schedule stayed: ", u64(own_schedule.last == lowered), "; the first thread: weight ", u64(first.weight), ", request ", u64(first.request), as_it_must ? string(" us: as it must") : string(" us: WRONG"))
 	return as_it_must
 }
 
@@ -983,10 +1003,11 @@ limited_child_run :: proc "c" (parameter: rawptr) -> ! {
 	system.thread_stop()
 }
 
-// weight_limits: no gain by writes. The conditions are statuses and values
-// that the kernel gives, with no time in them: under a limit, no write of
-// the thread and no new thread has a weight above the limit, each write
-// above it is refused, and only the machine handle raises the limit.
+// weight_limits: the conditions are statuses and values that the kernel
+// gives, with no time in them: under a limit, no write of the thread and
+// no new thread has a weight above the limit, a write of the thread never
+// raises its weight, and only the machine handle raises a weight or a
+// limit.
 weight_limits :: proc "contextless" () -> bool {
 	LIMIT :: WEIGHT_LIMIT_OF_THE_CASE
 	number := system.thread_record().number
@@ -1001,22 +1022,25 @@ weight_limits :: proc "contextless" () -> bool {
 	ignored := system.thread_schedule_write(0, number, {weight_limit = op.WEIGHT_FULL})
 	kept, kept_status := system.thread_schedule_read(0, number)
 	first_right := lowered == .Ok && now_status == .Ok && now == limited && raise == .Bad_Operation && record_right && ignored == .Ok && kept_status == .Ok && kept == limited
-	// The same weight again, down, up above the limit, up to the limit.
-	accepted, refused, above: u64
+	// The same weight again and a lower one are accepted. The full weight
+	// and the weight of the limit are refused then: a program only lowers.
+	// Only the machine handle gives the weight of the limit back.
+	accepted, refused, machine_raises, above: u64
 	for _ in 0 ..< LIMIT_ROUNDS {
 		accepted += u64(system.thread_schedule_write(0, number, {weight = LIMIT}) == .Ok)
 		accepted += u64(system.thread_schedule_write(0, number, {weight = 1}) == .Ok)
 		refused += u64(system.thread_schedule_write(0, number, {weight = op.WEIGHT_FULL}) == .Bad_Operation)
-		// The refused write changed nothing: the weight is still 1.
+		refused += u64(system.thread_schedule_write(0, number, {weight = LIMIT}) == .Bad_Operation)
+		// The refused writes changed nothing: the weight is still 1.
 		after_refusal, after_status := system.thread_schedule_read(0, number)
-		accepted += u64(system.thread_schedule_write(0, number, {weight = LIMIT}) == .Ok)
+		machine_raises += u64(system.thread_schedule_write(machine, self_machine_number, {weight_limit = LIMIT}) == .Ok)
 		last, last_status := system.thread_schedule_read(0, number)
 		if after_status != .Ok || after_refusal.weight != 1 || after_refusal.weight_limit != LIMIT || last_status != .Ok || last != limited {
 			above += 1
 		}
 	}
-	rounds_right := accepted == 3 * LIMIT_ROUNDS && refused == LIMIT_ROUNDS && above == 0
-	system.log("scheduler: the weight limit ", u64(LIMIT), " written through the machine handle: the thread has the weight ", u64(now.weight), "; its own write of the full weight ", op.STATUS_NAMES[raise], ", the error record has the limit: ", u64(record_right), "; its own write of the full limit changed nothing: ", u64(kept == limited), "; ", u64(LIMIT_ROUNDS), " rounds of its own writes of the weights ", u64(LIMIT), ", 1, 1024 and ", u64(LIMIT), ": ", accepted, " accepted, ", refused, " refused, a weight above the limit or a changed limit ", above, " times", first_right && rounds_right ? string(": as it must") : string(": WRONG"))
+	rounds_right := accepted == 2 * LIMIT_ROUNDS && refused == 2 * LIMIT_ROUNDS && machine_raises == LIMIT_ROUNDS && above == 0
+	system.log("scheduler: the weight limit ", u64(LIMIT), " written through the machine handle: the thread has the weight ", u64(now.weight), "; its own write of the full weight ", op.STATUS_NAMES[raise], ", the error record has the weight of the thread: ", u64(record_right), "; its own write of the full limit changed nothing: ", u64(kept == limited), "; ", u64(LIMIT_ROUNDS), " rounds of its own writes of the weights ", u64(LIMIT), ", 1, 1024 and ", u64(LIMIT), ", then the weight ", u64(LIMIT), " through the machine handle: ", accepted, " of its own accepted, ", refused, " refused, ", machine_raises, " raised by the machine handle, a wrong weight or limit ", above, " times", first_right && rounds_right ? string(": as it must") : string(": WRONG"))
 
 	// A new thread: a weight above the limit is refused; with the weight
 	// 0 it has the limit as its weight and as its limit.
@@ -1036,55 +1060,49 @@ weight_limits :: proc "contextless" () -> bool {
 	return first_right && rounds_right && child_right && restored_right
 }
 
-// No gain by writes, on what the kernel reports (docs/SCHEDULING.md, "The
-// schedule of a live thread"). The thread report gives the lag that
-// EEVDF keeps for a thread that is held (`Thread_Report.lag`): below 0 the
-// thread owes time, above 0 it is owed time. A write must never make that
-// number larger, and must leave a number below 0 as it is. The conditions compare
-// numbers of the kernel in their order: no time and no share is in them.
-OWING_ROUNDS :: 200
+// The place of a held thread, on what the kernel reports
+// (docs/SCHEDULING.md, "The schedule of a live thread"). The thread report
+// gives the lag that EEVDF keeps for a thread that is held
+// (`Thread_Report.lag`): below 0 the thread owes time, above 0 it is owed
+// time. A write of the program lowers or is refused, and leaves that
+// number as it is. A raise through the machine handle makes it 0: the
+// thread starts again as a new thread. The conditions compare numbers of
+// the kernel: no time and no share is in them.
+OWING_ROUNDS :: 100
 
 // What the rounds saw: the last three values are measures.
 Owing_Result :: struct {
-	rounds:  u64, // The rounds that ran.
-	grew:    u64, // Writes after which the reported lag was larger.
-	forgave: u64, // Writes after which a thread that owed time did not owe the same time.
-	owing:   u64, // Rounds where the held thread owed time.
-	owed:    u64, // Rounds where it was owed time.
-	largest: u64, // The most that it owed, in weighted cycles.
+	rounds:    u64, // The rounds that ran.
+	changed:   u64, // Writes of the program after which the reported lag was another number.
+	raised:    u64, // Raises of the program that the kernel did not refuse.
+	not_new:   u64, // Raises through the machine handle after which the lag was not 0.
+	owing:     u64, // Rounds where the held thread owed time.
+	owed:      u64, // Rounds where it was owed time.
+	largest:   u64, // The most that it owed, in weighted cycles.
+}
+
+// thread_item gives the record of a thread of this program in a new
+// thread report, or nil.
+thread_item :: proc "contextless" (number: u32) -> ^op.Thread_Report {
+	if self_slot == 0 || !threads_of(self_slot, self_serial) {
+		return nil
+	}
+	for &item in thread_table.threads[:min(thread_table.count, op.THREAD_REPORT_CAPACITY)] {
+		if item.number == number && item.state != .Stopped {
+			return &item
+		}
+	}
+	return nil
 }
 
 // held_lag gives the lag that the kernel reports for a thread of this
 // program that a stop holds. false: the report does not show it held.
 held_lag :: proc "contextless" (number: u32) -> (lag: i64, held: bool) {
-	if self_slot == 0 || !threads_of(self_slot, self_serial) {
+	item := thread_item(number)
+	if item == nil {
 		return 0, false
 	}
-	for &item in thread_table.threads[:min(thread_table.count, op.THREAD_REPORT_CAPACITY)] {
-		if item.number == number && item.state != .Stopped {
-			return item.lag, item.processor == 0 && item.queued == 0
-		}
-	}
-	return 0, false
-}
-
-// owing_step writes a schedule to the held thread and compares the lag
-// with the lag before: larger is a gain; a lag below 0 that changed is
-// time that the thread owed and no longer owes, or the reverse. It gives the lag after the write.
-owing_step :: proc "contextless" (result: ^Owing_Result, thread: system.Handle, number: u32, schedule: op.Thread_Schedule, lag_before: i64, round_right: ^bool) -> i64 {
-	status := system.thread_schedule_write(thread, 0, schedule)
-	lag, held := held_lag(number)
-	if status != .Ok || !held {
-		round_right^ = false
-		return lag_before
-	}
-	if lag > lag_before {
-		result.grew += 1
-	}
-	if lag_before < 0 && lag != lag_before {
-		result.forgave += 1
-	}
-	return lag
+	return item.lag, item.processor == 0 && item.queued == 0
 }
 
 // spinner_with_company gives a spinner that runs on a processor whose
@@ -1113,45 +1131,71 @@ spinner_with_company :: proc "contextless" (count: int) -> int {
 }
 
 // owing_kept: one spinner more than the processors, so that a queue has
-// two threads. In each round a spinner gets the weight 1 while it runs or
-// is in a list, then a Stop holds it; in the hold it gets the full weight,
-// the request 1 us, the longest request, the weight 1 and the full weight
-// again; then a Resume. These are the sequences that take a thread through
-// both forms of its position: a weight down in the list and up in the
-// hold, and a short request around a hold.
+// two threads. In each round a spinner lowers to the weight 1 through its
+// thread handle while it runs or is in a list. The round waits until the
+// kernel counted a tick of run for it after that write: the tick is
+// charged at the weight 1, so the spinner then owes about one second of
+// virtual time to the other threads of its queue. Then a Stop holds it.
+// In the hold: a write of the full weight through the thread handle is
+// refused, a write of the request 1 us is accepted, and the lag is the
+// same number after each; the machine handle writes the full weight, and
+// the lag is 0. Then a Resume.
 //
-// A round where the held spinner has the lag 0 checks nothing. So the
-// rounds go on after the first OWING_ROUNDS until the kernel reported the
-// held spinner with a lag below 0 at least one time: a state of the
-// kernel, not a speed. The hang bound ends the rounds if that state never
-// comes, and the case then fails and says so.
+// A round where the held spinner has the lag 0 checks nothing: it was
+// alone in its queue at the Stop. So the rounds go on after the first
+// OWING_ROUNDS until the kernel reported the held spinner with a lag below
+// 0 at least one time: a state of the kernel, not a speed. The hang bound
+// ends the rounds if that state never comes, and the case then fails and
+// says so. With as many processors as the program has spinners, or more,
+// each spinner can be alone in its queue for ever: the case says so and
+// checks nothing.
 owing_kept :: proc "contextless" (processors: u64) -> bool {
+	if processors >= SPINNER_LIMIT {
+		system.log("scheduler: the lag of a held spinner is not checked on a machine with ", u64(SPINNER_LIMIT), " processors or more: each spinner can be alone in its queue")
+		return true
+	}
 	result: Owing_Result
 	before, set_status := system.strategy_set(machine, .Eevdf)
 	if set_status != .Ok {
 		return false
 	}
-	count := min(int(processors) + 1, SPINNER_LIMIT)
+	count := int(processors) + 1
 	numbers: [SPINNER_LIMIT]u64
 	started := spinners_start(0, count, full_weight) && spinner_machine_numbers(0, count, &numbers)
-	long := op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_LIMIT}
-	rounds, wrong_rounds: u64
+	wrong_rounds: u64
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
-	for started && wrong_rounds == 0 && (rounds < OWING_ROUNDS || result.owing == 0) && system.time() < deadline {
+	for started && wrong_rounds == 0 && (result.rounds < OWING_ROUNDS || result.owing == 0) && system.time() < deadline {
 		target := spinner_with_company(count)
 		thread := spinner_threads[target].handle
 		number := intrinsics.atomic_load(&spinners[target].number) - 1
-		round_right := system.thread_schedule_write(thread, 0, {weight = 1, request = op.REQUEST_LIMIT}) == .Ok
+		ran_before: u64
+		if item := thread_item(number); item != nil {
+			ran_before = item.run_time
+		}
+		round_right := system.thread_schedule_write(thread, 0, {weight = 1}) == .Ok
+		// The wait is for a count of the kernel; the bound only ends a hang.
+		for ran := false; round_right && !ran && system.time() < deadline; {
+			system.sleep(system.time() + 1)
+			item := thread_item(number)
+			ran = item != nil && item.run_time > ran_before
+		}
 		_, stop_status := system.call(.Thread_Control, u64(thread), 0, u64(op.Thread_Control_Command.Stop))
 		if stop_status == .Ok {
-			lag, held := held_lag(number)
+			first, held := held_lag(number)
 			round_right &&= held
-			first := lag
-			lag = owing_step(&result, thread, number, long, lag, &round_right)
-			lag = owing_step(&result, thread, number, {weight = op.WEIGHT_FULL, request = 1}, lag, &round_right)
-			lag = owing_step(&result, thread, number, long, lag, &round_right)
-			lag = owing_step(&result, thread, number, {weight = 1, request = op.REQUEST_LIMIT}, lag, &round_right)
-			_ = owing_step(&result, thread, number, long, lag, &round_right)
+			// The program: a raise is refused, a lower request is accepted.
+			raise := system.thread_schedule_write(thread, 0, {weight = op.WEIGHT_FULL})
+			after_raise, held_after_raise := held_lag(number)
+			lower := system.thread_schedule_write(thread, 0, {request = 1})
+			after_lower, held_after_lower := held_lag(number)
+			round_right &&= held_after_raise && held_after_lower && lower == .Ok
+			result.raised += u64(raise != .Bad_Operation)
+			result.changed += u64(after_raise != first) + u64(after_lower != first)
+			// The machine handle: the full weight and the default request.
+			by_machine := system.thread_schedule_write(machine, numbers[target], {})
+			after_machine, held_after_machine := held_lag(number)
+			round_right &&= by_machine == .Ok && held_after_machine
+			result.not_new += u64(after_machine != 0)
 			_, resume_status := system.call(.Thread_Control, u64(thread), 0, u64(op.Thread_Control_Command.Resume))
 			round_right &&= resume_status == .Ok
 			if first < 0 {
@@ -1163,27 +1207,23 @@ owing_kept :: proc "contextless" (processors: u64) -> bool {
 		} else {
 			round_right = false
 		}
-		rounds += 1
+		result.rounds += 1
 		wrong_rounds += u64(!round_right)
-		// The spinner runs again before the next round. The pause is no
-		// condition.
-		system.sleep(system.time() + 1)
 	}
-	result.rounds = rounds
 	spinners_stop(0, count)
 	system.strategy_set(machine, before)
-	checked := started && wrong_rounds == 0 && rounds >= OWING_ROUNDS
-	as_it_must := checked && result.owing != 0 && result.grew == 0 && result.forgave == 0
+	ran_all := started && wrong_rounds == 0 && result.rounds >= OWING_ROUNDS
+	as_it_must := ran_all && result.owing != 0 && result.changed == 0 && result.raised == 0 && result.not_new == 0
 	ending := string(": as it must")
 	switch {
-	case !checked:
+	case !ran_all:
 		ending = ": a round did not run: WRONG"
 	case result.owing == 0:
 		ending = ": no round had a lag below 0, so nothing was checked: WRONG"
 	case !as_it_must:
 		ending = ": WRONG"
 	}
-	system.log("scheduler: rounds on a spinner under EEVDF, at least ", u64(OWING_ROUNDS), " and until the kernel reported the held spinner with a lag below 0: the weight 1 written while it ran, a Stop, then in the hold the full weight, the request 1 us, the longest request, the weight 1 and the full weight, a Resume: the lag that the kernel reports grew after ", result.grew, " writes, and a lag below 0 changed after ", result.forgave, " writes", ending)
+	system.log("scheduler: at least ", u64(OWING_ROUNDS), " rounds on a held spinner under EEVDF, until one had a lag below 0: the spinner lowered to the weight 1 and ran a tick, a Stop, its own writes of the full weight and of the request 1 us, the full weight through the machine handle, a Resume: ", result.raised, " of its raises were not refused, the reported lag changed after ", result.changed, " of its writes, and was not 0 after ", result.not_new, " raises of the machine handle", ending)
 	system.log("scheduler: in ", result.rounds, " rounds the kernel reported the held spinner with a lag below 0 ", result.owing, " times and above 0 ", result.owed, " times; the lowest lag was minus ", result.largest, " weighted cycles (measures)")
 	return as_it_must
 }
@@ -1500,7 +1540,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("a weight limit did not hold")
 	}
 	if !owing_kept(processors) {
-		fail("a write of a schedule changed what a held thread owes or is owed")
+		fail("a write of a schedule did not leave or start again the place of a held thread")
 	}
 	for index in 0 ..< STRATEGY_COUNT {
 		measure(index, processors)

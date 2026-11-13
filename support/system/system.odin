@@ -673,14 +673,19 @@ thread_schedule_read :: proc "contextless" (thread: Handle, number: u64, error: 
 	return schedule, status
 }
 
-// thread_schedule_write gives a thread a weight (1 to the weight limit of
-// the thread, 0: that limit) and a request in microseconds (1 to
-// op.REQUEST_LIMIT, 0: op.REQUEST_DEFAULT), also while the thread runs.
-// The thread is named as for thread_schedule_read; a thread handle needs
-// the right Control, the machine handle the rights Schedule and Inspect. Only a write
-// through the machine handle reads `weight_limit` (0: op.WEIGHT_FULL) and
-// sets the weight limit of the thread: such a write gives the three
-// values, so read the schedule first to change one of them.
+// thread_schedule_write gives a thread a weight and a request in
+// microseconds, also while the thread runs. The thread is named as for
+// thread_schedule_read; a thread handle needs the right Control, the
+// machine handle the rights Schedule and Inspect.
+//
+// Through 0 or a thread handle the write only lowers: a weight above the
+// weight of the thread, or a request above its request, gives
+// Bad_Operation; 0 keeps a value. Only a write through the machine handle
+// raises a weight or a request, and reads `weight_limit`: it gives the
+// three values (0: op.WEIGHT_FULL for the limit, the limit for the
+// weight, op.REQUEST_DEFAULT), so read the schedule first to change one
+// of them. A raised weight starts the thread again as a new thread for
+// its scheduling strategy.
 //
 // ```odin
 // status := system.thread_schedule_write(worker.handle, 0, {weight = 256})

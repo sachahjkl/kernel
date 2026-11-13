@@ -79,13 +79,13 @@ The run queue, the run lock, the balance between processors and the budgets stay
 
 1. **Round robin**: the reference strategy: a queue in order, a time slice of 10 ms, no wake preemption.
 2. **Fair**: the idea of CFS. Virtual time and weights; the least virtual time runs; a target latency of 6 ms divided by weight with a least turn of 0.75 ms; a sleeper credit of 3 ms; wake preemption with a granularity of 1 ms; a move keeps the distance to the queue clock. A new thread, and each thread that a change of strategy places again, starts one least turn (weighted) after the queue clock, not at it: a program that creates threads all the time does not get a turn before each other thread.
-3. **EEVDF**: average virtual time, eligible, virtual deadline from a request, the earliest eligible deadline runs, lag kept across a sleep (what a thread is owed within two requests, at least one tick; what it owes within the longest turn at its weight), wake preemption by deadline, a move keeps the lag. A new thread has the lag 0: it starts at the average `V`, not at the least virtual time, and its deadline is one whole request after it; so it is owed nothing, and runs before another thread only if that thread is owed less. A program that creates threads all the time gets no turn that its threads did not have before.
+3. **EEVDF**: average virtual time, eligible, virtual deadline from a request, the earliest eligible deadline runs, lag kept across a sleep within two requests (at least one tick), wake preemption by deadline, a move keeps the lag. A new thread has the lag 0: it starts at the average `V`, not at the least virtual time, and its deadline is one whole request after it; so it is owed nothing, and runs before another thread only if that thread is owed less. A program that creates threads all the time gets no turn that its threads did not have before.
 
 ### Weights and requests: a field at thread creation
 
 `Thread_Create` has two more values: the weight (1 to the weight limit of the calling thread, which is 1024, the full weight, unless it was lowered; 0 is that limit) and the request in microseconds (1 to 100 000; 0 is 3000). Zero is the default, so a program that gives neither value gets the most weight that it can have and the default request (property 13).
 
-Property 20, as an exact rule: a program sets the weight of each of its threads from 1 to the weight limit of that thread, and never above it. The weight limit is the full weight, until the holder of the right **Schedule** on the machine lowers it; only that holder raises it again. A new thread gets the weight limit of the thread that creates it. So a program can give one thread less than another, can raise again a weight that it lowered itself, and cannot take more than a thread with no weight, or more than its limit ("The weight limit", below). The processor limit of the budget stays above any weight: a strategy only orders the time that the budget gives. The request does not change the share: it moves the deadline. A short request can cost more switches; the cost is in the time of the thread itself, which its budget pays.
+Property 20, as an exact rule: a program only lowers the weight of its threads. A new thread gets a weight from 1 to the weight limit of the thread that creates it; after that, a write of the program gives the thread a weight at or under the weight that it has, never above. Only the holder of the right **Schedule** on the machine raises a weight ("The schedule of a live thread", below). So a program can give one thread less than another, and cannot take more than a thread with no weight, or more than its limit. The processor limit of the budget stays above any weight: a strategy only orders the time that the budget gives. The request does not change the share: it moves the deadline. A short request can cost more switches; the cost is in the time of the thread itself, which its budget pays.
 
 A weight is for a thread, not for a program or a budget: a program with many threads still has more share than a program with one thread, as with round robin. A share for each budget (the groups of Linux) is not built: see section 5.
 
@@ -93,20 +93,48 @@ A weight is for a thread, not for a program or a budget: a program with many thr
 
 The policy of scheduling is outside the kernel, and the mechanism is inside. A program chooses the weight and the request of threads, at a slow rate. The kernel applies them at each tick with its own strategy. No code of a program runs when the kernel picks a thread, charges a turn or wakes a thread.
 
-The two values of one thread are its thread schedule (`op.Thread_Schedule`: `weight`, `request`). `Thread_Create` gives the first one. `Thread_Control` has two commands for a thread that lives:
+The values of one thread are its thread schedule (`op.Thread_Schedule`: `weight`, `request`, `weight_limit`). `Thread_Create` gives the first one. `Thread_Control` has two commands for a thread that lives:
 
 | Command | What it does |
 |---|---|
 | `Read_Schedule` | Writes the thread schedule at the address of the caller: the values in use, never 0 |
-| `Write_Schedule` | Reads a thread schedule at the address of the caller: the thread has these values from now on. 0 is the default of each value, as for `Thread_Create` |
+| `Write_Schedule` | Reads a thread schedule at the address of the caller: the thread has these values from now on |
 
-The thread is not held: its schedule changes while it runs, while it is in a run queue, and while it waits. The rules of the values are the rules of `Thread_Create` (one check, `op.thread_schedule_accepted`, then the weight limit of the thread): a weight above the weight limit or a request above the limit gives `Bad_Operation`, and nothing changes. The error record names the refused value and the most that it can be.
+The thread is not held: its schedule changes while it runs, while it is in a run queue, and while it waits.
+
+**The rule.** Who writes decides what a write can do.
+
+| Who writes | The weight | The request | The weight limit | What happens to the place of the thread |
+|---|---|---|---|---|
+| The program, for its own thread (`thread` 0), or the holder of a thread handle | Only lower, or the same. 0: the same | Only lower, or the same. 0: the same | Not read | Nothing: the strategy fields stay |
+| The holder of the machine handle | Any weight up to the limit. 0: the limit | Any request. 0: the default | Written. 0: the full weight. A weight above the new limit becomes the limit | A raised weight: the thread starts again as a new thread. Else nothing |
+
+- A write of a program with a weight above the weight of the thread, or a request above its request, gives `Bad_Operation`, and nothing changes. The error record names the refused value and the value that the thread has.
+- A value above the most of the contract (`op.thread_schedule_accepted`: the full weight, 100 000 us) gives `Bad_Operation` for each writer.
+- A write through the machine handle always gives the three values: a holder that changes one value reads the schedule first.
+
+**Why a program only lowers.** A program chooses the moment of each write: while the thread runs, while it is in the list, while it waits, while a stop holds it. A program also has helpers that write for it. Each form of a rule that let a program raise a weight had a sequence of writes, down at one moment and up at another, that left the program better than a thread that never writes: a thread that owed less time, or a thread whose place moved the average of its queue. With one direction, no sequence gets back what a write gave up.
+
+The place of a thread in a queue is a history under its weight. A light thread can be far from the other threads in virtual time, and that is harmless: its weight is its pull on the average virtual time of the queue, so a far and light thread moves the average little. A weight written up on that thread keeps the far place and gives it a large pull: the average moves by seconds, and the other threads of the queue wait that long. A weight written down only makes the pull smaller.
+
+The request has the same rule for one reason. Under EEVDF the kernel keeps what a thread owes across a wait within two requests. A thread that runs a long turn under a long request, writes a short request, and waits, owes two short requests. With a request that a program can raise again, the thread does this at each turn. With a request that only goes down, it does it one time.
+
+**Why a raise starts the thread again.** Only the holder of the machine raises a weight, and the raised thread gets the zero values of its strategy fields (`strategy_weight_raised`). If the thread is in the list, its strategy places it again as a new thread; a thread on a processor is placed at its next tick, and a thread that waits or that a stop holds when it enters the list again. This is what a change of strategy does to each thread, for the same reason: the place of the thread is a history under the old weight, and it has no meaning under the new one. A thread placed as new is at the average of its queue, so a raise moves the average by nothing. What the thread owed is gone, and what it was owed too. No program gets this for its own thread: the holder decides it, and the holder already orders every thread of the machine.
+
+A write of the holder that lowers a weight, or keeps it, changes no strategy field, as a write of a program.
+
+**What a write that lowers can give, one time.** The strategy fields stay, and the kernel converts nothing. Two bounded effects exist under EEVDF, and none repeats, because the program cannot write the value up again:
+
+- A weight lowered while the thread waits. The kept lag was taken with the old weight, and the wake scales it with the new one. With `W` the weights of the other threads, the thread comes back at its place times `(W + new) / (W + old)`: nearer to the average. A thread that owed time owes less: at most the whole of one kept lag, which is at most two requests.
+- A request lowered before a wait. What the thread owes is then kept within two requests of the new value, so a part of one long turn is not kept: at most one time slice.
+
+Each is less than what the end of the thread and a new thread give, which is a place at the average, and each costs the program a lower weight or a shorter request for the rest of the life of the thread. A thread that never writes its schedule has the same computation as before the schedule could be written.
 
 **Who can read and write.** No program reaches the schedule of a thread because it runs (property 20). Three ways name a thread:
 
 | The argument `thread` | The argument `number` | `Read_Schedule` needs | `Write_Schedule` needs |
 |---|---|---|---|
-| 0 | The number of a live thread of the calling program | Nothing: its own thread | Nothing: its own share |
+| 0 | The number of a live thread of the calling program | Nothing: its own thread | Nothing: its own share, which it only lowers |
 | A thread handle | Not read | **Inspect** | **Control** |
 | The machine handle | The machine number of any thread | **Schedule** and **Inspect** | **Schedule** and **Inspect** |
 
@@ -114,15 +142,15 @@ The thread is not held: its schedule changes while it runs, while it is in a run
 - **Schedule** on the machine is the right of `Strategy_Set`. Its holder already changes the order of every thread of the machine, so the same right lets it set the weight and the request of any thread. The root service gives it to the program `scheduler` only.
 - The machine handle needs **Inspect** too, for both commands (`op.thread_control_machine_rights`). Each report of the machine needs **Inspect**, and a read by machine number is one: it gives values of any thread, and its status says which machine numbers name a thread. A write gives the three values of the record, so its holder must read the schedule first to keep the values that it does not change; and the machine numbers come from a report. So **Schedule** with no **Inspect** names no thread.
 - The machine handle names a thread for these two commands only. Each other command of `Thread_Control` with the machine handle gives `Bad_Handle`: **Schedule** holds no thread and reads no register.
-- Every write keeps the rule of the weights: a weight is at most the weight limit of the thread, and a limit is at most the full weight. So no holder, also the holder of **Schedule**, gives a thread more than a thread that asked for nothing.
+- A weight is at most the weight limit of the thread, and a limit is at most the full weight. So no holder, also the holder of **Schedule**, gives a thread more than a thread that asked for nothing.
 
 **The weight limit.** Each thread has a weight limit, from 1 to the full weight: the most that its weight can be. The third field of the thread schedule is the limit (`Thread_Schedule.weight_limit`), and `Read_Schedule` gives it.
 
 - Only a write through the machine handle sets the limit; 0 is the full weight. A weight above the new limit becomes the limit in the same write, so one write lowers both. A write through the machine handle always writes the three values: a holder that changes one value reads the schedule first.
-- A write of a program for its own thread, and a write through a thread handle, do not read the limit of the record. Their weight is refused above the limit that the thread has (`Bad_Operation`; the error record has the refusal `Weight` and the limit). Their weight 0 is the limit: the most that the thread can have.
+- A write of a program for its own thread, and a write through a thread handle, do not read the limit of the record. They only lower the weight, so they never pass the limit.
 - A new thread gets the weight limit of the thread that creates it, and `Thread_Create` refuses a weight above it. The first thread of a new program gets the limit of the thread that starts the program. The first thread of the root service has the full weight.
 
-Why. Without a limit the last writer decides, and the program of a thread is always a writer: it writes the full weight back in one operation, and a weight that the holder of **Schedule** lowered does not last. The limit makes the policy of that holder hold. Why a new thread takes the limit of its creator: with the full weight for each new thread, a program leaves a limit by a new thread that does the same work. The limit follows the creation of threads, so a program under a limit stays under it, also through a program that it starts. The limit is one word of the thread record, outside its first 64 bytes: only a write of a schedule and a creation read it.
+Why. A write of a program never raises the weight of a thread that lives. The limit carries the same rule across the creation of threads: with the full weight for each new thread, a program leaves a limit by a new thread that does the same work. The limit follows the creation of threads, so a program under a limit stays under it, also through a program that it starts. The limit is one word of the thread record, outside its first 64 bytes: only a write of a schedule and a creation read it.
 
 Two limits of the weight limit, which a limit for each budget closes:
 
@@ -133,62 +161,17 @@ What the limit is not: a share for a program. A program under a limit that creat
 
 **The machine number.** A thread number names a thread inside its program. The machine handle needs a name for any thread: the thread report of `Inspect` (`Inspect_Kind.Threads`) gives the machine number of each thread (`Thread_Report.machine_number`). Its low 32 bits are the place of the thread in the thread table of the kernel. Its high 32 bits are the serial of the thread in that place, which changes for each new thread there. The kernel compares the serial under the control lock, where no place gets a new thread. So the machine number of a thread that ended gives `Bad_State`, and never names a later thread.
 
-**What a write does in the kernel.** The write is one section of the run lock of the home of the thread (`thread_schedule_write`). If the thread is in the list of the queue, the sum of the weights of the queue loses the old weight and gets the new one, so it stays exact. The thread keeps its state, its home, its processor and its place in the list.
+**What a write does in the kernel.** The write is one section of the run lock of the home of the thread (`thread_schedule_write`). If the thread is in the list of the queue, the sum of the weights of the queue loses the old weight and gets the new one, so it stays exact. The thread keeps its state, its home, its processor and its place in the list. The time that a running thread used since its last charge is charged at the new weight, at its next tick or when it leaves its processor: at most one tick.
 
-**The invariant of a write.** Each strategy has one quantity that says where a thread is against the other threads of its queue. A write of a schedule leaves that quantity as it is when the thread owes time, and can only make it smaller when the thread is owed time, in every state of the thread: in the list, on a processor, in a wait, held by a stop.
+**A stop of `Thread_Control`** keeps what a thread owes. A thread that a `Stop` takes out of the list leaves it as a thread that starts to wait (`strategy_leaves_list`): its strategy keeps its lag or its difference to the queue clock, and the `Resume` places it as a woken thread. Zero values there let a `Stop` and a `Resume` from another thread of the program put a thread that ran more than its share before the threads that waited. Under EEVDF the lag is taken from the average of the other threads, so the budget of the thread itself is never read.
 
-The state must not matter, because a program chooses the state in which each write lands: a `Stop` takes a thread from the list to a hold, and a wake or a `Resume` puts it back. A rule that keeps one quantity in the list and another one in a wait lets a program write in the state that is good for it each time.
+A kept lag is exact only while the other threads of the queue stay the same. A thread that starts to wait while no other thread is in its queue keeps the lag 0. The balance moves threads between the queues all the time, so the kept lag is an estimate; no program commands the moves.
 
-| Strategy | The quantity | Its form in the list or on a processor | Its form in a wait or in a hold |
-|---|---|---|---|
-| Round robin | None: the order of the list | The place in the list | Nothing |
-| Fair | The virtual time minus the queue clock | The virtual time | That difference (`lag`) |
-| EEVDF | The place against the other threads of the queue: their average virtual time minus the virtual time of the thread | The virtual time | The kept lag (`lag`) and the weight of the stop (`lag_weight`) |
+The interleavings with a pick, a move, a wake, the end of a thread and a change of strategy are in `ARCHITECTURE.md`, "Locks of the kernel", "The schedule of a live thread".
 
-A thread in the list or on a processor holds the quantity as its virtual time, which no write moves back.
+**The tests.** The program `scheduler` checks: a thread reads its own schedule and lowers it, and its writes of the values of its creation are refused; the weights 1, 2 and 4 written through the machine handle to 12 spinners that run order their shares under the fair strategy and EEVDF; each refusal has its status; the schedule of a thread of another program is read and written through the machine handle; under a weight limit, 1000 rounds of writes of the thread raise no weight, and a new thread has the limit; writes through the machine handle, which raise and lower, during 100 changes of strategy lose no thread.
 
-A thread that waits under EEVDF holds it as the kept lag. The kept lag is `V` minus the virtual time, where `V` counts the thread itself: with `D` the place against the others, `W` the sum of their weights and `w` the weight of the thread, the kept lag is `D * W / (W + w)`. The wake places the thread at `V` minus the lag times `(W + w) / W`, so that `V` does not move when the thread joins, as Linux does. With one weight the two factors cancel, and the thread is back at `D`. With two weights they do not: a lag kept under the full weight and placed under the weight 1 is about half of `D` with one other thread. So the thread keeps the weight of its stop beside the lag (`lag_weight`, two bytes of the hot line), and the wake scales with that weight, not with the weight of that moment. A write during a wait or a hold changes neither the lag nor that weight: the thread comes back at `D`.
-
-A thread that never writes its schedule has one weight, so the two forms are the same computation as before the weight could be written.
-
-A change of strategy gives each thread the zero values of the strategy fields, because the history of one strategy has no meaning under another. A write of a schedule does not: the strategy is the same, and zero values take away what a thread owes. A thread that wrote its own schedule again and again, also with the same values, would run before threads that waited longer.
-
-**The bounds.** A bound is the one place where a written value meets the quantity, so the bounds follow the invariant.
-
-- What a thread is owed is cut to the lag bound of its values: two requests in weighted cycles, at least one tick. A write can make that bound smaller, and the cut is then against the thread. `strategy_schedule_changed` applies it at the write: a thread in the list or on a processor is raised to the bound under the queue clock, as each pick does for the list, and a thread that waits or is held has its kept lag cut to the bound. Without this, a thread that was owed much virtual time under a small weight would be owed that much under the full weight.
-- What a thread owes is cut, when it starts to wait and when it moves to another queue, to the longest turn at the weight that it has then: the time slice and one tick, in weighted cycles (`eevdf_owing_bound`: 11 ms of virtual time at the full weight). No request is in this bound. A bound of two requests on this side let a thread run a long turn under a long request, write a short request, and owe one tick. No thread owes more than this bound after one turn, so the bound takes nothing away that one turn ran. A write during a wait cuts nothing of what the thread owes.
-- The virtual deadline of a thread in the list is at most one new request after its virtual time, and never later than it was. The deadline orders the eligible threads; it is not in the quantity, and it does not change a share.
-
-The fair strategy has no bound that a write changes: the sleeper credit is a constant.
-
-**A stop of `Thread_Control`** follows the same rule. A thread that a `Stop` takes out of the list leaves it as a thread that starts to wait (`strategy_leaves_list`): its strategy keeps its lag or its difference to the clock, and the `Resume` places it as a woken thread. So a `Stop` and a `Resume` take nothing away that the thread owes. The kept lag is computed from the average of the other threads, so the budget of the thread itself is never read: a thread of the list whose budget has no time left keeps the lag of any other thread.
-
-**What a writer gets.** A write never moves a virtual time back, and never makes a kept lag larger. Each charge of a run is at least the charge of the weight limit of the thread. For one run of a real time `R`, a thread at its weight limit `L` that never writes owes `R * 1024 / L` of virtual time. A writer that ran at a weight `w` and waits at a weight `s` owes the least of `R * 1024 / w` and of the bound at `s` scaled back, and each is at least `R * 1024 / L`. So a thread that writes owes at least what a thread at its weight limit owes for the same run.
-
-Two costs fall on the writer only:
-
-- A thread that runs at a small weight and starts to wait at that weight keeps the whole lag of that weight, also when its weight goes up during the wait. A turn of 11 ms at the weight 1 is 11.264 s of virtual time: the other threads run that long before the thread is eligible again.
-- A thread of a small weight that waited long in the list, and then gets a larger weight, keeps up to the new lag bound: at most two requests, which a thread of the new weight can be owed too.
-
-**The longest wait of a thread that never writes.** The table gives the longest real time that a thread of the full weight and the default request waits after a wake until it is eligible again, at a tick of 1 ms. `k` is the count of threads of the full weight in its queue at the wake. The values come from the bounds above, not from a measure.
-
-| The other threads of the queue when the thread started to wait | With the bound of two requests on what a thread owes | With the bound of the longest turn |
-|---|---|---|
-| Only threads with the default values, and the thread ran one turn (3 to 4 ms) | about `4 * k` ms | the same |
-| Only threads with the default values, and the thread ran more than one turn (another processor took it while it was not eligible) | `6 * (k + 1)` ms | `11 * (k + 1)` ms |
-| One thread of the full weight with the request 100 000 us, which is owed 200 ms | `6 * (k + 1)` ms | `11 * (k + 1)` ms |
-| One thread of the weight 1 with the default request, which is owed 3 to 6 s of virtual time | 3 to 6 ms, times `k + 1` | the same |
-| One thread of the weight 1 with the request 100 000 us, which is owed up to 204 s of virtual time | `6 * (k + 1)` ms | `11 * (k + 1)` ms |
-
-So the bound of the longest turn costs a thread that never writes at most 11 ms in place of 6 ms, times `k + 1`, and only when the thread owes more than 6 ms. A thread of another program does not make it larger: a lag taken against a light thread is scaled by `W / (W + w)`, which is 1/1025 against one thread of the weight 1. What a thread is owed has the bound of two requests, as before.
-
-A kept lag is exact only while the other threads of the queue stay the same. A thread that starts to wait while no other thread is in its queue keeps the lag 0, and a thread that was out of the queue then is not in the lag. The balance moves threads between the queues all the time, so the kept lag is an estimate; no program commands the moves.
-
-One limit: the time that a running thread used since its last charge is charged at the new weight, at its next tick or when it leaves its processor. That time is at most one tick.
-
-The interleavings with a pick, a move, a wake, the end of a thread and a change of strategy are in `ARCHITECTURE.md`, "Locks of the kernel", "The schedule of a live thread". The program `scheduler` checks the commands: a thread reads and writes its own schedule; the weights 1, 2 and 4 written through the machine handle to 12 spinners that run order their shares under the fair strategy and EEVDF; each refusal has its status; the schedule of a thread of another program is read and written through the machine handle; under a weight limit, 1000 rounds of writes of the thread give no weight above the limit, and a new thread has the limit; writes during 100 changes of strategy lose no thread.
-
-The invariant has one test on what the kernel reports. The thread report gives the kept lag of a held thread (`Thread_Report.lag`). In at least 200 rounds a spinner gets the weight 1 while it runs, then a `Stop`, then in the hold the full weight, the request 1 us, the longest request, the weight 1 and the full weight, then a `Resume`. After each write in the hold the test reads the lag: it must never be larger, and a lag below 0 must be the same number. The rounds go on until the kernel reported the held spinner with a lag below 0 at least one time, so the test cannot pass with nothing to compare; if that state never comes, the test fails and says so. The condition is an order between numbers of the kernel, with no time in it. What the test does not see: the report shows the lag only for a thread that waits or is held, so the test does not see the cut at the moment of the stop, it does not compare the place after the `Resume` with the place before the `Stop`, and it does not measure processor time. No machine test asserts a share of processor time or a longest wait: such a condition depends on the load of the host.
+One test reads the place of a held thread. The thread report gives the kept lag of a held thread (`Thread_Report.lag`). In at least 100 rounds a spinner lowers to the weight 1, runs one tick (a count of the kernel), and a `Stop` holds it. In the hold its write of the full weight must be refused, its write of the request 1 us accepted, and the lag must be the same number after each; then the machine handle writes the full weight, and the lag must be 0. The rounds go on until one round had a lag below 0, so the test cannot pass with nothing to compare; if that state never comes, the test fails and says so. The conditions are numbers of the kernel, with no time in them. The test does not measure processor time, and no machine test asserts a share or a longest wait after writes: such a condition depends on the load of the host.
 
 **Not built.** The placement of a thread on the processors, and a share for each budget. Section 5 says what each one needs.
 
@@ -204,7 +187,7 @@ This section says how the strategies keep their data small and their arithmetic 
 
 ### The hot data
 
-The fields that a pick and a wake read are in the first 64 bytes of the thread record: state, home, the links of the queue, processor, budget, weight, request, virtual time, virtual deadline, lag, queued, placed, the weight of the kept lag. `Thread` is aligned on 64 bytes, so the line is one cache line. The run queue is one line too: the lock, the head, the tail, the counts, the strategy of the queue, the sum of the weights, the queue clock.
+The fields that a pick and a wake read are in the first 64 bytes of the thread record: state, home, the links of the queue, processor, budget, weight, request, virtual time, virtual deadline, lag, queued, placed. `Thread` is aligned on 64 bytes, so the line is one cache line. The run queue is one line too: the lock, the head, the tail, the counts, the strategy of the queue, the sum of the weights, the queue clock.
 
 A pick touches: the line of the queue, and one line for each thread of the queue (round robin: the first thread whose budget has time), plus the lines of the budgets of these threads (`budget_spent` walks the chain of budgets). A pick of EEVDF reads each thread of the queue three times: one pass keeps each thread within its bound, one computes `V`, one finds the deadline. The second and the third pass read lines that the first pass brought into the cache.
 
@@ -218,9 +201,9 @@ The kernel counts time in cycles of the cycle counter (about 3e9 in one second h
 
 A virtual time is a `u64` that can wrap. Two virtual times are compared by the sign of their difference as an `i64` (as Linux does): this is right while the two are less than 2^63 apart.
 
-Each queue has a queue clock (`Run_Queue.virtual`), which never goes back. The kernel keeps each queued thread within a bound under the clock: a pick that sees a thread more than the bound behind sets it to the bound. So a thread whose budget had no time for a while stays at a bounded distance. The bound is the sleeper credit (3 ms of weighted cycles) for the fair strategy, and the lag bound of the thread for EEVDF: two requests, at least one tick. A request is at most 100 ms, about 2^29 cycles at 5 GHz; at the least weight it is 2^39 weighted cycles, so the lag bound is at most 2^40. A thread ahead of the clock ran at most one turn ahead of it. A thread that waits is in no list, and the clock can move by any amount during its wait, so it keeps no absolute virtual time: under the fair strategy it keeps its distance to the queue clock (`lag`, clamped to the credit below and 2^44 above) and wakes at the clock plus that distance; under EEVDF it keeps its lag (cut to its bound above 0, and to the longest turn at its weight below 0) and wakes at `V` minus the lag. A thread does not move while it waits: a move takes a thread from a list. A thread that goes back to the list after its turn is kept within the bound by the next pick. This correction is by argument: the case that it closes needs about 35 days of one thread of weight 1 alone in a queue, and the kernel code does not run on the host, so no test reaches it.
+Each queue has a queue clock (`Run_Queue.virtual`), which never goes back. The kernel keeps each queued thread within a bound under the clock: a pick that sees a thread more than the bound behind sets it to the bound. So a thread whose budget had no time for a while stays at a bounded distance. The bound is the sleeper credit (3 ms of weighted cycles) for the fair strategy, and the lag bound of the thread for EEVDF: two requests, at least one tick. A request is at most 100 ms, about 2^29 cycles at 5 GHz; at the least weight it is 2^39 weighted cycles, so the lag bound is at most 2^40. A thread ahead of the clock ran at most one turn ahead of it. A thread that waits is in no list, and the clock can move by any amount during its wait, so it keeps no absolute virtual time: under the fair strategy it keeps its distance to the queue clock (`lag`, clamped to the credit below and 2^44 above) and wakes at the clock plus that distance; under EEVDF it keeps its lag, clamped to its bound, and wakes at `V` minus the lag. A thread does not move while it waits: a move takes a thread from a list. A thread that goes back to the list after its turn is kept within the bound by the next pick. This correction is by argument: the case that it closes needs about 35 days of one thread of weight 1 alone in a queue, and the kernel code does not run on the host, so no test reaches it.
 
-The average of EEVDF is `V = clock + sum(w * key) / sum(w)`, with `key = v - clock`. The kernel clamps each key to `±2^44` before the product. The clamp changes nothing unless a thread of weight 1 ran about 5 s with no tick that ended its turn. Then one product is at most `2^10 * 2^44 = 2^54`, and the sum of the 256 threads of the table at most `2^62`: it fits in an `i64`. The weights sum to at most `2^18`. The placement of a woken thread scales its lag by `(W + w) / W`, as Linux does, so that `V` does not move when the thread joins: the lag is at most `2^40` and `W + w` at most `2^18 + 2^10`, so the product is below `2^59`. `w` is the weight of the stop ("The schedule of a live thread"). The kept lag itself is the place against the other threads, clamped to `±2^44`, times `W / (W + w)`: the product is at most `2^62`.
+The average of EEVDF is `V = clock + sum(w * key) / sum(w)`, with `key = v - clock`. The kernel clamps each key to `±2^44` before the product. The clamp changes nothing unless a thread of weight 1 ran about 5 s with no tick that ended its turn. Then one product is at most `2^10 * 2^44 = 2^54`, and the sum of the 256 threads of the table at most `2^62`: it fits in an `i64`. The weights sum to at most `2^18`. The placement of a woken thread scales its lag by `(W + w) / W`, as Linux does, so that `V` does not move when the thread joins: the lag is at most `2^40` and `W + w` at most `2^18 + 2^10`, so the product is below `2^59`.
 
 ### The change at run time
 

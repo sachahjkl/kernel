@@ -1036,8 +1036,9 @@ Operation :: enum u32 {
 	//
 	// - `Bad_Operation`: `command` is `None` or a command that the kernel does not know; a write of values
 	//   that a thread of a program cannot hold changes nothing (`thread_registers_refusal`,
-	//   `extended_state_refusal`); a `Write_Schedule` with a weight above the weight limit of the thread,
-	//   a request above `REQUEST_LIMIT`, or through the machine handle a weight limit above `WEIGHT_FULL`,
+	//   `extended_state_refusal`); a `Write_Schedule` through 0 or a thread handle with a weight above
+	//   the weight of the thread or a request above its request; a `Write_Schedule` with a weight above
+	//   `WEIGHT_FULL`, a request above `REQUEST_LIMIT`, or a weight limit above `WEIGHT_FULL`,
 	//   changes nothing.
 	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with the rights of the command, and not
 	//   the machine handle with the rights of a command of the schedule. The machine handle with
@@ -1097,23 +1098,33 @@ REQUEST_LIMIT :: 100_000
 // [thread schedule](term:thread-schedule) and (docs/SCHEDULING.md, "The
 // schedule of a live thread").
 //
-// A write takes 0 for a default, as `Thread_Create` does; a read gives the
-// values in use, never 0.
+// A read gives the values in use, never 0.
 //
-// The weight limit is the most that the weight of the thread can be. Only
-// a write through the machine handle with **Schedule** and **Inspect** sets it; a write
-// through 0 or through a thread handle does not read `weight_limit`, and
-// gives `Bad_Operation` for a weight above the limit that the thread has.
-// A write of a limit below the weight lowers the weight to the limit. A
-// new thread gets the limit of the thread that creates it. So a weight that
+// Who writes decides what a write can do:
+//
+// - A write through 0 (a thread of the calling program) or through a thread
+//   handle only **lowers**: a weight above the weight that the thread has
+//   now, or a request above its request, gives `Bad_Operation`, and nothing
+//   changes. 0 keeps the value that the thread has. `weight_limit` is not
+//   read.
+// - A write through the machine handle with **Schedule** and **Inspect**
+//   gives the three values, and it alone raises a weight or a request. 0 is
+//   the default of each: `WEIGHT_FULL` for the limit, the limit for the
+//   weight, `REQUEST_DEFAULT` for the request. A weight above the new limit
+//   becomes the limit. A thread whose weight was raised starts again as a
+//   new thread for its scheduling strategy: what it owed and what it was
+//   owed are gone.
+//
+// The weight limit is the most that the weight of the thread can be. A new
+// thread gets the limit of the thread that creates it. So a weight that
 // the holder of **Schedule** lowered stays lowered.
 //
 // Example: `{weight = 256, request = 500}` gives the thread a quarter of the
 // share of a thread of the full weight, and asks for turns of 500
 // microseconds under EEVDF.
 Thread_Schedule :: struct {
-	weight:       u32, // From 1 to the weight limit of the thread; 0 in a write is that limit. The share of the thread under the strategies that use weights.
-	request:      u32, // Microseconds, from 1 to `REQUEST_LIMIT`; 0 in a write is `REQUEST_DEFAULT`. The delay that the thread asks for under EEVDF.
+	weight:       u32, // From 1 to the weight limit of the thread. The share of the thread under the strategies that use weights. 0 in a write: the weight that the thread has, or the limit in a write through the machine handle.
+	request:      u32, // Microseconds, from 1 to `REQUEST_LIMIT`. The delay that the thread asks for under EEVDF. 0 in a write: the request that the thread has, or `REQUEST_DEFAULT` in a write through the machine handle.
 	weight_limit: u32, // From 1 to `WEIGHT_FULL`; 0 in a write is `WEIGHT_FULL`. Read from a write through the machine handle only.
 }
 #assert(size_of(Thread_Schedule) == 12)
@@ -1506,13 +1517,14 @@ Thread_Control_Command :: enum u64 {
 	// machine number.
 	Read_Schedule        = 7,
 	// Reads a Thread_Schedule at the address: the thread has this weight and
-	// this request from now on, also while it runs. 0 is the default of each
-	// value; for the weight that is the weight limit of the thread.
-	// Bad_Operation for a weight above the weight limit of the thread or a
-	// request above REQUEST_LIMIT: nothing changes. A thread handle needs
-	// Control; the machine handle with Schedule and Inspect names any thread
-	// by its machine number, and its write sets the weight limit too: a weight
-	// above the new limit becomes the limit.
+	// this request from now on, also while it runs. Through 0 or a thread
+	// handle (with Control) the write only lowers: Bad_Operation for a
+	// weight above the weight of the thread or a request above its request,
+	// and nothing changes; 0 keeps a value. The machine handle with Schedule
+	// and Inspect names any thread by its machine number; its write gives
+	// the three values, raises too, and sets the weight limit: a weight
+	// above the new limit becomes the limit. A raised weight starts the
+	// thread again as a new thread for its strategy.
 	Write_Schedule       = 8,
 }
 
@@ -1523,8 +1535,8 @@ Thread_Control_Command :: enum u64 {
 // thread runs, so it has its own right; a hold and a read do not, so a
 // profiler gets them with no write. A writer also reads the frame before it
 // writes it. Control, the right to end a thread, gives none of them. It
-// gives the write of the schedule: a holder that can end a thread can also
-// give it a smaller share, which is less.
+// gives the write of the schedule, which only lowers: a holder that can end
+// a thread can also give it a smaller share, which is less.
 thread_control_rights :: proc "contextless" (command: Thread_Control_Command) -> Rights {
 	#partial switch command {
 	case .Write_Registers, .Write_Extended_State:
@@ -1622,8 +1634,8 @@ Thread_Write_Refusal :: enum u64 {
 	Mxcsr               = 6, // A bit that the processor does not take (its MXCSR mask).
 	Header_Components   = 7, // XSTATE_BV names a component that the kernel does not save.
 	Header_Reserved     = 8, // A byte of the header after XSTATE_BV is not 0.
-	Weight              = 9, // The weight of a Thread_Schedule is above WEIGHT_FULL, or above the weight limit of the thread: the error record gives the limit that applied.
-	Request             = 10, // The request of a Thread_Schedule is above REQUEST_LIMIT.
+	Weight              = 9, // The weight of a Thread_Schedule is above WEIGHT_FULL, or, in a write that only lowers, above the weight that the thread has: the error record gives the most that applied.
+	Request             = 10, // The request of a Thread_Schedule is above REQUEST_LIMIT, or, in a write that only lowers, above the request that the thread has: the error record gives the most that applied.
 	Weight_Limit        = 11, // The weight limit of a Thread_Schedule, in a write through the machine handle, is above WEIGHT_FULL.
 }
 
