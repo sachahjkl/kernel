@@ -698,6 +698,24 @@ find :: proc "contextless" (table: ^Table, remote_address: u32, local_port, remo
 	return -1
 }
 
+// connection_of_segment gives the record of the connection that the two
+// ports of a segment name, for the remote address that came with it. -1: no
+// record, or a segment too short to hold the two ports.
+//
+// It reads the ports at their fixed place, bytes 0 to 3, and nothing else:
+// not the checksum, not the data offset, not an option. So it also answers
+// for a segment that `step` dropped, damaged or malformed. A program that
+// must decide something for a segment after the step (the release of a
+// remote that no connection has) asks this, and decides only when the
+// answer is -1: a damaged segment whose ports name a live connection then
+// changes nothing of that connection.
+connection_of_segment :: proc "contextless" (table: ^Table, item: Incoming) -> int {
+	if len(item.segment) < 4 {
+		return -1
+	}
+	return find(table, item.remote_address, read_16(item.segment, 2), read_16(item.segment, 0))
+}
+
 // emit writes one segment in the next place of the output. false: the
 // output is full.
 @(private)

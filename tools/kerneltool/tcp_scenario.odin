@@ -46,6 +46,13 @@ scenario_tcp := [?]Step {
 	{kind = .Peer, text = "stray"},
 	{kind = .Peer, text = "challenge"},
 	{kind = .Wait, text = " 2 challenges"},
+	// On a live connection, a segment that the wire damaged (a wrong
+	// checksum, a malformed option), then the same segment with its checksum
+	// whole: the library of the server drops both, the server releases no
+	// remote for them, and the connection serves two more requests.
+	{kind = .Peer, text = "damaged"},
+	{kind = .Wait, text = "server: 1 segments dropped for a wrong checksum"},
+	{kind = .Wait, text = " closed, the remote first: 3 requests, "},
 	{kind = .Peer, text = "crowd"},
 	{kind = .Wait, text = "server: 16 connections open at once"},
 	// Three more rounds of 1 MiB each way: the spread of the measure.
@@ -116,12 +123,14 @@ scenario_tcp := [?]Step {
 }
 
 scenario_tcp_real := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
 	// The server sends the field Date only when the date is known, and the
 	// program `date` knows it after it saw a second of the real-time clock
 	// begin: up to one second after its start. The fetch checks the field,
 	// so the date is known first.
+	// The date line and the line of the first window come in either order:
+	// the first one is looked for with no move of the place in the log.
 	{kind = .Wait, text = "date: ok, ", any_order = true},
+	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Launch, text = "server"},
 	{kind = .Wait, text = "server: listening on the TCP port 80"},
 	{kind = .Fetch, text = "/"},
