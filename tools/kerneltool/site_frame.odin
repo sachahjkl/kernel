@@ -1220,6 +1220,9 @@ site_check_pages :: proc(pages: []Site_Page, written: map[string]string, files: 
 		if problem := site_layout_problem(page, html, ids[page.path]); problem != "" {
 			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
 		}
+		if problem := site_tree_lines_problem(html); problem != "" {
+			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
+		}
 		if problem := site_type_cards_problem(html, ids[page.path]); problem != "" {
 			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
 		}

@@ -20,6 +20,7 @@ No page holds a text that a person must remember to update: each page is generat
   - each page has exactly one search field (`GLOSSARY.md`): in the bar, but on the docs home, where it is in the page and the bar has none (`site_search_field_problem`);
   - each `srcset` candidate names a file that the command wrote;
   - a page of the documentation layout has one documentation tree and one list "On this page", and each link of the list names an id of the page; a page of the presentation layout has neither (see "The two layouts");
+  - each list under an item of a list, inside a `nav` element, is a list of tree lines (see "The tree lines");
   - no page holds code or style of its own: each `<script>` has a `src` and nothing inside, but the one `<script type="application/ld+json">` of the page graph, whose text has no `<`; no `<style>` element and no `style` attribute exists;
   - no page names a document of the repository as bare text (see "The count and the check").
 - Then the command checks what other programs read (see "What other sites read"); a failure stops it in the same way.
@@ -529,9 +530,9 @@ The writer of each page states its layout (`Site_Page.layout`); the tool does no
 | Presentation | The home, the docs home, the news, the releases | One centred column of at most 1152 pixels |
 | Documentation (`GLOSSARY.md`) | Each guide, each reference page, the index and the page of each group of the glossary, each module page, the status, and the index pages of the guides, the reference and the modules | The documentation tree, the text, "On this page", over the whole width of the window |
 
-The documentation tree (`GLOSSARY.md`) is one `<nav class="tree" aria-label="Documentation">`. Its first link is the docs home, "Docs", the way back to the door of the docs. Then, on a guide: "Guides" with each guide in the reading order of the page of the guides, "Reference" with each reference page in the order of its index (under the glossary, each of its groups with the count of its terms), "Modules" with a `details` for each group (Kernel, Programs, Modules), open when it holds the current page, and "Status". The current page has `aria-current="page"`. It is written once in each page, inside the site menu, after the search: under 720 pixels it is under the sections in the open menu, which scrolls on its own; from 720 pixels the style sheet fixes it at the left of the window (`position: fixed`, its own `overflow-y`), so a long tree never moves the page. With no script, a browser with no `::details-content` shows the tree when the button of the menu opens it, as the sections.
+The documentation tree (`GLOSSARY.md`) is one `<nav class="tree" aria-label="Documentation">`. Its first link is the docs home, "Docs", the way back to the door of the docs. Then, on a guide: "Guides" with each guide in the reading order of the page of the guides, "Reference" with each reference page in the order of its index (under the glossary, each of its groups with the count of its terms), "Modules" with a heading for each group (Kernel, Programs, Modules) and the modules of the group under it, and "Status". The tree is whole: it has no `details`, and no part of it is folded. Each list under an item is a list of tree lines (see "The tree lines"). The current page has `aria-current="page"`. It is written once in each page, inside the site menu, after the search: under 720 pixels it is under the sections in the open menu, which scrolls on its own; from 720 pixels the style sheet fixes it at the left of the window (`position: fixed`, its own `overflow-y`), so a long tree never moves the page. With no script, a browser with no `::details-content` shows the tree when the button of the menu opens it, as the sections.
 
-"On this page" (`GLOSSARY.md`) is one `<details class="outline">` at the start of `main`: the title of the page (a link to `#content`), then each heading h2 and h3 with an id, then each element that states a symbol with `data-outline`, in the order of the page. From 1100 pixels it is a column at the right of the text, sticky, with its own scroll, and open (`::details-content`, or `search.js`); under 1100 pixels it is closed above the text, and its summary "On this page" opens it. The script marks the link of the part in view with `aria-current="location"`: an `IntersectionObserver` reports each heading and symbol that enters or leaves the top 40 % of the window; nothing runs each frame. With no script it is a correct list of links.
+"On this page" (`GLOSSARY.md`) is one `<details class="outline">` at the start of `main`: the title of the page (a link to `#content`), then each heading h2 and h3 with an id, and each element that states a symbol with `data-outline`, in the order of the page. It is a tree of two levels: the title and each heading h2 are the items of its first list; a heading h3 or a symbol is a branch of the item before it, in a list of tree lines (see "The tree lines"), so a symbol with no heading h2 before it is a branch of the title. From 1100 pixels it is a column at the right of the text, sticky, with its own scroll, and open (`::details-content`, or `search.js`); under 1100 pixels it is closed above the text, and its summary "On this page" opens it. The script marks the link of the part in view with `aria-current="location"`: an `IntersectionObserver` reports each heading and symbol that enters or leaves the top 40 % of the window; nothing runs each frame. With no script it is a correct list of links.
 
 The text keeps a measure of 80 characters (`80ch`) for paragraphs, items, headings and quotes; a table, a block of code and a figure take the whole middle column, and a table still scrolls in its own box.
 
@@ -544,6 +545,51 @@ The text keeps a measure of 80 characters (`80ch`) for paragraphs, items, headin
 No column has a fixed least width but the tree and "On this page", and each grid item of the text has `min-width: 0`: no line is wider than the window at 360, 768, 1024, 1440, 1920 and 2560 pixels. At 768 pixels the text column is 480 pixels; at 1100 pixels, 540.
 
 Print shows the middle column only: the bar, the tree, "On this page", the breadcrumbs and the links to the guides before and after are hidden.
+
+### The tree lines
+
+A navigation of the site that is a tree shows its levels by tree lines (`GLOSSARY.md`), as a file tree does, not by its indentation alone. The rule is one for every tree: each list under an item of another list, inside a `nav` element, has the class `tree-lines` (`SITE_TREE_LINES_LIST_OPEN` in `tools/kerneltool/site_documentation.odin`), and the style sheet draws the lines of each item of such a list. No tree has a rule of its own for the indentation of a level.
+
+The trees of the site:
+
+| Tree | Written by | Levels |
+|---|---|---|
+| The documentation tree | `site_tree_html` | 3: a part ("Guides", "Reference", "Modules"); its pages, or the groups of the modules; the groups of the glossary under the glossary, or the modules under their group |
+| "On this page" | `site_outline_html` | 2: the title and the headings h2; the headings h3 and the symbols |
+
+The sections of the bar, the breadcrumbs, the letters of the glossary and the links to the pages before and after are lists of one level: they have no line. A list of the text of a page is not a navigation: it keeps its square marks.
+
+The numbers, in CSS pixels, on the grid of 8 pixels:
+
+- A row is 24 pixels high: a line of text of 20 pixels and 2 pixels above and under it. The name of a group of modules has the same row as a link.
+- A level is 16 pixels to the right of the level above it: the list starts 8 pixels from the left edge of the row of its parent (`margin-left: 8px`), and the row of each item starts 8 pixels further (`padding-left: 8px`). The text of a row starts 10 pixels from the left edge of its row (a border of 2 pixels, which marks the current row, and a padding of 8 pixels), so the vertical line is 2 pixels to the left of the first letter of the parent.
+- The vertical line is 1 pixel wide, at the left edge of the list. It starts at the bottom of the row of the parent.
+- The branch of an item is 1 pixel high and 8 pixels long, from the vertical line to the left edge of the row of the item, 12 pixels under the top of the item: the middle of its first line.
+- The corners are square. No line has a round end.
+
+How an item draws its lines: two parts with no text (`::before` and `::after`, `content: ""`), with borders of 1 pixel, so a screen reader reads the lists as before and the lines stay in a forced-colors mode.
+
+- The corner (`::before`): a box of 8 by 13 pixels at the top of the item, with a left border and a bottom border: the vertical line from the top of the item to its branch, and the branch.
+- The rest (`::after`): a left border from 13 pixels under the top of the item to its bottom: the vertical line beside the rest of the item and beside its own branches. The last item of a list has none (`li:last-child`).
+- So the vertical line of a list stops at the branch of its last item, and not at the bottom of the branches of that item. An item whose name takes two lines keeps its branch at the middle of the first one, and its second line starts under the first, at the right of the line.
+
+The colors:
+
+- A tree line is `--tree-line`: the dim color at 40 % on the track (`color-mix(in srgb, var(--dim) 40%, var(--track))`), about `0x424E5C` in the dark form and `0x9EA4AB` in the light form. On the surface of the tree its contrast is 2.10 (dark) and 2.43 (light). The track alone is 1.17 and 1.35 there: a line of 1 pixel in it does not show. The dim color alone is the color of a text.
+- The lines from the first list to the current item are in the line color, the color of the line under a link: the corner of each item that holds the current item, and the vertical line beside each item before it in its list. So the way from a part to the current page reads at once. The current item is the link with `aria-current`: `page` in the documentation tree, `location` in "On this page", where the script moves it as the page scrolls. The rule uses `:has()`; a browser with no `:has()` draws every line in the color of a tree line.
+- The current row keeps its look: the line of 2 pixels at its left in the line color, and in the documentation tree the band of the track. A row of "On this page" that is not the current one has no line of its own at its left: the tree lines are its only lines.
+
+What the lines do not touch:
+
+- The band of a row under the pointer starts at the left edge of the row, where the branch ends.
+- The outline of the focus is 2 pixels wide, 2 pixels from the row, so it crosses the branch of its row and the top of the line of its branches. A link of a tree that has the focus is drawn over the lines (`position: relative; z-index: 1`), so no line cuts its outline.
+- The lines take no events of the pointer.
+
+The widths: the column of the tree is 256 pixels, with 8 pixels of padding at each side. The text of the deepest level starts 42 pixels from the left edge of the lists and has 190 pixels, or 174 when the tree scrolls and shows its scroll bar of 16 pixels; a longer name breaks and continues under its own start (`overflow-wrap: anywhere`). The text of a branch of "On this page" has 206 pixels of its 240. In the open menu of a narrow screen the tree has the same lines and the width of the screen less 32 pixels.
+
+Print hides the tree and "On this page", so it has no tree line. The lines do not move: a reader who asks for reduced motion sees the same page.
+
+The host tests: `site_documentation_tree_has_tree_lines` (each list under an item of the documentation tree has the class, to the deepest level), `site_documentation_outline_is_a_tree`, `site_documentation_tree_lines_check` (the check of the pages, `site_tree_lines_problem`, on good and damaged pages) and `site_documentation_tree_lines_in_the_style_sheet` (the rules above, and no rule of the indentation of one tree).
 
 ### The kinds of values
 
