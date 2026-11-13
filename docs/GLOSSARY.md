@@ -102,7 +102,7 @@ Do not use: section, blob.
 
 A replacement is a record `{hash, hash}` that the starter of a program gives to the loader: where a module imports the first module, the loader loads the second one.
 
-A replacement lets the publisher of the system fix a module in every program that imports it, with no new build of the programs. Example: module B has a security fault, and B2 has the correction; a replacement `{B, B2}` makes each import of B load B2. The file of the importing module does not change, so its hash stays.
+A replacement lets the principal that signs the system fix a module in every program that imports it, with no new build of the programs. Example: module B has a security fault, and B2 has the correction; a replacement `{B, B2}` makes each import of B load B2. The file of the importing module does not change, so its hash stays.
 
 The loader does not trust a replacement. For each slot that the importing module uses, it finds the export of the same name in B2 and compares the two descriptions: the parameters, the result, each record and the rights of each handle. One difference refuses the load, with a load error that names the export and the difference. The loader applies one record to one import: a module that replaces is not replaced.
 
@@ -1219,7 +1219,7 @@ Do not use: system call, syscall.
 
 The boot program is the UEFI program that checks, measures and loads the system, then starts the kernel.
 
-It holds the kernel module, the boot image and the public key of the publisher of the system. It verifies the signature of the system description, compares each module and resource with it, asks the firmware to measure the description into the TPM, loads the kernel module, and gives the kernel the memory map, the framebuffer and the trust record in one record. A failed check stops the boot with the file and the two hashes on the screen.
+It holds the kernel module, the boot image and the public key of the principal that signs the system. It verifies the signature of the system description, compares each module and resource with it, asks the firmware to measure the description into the TPM, loads the kernel module, and gives the kernel the memory map, the framebuffer and the trust record in one record. A failed check stops the boot with the file and the two hashes on the screen.
 
 The design: `docs/ARCHITECTURE.md`, "Boot program", and `docs/PROPERTIES.md`, "Trusted boot: UEFI program, Secure Boot, TPM".
 
@@ -3810,12 +3810,6 @@ The design: `docs/QUIC.md`, "6. QUIC on the network (the fourth layer, built, wi
 Do not use: port forward, proxy, hostfwd (for this).
 
 ## Trusted boot
-
-### Publisher
-
-Who builds a system and signs its system description: the maker of a release, or anyone who builds a system of their own and enrols their key in their machine. A machine starts only a system of a publisher whose key it holds (`docs/PROPERTIES.md`, "Trusted boot: UEFI program, Secure Boot, TPM").
-
-Do not use: vendor, owner, person, administrator.
 
 ### Signing key
 
