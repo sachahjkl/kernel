@@ -578,3 +578,29 @@ keys_while_a_line_runs :: proc(t: ^testing.T) {
 	testing.expect_value(t, running_key_action(true, false, 4, 4), Running_Key_Action.Drop)
 	testing.expect_value(t, running_key_action(false, false, 4, 4), Running_Key_Action.Drop)
 }
+
+// The program takes a key from its queue while a place is free. With no
+// place, it reads on only to find an Escape that can stop a call: in each
+// other case the key stays in the queue, and no key is lost.
+@(test)
+keys_stay_in_the_queue_when_no_key_can_wait_or_act :: proc(t: ^testing.T) {
+	testing.expect(t, running_key_can_be_taken(false, 0, 4))
+	testing.expect(t, running_key_can_be_taken(false, 3, 4))
+	testing.expect(t, running_key_can_be_taken(true, 3, 4))
+	testing.expect(t, !running_key_can_be_taken(false, 4, 4), "no place and no call to stop: the key stays in the queue")
+	testing.expect(t, running_key_can_be_taken(true, 4, 4), "the program reads on to find Escape")
+	// A key that is taken with a place never gives Drop.
+	for waiting in 0 ..< 4 {
+		for escape in ([2]bool{false, true}) {
+			for stoppable in ([2]bool{false, true}) {
+				if running_key_can_be_taken(stoppable, waiting, 4) {
+					testing.expect(t, running_key_action(escape, stoppable, waiting, 4) != .Drop)
+				}
+			}
+		}
+	}
+	// With no place, a key is taken only when Escape can stop a call: the
+	// one key that is then lost is a key that is not Escape.
+	testing.expect_value(t, running_key_action(true, true, 4, 4), Running_Key_Action.Stop_Call)
+	testing.expect_value(t, running_key_action(false, true, 4, 4), Running_Key_Action.Drop)
+}

@@ -59,6 +59,7 @@ package terminal_program
 import "support:display"
 import "support:graphics"
 import "support:interface"
+import "support:key_path"
 import "contract:ring"
 import "support:system"
 import terminal "support:terminal"
@@ -928,7 +929,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	sample_lines, sample_records, sample_bytes, sample_entries: u64
 	frames, sample_frames: u64
 	sample_entries = system.program_entries(program)
-	keys_sent, keys_lost: u64
+	keys_sent: u64
+	keys_loss: key_path.Loss_Period // The keys that the full queue of the program refused.
 	// One line of the log, for the second that follows the first second.
 	second_start: u64
 	second_lines, second_records, second_entries, second_frames: u64
@@ -968,18 +970,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				move = i64(rows - 1)
 			case:
 				// The key goes to the program. The terminal never waits for
-				// the program: if the queue is full, the key is lost.
+				// the program: this thread also draws the window and moves
+				// the view, and a program that reads no key must not stop
+				// them. The queue holds the keys typed ahead; when it is
+				// full, the key is lost, and the log has one line when the
+				// loss begins and one line with the count when it ends.
 				if program != 0 {
 					if system.send(&source.completions, ring.Record{kind = u32(terminal.Input.Key), tag = event.code, values = {0 = u64(event.character), 1 = u64(event.modifiers)}}) {
 						keys_sent += 1
 						if keys_sent == 1 {
 							system.log("terminal: the first key goes to ", program_name)
 						}
-					} else {
-						keys_lost += 1
-						if keys_lost == 1 {
-							system.log("terminal: ", program_name, " does not read its keys: the queue is full, a key is lost")
+						if lost, ended := key_path.loss_end(&keys_loss); ended {
+							system.log("terminal: ", program_name, " reads its keys again: ", lost, " keys were lost")
 						}
+					} else if key_path.loss_count(&keys_loss) {
+						system.log("terminal: ", program_name, " does not read its keys: its queue of ", u64(ring.capacity(&source.completions)), " keys is full, and a new key is lost")
 					}
 				}
 				request.follow = true
@@ -1010,6 +1016,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				request.stopped, request.code = true, code
 				view_take()
 				system.log("terminal: ", program_name, " stopped with code ", u64(code), " after ", view.count - 1, " lines and ", view.records, " records")
+				if lost, ended := key_path.loss_end(&keys_loss); ended {
+					system.log("terminal: ", program_name, " stopped and did not read its keys: ", lost, " keys were lost")
+				}
 				system.close(program)
 				program = 0
 				dirty = true

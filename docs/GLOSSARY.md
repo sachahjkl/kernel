@@ -2017,11 +2017,27 @@ The program `date` writes there the date of the time 0 of the system. So a progr
 
 Do not use: wall-clock page, vDSO, clock page.
 
+### Back pressure
+
+Back pressure is the rule of a queue whose writer waits while the queue is full, so that no record is lost.
+
+It is the first form of the rule of the path of a key: the input service takes no byte of the keyboard from the controller while the input ring has no room, and the console takes no key from the terminal ring while 128 keys wait for the end of a line. The writer waits with `system.wait_room`; the reader wakes it when half of the queue is free. A writer that cannot wait (the compositor for a window, the terminal for its program) uses the second form: a stated capacity, and a loss period for each refusal. The design: `ARCHITECTURE.md`, "The path of a key".
+
+Do not use: writer stall, push back.
+
+### Loss period
+
+A loss period is the time from the first record that a full queue refuses to the moment when the queue takes a record again.
+
+A writer that cannot wait counts each record that it loses, and writes two lines in the log for one period: one when the loss begins, one with the count when it ends. It writes no line for each record: a queue that refuses 1000 keys must not fill the log. The compositor has one for each window, the terminal one for its program, the console one for the keys that wait during a line. The code: `key_path.Loss_Period` (`support/key_path`). The design: `ARCHITECTURE.md`, "The path of a key".
+
+Do not use: drop window, loss burst.
+
 ### Terminal ring
 
 The terminal ring is the ring between a program and its terminal.
 
-In the command queue, a record from the program has a kind (text, status, clear, edit line, hint line, completion list, runs of code), a count of bytes in the text region and a style; it has no place on the screen. In the completion queue, a record from the terminal is a key record. When the queue of keys is full, the newest keys are lost: the terminal never waits for a program.
+In the command queue, a record from the program has a kind (text, status, clear, edit line, hint line, completion list, runs of code), a count of bytes in the text region and a style; it has no place on the screen. In the completion queue, a record from the terminal is a key record. The queue of keys holds 4096 keys: the keys typed ahead. The terminal never waits for a program: when the queue is full, a new key is lost, the terminal counts it, and the log has a line when the loss begins and a line with the count when it ends (a loss period).
 
 The contract: `support/terminal/terminal.odin`.
 

@@ -33,6 +33,7 @@
 package input
 
 import "support:display"
+import "support:key_path"
 import "contract:ring"
 import "support:system"
 
@@ -67,6 +68,13 @@ modifiers: u32
 extended: bool
 packet: [3]u8
 packet_count: int
+// The packets of the mouse that found the input ring full: they go to the
+// ring, in order, before any newer record.
+pointer_backlog: key_path.Pointer_Backlog
+// The records that this service lost. The back pressure of entry keeps
+// both at 0: a number above 0 is a fault of this program.
+key_records_refused: u64
+pointer_records_refused: u64
 
 controller_wait_write :: proc "contextless" () {
 	for _ in 0 ..< 100000 {
@@ -113,6 +121,18 @@ mouse_command :: proc "contextless" (command: u8) {
 // the status port says that one waits: a byte of the mouse goes to
 // `mouse_byte`, a byte of the keyboard to `keyboard_byte`.
 //
+// **A full input ring.** The service never drops a record. It does not
+// take a byte of the keyboard from the controller while the input ring has
+// no room for its record: the byte stays in the controller, the keyboard
+// holds the bytes after it, and the service waits until the compositor
+// read half of the ring (docs/ARCHITECTURE.md, "The path of a key"). The
+// moves of the mouse that find the ring full become one move; a change of
+// a button waits in order, and when 8 of them wait the bytes of the mouse
+// stay in the controller too. The log has
+// `input: the input ring is full: the keyboard controller keeps its bytes`
+// when a wait begins, and `input: the input ring has room again` when it
+// ends.
+//
 // **The stop**: with no ring, it writes `input: no ring` and stops with the
 // code 1. Else it never returns.
 @(export, link_name = "entry")
@@ -138,23 +158,64 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	mouse_command(0xF4) // Send motion.
 	system.log("input: ok")
 
+	held_before := false // The turn before left a byte in the controller.
 	for {
 		// An interrupt of this program is an event.
 		wait := system.wait_begin()
+		held := false
 		for {
+			pointer_backlog_send()
 			state := system.port_read_8(PORT_STATUS)
 			if state & STATUS_OUTPUT_FULL == 0 {
 				break
 			}
+			from_mouse := state & STATUS_MOUSE != 0
+			has_room := ring.count(&output.commands) < ring.capacity(&output.commands)
+			if !key_path.input_byte_can_be_read(from_mouse, has_room, pointer_backlog.count) {
+				// No place for the record of this byte: the byte stays in
+				// the controller, and the device holds the ones after it.
+				held = true
+				break
+			}
 			value := system.port_read_8(PORT_DATA)
-			if state & STATUS_MOUSE != 0 {
+			if from_mouse {
 				mouse_byte(value)
 			} else {
 				keyboard_byte(value)
 			}
 		}
+		if held != held_before {
+			held_before = held
+			if held {
+				system.log("input: the input ring is full: the keyboard controller keeps its bytes")
+			} else {
+				system.log("input: the input ring has room again")
+			}
+		}
+		if held || pointer_backlog.count > 0 {
+			// The compositor wakes this thread when half of the ring is
+			// free, or before it waits itself. If the ring already has
+			// room, the wait ends at once.
+			system.wait_room(&wait, &output.commands)
+		}
 		system.wait_end(&wait)
 	}
+}
+
+// pointer_backlog_send writes in the input ring the packets of the mouse
+// that wait, the oldest first, while the ring has room.
+pointer_backlog_send :: proc "contextless" () {
+	for {
+		waiting := key_path.pointer_backlog_first(&pointer_backlog) or_break
+		if !system.send(&output.commands, pointer_record(waiting)) {
+			break
+		}
+		key_path.pointer_backlog_remove_first(&pointer_backlog)
+	}
+}
+
+pointer_record :: proc "contextless" (pointer: key_path.Pointer_Packet) -> ring.Record {
+	return {kind = u32(display.Input.Pointer), values = {0 = u64(pointer.motion_x), 1 = u64(pointer.motion_y), 2 = pointer.buttons}}
 }
 
 // keyboard_byte turns one byte of the keyboard into a record `Key`. The
@@ -190,7 +251,12 @@ keyboard_byte :: proc "contextless" (value: u8) {
 	if code < len(characters[0]) {
 		character = characters[modifiers & display.MODIFIER_SHIFT][code]
 	}
-	system.send(&output.commands, ring.Record{kind = u32(display.Input.Key), values = {0 = u64(code), 1 = u64(character), 2 = u64(pressed), 3 = u64(modifiers)}})
+	// The loop of entry read this byte only when the ring had room, and
+	// this thread is the one writer of the ring: the record has a place.
+	if !system.send(&output.commands, ring.Record{kind = u32(display.Input.Key), values = {0 = u64(code), 1 = u64(character), 2 = u64(pressed), 3 = u64(modifiers)}}) {
+		key_records_refused += 1
+		system.log("input: the input ring refused a key record that had a place: ", key_records_refused, " key records are lost")
+	}
 }
 
 // mouse_byte keeps the bytes of a packet of 3 bytes and sends a record
@@ -209,5 +275,16 @@ mouse_byte :: proc "contextless" (value: u8) {
 	packet_count = 0
 	motion_x := i64(packet[1]) - (packet[0] & 0x10 != 0 ? 256 : 0)
 	motion_y := i64(packet[2]) - (packet[0] & 0x20 != 0 ? 256 : 0)
-	system.send(&output.commands, ring.Record{kind = u32(display.Input.Pointer), values = {0 = u64(motion_x), 1 = u64(-motion_y), 2 = u64(packet[0] & 0x07)}})
+	moved := key_path.Pointer_Packet{motion_x = motion_x, motion_y = -motion_y, buttons = u64(packet[0] & 0x07)}
+	// A packet that waits goes first. With none, the ring takes this one,
+	// or it is the first one that waits.
+	if pointer_backlog.count == 0 && system.send(&output.commands, pointer_record(moved)) {
+		return
+	}
+	if !key_path.pointer_backlog_add(&pointer_backlog, moved) {
+		// The loop of entry reads a byte of the mouse only while an entry
+		// is free: this is a fault of this program, and it is in the log.
+		pointer_records_refused += 1
+		system.log("input: no entry for a change of a button of the pointer: ", pointer_records_refused, " pointer records are lost")
+	}
 }

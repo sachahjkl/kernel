@@ -408,11 +408,15 @@ Control-R and Control-S: the console tests the character of the key (`r`, `s`) w
 
 A line ends when its result is drawn. The console then takes the keys again. What the console does after the result holds no key: the save of the line history (section 6) runs after the end of the line, in the thread that runs the lines.
 
-While a line runs, each key waits, in order, and the edit line shows them (`|` Enter, `<` Backspace, `>` Tab, `^` a key with no character; Escape is `^`). At the end of the line the console acts on them in their order, as if they came then: a key that waited means what it means when typed slowly. At most 128 keys wait; a key after them is lost.
+While a line runs, each key waits, in order, and the edit line shows them (`|` Enter, `<` Backspace, `>` Tab, `^` a key with no character; Escape is `^`). At the end of the line the console acts on them in their order, as if they came then: a key that waited means what it means when typed slowly.
+
+128 keys wait in the console. The keys after them are not lost: the console takes no more key from the terminal ring, so they stay there, in order, and the console takes them when the line ends. The terminal ring holds 4096 keys; that number is the bound of the keys typed ahead during one line (`ARCHITECTURE.md`, "The path of a key").
+
+One state loses a key. While Escape can stop a call of the line, the console must read each key to find that Escape. With 128 keys waiting, it then has no place for a key that is not Escape, and that key is lost. The console counts each such key. The log has `console: 128 keys wait for the end of the line, and the console reads on to find an Escape: a new key is lost` at the first one, and `console: the line ended: N keys were lost while it ran` when the line ends. After the Escape that stops the call, the console reads on only while a key has a place.
 
 Escape has one more meaning, and only in one state: while the line waits in a call of a sandboxed program or of a service, Escape stops that call at once, also when keys wait. While the line is in no such call (a built-in command, a direct call, the drawing of the result), Escape waits as each key, and then closes the list that the keys before it opened. So `clear()`, then `mcnt`, Escape and Tab typed before `clear()` ended, give what they give when typed slowly: the list opens at `m`, Escape closes it, Tab opens it again.
 
-The rule is `line_editor.running_key_action` (`support/line_editor/running_keys.odin`), with its host test. A direct call that does not return cannot be stopped: the module runs in the thread of the lines; `isolate` such a module.
+The rules are `line_editor.running_key_action` and `line_editor.running_key_can_be_taken` (`support/line_editor/running_keys.odin`), with their host tests. A direct call that does not return cannot be stopped: the module runs in the thread of the lines; `isolate` such a module.
 
 A chosen name replaces the whole name at the caret, also its part after the caret, up to a dot. A command or an export gets its `(`, unless a `(` follows; a name in quotes gets its closing quote, unless one follows.
 
