@@ -157,7 +157,9 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Type, text = "columns(step(0), \"thread state procedure offset\")"},
 	{kind = .Wait, text = "[console]      0  stopped  debug_target::add_step       1"},
 	{kind = .Type, text = "columns(step_line(0), \"procedure line\")"},
-	{kind = .Wait, text = "[console] debug_target::add_step    " + DEBUG_TARGET_LINE_OF_THE_LOAD},
+	// The compiler gives the load and the store one row of the line table,
+	// with the line of the store: the next line after the first one is it.
+	{kind = .Wait, text = "[console] debug_target::add_step    " + DEBUG_TARGET_LINE_OF_THE_STORE},
 
 	// A breakpoint by a file and a line, in the place of the second one.
 	{kind = .Type, text = "columns(break_remove(1), \"number place\")"},
