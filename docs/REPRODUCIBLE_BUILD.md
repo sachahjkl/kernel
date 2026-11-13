@@ -37,7 +37,7 @@ The tool compares each output of a build, not only the module. A difference in t
 | Its object | `build/modules/<name>/objects/<name>.o` | `llc`, from the LLVM IR |
 | Its debug object | `build/modules/<name>.debug` | the tool, from the DWARF of the linked file |
 | Each pointer theme file | `build/pointers/*.pointers` | the tool (`docs/POINTERS.md`); compared by `check` only |
-| The boot program and its object | `build/boot/BOOTX64.EFI`, `build/boot/boot.obj` | `lld-link`, the Odin compiler |
+| The boot program and its object | `build/boot/main/BOOTX64.EFI`, `build/boot/main/boot.obj` (the boot program of the main boot volume) | `lld-link`, the Odin compiler |
 
 When an output differs:
 
@@ -69,6 +69,8 @@ Three facts keep the two rules apart:
 - **The proof never rests on a kept output.** A check that compares two builds must run the compiler two times. `check`, `screenshots` and `repeat` build whole, and the procedures of the second build (`outputs_same_after_second_build`, `modules_same_without_debug_information`) set the whole build themselves. A build that kept its outputs would compare a file with itself.
 - **A kept output is as sound as the list of the inputs.** The rule of the same bytes says nothing about an input that the build key does not hold. So the key holds each file that the compiler lists, every file of the folder of each package, the commands with each flag, the programs of the build and the sources of the tool, and the tool builds in every case of doubt.
 - **A compiler that loses the rule is still caught.** With a compiler that is not deterministic, a kept module is one of the distinct results of its inputs: a valid module, with a valid hash, and each module that imports it names that hash. The next full check builds whole two times and finds the difference.
+
+A boot volume is kept by the same rule, each with its own build key and its own build record. A command that boots some volumes only builds those; a volume that it does not build can be the volume of older sources, so the tool starts a machine only from a volume that the build of the same process built or kept. The second build of a check builds the main boot volume again in its own process, with no record read.
 
 The LLVM IR and the object of a kept module stay from the build that made the module. No step of a usual build reads them; the checks that read them build whole first.
 

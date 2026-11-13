@@ -915,7 +915,7 @@ The reason for the design is the cost of the instructions themselves, measured o
 | A thread that uses the ymm high halves | + 256 bytes in the save and the restore |
 | A thread that uses AVX-512 | up to + 1600 bytes (the opmask and the two parts of zmm); not measured: the host has no AVX-512 |
 
-The lines of `kerneltool measure`:
+The lines of `kerneltool measure`, which starts a measure run (`docs/TOOLS.md`, "A check by count, a measure by time"); the machine test writes no rate:
 
 - `locks: kernel entries in one second, each locker on its own objects: ...`: entries with no switch.
 - `locks: word wait, two threads wake each other: ...`: each wake is a switch.

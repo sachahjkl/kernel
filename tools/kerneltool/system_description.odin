@@ -360,12 +360,24 @@ boot_image_signed_write :: proc(base_path, kernel_name, output_path: string, cha
 		fmt.eprintfln("kerneltool: cannot write %s: %v", output_path, err)
 		return
 	}
-	if err := os.write_entire_file(SYSTEM_PUBLIC_KEY_FILE, key.public_key[:]); err != nil {
-		fmt.eprintfln("kerneltool: cannot write %s: %v", SYSTEM_PUBLIC_KEY_FILE, err)
-		return
-	}
 	signed.signed_by_test_key = key.is_test
 	return signed, true
+}
+
+// system_public_key_write writes the public key of the signing key of the
+// build in the file that every boot program loads. The process that leads
+// the build writes it one time, before the first boot volume is built: two
+// volume builds at the same time never write a file that a compiler of the
+// other reads.
+system_public_key_write :: proc() -> bool {
+	key := signing_key_read() or_return
+	// The private key leaves the memory of the tool after this one use.
+	defer ed25519.private_key_clear(&key.private_key)
+	if err := os.write_entire_file(SYSTEM_PUBLIC_KEY_FILE, key.public_key[:]); err != nil {
+		fmt.eprintfln("kerneltool: cannot write %s: %v", SYSTEM_PUBLIC_KEY_FILE, err)
+		return false
+	}
+	return true
 }
 
 // image_stated_hash_change changes one bit of the hash that the entry of

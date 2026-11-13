@@ -1,13 +1,16 @@
-// The measures of the locks of the kernel.
+// The checks and the measures of the locks of the kernel.
 //
 // The program starts four programs `locker`. Each one works on its own
 // objects only: a kernel entry of one locker touches no object of another
 // locker. So a locker waits for another one only when the kernel makes it
-// wait. With 1, 2 and 4 lockers at one time, the program measures the
-// kernel entries in one second and the page faults on first use in one
-// second. Then two threads of this program wake each other with the word
-// wait, alone, then while two lockers enter the kernel. The window shows
-// the numbers, and the waits of each lock of the kernel in each measure.
+// wait. With 1, 2 and 4 lockers at one time, each locker enters the kernel
+// a fixed count of times, then writes a fixed count of pages for the first
+// time. Then two threads of this program wake each other with the word
+// wait a fixed count of times, alone, then while two lockers enter the
+// kernel. The window shows the counts, and the waits of each lock of the
+// kernel in each run. In a [measure run](term:measure-run) each run has a
+// fixed time and no count, and the numbers are the kernel entries, the
+// page faults on first use and the wakes in one second.
 //
 // The program checks the counts: the kernel counted each entry of a
 // locker, each page returned to its budget, each free page is in a budget
@@ -25,9 +28,10 @@
 //
 // **What a reader sees.** Start it from the menu of the programs, or with
 // `start("locks")` in the console. The window shows the kernel entries and
-// the page faults in one second with 1, 2 and 4 lockers, the time of the
+// the page faults of the check with 1, 2 and 4 lockers, the wakes of the
 // word wait between two threads alone and under load, and, for each
-// measure, the waits of each lock. The log gets one line for each locker
+// run, the waits of each lock. In a measure run (`kerneltool measure`) the
+// numbers are in one second. The log gets one line for each locker
 // (`locks: locker 1 counted ... entries, the kernel ...`), the lines of the
 // stress case and of the case of the frames, then the summary.
 //
@@ -56,8 +60,14 @@ records_now, records_before: [1024]interface.Draw_Record
 text_now, text_before: [16384]u8
 drawing: interface.Window_Drawing
 
-MEASURE_TIME :: 300 // Milliseconds of one measure.
-PAIR_TIME :: 500 // Milliseconds of one measure of the word wait.
+MEASURE_TIME :: 300 // Milliseconds of one measure, in a measure run.
+PAIR_TIME :: 500 // Milliseconds of one measure of the word wait, in a measure run.
+// The work of the checks: each locker ends its command after this count.
+ENTRIES_CHECKED :: 16_384 // Kernel entries of one locker.
+FAULT_PAGES_CHECKED :: 8 * lockers.FAULT_PAGES // Pages that one locker writes for the first time.
+LARGE_OBJECTS_CHECKED :: 16 // Memory objects of 600 pages that one locker makes and closes.
+PAIR_ROUNDS_CHECKED :: 2_000 // Turns of the first thread of the word wait.
+LOAD_ENTRIES_CHECKED :: 65_536 // Kernel entries of each locker that loads the kernel during the word wait.
 // A wait that ends at this deadline after the word changed lost its wake. A
 // wake that is only late on a loaded host comes long before it: the bound of
 // a hang.
@@ -89,9 +99,11 @@ machine: system.Handle
 board: ^lockers.Board
 programs: [lockers.LOCKER_CAPACITY]system.Handle
 
-entry_rates: [len(counts)]u64 // Kernel entries in one second, all the lockers together.
-fault_rates: [len(counts)]u64 // Pages on first use in one second, all the lockers together.
-pairs_alone, pairs_loaded: u64 // Wakes between the two threads in one second.
+// All the lockers together: the kernel entries and the pages on first use
+// of the check; in a measure run, in one second.
+entry_rates: [len(counts)]u64
+fault_rates: [len(counts)]u64
+pairs_alone, pairs_loaded: u64 // Wakes between the two threads: of the check; in a measure run, in one second.
 lost_wakes: u64
 entry_locks, fault_locks, pair_locks: [op.LOCK_KIND_CAPACITY]op.Lock_Count // The locks during the measures with 4 lockers, and with the word wait.
 entries_right, faults_right, pages_right, pairs_right := true, true, true, true
@@ -110,9 +122,21 @@ locks_between :: proc "contextless" (before, after: op.System_Report) -> (delta:
 	return delta
 }
 
+// lockers_answered says if each of the first `active` lockers ended the
+// command that it had when `seen` was read.
+lockers_answered :: proc "contextless" (active: int, seen: ^[lockers.LOCKER_CAPACITY]u32) -> bool {
+	for index in 0 ..< active {
+		if intrinsics.atomic_load(&board.slots[index].done) == seen[index] {
+			return false
+		}
+	}
+	return true
+}
+
 // command gives one command to the first `active` lockers, and waits for
-// their results.
-command :: proc "contextless" (active: int, mode: lockers.Mode, start, end: u64) -> bool {
+// their results. A locker ends at the time `end`, or after `limit`
+// operations (0: no limit).
+command :: proc "contextless" (active: int, mode: lockers.Mode, start, end, limit: u64) -> bool {
 	seen: [lockers.LOCKER_CAPACITY]u32
 	for index in 0 ..< active {
 		slot := &board.slots[index]
@@ -120,6 +144,7 @@ command :: proc "contextless" (active: int, mode: lockers.Mode, start, end: u64)
 		slot.mode = mode
 		slot.start = start
 		slot.end = end
+		slot.limit = limit
 		intrinsics.atomic_add(&slot.command, 1)
 		system.word_wake(&slot.command, system.WAKE_ALL)
 	}
@@ -136,17 +161,27 @@ command :: proc "contextless" (active: int, mode: lockers.Mode, start, end: u64)
 	return true
 }
 
-// measure runs one mode on 1, 2 and 4 lockers, and checks the counts.
+// measure runs one mode on 1, 2 and 4 lockers, and checks the counts. The
+// check ends when each locker did its count of work: the time of its end
+// is the hang bound. A measure run has a fixed time and no count, and
+// gives the rate.
 measure :: proc "contextless" (mode: lockers.Mode, rates: ^[len(counts)]u64, locks: ^[op.LOCK_KIND_CAPACITY]op.Lock_Count) {
+	measured := system.measure_run()
+	limit: u64
+	if !measured {
+		limit = mode == .Entries ? ENTRIES_CHECKED : FAULT_PAGES_CHECKED
+	}
 	for active, row in counts {
 		entries_before: [lockers.LOCKER_CAPACITY]u64
 		for index in 0 ..< active {
 			entries_before[index] = system.program_entries(programs[index])
 		}
 		before := report()
-		start := system.time() + 20
-		end := start + MEASURE_TIME
-		answered := command(active, mode, start, end)
+		// A measure starts a little later: each locker is at its start
+		// before the time counts.
+		start := system.time() + (measured ? 20 : 0)
+		end := start + (measured ? MEASURE_TIME : system.TEST_HANG_BOUND_MILLISECONDS)
+		answered := command(active, mode, start, end, limit)
 		after := report()
 		total: u64
 		kernel_total: u64
@@ -167,6 +202,11 @@ measure :: proc "contextless" (mode: lockers.Mode, rates: ^[len(counts)]u64, loc
 			if slot.budget_before != slot.budget_after {
 				pages_right = false
 			}
+			// A locker of the check that ended before its count ended at the
+			// hang bound.
+			if slot.count < limit {
+				answered = false
+			}
 		}
 		// The entries of the lockers are a part of the entries of the machine.
 		if !answered || kernel_total > after.entries - before.entries {
@@ -178,7 +218,7 @@ measure :: proc "contextless" (mode: lockers.Mode, rates: ^[len(counts)]u64, loc
 		if after.budget_pages + after.reserved_pages != after.free_pages {
 			pages_right = false
 		}
-		rates[row] = total * 1000 / MEASURE_TIME
+		rates[row] = measured ? total * 1000 / MEASURE_TIME : total
 		if active == lockers.LOCKER_CAPACITY {
 			locks^ = locks_between(before, after)
 		}
@@ -229,9 +269,13 @@ pair_second :: proc "c" (parameter: rawptr) -> ! {
 	system.thread_stop()
 }
 
-// pairs measures the wakes between the two threads in one second, with
-// `load` lockers that enter the kernel at the same time.
+// pairs runs the word wait between the two threads, with `load` lockers
+// that enter the kernel at the same time. The check goes on until the
+// first thread did PAIR_ROUNDS_CHECKED turns and each locker of the load
+// did its count of entries, and gives the wakes. A measure run goes on for
+// PAIR_TIME, and gives the wakes in one second.
 pairs :: proc "contextless" (load: int) -> u64 {
+	measured := system.measure_run()
 	pair = {}
 	thread, status := system.thread_start(pair_second, nil)
 	if status != .Ok {
@@ -239,8 +283,8 @@ pairs :: proc "contextless" (load: int) -> u64 {
 		return 0
 	}
 	before := report()
-	start := system.time() + 20
-	end := start + PAIR_TIME
+	start := system.time() + (measured ? 20 : 0)
+	end := start + (measured ? PAIR_TIME : system.TEST_HANG_BOUND_MILLISECONDS)
 	seen: [lockers.LOCKER_CAPACITY]u32
 	for index in 0 ..< load {
 		slot := &board.slots[index]
@@ -248,13 +292,14 @@ pairs :: proc "contextless" (load: int) -> u64 {
 		slot.mode = .Entries
 		slot.start = start
 		slot.end = end
+		slot.limit = measured ? 0 : LOAD_ENTRIES_CHECKED
 		intrinsics.atomic_add(&slot.command, 1)
 		system.word_wake(&slot.command, system.WAKE_ALL)
 	}
 	for system.time() < start {
 		intrinsics.cpu_relax()
 	}
-	for system.time() < end {
+	for system.time() < end && (measured || pair.rounds[0] < PAIR_ROUNDS_CHECKED || !lockers_answered(load, &seen)) {
 		turn := intrinsics.atomic_load(&pair.turn)
 		if turn % 2 == 1 {
 			system.word_wait(&pair.turn, turn, system.time() + LOST_WAIT)
@@ -281,7 +326,14 @@ pairs :: proc "contextless" (load: int) -> u64 {
 	if load != 0 {
 		pair_locks = locks_between(before, after)
 	}
-	return pair.rounds[0] * 1000 / PAIR_TIME
+	if measured {
+		return pair.rounds[0] * 1000 / PAIR_TIME
+	}
+	// A check that ended before its count ended at the hang bound.
+	if pair.rounds[0] < PAIR_ROUNDS_CHECKED {
+		pairs_right = false
+	}
+	return pair.rounds[0]
 }
 
 locks_text :: proc "contextless" (buffer: []u8, locks: [op.LOCK_KIND_CAPACITY]op.Lock_Count) -> string {
@@ -323,9 +375,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 	y := LEFT
-	interface.draw_text(table, LEFT, y, "each locker works on its own objects: it waits only if the kernel makes it wait.", graphics.COLOR_DIM)
+	measured := system.measure_run()
+	interface.draw_text(table, LEFT, y, measured ? "each locker works on its own objects: it waits only if the kernel makes it wait." : "each locker works on its own objects. rates in one second: run `kerneltool measure`.", graphics.COLOR_DIM)
 	y += LINE + GAP
-	interface.draw_text(table, LEFT, y, "in one second, all lockers", graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT, y, measured ? "in one second, all lockers" : "in the check, all lockers", graphics.COLOR_DIM)
 	for active, index in counts {
 		line: [24]u8
 		interface.draw_text(table, COLUMN_X + index * COLUMN_WIDTH, y, system.format(line[:], u64(active), active == 1 ? " locker" : " lockers"), graphics.COLOR_DIM)
@@ -389,7 +442,7 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
 		right := entries_right && faults_right && pages_right && pairs_right && lost_wakes == 0 && stress_right
 		interface.draw_text(table, LEFT, y, right ? "the counts add up, no wake was lost, stopped programs returned all" : "a count is wrong", right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
 	} else {
-		interface.draw_text(table, LEFT, y, "measures in progress", graphics.COLOR_DIM)
+		interface.draw_text(table, LEFT, y, measured ? "measures in progress" : "checks in progress", graphics.COLOR_DIM)
 	}
 }
 
@@ -490,7 +543,7 @@ stress_started: u64
 // build); this program checks that the free pages less the reserved pages
 // are the pages of the budgets in each report. The lockers and this program
 // are different programs: no program lock orders their kernel entries.
-FRAMES_STRESS_TIME :: 500 // Milliseconds.
+FRAMES_STRESS_TIME :: 500 // Milliseconds of one round, in a measure run.
 
 frames_stress_right: bool
 
@@ -498,23 +551,30 @@ frames_stress :: proc "contextless" () {
 	modes := [lockers.LOCKER_CAPACITY]lockers.Mode{.Large, .Large, .Faults, .Faults}
 	reports, wrong, made, faulted: u64
 	answered := true
-	// A loaded host can give the lockers no time in one round: the rounds go
-	// on until each kind of work ran at least once. The bound only ends a
-	// hang.
+	measured := system.measure_run()
+	// In the check, each locker ends after its count of work, and this
+	// program reads reports until each one ended. A measure run has rounds
+	// of a fixed time: a loaded host can give the lockers no time in one
+	// round, so the rounds go on until each kind of work ran at least once.
+	// The bound only ends a hang.
 	for stress_deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; answered && (made == 0 || faulted == 0) && system.time() < stress_deadline; {
 		seen: [lockers.LOCKER_CAPACITY]u32
-		start := system.time() + 20
-		end := start + FRAMES_STRESS_TIME
+		start := system.time() + (measured ? 20 : 0)
+		end := start + (measured ? FRAMES_STRESS_TIME : system.TEST_HANG_BOUND_MILLISECONDS)
 		for index in 0 ..< lockers.LOCKER_CAPACITY {
 			slot := &board.slots[index]
 			seen[index] = intrinsics.atomic_load(&slot.done)
 			slot.mode = modes[index]
 			slot.start = start
 			slot.end = end
+			slot.limit = 0
+			if !measured {
+				slot.limit = modes[index] == .Large ? LARGE_OBJECTS_CHECKED : FAULT_PAGES_CHECKED
+			}
 			intrinsics.atomic_add(&slot.command, 1)
 			system.word_wake(&slot.command, system.WAKE_ALL)
 		}
-		for system.time() < end + 5 {
+		for (measured ? system.time() < end + 5 : system.time() < end && !lockers_answered(lockers.LOCKER_CAPACITY, &seen)) {
 			read := report()
 			reports += 1
 			if read.budget_pages + read.reserved_pages != read.free_pages {
@@ -618,13 +678,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.word_wait(&slot.done, 0, deadline)
 		}
 	}
+	// The rates are in the lines of a measure run only: the lines of the
+	// check have the counts of its work.
+	measured := system.measure_run()
 	measure(.Entries, &entry_rates, &entry_locks)
-	system.log("locks: kernel entries in one second, each locker on its own objects: 1 locker ", entry_rates[0], ", 2 lockers ", entry_rates[1], ", 4 lockers ", entry_rates[2])
+	system.log(measured ? "locks: kernel entries in one second, each locker on its own objects: 1 locker " : "locks: kernel entries, each locker on its own objects: 1 locker ", entry_rates[0], ", 2 lockers ", entry_rates[1], ", 4 lockers ", entry_rates[2])
 	measure(.Faults, &fault_rates, &fault_locks)
-	system.log("locks: pages on first use in one second, each locker in its own memory: 1 locker ", fault_rates[0], ", 2 lockers ", fault_rates[1], ", 4 lockers ", fault_rates[2])
+	system.log(measured ? "locks: pages on first use in one second, each locker in its own memory: 1 locker " : "locks: pages on first use, each locker in its own memory: 1 locker ", fault_rates[0], ", 2 lockers ", fault_rates[1], ", 4 lockers ", fault_rates[2])
 	pairs_alone = pairs(0)
 	pairs_loaded = pairs(2)
-	system.log("locks: word wait, two threads wake each other: ", pairs_alone, " wakes in one second alone, ", pairs_loaded, " while 2 lockers enter the kernel, ", lost_wakes, " lost")
+	system.log("locks: word wait, two threads wake each other: ", pairs_alone, measured ? " wakes in one second alone, " : " wakes alone, ", pairs_loaded, " while 2 lockers enter the kernel, ", lost_wakes, " lost")
 	text: [512]u8
 	system.log("locks: lock waits of takes, 4 lockers, kernel entries: ", locks_text(text[:], entry_locks))
 	system.log("locks: lock waits of takes, 4 lockers, pages on first use: ", locks_text(text[:], fault_locks))

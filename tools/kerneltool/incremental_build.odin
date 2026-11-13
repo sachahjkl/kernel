@@ -40,8 +40,6 @@ build_whole := false
 BUILD_RECORD_FIRST_LINE :: "build record, form 1"
 BUILD_RECORD_SUFFIX :: ".build_record"
 DEPENDENCY_FILE_NAME :: "dependencies.json"
-BOOT_DEPENDENCY_FILE :: BUILD_FOLDER + "/boot_" + DEPENDENCY_FILE_NAME
-BOOT_VOLUMES_RECORD_FILE :: BUILD_FOLDER + "/boot_volumes" + BUILD_RECORD_SUFFIX
 TOOL_SOURCE_FOLDER :: "tools/kerneltool"
 
 // The folders of the repository that hold sources of a build. The tool
@@ -335,6 +333,9 @@ Build_Key_Inputs :: struct {
 	// Outputs of an earlier step of this build: hashed at the time of the
 	// key, never through the table.
 	built_files:   []string,
+	// Outputs of an earlier step of this build that the caller hashed
+	// already: several keys of one build read the same large file.
+	hashed_built_files: []Record_Output,
 	// The list of the compiler: the source files of every package, and the
 	// files of `#load`.
 	source_files:  []string,
@@ -370,6 +371,15 @@ build_key :: proc(inputs: Build_Key_Inputs, table: ^Input_File_Table, inputs_mus
 			continue
 		}
 		hash := built_contents[index].hash
+		key_add_bytes(&text, "content", hash[:])
+	}
+	hashed_built_files := slice.clone(inputs.hashed_built_files, context.temp_allocator)
+	slice.sort_by(hashed_built_files, proc(first, second: Record_Output) -> bool {
+		return first.path < second.path
+	})
+	for file in hashed_built_files {
+		key_add(&text, "built file", file.path)
+		hash := file.hash
 		key_add_bytes(&text, "content", hash[:])
 	}
 	source_paths := sorted_copy(inputs.source_files)
@@ -545,10 +555,20 @@ build_record_read :: proc(path: string) -> (record: Build_Record, ok: bool) {
 // outputs.
 build_record_write :: proc(path: string, key: blake3.Hash, output_paths: []string, source_files, load_files: []string) -> bool {
 	contents := file_contents_read_in_parallel(output_paths, context.temp_allocator)
+	return build_record_write_of_contents(path, key, output_paths, contents, source_files, load_files)
+}
+
+// build_record_write_of_contents writes the record file with the hashes
+// that the caller read: contents has the order of output_paths. A caller
+// with many large outputs reads them all at once, on several threads.
+build_record_write_of_contents :: proc(path: string, key: blake3.Hash, output_paths: []string, contents: []File_Content, source_files, load_files: []string) -> bool {
 	outputs := make([]Record_Output, len(output_paths), context.temp_allocator)
-	written := true
+	written := len(contents) == len(output_paths)
 	for output_path, index in output_paths {
-		written = written && contents[index].readable
+		if !written {
+			break
+		}
+		written = contents[index].readable
 		outputs[index] = {
 			path = output_path,
 			hash = contents[index].hash,
@@ -569,9 +589,8 @@ build_record_write :: proc(path: string, key: blake3.Hash, output_paths: []strin
 	return written
 }
 
-// record_outputs_are_present says if each output of a record is a file
-// with the recorded hash, and if the record names each required path.
-record_outputs_are_present :: proc(record: Build_Record, required_paths: []string) -> bool {
+// record_names_each_output says if a record names each required path.
+record_names_each_output :: proc(record: Build_Record, required_paths: []string) -> bool {
 	for required in required_paths {
 		named := false
 		for output in record.outputs {
@@ -581,17 +600,77 @@ record_outputs_are_present :: proc(record: Build_Record, required_paths: []strin
 			return false
 		}
 	}
-	paths := make([]string, len(record.outputs), context.temp_allocator)
-	for output, index in record.outputs {
-		paths[index] = output.path
+	return true
+}
+
+// record_outputs_have_their_hashes says if each output of a record is a
+// file with the recorded hash. contents is what the caller read of the
+// outputs of the record, in their order.
+record_outputs_have_their_hashes :: proc(record: Build_Record, contents: []File_Content) -> bool {
+	if len(contents) != len(record.outputs) {
+		return false
 	}
-	contents := file_contents_read_in_parallel(paths, context.temp_allocator)
 	for output, index in record.outputs {
 		if !contents[index].readable || contents[index].hash != output.hash {
 			return false
 		}
 	}
 	return true
+}
+
+// record_outputs_are_present says if each output of a record is a file
+// with the recorded hash, and if the record names each required path.
+record_outputs_are_present :: proc(record: Build_Record, required_paths: []string) -> bool {
+	if !record_names_each_output(record, required_paths) {
+		return false
+	}
+	paths := make([]string, len(record.outputs), context.temp_allocator)
+	for output, index in record.outputs {
+		paths[index] = output.path
+	}
+	return record_outputs_have_their_hashes(record, file_contents_read_in_parallel(paths, context.temp_allocator))
+}
+
+// recorded_build_has_its_key reads the record of one thing and says if the
+// build key of the inputs as they are now is the key of the record. inputs
+// has every input but the list of the compiler, which the record gives.
+// reason says why the thing is built.
+recorded_build_has_its_key :: proc(record_path: string, inputs: Build_Key_Inputs, table: ^Input_File_Table) -> (record: Build_Record, same: bool, reason: string) {
+	recorded: bool
+	record, recorded = build_record_read(record_path)
+	if !recorded {
+		return {}, false, "no build record"
+	}
+	inputs_now := inputs
+	inputs_now.source_files = record.source_files
+	inputs_now.load_files = record.load_files
+	key, complete := build_key(inputs_now, table)
+	if !complete {
+		return {}, false, "an input cannot be read"
+	}
+	if key != record.key {
+		return {}, false, "an input changed"
+	}
+	return record, true, ""
+}
+
+// The reason of a build when a file of the last build is gone or has
+// other bytes.
+OUTPUT_CHANGED_REASON :: "an output is absent or changed"
+
+// recorded_build_is_kept says if the outputs of one thing are those of
+// this build with no build: the record is there, the build key of the
+// inputs as they are now is the key of the record, and each output is
+// there with its recorded hash. reason says why the thing is built.
+recorded_build_is_kept :: proc(record_path: string, inputs: Build_Key_Inputs, table: ^Input_File_Table, required_outputs: []string) -> (kept: bool, reason: string) {
+	record, same, why := recorded_build_has_its_key(record_path, inputs, table)
+	if !same {
+		return false, why
+	}
+	if !record_outputs_are_present(record, required_outputs) {
+		return false, OUTPUT_CHANGED_REASON
+	}
+	return true, ""
 }
 
 // dependency_list_parse reads the file that the compiler writes with
@@ -642,7 +721,7 @@ dependency_list_parse :: proc(text: string) -> (source_files, load_files: []stri
 	return sources[:], loads[:], true
 }
 
-@(private = "file")
+// dependency_list_read reads the list of one compiler from its file.
 dependency_list_read :: proc(path: string) -> (source_files, load_files: []string, ok: bool) {
 	text, error := os.read_entire_file(path, context.temp_allocator)
 	if error != nil {
@@ -930,30 +1009,9 @@ module_record_write :: proc(build: Module_Build) -> bool {
 	return build_record_write(record_path, key, module_recorded_outputs(build), source_files, load_files)
 }
 
-// The outputs of the boot volumes of this build, as build_boot_program
-// wrote them.
-boot_volume_outputs: [dynamic]string
-
-// boot_volume_outputs_forget empties the list before the boot volumes of
-// a build are written.
-boot_volume_outputs_forget :: proc() {
-	for path in boot_volume_outputs {
-		delete(path)
-	}
-	clear(&boot_volume_outputs)
-}
-
-// boot_volume_output_note adds one output of the boot volumes.
-boot_volume_output_note :: proc(path: string) {
-	if !slice.contains(boot_volume_outputs[:], path) {
-		append(&boot_volume_outputs, strings.clone(path))
-	}
-}
-
 // paths_outside_the_build_folder leaves out the files of the build
 // folder: an output of this build is hashed as a built file, never
 // through the table of the sources.
-@(private = "file")
 paths_outside_the_build_folder :: proc(paths: []string) -> []string {
 	inside_by_name := join(build_inputs.table.root, "/", BUILD_FOLDER, "/")
 	inside_by_link := inside_by_name
@@ -969,86 +1027,6 @@ paths_outside_the_build_folder :: proc(paths: []string) -> []string {
 		}
 	}
 	return outside[:]
-}
-
-// boot_volumes_key_inputs gives the inputs of the build key of all the
-// boot volumes: the boot images, the debug image and the two kernels as
-// they are now, the sources of the boot program (the list of its
-// compiler), the test keys, and the programs that build and sign. With
-// the signing key of the publisher of the system, usable is false: the
-// tool never keeps a volume that this key signs, and never hashes that key.
-boot_volumes_key_inputs :: proc(source_files, load_files: []string) -> (inputs: Build_Key_Inputs, usable: bool) {
-	if os.get_env(SIGNING_KEY_VARIABLE, context.temp_allocator) != "" {
-		return {}, false
-	}
-	settings := make([dynamic]string, context.temp_allocator)
-	append(&settings, ..build_inputs.volume_programs[:])
-	append(&settings, join("OVMF_FULL_VARS=", os.get_env("OVMF_FULL_VARS", context.temp_allocator)))
-	fixed_files := make([dynamic]string, context.temp_allocator)
-	append(&fixed_files, "boot/jump.asm", RUNTIME_MEMORY, TEST_SIGNING_KEY_FILE, TEST_FIRMWARE_SIGNING_KEY_FILE, TEST_FIRMWARE_CERTIFICATE_FILE)
-	built_files := make([dynamic]string, context.temp_allocator)
-	append(&built_files, BOOT_IMAGE, BOOT_IMAGE_FAILS, BOOT_IMAGE_SHORTAGE, DEBUG_IMAGE, module_path("kernel"), module_path("kernel_without_return_check"))
-	inputs = {
-		subject       = "the boot volumes",
-		tool_identity = build_inputs.tool_identity,
-		settings      = settings[:],
-		fixed_files   = fixed_files[:],
-		built_files   = built_files[:],
-		source_files  = paths_outside_the_build_folder(source_files),
-		load_files    = paths_outside_the_build_folder(load_files),
-	}
-	return inputs, true
-}
-
-// boot_volumes_are_kept says if every boot volume is that of this build
-// with no build.
-boot_volumes_are_kept :: proc() -> (kept: bool, reason: string) {
-	if build_whole {
-		return false, "a whole build"
-	}
-	if build_inputs.table == nil || !build_inputs.usable {
-		return false, "a source of the tool cannot be read"
-	}
-	record, recorded := build_record_read(BOOT_VOLUMES_RECORD_FILE)
-	if !recorded {
-		return false, "no build record"
-	}
-	inputs, usable := boot_volumes_key_inputs(record.source_files, record.load_files)
-	if !usable {
-		return false, "the signing key of the publisher of the system signs: its volumes are never kept"
-	}
-	key, complete := build_key(inputs, build_inputs.table)
-	if !complete {
-		return false, "an input cannot be read"
-	}
-	if key != record.key {
-		return false, "an input changed"
-	}
-	if !record_outputs_are_present(record, {BOOT_VOLUME}) {
-		return false, "an output is absent or changed"
-	}
-	return true, ""
-}
-
-// boot_volumes_record_write writes the build record of the boot volumes
-// that this build wrote.
-boot_volumes_record_write :: proc() -> bool {
-	if build_inputs.table == nil || !build_inputs.usable {
-		_ = os.remove(BOOT_VOLUMES_RECORD_FILE)
-		return false
-	}
-	source_files, load_files, listed := dependency_list_read(BOOT_DEPENDENCY_FILE)
-	inputs, usable := boot_volumes_key_inputs(source_files, load_files)
-	if !listed || !usable {
-		_ = os.remove(BOOT_VOLUMES_RECORD_FILE)
-		return false
-	}
-	key, complete := build_key(inputs, build_inputs.table, true)
-	if !complete {
-		_ = os.remove(BOOT_VOLUMES_RECORD_FILE)
-		return false
-	}
-	return build_record_write(BOOT_VOLUMES_RECORD_FILE, key, boot_volume_outputs[:], inputs.source_files, inputs.load_files)
 }
 
 // The time of one step of a build after the modules.
@@ -1071,11 +1049,10 @@ Build_Measure :: struct {
 	modules_kept:         int,
 	steps:                [dynamic]Build_Step_Time,
 	volumes_built:        int,
-	volumes_kept:         bool,
-	volume_signed_images: time.Duration,
-	volume_compiles:      time.Duration,
-	volume_links:         time.Duration,
-	volume_writes:        time.Duration,
+	volumes_kept:         int,
+	volumes_not_needed:   int, // The volumes that the command does not boot: not checked, not built.
+	volume_processes:     int, // The volume processes at once.
+	volume_times:         [dynamic]Build_Step_Time, // The whole time of the process of each built volume.
 }
 
 build_measure: Build_Measure
@@ -1085,6 +1062,10 @@ build_measure_start :: proc() {
 		delete(step.name)
 	}
 	delete(build_measure.steps)
+	for volume_time in build_measure.volume_times {
+		delete(volume_time.name)
+	}
+	delete(build_measure.volume_times)
 	build_measure = {
 		started = time.tick_now(),
 	}
@@ -1105,10 +1086,11 @@ build_measure_lines :: proc(measure: Build_Measure, whole: time.Duration) -> []s
 	for step in measure.steps {
 		append(&lines, fmt.tprintf("the build: %8.2f s: %s", seconds(step.duration), step.name))
 	}
-	if measure.volumes_kept {
-		append(&lines, "the build: the boot volumes are kept: no boot program was built")
-	} else if measure.volumes_built > 0 {
-		append(&lines, fmt.tprintf("the build: in the %d boot volumes: the signed boot images %.1f s, the compiler of the boot program %.1f s, the assembler, the link and the firmware signature %.1f s, the volume files %.1f s", measure.volumes_built, seconds(measure.volume_signed_images), seconds(measure.volume_compiles), seconds(measure.volume_links), seconds(measure.volume_writes)))
+	if measure.volumes_built + measure.volumes_kept + measure.volumes_not_needed > 0 {
+		append(&lines, fmt.tprintf("the build: the boot volumes: %d built, %d kept, %d not needed by this command; %d volume processes at once", measure.volumes_built, measure.volumes_kept, measure.volumes_not_needed, measure.volume_processes))
+	}
+	for volume_time in measure.volume_times {
+		append(&lines, fmt.tprintf("the build: %8.2f s: the process of the boot volume %s", seconds(volume_time.duration), volume_time.name))
 	}
 	return lines[:]
 }
