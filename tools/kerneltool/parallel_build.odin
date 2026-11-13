@@ -210,13 +210,12 @@ build_modules_in_parallel :: proc() -> bool {
 		// module of another build, with no error.
 		commands := make([][]string, len(indexes), context.temp_allocator)
 		for index, place in indexes {
-			command := make([]string, 6, context.temp_allocator)
+			command := make([]string, 5, context.temp_allocator)
 			command[0] = tool_path
 			command[1] = "module"
 			command[2] = module_builds[index].name
 			command[3] = test_build_checks ? "with_checks" : "without_checks"
-			command[4] = measure_run ? "measure_run" : "usual_run"
-			command[5] = debug_information ? "with_debug_information" : "without_debug_information"
+			command[4] = debug_information ? "with_debug_information" : "without_debug_information"
 			commands[place] = command
 		}
 		level_outcomes := build_processes_run(commands, processes, context.temp_allocator)
@@ -267,15 +266,14 @@ build_modules_in_parallel :: proc() -> bool {
 // The command module: build one module of the table in this process. The
 // parallel build runs it; a developer can run it to build one module.
 run_module :: proc(args: []string) -> int {
-	if len(args) != 4 || (args[1] != "with_checks" && args[1] != "without_checks") || (args[2] != "measure_run" && args[2] != "usual_run") || (args[3] != "with_debug_information" && args[3] != "without_debug_information") {
-		fmt.eprintln("kerneltool: module <name> with_checks|without_checks measure_run|usual_run with_debug_information|without_debug_information")
+	if len(args) != 3 || (args[1] != "with_checks" && args[1] != "without_checks") || (args[2] != "with_debug_information" && args[2] != "without_debug_information") {
+		fmt.eprintln("kerneltool: module <name> with_checks|without_checks with_debug_information|without_debug_information")
 		return EXIT_USAGE
 	}
 	test_build_checks = args[1] == "with_checks"
-	measure_run = args[2] == "measure_run"
 	// A module with no debug information goes to a folder of its own: the
 	// modules of the build stay as they are.
-	debug_information = args[3] == "with_debug_information"
+	debug_information = args[2] == "with_debug_information"
 	module_build_folder = debug_information ? MODULE_BUILD_FOLDER : MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION
 	for build in module_builds {
 		if build.name == args[0] {

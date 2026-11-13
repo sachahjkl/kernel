@@ -54,6 +54,7 @@ BOOT_PROGRAM_OBJECT :: BOOT_OBJECT_FOLDER + "/" + MAIN_BOOT_VOLUME_NAME + "/" + 
 BOOT_VOLUME :: BUILD_FOLDER + "/boot_volume.img"
 BOOT_VOLUME_FAILS :: BUILD_FOLDER + "/boot_volume_fails.img"
 BOOT_VOLUME_SHORTAGE :: BUILD_FOLDER + "/boot_volume_shortage.img"
+BOOT_VOLUME_MEASURE :: BUILD_FOLDER + "/boot_volume_measure.img" // The boot image of a measure run: `kerneltool measure`.
 BOOT_VOLUME_WITHOUT_RETURN_CHECK :: BUILD_FOLDER + "/boot_volume_without_return_check.img" // The kernel kernel_without_return_check: one machine of `test return_fault` only.
 TEST_OUTPUT_SHORTAGE :: BUILD_FOLDER + "/test_output_shortage.txt"
 BOOT_VOLUME_SELF_TEST :: BUILD_FOLDER + "/boot_volume_self_test_%d.img"
@@ -164,14 +165,12 @@ COMMANDS :: [?]Command {
 	// - `name`: a module of the table (`module_builds`).
 	// - `with_checks` or `without_checks`: the checks of the kernel (the order
 	//   of the locks, the frames).
-	// - `measure_run` or `usual_run`: the build of the measures, or the usual
-	//   one.
 	// - `with_debug_information` or `without_debug_information`: the debug
 	//   object beside the module.
 	//
 	// The parallel build of `build` runs this command once for each module.
 	// Run it by hand to see the errors of one module alone.
-	{name = "module", about = "module <name> with_checks|without_checks measure_run|usual_run with_debug_information|without_debug_information: build one module of the table, and its debug object with the debug information (the parallel build runs this command)", run = run_module},
+	{name = "module", about = "module <name> with_checks|without_checks with_debug_information|without_debug_information: build one module of the table, and its debug object with the debug information (the parallel build runs this command)", run = run_module},
 	// Builds one boot volume in this process: its boot image with the system
 	// description, its boot program, and the volume file.
 	//
@@ -237,15 +236,22 @@ COMMANDS :: [?]Command {
 	// - `compress`: no machine; it compresses each PNG file of
 	//   `docs/screenshots` and `resources` whose data is stored with no
 	//   compression, and prints the bytes before and after.
-	{name = "screenshots", about = "test and the second build, then write the measure record " + MEASURE_RECORD_FILE + " and copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER + "; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
+	{name = "screenshots", about = "test, the second build and the measure runs, then write the measure record " + MEASURE_RECORD_FILE + " and copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER + "; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
 	// Runs a machine that measures, with no other load: the numbers that it
 	// prints are measures, never conditions of the test.
+	//
+	// Each machine is a measure run: its boot image holds the resource
+	// `measure_run`, and a program then measures its rates over a duration.
+	// The modules are those of the test.
 	//
 	// - no argument: the program `locks` on a machine where only the desktop
 	//   runs: the kernel entries in one second with 1, 2 and 4 lockers, in
 	//   `build/test_output_measure.txt`.
 	// - `scheduler N`: N machines that run the program `scheduler` alone, in
 	//   `build/test_output_scheduler_<n>.txt`.
+	// - `clock`, `crowd`, `disk`, `flow`, `limits`: the program alone, in
+	//   `build/test_output_measure_<program>.txt`; the command prints its
+	//   lines.
 	// - `windows`: each window of the interface package, alone, and a table of
 	//   the time of its pictures.
 	// - `address_space`, `shortage`: the machine of one measure.
@@ -254,7 +260,7 @@ COMMANDS :: [?]Command {
 	//
 	// The tool checks no speed: a program checks its counts, and the numbers
 	// are printed for a reader (docs/TOOLS.md, "The bounds of the tests").
-	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
+	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure clock|crowd|disk|flow|limits`: the program alone, and its lines; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
 	// Builds, starts a machine that types in the terminal, and films it: the
 	// pictures of the screen become a film with ffmpeg, which must be on the
 	// path. The film is for the development log, not a test.
@@ -668,6 +674,11 @@ run_screenshots :: proc(args: []string) -> int {
 	if !outputs_same_after_second_build() {
 		return EXIT_FAILURE
 	}
+	// The rates of the record come from measure runs: the test measures
+	// none (measure_runs.odin).
+	if !measure_runs_of_the_record() {
+		return EXIT_FAILURE
+	}
 	if !measure_record_write(run_facts) {
 		return EXIT_FAILURE
 	}
@@ -697,18 +708,22 @@ TEST_OUTPUT_MEASURE :: BUILD_FOLDER + "/test_output_measure.txt"
 // run_measure runs the measures of the program `locks` on a machine where
 // only the desktop runs: the numbers have no load of the other programs of
 // the test. The program checks its counts; the tool does not check a speed.
+// The machine is a measure run: its boot image holds the resource
+// `measure_run`, so each program measures its rates over a duration
+// (measure_runs.odin). `measure <program>`: one program of
+// `measure_programs`, alone, and its lines.
 // `measure scheduler N`: N machines that run only the program scheduler
 // with the desktop; the numbers are in build/test_output_scheduler_<n>.txt.
 run_measure :: proc(args: []string) -> int {
 	args := args
-	if len(args) == 1 && args[0] == "windows" {
-		measure_run = true
-	}
 	if len(args) >= 1 && args[0] == "without_checks" {
 		test_build_checks = false
 		args = args[1:]
 	}
-	if code := build_system(boot_volumes_of_command("measure")); code != 0 {
+	// `measure shortage` boots the volume of the shortage of frames; each
+	// other form boots the volume of a measure run.
+	shortage := len(args) >= 1 && args[0] == "shortage"
+	if code := build_system(boot_volumes_of_command(shortage ? MEASURE_SHORTAGE_COMMAND : MEASURE_COMMAND)); code != 0 {
 		return code
 	}
 	if !make_folder(SCREENSHOT_FOLDER) || !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) {
@@ -718,10 +733,16 @@ run_measure :: proc(args: []string) -> int {
 		return measure_windows() ? 0 : EXIT_FAILURE
 	}
 	if len(args) >= 1 && args[0] == "address_space" {
-		return machine_test(scenario_measure_address_space[:], BOOT_VOLUME, TEST_OUTPUT_MEASURE, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
+		return machine_test(scenario_measure_address_space[:], BOOT_VOLUME_MEASURE, TEST_OUTPUT_MEASURE, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
 	}
-	if len(args) >= 1 && args[0] == "shortage" {
-		return machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
+	// `measure <program>`: one program that measures itself, alone.
+	if len(args) == 1 {
+		if program, found := measure_program_find(args[0]); found {
+			return measure_program_run(program) ? 0 : EXIT_FAILURE
+		}
+	}
+	if shortage {
+		return shortage_tests_run() ? 0 : EXIT_FAILURE
 	}
 	if len(args) >= 1 && args[0] == "scheduler" {
 		count := 1
@@ -739,13 +760,17 @@ run_measure :: proc(args: []string) -> int {
 			// Not in the temporary allocator: the scenario frees it after each step.
 			output := fmt.aprintf("%s/test_output_scheduler_%d.txt", BUILD_FOLDER, run)
 			defer delete(output)
-			if !machine_test(scenario_measure_scheduler[:], BOOT_VOLUME, output, MACHINE_STOP_OK, TEST_DATA_DISK) {
+			if !machine_test(scenario_measure_scheduler[:], BOOT_VOLUME_MEASURE, output, MACHINE_STOP_OK, TEST_DATA_DISK) {
 				return EXIT_FAILURE
 			}
 		}
 		return 0
 	}
-	if !machine_test(scenario_measure[:], BOOT_VOLUME, TEST_OUTPUT_MEASURE, MACHINE_STOP_OK, TEST_DATA_DISK) {
+	if len(args) != 0 {
+		fmt.eprintln("kerneltool: measure [without_checks] [scheduler <count> | windows | address_space | shortage | clock | crowd | disk | flow | limits]")
+		return EXIT_USAGE
+	}
+	if !machine_test(scenario_measure[:], BOOT_VOLUME_MEASURE, TEST_OUTPUT_MEASURE, MACHINE_STOP_OK, TEST_DATA_DISK) {
 		return EXIT_FAILURE
 	}
 	return 0

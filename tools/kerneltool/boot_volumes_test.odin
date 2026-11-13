@@ -7,13 +7,13 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 
-// The table of the boot volumes: 12 fixed volumes and one for each test of
+// The table of the boot volumes: 13 fixed volumes and one for each test of
 // the kernel on itself, each with its own name and its own files.
 @(test)
 boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 	volumes := boot_volumes()
-	testing.expect_value(t, len(volumes), 12 + len(self_tests))
-	testing.expect_value(t, len(volumes), 18)
+	testing.expect_value(t, len(volumes), 13 + len(self_tests))
+	testing.expect_value(t, len(volumes), 19)
 	files := make([dynamic]string, context.temp_allocator)
 	main_found := false
 	for volume in volumes {
@@ -26,7 +26,7 @@ boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 		}
 		// What only this volume writes: its folder, its record, the list of
 		// its compiler, and each recorded output.
-		append(&files, boot_volume_name(volume.path), boot_volume_folder(volume), boot_volume_record_path(volume), boot_volume_dependency_file(volume))
+		append(&files, boot_volume_name(volume.path), boot_volume_folder(volume), boot_volume_record_path(volume), boot_volume_dependency_file(volume), boot_volume_program_path(volume), boot_volume_object_path(volume), boot_volume_signed_program_path(volume))
 		append(&files, ..boot_volume_recorded_outputs(volume))
 		// The kernel module that the build key names is the module of the
 		// table, or the changed copy of this volume.
@@ -44,6 +44,11 @@ boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, boot_volume_name(BUILD_FOLDER + "/boot_volume_self_test_3.img"), "self_test_3")
 	testing.expect_value(t, boot_volume_name(BOOT_VOLUME_SHORTAGE), "shortage")
+	testing.expect_value(t, boot_volume_name(BOOT_VOLUME_MEASURE), "measure")
+	// The volume of a measure run has its own boot image.
+	for volume in volumes {
+		testing.expectf(t, (volume.path == BOOT_VOLUME_MEASURE) == (volume.image == BOOT_IMAGE_MEASURE), "only the volume of a measure run holds the boot image of a measure run: %s", volume.path)
+	}
 	// The variable store of Secure Boot is an output of one volume.
 	stores := 0
 	for volume in volumes {
@@ -110,9 +115,15 @@ each_test_part_has_its_boot_volumes :: proc(t: ^testing.T) {
 		found_main = found_main || path == BOOT_VOLUME
 	}
 	testing.expect(t, found_other_system && found_main, "trusted_boot tpm builds the main volume and the other system")
-	for command in ([]string{"run", "measure", "film"}) {
+	for command in ([]string{"run", MEASURE_COMMAND, MEASURE_SHORTAGE_COMMAND, "screenshots", "film"}) {
 		testing.expectf(t, len(boot_volumes_of_command(command)) > 0, "the command %s names its volumes", command)
 	}
+	// Each form of `measure` boots the volume of a measure run, but
+	// `measure shortage`.
+	measure := boot_volumes_of_command(MEASURE_COMMAND)
+	testing.expect(t, len(measure) == 1 && measure[0] == BOOT_VOLUME_MEASURE, "measure builds the volume of a measure run only")
+	measure_shortage := boot_volumes_of_command(MEASURE_SHORTAGE_COMMAND)
+	testing.expect(t, len(measure_shortage) == 1 && measure_shortage[0] == BOOT_VOLUME_SHORTAGE, "measure shortage builds the volume of the shortage only")
 }
 
 // The constants of the tool that name a boot volume, by their names in the
@@ -123,6 +134,7 @@ volume_constants := [?][2]string {
 	{"BOOT_VOLUME", BOOT_VOLUME},
 	{"BOOT_VOLUME_FAILS", BOOT_VOLUME_FAILS},
 	{"BOOT_VOLUME_SHORTAGE", BOOT_VOLUME_SHORTAGE},
+	{"BOOT_VOLUME_MEASURE", BOOT_VOLUME_MEASURE},
 	{"BOOT_VOLUME_WITHOUT_RETURN_CHECK", BOOT_VOLUME_WITHOUT_RETURN_CHECK},
 	{"BOOT_VOLUME_SELF_TEST", BOOT_VOLUME_SELF_TEST},
 	{"BOOT_VOLUME_CHANGED_MODULE", BOOT_VOLUME_CHANGED_MODULE},
@@ -336,6 +348,7 @@ shared_inputs_of_a_test :: proc(image_content: string) -> Boot_Volume_Shared_Inp
 	built_files := make([dynamic]Record_Output, context.temp_allocator)
 	append(&built_files, Record_Output{path = BOOT_IMAGE, hash = hash_of_text(image_content)})
 	append(&built_files, Record_Output{path = BOOT_IMAGE_SHORTAGE, hash = hash_of_text("the image of the shortage")})
+	append(&built_files, Record_Output{path = BOOT_IMAGE_MEASURE, hash = hash_of_text("the image of a measure run")})
 	append(&built_files, Record_Output{path = module_path("kernel"), hash = hash_of_text("the kernel")})
 	append(&built_files, Record_Output{path = DEBUG_IMAGE, hash = hash_of_text("the debug image")})
 	append(&built_files, Record_Output{path = SYSTEM_PUBLIC_KEY_FILE, hash = hash_of_text("the public key")})
@@ -412,6 +425,19 @@ boot_volume_key_changes_with_each_input :: proc(t: ^testing.T) {
 	shortage := Boot_Volume{path = BOOT_VOLUME_SHORTAGE, image = BOOT_IMAGE_SHORTAGE, kernel = "kernel"}
 	testing.expect(t, volume_key_of_a_new_build(t, root, shortage, shared) != first, "another volume has another key")
 
+	measure_volume := Boot_Volume{path = BOOT_VOLUME_MEASURE, image = BOOT_IMAGE_MEASURE, kernel = "kernel"}
+	measure_key := volume_key_of_a_new_build(t, root, measure_volume, shared)
+	testing.expect(t, measure_key != first, "the volume of a measure run has another key")
+	// The boot image of a measure run is an input of its volume only.
+	other_measure_image := shared_inputs_of_a_test("the boot image")
+	for &file in other_measure_image.built_files {
+		if file.path == BOOT_IMAGE_MEASURE {
+			file.hash = hash_of_text("the image of a measure run with another resource")
+		}
+	}
+	testing.expect(t, volume_key_of_a_new_build(t, root, measure_volume, other_measure_image) != measure_key, "another boot image of a measure run changes the key of its volume")
+	testing.expect_value(t, volume_key_of_a_new_build(t, root, main_volume, other_measure_image), first)
+
 	boot_tree_file_write(root, "boot/main.odin", "package boot\n\nefi_main :: proc() {_ = 1}\n")
 	after_source := volume_key_of_a_new_build(t, root, main_volume, shared)
 	testing.expect(t, after_source != first, "a byte of a source of the boot program changes the key")
@@ -487,6 +513,22 @@ kept_boot_volume_with_a_changed_file_is_built_again :: proc(t: ^testing.T) {
 	boot_tree_file_write(root, "boot/main.odin", "package boot\n\nefi_main :: proc() {}\n")
 	kept, _ = decision(root, record_file, inputs, {volume_file, image_file})
 	testing.expect(t, kept, "the same source again gives the recorded key")
+
+	// The two parts of the decision, as the build of all the volumes uses
+	// them: the key first, then the hashes of the outputs read at once.
+	{
+		table := input_file_table_make(root, {"boot"})
+		defer input_file_table_destroy(table)
+		record, same, _ := recorded_build_has_its_key(record_file, inputs, table)
+		testing.expect(t, same, "the record has the key of the inputs")
+		testing.expect(t, record_names_each_output(record, {volume_file, image_file}), "the record names each output")
+		contents := file_contents_read_in_parallel({volume_file, image_file}, context.temp_allocator)
+		testing.expect(t, record_outputs_have_their_hashes(record, contents), "each output has its recorded hash")
+		testing.expect(t, !record_outputs_have_their_hashes(record, contents[:1]), "a list with one output less proves nothing")
+		contents[0].hash[0] ~= 1
+		testing.expect(t, !record_outputs_have_their_hashes(record, contents), "another hash of the volume file forces a build")
+		testing.expect(t, !build_record_write_of_contents(fmt.tprintf("%s/other%s", root, BUILD_RECORD_SUFFIX), record.key, {volume_file, image_file}, contents[:1], sources, nil), "no record with a hash less than the outputs")
+	}
 
 	_ = os.write_entire_file(record_file, "a damaged record")
 	kept, reason = decision(root, record_file, inputs, {volume_file, image_file})

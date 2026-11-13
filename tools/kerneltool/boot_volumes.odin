@@ -51,7 +51,7 @@ BOOT_PROGRAM_OBJECT_FILE_NAME :: "boot.obj"
 // The name of the main volume: the name of its object folder.
 MAIN_BOOT_VOLUME_NAME :: "main"
 
-// boot_volumes gives every boot volume of the build: 12 fixed ones and one
+// boot_volumes gives every boot volume of the build: 13 fixed ones and one
 // for each test of the kernel on itself. The list is new at each call: the
 // path of a self test volume is a text of the temporary memory.
 boot_volumes :: proc() -> []Boot_Volume {
@@ -60,6 +60,9 @@ boot_volumes :: proc() -> []Boot_Volume {
 	// input service): the two other boot images of the build.
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_FAILS, image = BOOT_IMAGE_FAILS, kernel = "kernel"})
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_SHORTAGE, image = BOOT_IMAGE_SHORTAGE, kernel = "kernel"})
+	// A measure run: the modules of the test, and the resource that tells
+	// the root service that the machine runs for a measure.
+	append(&volumes, Boot_Volume{path = BOOT_VOLUME_MEASURE, image = BOOT_IMAGE_MEASURE, kernel = "kernel"})
 	// The kernel with one check skipped.
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_WITHOUT_RETURN_CHECK, image = BOOT_IMAGE, kernel = "kernel_without_return_check"})
 	// The volumes of the trusted boot that the boot program must refuse, and
@@ -185,18 +188,17 @@ boot_program_link_command :: proc(volume: Boot_Volume) -> [dynamic]string {
 	return command
 }
 
-// boot_volume_recorded_outputs gives the files that the build of a volume
-// writes and that a machine, a test or a check of two builds reads. The
-// build record holds the hash of each one.
+// boot_volume_recorded_outputs gives the files of a volume that a machine
+// or a test reads: the volume, its boot image (the test of the measure
+// reads its system description), the file that says which key signed it,
+// and the variable store of Secure Boot. The build record holds the hash of
+// each one. The boot program, its object and the changed kernel in the
+// object folder are read only by the build of the volume itself, and by the
+// checks that compare two whole builds: as for the object of a module, the
+// record does not hold them, and a kept volume does not prove them.
 boot_volume_recorded_outputs :: proc(volume: Boot_Volume) -> []string {
 	outputs := make([dynamic]string, context.temp_allocator)
-	append(&outputs, volume.path, signed_image_path(volume.path), signed_by_file_path(volume.path), boot_volume_program_path(volume), boot_volume_object_path(volume))
-	if volume.change.kernel_changed_after_description {
-		append(&outputs, boot_volume_kernel_module_path(volume))
-	}
-	if volume.firmware_signature != .None {
-		append(&outputs, boot_volume_signed_program_path(volume))
-	}
+	append(&outputs, volume.path, signed_image_path(volume.path), signed_by_file_path(volume.path))
 	if volume.with_secure_boot_variables {
 		append(&outputs, SECURE_BOOT_VARIABLES)
 	}
@@ -439,31 +441,74 @@ boot_volume_key_inputs :: proc(volume: Boot_Volume, shared: Boot_Volume_Shared_I
 // inputs of such a volume.
 SIGNING_KEY_REASON :: "the signing key of the publisher of the system signs: its volumes are never kept"
 
-// boot_volume_is_kept says if the files of a volume are those of this
-// build with no build: its record has the build key of its inputs as they
-// are now, and each output is there with its recorded hash.
-boot_volume_is_kept :: proc(volume: Boot_Volume, shared: Boot_Volume_Shared_Inputs) -> (kept: bool, reason: string) {
-	if build_whole {
-		return false, "a whole build"
+// boot_volumes_kept says, for each volume of a list, if its files are
+// those of this build with no build: its record has the build key of its
+// inputs as they are now, and each output is there with its recorded hash.
+// The outputs of all the volumes whose key is the same are read and hashed
+// at once, on several threads: a volume is 64 MiB, and one volume after the
+// other costs the hash of each one on one thread. reasons says why a volume
+// is built.
+boot_volumes_kept :: proc(volumes: []Boot_Volume, shared: Boot_Volume_Shared_Inputs) -> (kept: []bool, reasons: []string) {
+	kept = make([]bool, len(volumes), context.temp_allocator)
+	reasons = make([]string, len(volumes), context.temp_allocator)
+	refusal := ""
+	switch {
+	case build_whole:
+		refusal = "a whole build"
+	case build_inputs.table == nil || !build_inputs.usable:
+		refusal = "a source of the tool cannot be read"
+	case os.get_env(SIGNING_KEY_VARIABLE, context.temp_allocator) != "":
+		refusal = SIGNING_KEY_REASON
 	}
-	if build_inputs.table == nil || !build_inputs.usable {
-		return false, "a source of the tool cannot be read"
+	if refusal != "" {
+		for &reason in reasons {
+			reason = refusal
+		}
+		return
 	}
-	if os.get_env(SIGNING_KEY_VARIABLE, context.temp_allocator) != "" {
-		return false, SIGNING_KEY_REASON
+	// The volumes whose record has the key of now, and the paths of their
+	// outputs, in the order of the volumes.
+	records := make([]Build_Record, len(volumes), context.temp_allocator)
+	paths := make([dynamic]string, context.temp_allocator)
+	for volume, index in volumes {
+		inputs, readable := boot_volume_key_inputs(volume, shared, nil, nil)
+		if !readable {
+			reasons[index] = "an input cannot be read"
+			continue
+		}
+		records[index], kept[index], reasons[index] = recorded_build_has_its_key(boot_volume_record_path(volume), inputs, build_inputs.table)
+		if kept[index] && !record_names_each_output(records[index], boot_volume_recorded_outputs(volume)) {
+			kept[index] = false
+			reasons[index] = OUTPUT_CHANGED_REASON
+		}
+		if kept[index] {
+			for output in records[index].outputs {
+				append(&paths, output.path)
+			}
+		}
 	}
-	inputs, readable := boot_volume_key_inputs(volume, shared, nil, nil)
-	if !readable {
-		return false, "an input cannot be read"
+	contents := file_contents_read_in_parallel(paths[:], context.temp_allocator)
+	first := 0
+	for index in 0 ..< len(volumes) {
+		if !kept[index] {
+			continue
+		}
+		count := len(records[index].outputs)
+		if !record_outputs_have_their_hashes(records[index], contents[first:][:count]) {
+			kept[index] = false
+			reasons[index] = OUTPUT_CHANGED_REASON
+		}
+		first += count
 	}
-	return recorded_build_is_kept(boot_volume_record_path(volume), inputs, build_inputs.table, boot_volume_recorded_outputs(volume))
+	return
 }
 
 // boot_volume_record_write writes the build record of a volume that was
-// just built. With no list of the compiler, with an input that changed
-// during the build, or with the signing key of the publisher of the system,
-// it writes none.
-boot_volume_record_write :: proc(volume: Boot_Volume, shared: Boot_Volume_Shared_Inputs) -> bool {
+// just built. output_contents is what the caller read of the recorded
+// outputs of the volume, in their order. With no list of the compiler,
+// with an input that changed during the build, or with the signing key of
+// the publisher of the system, it writes none.
+boot_volume_record_write :: proc(volume: Boot_Volume, shared: Boot_Volume_Shared_Inputs, output_contents: []File_Content) -> bool {
 	record_path := boot_volume_record_path(volume)
 	_ = os.remove(record_path)
 	if build_inputs.table == nil || !build_inputs.usable || os.get_env(SIGNING_KEY_VARIABLE, context.temp_allocator) != "" {
@@ -474,7 +519,7 @@ boot_volume_record_write :: proc(volume: Boot_Volume, shared: Boot_Volume_Shared
 		return false
 	}
 	// The files of `#load` are outputs of this build: the key holds them as
-	// built files, and the record as outputs.
+	// built files.
 	inputs, readable := boot_volume_key_inputs(volume, shared, paths_outside_the_build_folder(source_files), paths_outside_the_build_folder(load_files))
 	if !readable {
 		return false
@@ -483,7 +528,7 @@ boot_volume_record_write :: proc(volume: Boot_Volume, shared: Boot_Volume_Shared
 	if !complete {
 		return false
 	}
-	return build_record_write(record_path, key, boot_volume_recorded_outputs(volume), inputs.source_files, inputs.load_files)
+	return build_record_write_of_contents(record_path, key, boot_volume_recorded_outputs(volume), output_contents, inputs.source_files, inputs.load_files)
 }
 
 // The boot volumes that this process built or kept in its last build: a
@@ -536,7 +581,7 @@ boot_volume_processes :: proc(volume_count: int, asked: int, processors: int) ->
 }
 
 // The names of the built volumes that the line of the kept volumes prints.
-BUILT_VOLUME_NAMES_MOST :: 18
+BUILT_VOLUME_NAMES_MOST :: 19
 
 // boot_volumes_build builds or keeps each boot volume that a command
 // needs. needed_paths names them by their paths; nil is every volume. A
@@ -573,16 +618,16 @@ boot_volumes_build :: proc(needed_paths: []string) -> bool {
 	to_build := make([dynamic]Boot_Volume, context.temp_allocator)
 	built_names := strings.builder_make(context.temp_allocator)
 	kept_count := 0
-	for volume in needed {
-		kept, reason := boot_volume_is_kept(volume, shared)
-		if kept {
+	kept, reasons := boot_volumes_kept(needed[:], shared)
+	for volume, index in needed {
+		if kept[index] {
 			kept_count += 1
 			boot_volume_ready_note(volume.path)
 			continue
 		}
 		append(&to_build, volume)
 		if len(to_build) <= BUILT_VOLUME_NAMES_MOST {
-			fmt.sbprintf(&built_names, "%s%s (%s)", len(to_build) > 1 ? ", " : "", boot_volume_name(volume.path), reason)
+			fmt.sbprintf(&built_names, "%s%s (%s)", len(to_build) > 1 ? ", " : "", boot_volume_name(volume.path), reasons[index])
 		}
 		// The record of the last build does not stay beside files that a
 		// build is about to change.
@@ -642,10 +687,21 @@ boot_volumes_build :: proc(needed_paths: []string) -> bool {
 		return false
 	}
 	writes_started := time.tick_now()
+	// The recorded outputs of all the built volumes are read and hashed at
+	// once, on several threads.
+	output_paths := make([dynamic]string, context.temp_allocator)
+	for volume in to_build {
+		append(&output_paths, ..boot_volume_recorded_outputs(volume))
+	}
+	output_contents := file_contents_read_in_parallel(output_paths[:], context.temp_allocator)
+	first_output := 0
 	for volume, place in to_build {
 		build_measure.volumes_built += 1
 		append(&build_measure.volume_times, Build_Step_Time{name = strings.clone(boot_volume_name(volume.path)), duration = outcomes[place].duration})
-		if !boot_volume_record_write(volume, shared) && build_inputs.usable && os.get_env(SIGNING_KEY_VARIABLE, context.temp_allocator) == "" {
+		output_count := len(boot_volume_recorded_outputs(volume))
+		volume_contents := output_contents[first_output:][:output_count]
+		first_output += output_count
+		if !boot_volume_record_write(volume, shared, volume_contents) && build_inputs.usable && os.get_env(SIGNING_KEY_VARIABLE, context.temp_allocator) == "" {
 			fmt.printfln("kerneltool: no build record for the boot volume %s: the compiler gave no list of its files, or an input changed during the build; the next build builds it again", boot_volume_name(volume.path))
 		}
 		// The volume is the volume of this build, with or without a record.
@@ -695,10 +751,18 @@ test_part_volumes := [?]Volumes_Of_Part {
 	},
 }
 
-// The other commands that start a machine, and their volumes.
+// The other commands that start a machine, and their volumes. Each form
+// of `measure` boots the volume of a measure run, but `measure shortage`,
+// which boots the volume of the shortage of frames. `screenshots` builds
+// every volume, as the whole test that it runs first: its row names the
+// volume of the measure runs that it starts after the test.
+MEASURE_COMMAND :: "measure"
+MEASURE_SHORTAGE_COMMAND :: "measure shortage"
 command_volumes := [?]Volumes_Of_Part {
 	{part = "run", procedures = {"run_machine"}, volumes = {BOOT_VOLUME}},
-	{part = "measure", procedures = {"run_measure", "measure_windows"}, volumes = {BOOT_VOLUME, BOOT_VOLUME_SHORTAGE}},
+	{part = MEASURE_COMMAND, procedures = {"run_measure", "measure_windows", "measure_program_run"}, volumes = {BOOT_VOLUME_MEASURE}},
+	{part = MEASURE_SHORTAGE_COMMAND, procedures = {"shortage_tests_run"}, volumes = {BOOT_VOLUME_SHORTAGE}},
+	{part = "screenshots", procedures = {"measure_runs_of_the_record", "measure_program_run"}, volumes = {BOOT_VOLUME_MEASURE}},
 	{part = "film", procedures = {"run_film"}, volumes = {BOOT_VOLUME}},
 }
 

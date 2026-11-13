@@ -1,11 +1,13 @@
-// A measure of the shared queue and of the event.
+// A check and a measure of the shared queue and of the event.
 //
 // Several threads write records in one queue as fast as they can, and
-// several threads read them, for one second. The shared queue has no lock:
-// a thread takes its place with one compare-and-exchange. The last measure
-// uses a queue with one lock, for comparison.
+// several threads read them. The shared queue has no lock: a thread takes
+// its place with one compare-and-exchange. The last run uses a queue with
+// one lock, for comparison. In the check, each writer writes a fixed count
+// of records. In a [measure run](term:measure-run) the writers go on for
+// one second, and the program writes the records in one second.
 //
-// The threads of each measure wait on one event. The first thread wakes
+// The threads of each run wait on one event. The first thread wakes
 // the event one time: all of them start together.
 //
 // Each record has the number of its writer and a count. A reader checks
@@ -20,12 +22,13 @@
 // to compare.
 //
 // **What a reader sees.** Start it from the menu of the programs, or with
-// `start("crowd")` in the console. The window has one row for each
-// measure: the writers, the readers, the records in one second. The log
-// gets one line for each measure (`crowd: shared queue, 2 writers, 2
-// readers: ...`), then `crowd: ok, <count> measures, each record written
-// is read one time, each event started all the threads`, or
-// `crowd: wrong: ...`.
+// `start("crowd")` in the console. The window has one row for each run:
+// the writers, the readers, the records that were read. The log gets one
+// line for each run (`crowd: shared queue, 2 writers, 2 readers: ...`),
+// then `crowd: ok, <count> runs, each record written is read one time,
+// each event started all the threads`, or `crowd: wrong: ...`. In a
+// measure run (`kerneltool measure crowd`) the window and the lines have
+// the records in one second.
 //
 // **Its grant**: **Inspect**: the machine handle reads the kernel entries
 // of this program, which the measure counts.
@@ -47,7 +50,8 @@ records_now, records_before: [512]interface.Draw_Record
 text_now, text_before: [8192]u8
 drawing: interface.Window_Drawing
 
-DURATION :: 1000 // Milliseconds of one measure.
+DURATION :: 1000 // Milliseconds of one measure, in a measure run.
+RECORDS_CHECKED :: 50_000 // The records that each writer writes in the check.
 CAPACITY :: 1024
 THREAD_LIMIT :: 4 // The writers and the readers of one measure.
 RECORD :: 1
@@ -61,7 +65,7 @@ ENTRIES_HEADER :: "kernel entries, one million records"
 // The widest text at the right is the header of the entries: the window
 // ends 12 pixels after it, the same margin as at the left.
 WIDTH :: ENTRIES_X + len(ENTRIES_HEADER) * graphics.CELL_WIDTH + 12
-HEIGHT :: 12 + 3 * LINE + len(measures) * LINE + LINE + 12
+HEIGHT :: 12 + 3 * LINE + len(measures) * LINE + 2 * LINE + 12
 
 COLOR_RATE :: 0x58D878
 COLOR_LOCK :: 0x5890E0
@@ -72,7 +76,8 @@ Measure :: struct {
 	readers:   int,
 	with_lock: bool,
 	done:      bool,
-	rate:      u64, // Records in one second.
+	read:      u64, // The records that the readers read.
+	rate:      u64, // Records in one second: a measure run only.
 	entries:   u64, // Kernel entries of the program for one million records.
 	wrong:     u64, // Records that are lost, that arrived two times, or that arrived before an older record of the same writer.
 	together:  u64, // The threads that the event started.
@@ -101,6 +106,7 @@ start: system.Event // All the threads of a measure wait on it.
 running: u32
 started: u32
 stop: u32 // 1: the writers end.
+records_wanted: u64 // The records that each writer writes; 0: it goes on until stop.
 members: [THREAD_LIMIT]Member
 
 machine: system.Handle
@@ -180,7 +186,7 @@ wait_start :: proc "contextless" () {
 write_records :: proc "c" (parameter: rawptr) -> ! {
 	member := (^Member)(parameter)
 	wait_start()
-	for intrinsics.atomic_load_explicit(&stop, .Relaxed) == 0 {
+	for intrinsics.atomic_load_explicit(&stop, .Relaxed) == 0 && (records_wanted == 0 || member.count < records_wanted) {
 		put({kind = RECORD, values = {0 = u64(member.number), 1 = member.count}})
 		member.count += 1
 	}
@@ -214,7 +220,11 @@ entries :: proc "contextless" () -> u64 {
 	return report.entries
 }
 
+// run starts the writers and the readers of one queue. In the check each
+// writer ends after RECORDS_CHECKED records; a measure run stops the
+// writers after DURATION, and has the rate.
 run :: proc "contextless" (measure: ^Measure) -> bool {
+	measured := system.measure_run()
 	memory: system.Handle
 	status: system.Status
 	if measure.with_lock {
@@ -231,6 +241,7 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 		system.shared_close(&shared)
 	}
 	with_lock, stop, running, started = measure.with_lock, 0, 0, 0
+	records_wanted = measured ? 0 : RECORDS_CHECKED
 	members = {}
 	threads: [THREAD_LIMIT]system.Thread
 	count := measure.writers + measure.readers
@@ -247,8 +258,11 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 	begin := system.time()
 	intrinsics.atomic_store(&running, 1)
 	system.event_wake(&start)
-	end := system.sleep(begin + DURATION)
-	intrinsics.atomic_store(&stop, 1)
+	end := begin
+	if measured {
+		end = system.sleep(begin + DURATION)
+		intrinsics.atomic_store(&stop, 1)
+	}
 	for thread in threads[:measure.writers] {
 		system.thread_wait(thread)
 	}
@@ -277,12 +291,17 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 		read += reader.count
 		measure.wrong += reader.disorder
 	}
-	measure.rate = read * 1000 / max(end - begin, 1)
+	measure.read = read
 	measure.entries = (after - before) * 1_000_000 / max(read, 1)
 	measure.together = u64(started)
 	measure.done = true
-	system.log("crowd: ", measure.with_lock ? "queue with a lock, " : "shared queue, ", u64(measure.writers), " writers, ", u64(measure.readers), " readers: ", measure.rate, " records in one second, ", measure.entries, " kernel entries for one million records, ", written, " written, ", read, " read, ", measure.wrong, " wrong")
-	return read != 0 && written == read && measure.together == u64(count)
+	if measured {
+		measure.rate = read * 1000 / max(end - begin, 1)
+		system.log("crowd: ", measure.with_lock ? "queue with a lock, " : "shared queue, ", u64(measure.writers), " writers, ", u64(measure.readers), " readers: ", measure.rate, " records in one second, ", measure.entries, " kernel entries for one million records, ", written, " written, ", read, " read, ", measure.wrong, " wrong")
+		return read != 0 && written == read && measure.together == u64(count)
+	}
+	system.log("crowd: ", measure.with_lock ? "queue with a lock, " : "shared queue, ", u64(measure.writers), " writers, ", u64(measure.readers), " readers: ", written, " written, ", read, " read, ", measure.wrong, " wrong, ", measure.entries, " kernel entries for one million records")
+	return written == u64(measure.writers) * RECORDS_CHECKED && written == read && measure.together == u64(count)
 }
 
 bar :: proc "contextless" (table: ^interface.Draw_Table, x, y: int, value, most: u64, color: graphics.Color) {
@@ -298,17 +317,18 @@ draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
 	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+	measured := system.measure_run()
 	most_rate, most_entries: u64
 	for measure in measures {
-		most_rate, most_entries = max(most_rate, measure.rate), max(most_entries, measure.entries)
+		most_rate, most_entries = max(most_rate, measured ? measure.rate : measure.read), max(most_entries, measure.entries)
 	}
 	y := 12
-	interface.draw_text(table, 12, y, "several threads write records in one queue, several threads read them, for one second.", graphics.COLOR_DIM)
+	interface.draw_text(table, 12, y, measured ? "several threads write records in one queue, several threads read them, for one second." : "several threads write 50000 records each in one queue, several threads read them.", graphics.COLOR_DIM)
 	y += LINE
-	interface.draw_text(table, 12, y, "one event starts the threads of a measure. no record is lost, none arrives two times.", graphics.COLOR_DIM)
+	interface.draw_text(table, 12, y, "one event starts the threads of a run. no record is lost, none arrives two times.", graphics.COLOR_DIM)
 	y += LINE + LINE / 2
 	interface.draw_text(table, 12, y, "queue    writers  readers  wrong", graphics.COLOR_DIM)
-	interface.draw_text(table, RATE_X, y, "records in one second", graphics.COLOR_DIM)
+	interface.draw_text(table, RATE_X, y, measured ? "records in one second" : "records read", graphics.COLOR_DIM)
 	interface.draw_text(table, ENTRIES_X, y, ENTRIES_HEADER, graphics.COLOR_DIM)
 	y += LINE
 	for measure, index in measures {
@@ -320,17 +340,20 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.draw_unsigned(table, 156, y, u64(measure.readers), graphics.COLOR_TEXT)
 		if measure.done {
 			interface.draw_unsigned(table, 228, y, measure.wrong, measure.wrong == 0 ? graphics.COLOR_DIM : graphics.COLOR_FAILED)
-			bar(table, RATE_X, y, measure.rate, most_rate, measure.wrong != 0 ? graphics.COLOR_FAILED : measure.with_lock ? COLOR_LOCK : COLOR_RATE)
+			bar(table, RATE_X, y, measured ? measure.rate : measure.read, most_rate, measure.wrong != 0 ? graphics.COLOR_FAILED : measure.with_lock ? COLOR_LOCK : COLOR_RATE)
 			bar(table, ENTRIES_X, y, measure.entries, most_entries, COLOR_ENTRIES)
 		} else {
 			interface.draw_text(table, RATE_X, y, "...", graphics.COLOR_DIM)
 		}
 		y += LINE
 	}
+	if !measured {
+		interface.draw_text(table, 12, y + LINE / 2, "the records in one second are a measure: run `kerneltool measure crowd`.", graphics.COLOR_DIM)
+	}
 	interface.window_frame_end(&drawing, &frame, window)
 }
 
-// entry finds its own slot with the machine handle, runs each measure
+// entry finds its own slot with the machine handle, runs each queue
 // (`run`), and writes the summary line: it is wrong when a record is lost,
 // read two times, or out of the order of its writer. The program then keeps
 // its window open until it is stopped; with no window, it stops with the
@@ -365,7 +388,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if wrong || total_wrong != 0 {
 		system.log("crowd: wrong: ", total_wrong, " records lost, in disorder or read two times")
 	} else {
-		system.log("crowd: ok, ", u64(len(measures)), " measures, each record written is read one time, each event started all the threads")
+		system.log("crowd: ok, ", u64(len(measures)), " runs, each record written is read one time, each event started all the threads")
 	}
 	for {
 		draw(&window)

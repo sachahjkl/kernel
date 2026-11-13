@@ -19,6 +19,13 @@ MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION :: BUILD_FOLDER + "/modules_withou
 BOOT_IMAGE :: BUILD_FOLDER + "/boot.image"
 BOOT_IMAGE_FAILS :: BUILD_FOLDER + "/boot_fails.image"
 BOOT_IMAGE_SHORTAGE :: BUILD_FOLDER + "/boot_shortage.image"
+// The boot image of a measure run: the usual one, with one resource more,
+// which the root service looks for (docs/TOOLS.md, "A check by count, a measure by time").
+BOOT_IMAGE_MEASURE :: BUILD_FOLDER + "/boot_measure.image"
+MEASURE_RUN_RESOURCE_NAME :: "measure_run" // system.MEASURE_RUN_RESOURCE.
+MEASURE_RUN_RESOURCE_FILE :: BUILD_FOLDER + "/measure_run.resource"
+// The bytes of the resource: the root service reads its name only.
+MEASURE_RUN_RESOURCE_TEXT :: "This machine runs for a measure.\n"
 SYSTEM_LIBRARY_FOLDER :: "support/system"
 // The copy and the fill of every module, of the kernel and of the boot
 // program: copy_bytes_without_overlap, copy_bytes_with_overlap,
@@ -186,7 +193,18 @@ build_modules :: proc() -> bool {
 	// The third has no input service: the root service starts only the
 	// program shortage (the test of the shortage of frames).
 	images_built := build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:])
-	build_measure_step("the three boot images", step_started)
+	if images_built {
+		// The fourth is the image of a measure run: the same modules and one
+		// resource more, so a measure runs the code that a test checked.
+		resource_text: string = MEASURE_RUN_RESOURCE_TEXT
+		if err := os.write_entire_file(MEASURE_RUN_RESOURCE_FILE, transmute([]u8)resource_text); err != nil {
+			fmt.eprintfln("kerneltool: cannot write %s: %v", MEASURE_RUN_RESOURCE_FILE, err)
+			return false
+		}
+		append(&all_resources, Resource_File{name = MEASURE_RUN_RESOURCE_NAME, path = MEASURE_RUN_RESOURCE_FILE})
+		images_built = build_boot_image(BOOT_IMAGE_MEASURE, "", all_resources[:])
+	}
+	build_measure_step("the four boot images", step_started)
 	return images_built
 }
 
@@ -215,9 +233,6 @@ files_with_suffix :: proc(folder, suffix: string) -> (paths: []string, ok: bool)
 // passes the two defines in each build: the defaults of the source never
 // decide.
 test_build_checks := true
-// A measure run of the windows: the programs write the time of their
-// pictures (display.MEASURE_RUN, `kerneltool measure windows`).
-measure_run := false
 
 // module_compile_command gives the command of the compiler for a module,
 // with each flag of its build: the checks of the kernel, the debug
@@ -267,9 +282,6 @@ module_compile_command :: proc(build: Module_Build) -> []string {
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_FRAME_SUMS=true" : "-define:TEST_BUILD_CHECKS_FRAME_SUMS=false")
 	} else {
 		append(&compile, SUPPORT_LIBRARY) // The kernel has the contract library only.
-		if measure_run {
-			append(&compile, "-define:MEASURE_RUN=true")
-		}
 	}
 	return compile[:]
 }

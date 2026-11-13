@@ -138,11 +138,11 @@ Window :: struct {
 }
 
 PICTURES_MEASURED :: 10 // The pictures after which a measure run writes its last line.
-// A measure run: the log has the time of the pictures of each window, after
-// 1, 3 and 10 pictures. A normal run writes none of these lines: the ring of
-// the log keeps 1023 records, and the main scenario reads its oldest records
-// (the channel boot) late in the run, with about 13 records of room.
-MEASURE_RUN :: #config(MEASURE_RUN, false)
+// In a measure run (system.measure_run), the log has the time of the
+// pictures of each window, after 1, 3 and 10 pictures. A usual run writes
+// none of these lines: the ring of the log keeps 1023 records, and the main
+// scenario reads its oldest records (the channel boot) late in the run,
+// with about 13 records of room.
 
 // picture_begin marks the start of a picture, for the measure of present.
 picture_begin :: proc "contextless" (window: ^Window) {
@@ -155,7 +155,7 @@ picture_end :: proc "contextless" (window: ^Window) {
 	if window.picture_started != 0 && window.picture_count < PICTURES_MEASURED {
 		window.picture_time += system.nanoseconds() - window.picture_started
 		window.picture_count += 1
-		if count := window.picture_count; MEASURE_RUN && (count == 1 || count == 3 || count == PICTURES_MEASURED) {
+		if count := window.picture_count; system.measure_run() && (count == 1 || count == 3 || count == PICTURES_MEASURED) {
 			mean := window.picture_time / count
 			system.log("display: ", string(window.title[:window.title_count]), " drew one picture in ", mean / 1000, ".", mean / 100 % 10, " us, the mean of ", count)
 		}

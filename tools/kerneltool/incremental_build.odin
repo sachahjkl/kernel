@@ -555,10 +555,20 @@ build_record_read :: proc(path: string) -> (record: Build_Record, ok: bool) {
 // outputs.
 build_record_write :: proc(path: string, key: blake3.Hash, output_paths: []string, source_files, load_files: []string) -> bool {
 	contents := file_contents_read_in_parallel(output_paths, context.temp_allocator)
+	return build_record_write_of_contents(path, key, output_paths, contents, source_files, load_files)
+}
+
+// build_record_write_of_contents writes the record file with the hashes
+// that the caller read: contents has the order of output_paths. A caller
+// with many large outputs reads them all at once, on several threads.
+build_record_write_of_contents :: proc(path: string, key: blake3.Hash, output_paths: []string, contents: []File_Content, source_files, load_files: []string) -> bool {
 	outputs := make([]Record_Output, len(output_paths), context.temp_allocator)
-	written := true
+	written := len(contents) == len(output_paths)
 	for output_path, index in output_paths {
-		written = written && contents[index].readable
+		if !written {
+			break
+		}
+		written = contents[index].readable
 		outputs[index] = {
 			path = output_path,
 			hash = contents[index].hash,
@@ -579,9 +589,8 @@ build_record_write :: proc(path: string, key: blake3.Hash, output_paths: []strin
 	return written
 }
 
-// record_outputs_are_present says if each output of a record is a file
-// with the recorded hash, and if the record names each required path.
-record_outputs_are_present :: proc(record: Build_Record, required_paths: []string) -> bool {
+// record_names_each_output says if a record names each required path.
+record_names_each_output :: proc(record: Build_Record, required_paths: []string) -> bool {
 	for required in required_paths {
 		named := false
 		for output in record.outputs {
@@ -591,11 +600,16 @@ record_outputs_are_present :: proc(record: Build_Record, required_paths: []strin
 			return false
 		}
 	}
-	paths := make([]string, len(record.outputs), context.temp_allocator)
-	for output, index in record.outputs {
-		paths[index] = output.path
+	return true
+}
+
+// record_outputs_have_their_hashes says if each output of a record is a
+// file with the recorded hash. contents is what the caller read of the
+// outputs of the record, in their order.
+record_outputs_have_their_hashes :: proc(record: Build_Record, contents: []File_Content) -> bool {
+	if len(contents) != len(record.outputs) {
+		return false
 	}
-	contents := file_contents_read_in_parallel(paths, context.temp_allocator)
 	for output, index in record.outputs {
 		if !contents[index].readable || contents[index].hash != output.hash {
 			return false
@@ -604,29 +618,57 @@ record_outputs_are_present :: proc(record: Build_Record, required_paths: []strin
 	return true
 }
 
-// recorded_build_is_kept says if the outputs of one thing are those of
-// this build with no build. inputs has every input but the list of the
-// compiler, which the record gives. The outputs are kept when the record is
-// there, the build key of the inputs as they are now is the key of the
-// record, and each output is there with its recorded hash. reason says why
-// the thing is built.
-recorded_build_is_kept :: proc(record_path: string, inputs: Build_Key_Inputs, table: ^Input_File_Table, required_outputs: []string) -> (kept: bool, reason: string) {
-	record, recorded := build_record_read(record_path)
+// record_outputs_are_present says if each output of a record is a file
+// with the recorded hash, and if the record names each required path.
+record_outputs_are_present :: proc(record: Build_Record, required_paths: []string) -> bool {
+	if !record_names_each_output(record, required_paths) {
+		return false
+	}
+	paths := make([]string, len(record.outputs), context.temp_allocator)
+	for output, index in record.outputs {
+		paths[index] = output.path
+	}
+	return record_outputs_have_their_hashes(record, file_contents_read_in_parallel(paths, context.temp_allocator))
+}
+
+// recorded_build_has_its_key reads the record of one thing and says if the
+// build key of the inputs as they are now is the key of the record. inputs
+// has every input but the list of the compiler, which the record gives.
+// reason says why the thing is built.
+recorded_build_has_its_key :: proc(record_path: string, inputs: Build_Key_Inputs, table: ^Input_File_Table) -> (record: Build_Record, same: bool, reason: string) {
+	recorded: bool
+	record, recorded = build_record_read(record_path)
 	if !recorded {
-		return false, "no build record"
+		return {}, false, "no build record"
 	}
 	inputs_now := inputs
 	inputs_now.source_files = record.source_files
 	inputs_now.load_files = record.load_files
 	key, complete := build_key(inputs_now, table)
 	if !complete {
-		return false, "an input cannot be read"
+		return {}, false, "an input cannot be read"
 	}
 	if key != record.key {
-		return false, "an input changed"
+		return {}, false, "an input changed"
+	}
+	return record, true, ""
+}
+
+// The reason of a build when a file of the last build is gone or has
+// other bytes.
+OUTPUT_CHANGED_REASON :: "an output is absent or changed"
+
+// recorded_build_is_kept says if the outputs of one thing are those of
+// this build with no build: the record is there, the build key of the
+// inputs as they are now is the key of the record, and each output is
+// there with its recorded hash. reason says why the thing is built.
+recorded_build_is_kept :: proc(record_path: string, inputs: Build_Key_Inputs, table: ^Input_File_Table, required_outputs: []string) -> (kept: bool, reason: string) {
+	record, same, why := recorded_build_has_its_key(record_path, inputs, table)
+	if !same {
+		return false, why
 	}
 	if !record_outputs_are_present(record, required_outputs) {
-		return false, "an output is absent or changed"
+		return false, OUTPUT_CHANGED_REASON
 	}
 	return true, ""
 }
