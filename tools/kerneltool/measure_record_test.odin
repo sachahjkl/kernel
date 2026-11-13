@@ -229,7 +229,7 @@ measure_record_page_text :: proc(t: ^testing.T) {
 		"Measured in the full check of 2026-11-12, on the tree of <code>264fa30</code>, with changes that were not committed.",
 		"Measured in this work tree: the log in <code>build/</code> is newer than <code>docs/measures/measures.txt</code>.",
 		"1 numbers come from the logs in <code>build/</code>",
-		"<td class=\"column-line missing\">Not measured.</td>",
+		"<td data-label=\"The line of the log\" class=\"column-line missing\">Not measured.</td>",
 		"2 of 3 numbers are measured.",
 	}
 	for part in expect {

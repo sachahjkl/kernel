@@ -365,8 +365,8 @@ site_tables_with_kinds :: proc(t: ^testing.T) {
 		"<p>before</p>\n<div class=\"table\" role=\"region\" tabindex=\"0\" aria-label=\"Measured &lt;numbers&gt;\"><table>",
 		"<th scope=\"col\" class=\"column-prose\">What</th><th scope=\"col\" class=\"column-line\">The line of the log</th>",
 		"<th scope=\"col\" class=\"column-date value-head value-icon value-time\">Written</th>",
-		"<tr id=\"one\"><td class=\"column-prose\">What</td><td class=\"column-line code\"><code>line</code></td><td class=\"column-prose\">log</td><td class=\"column-date value value-time\"><time datetime=\"2026-11-12T02:09Z\">2026-11-12 02:09 UTC</time></td></tr>",
-		"<tr><td class=\"column-prose\">Second</td><td class=\"column-line\"></td><td class=\"column-prose\"></td><td class=\"column-date value value-time\"></td></tr>",
+		"<tr id=\"one\"><td class=\"column-prose\">What</td><td data-label=\"The line of the log\" class=\"column-line code\"><code>line</code></td><td data-label=\"Log, line, machine\" class=\"column-prose\">log</td><td data-label=\"Written\" class=\"column-date value value-time\"><time datetime=\"2026-11-12T02:09Z\">2026-11-12 02:09 UTC</time></td></tr>",
+		"<tr><td class=\"column-prose\">Second</td><td data-label=\"The line of the log\" class=\"column-line\"></td><td data-label=\"Log, line, machine\" class=\"column-prose\"></td><td data-label=\"Written\" class=\"column-date value value-time\"></td></tr>",
 		"</tbody></table></div>\n",
 	}
 	for part in expect {
@@ -394,5 +394,5 @@ site_tables_with_kinds :: proc(t: ^testing.T) {
 	site := test_site()
 	rendered, _ := render(&site, "## Sizes\n\n| What | Bytes |\n|---|---|\n| The kernel | 1024 |\n")
 	testing.expect(t, strings.contains(rendered, "aria-label=\"Sizes\""))
-	testing.expect(t, strings.contains(rendered, "<td class=\"column-any\">The kernel</td><td class=\"column-number\">1024</td>"))
+	testing.expect(t, strings.contains(rendered, "<td class=\"column-any\">The kernel</td><td data-label=\"Bytes\" class=\"column-number\">1024</td>"))
 }

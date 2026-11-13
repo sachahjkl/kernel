@@ -495,11 +495,12 @@ A list of names is not a name. On 2026-11-13 the table of the grants of each pro
 The measured numbers are What (Prose), The line of the log (Line), Log, line, machine (Prose) and Written (Date): 13 + 30 + 13 em and the date, under the 1120 pixels of the column of the page, so the table does not scroll on a wide screen, and a line of a log takes two or three lines.
 
 - The box: `<div class="table" role="region" tabindex="0" aria-label="...">`, the pattern for a table that scrolls: the keyboard reaches the box and scrolls it with the arrows, and a screen reader names it. The name is the name of the table that its writer gives, or the heading above a table of a document. The focus of the box is visible.
-- The box scrolls sideways at every width (`overflow-x: auto`), when the sum of the least widths passes the width of the page; on a wide screen where the table fits, nothing scrolls.
+- From 720 pixels of width, the box scrolls sideways (`overflow-x: auto`) when the sum of the least widths passes the width of the page; where the table fits, nothing scrolls.
+- Under 720 pixels a table does not scroll and has no columns: a row is a block. The first cell of the row is its title, in bold. Each other cell is under it, with the head of its column above it in the dim color (the attribute `data-label` of the cell, which `site_table_end` and the renderer of a document write; the style sheet shows it with `content: attr(data-label)`). An empty cell is not shown. The head row is kept for a screen reader and is not shown. A column squeezed to two words a line, or a table that hides its columns to the right of a phone, is the fault that this rule removes.
 - A sign that there is more: a line in the color of the line of a link at each edge of the box where more of the table is, tied to the place of the scroll of the box (a scroll timeline, `animation-timeline: scroll(self inline)`). It moves with the scroll, not with the time, so it is not an animation in the sense of `DESIGN.md`. A box that does not scroll has no line. A browser with no scroll timeline shows its scroll bar only.
-- The first cell of each row stays in view while the table scrolls sideways (`position: sticky; left: 0`), on an opaque background of the color of its row.
+- From 720 pixels, the first cell of each row stays in view while the table scrolls sideways (`position: sticky; left: 0`), on an opaque background of the color of its row.
 - The head row does not stay at the top while the page scrolls. A box with `overflow-x: auto` is a scroll container for both axes, so a `position: sticky; top` of the head would stick inside the box, which does not scroll up and down: the rule would do nothing, so it is not written. The bar of the site does not stay at the top either.
-- On a narrow screen a heading, a paragraph, an item, a caption and the breadcrumbs break a long word; a cell of a table does not, because its box scrolls.
+- On a narrow screen a heading, a paragraph, an item, a caption and the breadcrumbs break a long word; a cell of a table does too, because its row is a block.
 
 ### The site menu
 

@@ -588,6 +588,19 @@ figcaption { padding-top: 8px; font-size: 14px; }
   }
 }
 @media (max-width: 719px) {
+  /* A table on a narrow screen: a row is a block. Its first cell is its
+     title; each other cell is under it, with the head of its column before
+     it. So no table scrolls sideways, and no column is squeezed to a few
+     words a line. The head row is kept for a screen reader, not shown. */
+  .table { overflow-x: visible; border-left: 0; border-right: 0; animation: none; }
+  .table table, .table tbody, .table tr, .table td { display: block; width: auto; min-width: 0; }
+  .table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .table tr { padding: 8px 0; border-bottom: 1px solid var(--track); }
+  .table tbody tr:nth-child(odd) { background: none; }
+  .table tr > :first-child, .table tbody tr:nth-child(odd) > :first-child { position: static; background: none; font-weight: 600; }
+  .table td { padding: 2px 0; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+  .table td:empty { display: none; }
+  .table td[data-label]::before { content: attr(data-label); display: block; color: var(--dim); font-size: 12px; line-height: 16px; font-weight: 400; font-family: var(--reading); }
   /* The bar: the mark at the left, the button at the right; the open menu
      lies over the page under the bar, the sections one under the other,
      then the search over the whole width. */

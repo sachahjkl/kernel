@@ -71,6 +71,7 @@ Site_Table :: struct {
 	start:   int,
 	kinds:   []Site_Column_Kind,
 	classes: []string, // The class of the cells of each column: its kind, and the kind of its values.
+	headers: []string, // The head of each column: on a narrow screen a row is a block, and each cell says its column.
 }
 
 // site_column_value_kind gives the kind of the values of a column: the one
@@ -99,12 +100,13 @@ site_column_value_kind :: proc(column_kind: Site_Column_Kind, stated: value_kind
 // and its cells keep the font and the color of the kind: no row repeats
 // the icon (docs/SITE.md, "The kinds of values").
 site_table_start :: proc(b: ^strings.Builder, name: string, columns: []Site_Column, values: []value_kinds.Value_Kind = nil) -> Site_Table {
-	table := Site_Table{start = strings.builder_len(b^), kinds = make([]Site_Column_Kind, len(columns), context.temp_allocator), classes = make([]string, len(columns), context.temp_allocator)}
+	table := Site_Table{start = strings.builder_len(b^), kinds = make([]Site_Column_Kind, len(columns), context.temp_allocator), classes = make([]string, len(columns), context.temp_allocator), headers = make([]string, len(columns), context.temp_allocator)}
 	strings.write_string(b, "<div class=\"table\" role=\"region\" tabindex=\"0\" aria-label=\"")
 	site_escape(b, name)
 	strings.write_string(b, "\"><table>\n<thead><tr>")
 	for column, index in columns {
 		table.kinds[index] = column.kind
+		table.headers[index] = column.header
 		stated: value_kinds.Value_Kind = index < len(values) ? values[index] : .None
 		value_kind := site_column_value_kind(column.kind, stated)
 		table.classes[index] = site_column_classes[column.kind]
@@ -134,12 +136,16 @@ site_table_end :: proc(b: ^strings.Builder, table: Site_Table) {
 	body_start += table.start
 	body := strings.clone(written[body_start:], context.temp_allocator)
 	resize(&b.buf, body_start)
-	strings.write_string(b, site_table_cells_with_classes(body, table.classes))
+	strings.write_string(b, site_table_cells_with_classes(body, table.classes, table.headers))
 }
 
 // site_table_cells_with_classes gives the body of a table with the class
-// of its column on each cell, by the place of the cell in its row.
-site_table_cells_with_classes :: proc(body: string, classes: []string) -> string {
+// of its column on each cell, by the place of the cell in its row, and
+// with the head of its column as `data-label` on each cell after the
+// first: on a narrow screen a row is a block, the first cell is its title,
+// and each other cell says which column it is (the style sheet writes the
+// label before the cell).
+site_table_cells_with_classes :: proc(body: string, classes: []string, headers: []string = nil) -> string {
 	out := strings.builder_make(context.temp_allocator)
 	column := 0
 	index := 0
@@ -149,11 +155,19 @@ site_table_cells_with_classes :: proc(body: string, classes: []string) -> string
 			column = 0
 		} else if (strings.has_prefix(rest, "<td") || strings.has_prefix(rest, "<th")) && len(rest) > 3 && (rest[3] == '>' || rest[3] == ' ') {
 			class := column < len(classes) ? classes[column] : ""
+			label := column > 0 && column < len(headers) ? headers[column] : ""
 			column += 1
-			if class != "" {
+			if class != "" || label != "" {
 				strings.write_string(&out, rest[:3])
+				if label != "" {
+					strings.write_string(&out, " data-label=\"")
+					site_escape(&out, label)
+					strings.write_byte(&out, '"')
+				}
 				after := rest[3:]
 				switch {
+				case class == "":
+					index += 3
 				case strings.has_prefix(after, " class=\""):
 					strings.write_string(&out, " class=\"")
 					strings.write_string(&out, class)

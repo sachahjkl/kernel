@@ -138,7 +138,7 @@ site_value_markup :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(html, "<th scope=\"col\" class=\"column-number value-head value-icon value-number\">Place</th>"))
 	testing.expect(t, strings.contains(html, "<th scope=\"col\" class=\"column-name value-head value-icon value-grant\">Grant</th>"))
 	testing.expect(t, strings.contains(html, "<th scope=\"col\" class=\"column-prose\">What</th>"))
-	testing.expect(t, strings.contains(html, "<td class=\"column-number value value-number\">1</td><td class=\"column-name value value-grant\">x</td><td class=\"column-prose\">y</td>"))
+	testing.expect(t, strings.contains(html, "<td class=\"column-number value value-number\">1</td><td data-label=\"Grant\" class=\"column-name value value-grant\">x</td><td data-label=\"What\" class=\"column-prose\">y</td>"))
 	testing.expect_value(t, strings.count(html, "value-icon"), 2)
 
 	// No value in a heading.
@@ -184,7 +184,7 @@ site_value_kinds_of_the_context_roles :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(body, "<code class=\"value value-handle value-icon\">handle</code>"))
 	testing.expect(t, strings.contains(body, "<code class=\"value value-value value-icon\">value</code>"))
 	testing.expect(t, strings.contains(body, "<th scope=\"col\" class=\"column-number value-head value-icon value-number\">Place</th>"))
-	testing.expect(t, strings.contains(body, "<td class=\"column-number value value-number\">"))
+	testing.expect(t, strings.contains(body, "<td data-label=\"Place\" class=\"column-number value value-number\">"))
 }
 
 // A cell of several names is a list of values: the column has the kind
@@ -200,7 +200,7 @@ site_value_list_in_a_table :: proc(t: ^testing.T) {
 	site_table_end(&b, table)
 	html := strings.to_string(b)
 	testing.expect(t, strings.contains(html, "<th scope=\"col\" class=\"column-list value-head value-icon value-grant\">Grants</th>"), html)
-	testing.expect(t, strings.contains(html, "<td class=\"column-list value value-grant\"><ul class=\"value-list\"><li><code class=\"value value-grant\">Inspect</code></li><li><code class=\"value value-grant\">Debug_Image</code></li></ul></td>"), html)
+	testing.expect(t, strings.contains(html, "<td data-label=\"Grants\" class=\"column-list value value-grant\"><ul class=\"value-list\"><li><code class=\"value value-grant\">Inspect</code></li><li><code class=\"value value-grant\">Debug_Image</code></li></ul></td>"), html)
 	testing.expect(t, !strings.contains(html, "</code>, "), "no comma joins two names")
 	style := site_style_sheet("")
 	testing.expect(t, strings.contains(style, ".value-list { display: flex; flex-wrap: wrap;"))

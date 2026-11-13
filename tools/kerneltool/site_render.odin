@@ -446,12 +446,24 @@ site_render_table :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 		strings.write_string(b, "</th>")
 	}
 	strings.write_string(b, "</tr></thead>\n<tbody>\n")
+	// The head of each column as plain text: on a narrow screen a row is a
+	// block, and each cell after the first says its column.
+	labels := make([]string, len(header), context.temp_allocator)
+	for cell, cell_index in header {
+		label := strings.builder_make(context.temp_allocator)
+		site_plain(&label, cell)
+		labels[cell_index] = strings.to_string(label)
+	}
 	for row in lines[start + 2:end] {
 		cells := site_table_row_cells(row)
 		strings.write_string(b, "<tr>")
 		for cell_index in 0 ..< len(header) {
 			kind := cell_index < len(cells) ? site_cell_kind(cells[cell_index]) : Site_Column_Kind.Any
-			fmt.sbprintf(b, "<td class=\"%s\">", site_column_classes[kind])
+			if cell_index > 0 && labels[cell_index] != "" {
+				fmt.sbprintf(b, "<td data-label=\"%s\" class=\"%s\">", labels[cell_index], site_column_classes[kind])
+			} else {
+				fmt.sbprintf(b, "<td class=\"%s\">", site_column_classes[kind])
+			}
 			if cell_index < len(cells) {
 				site_render_inline(renderer, cells[cell_index])
 			}
