@@ -1,30 +1,91 @@
 package quic
 
-// The send path of a connection: one datagram at a time, with a packet of
-// each space that has something to send, in the order Initial, Handshake,
-// 1-RTT (RFC 9000, section 12.2). Each packet has a packet number of 4
-// bytes, and each long header a Length of 2 bytes: the packets are short,
-// and a fixed form keeps the room of each packet known before its frames
-// are written.
+// The send path of a connection: one datagram at a time, with a packet of each
+// packet number space that has something to send, in the order Initial,
+// Handshake, 1-RTT (RFC 9000, section 12.2).
+//
+// A datagram is built in two passes. The first pass writes the frames of each
+// packet into the private memory of the record (`Connection.payloads`), with
+// the room that the datagram still has. The second pass writes each header,
+// copies the frames after it, and seals the packet into the buffer of the
+// caller. Between the two, PADDING frames fill a datagram that must have 1200
+// bytes.
+//
+// Each packet has a packet number of 4 bytes, and each long header a Length of
+// 2 bytes: the packets are short, and a fixed form keeps the room of each
+// packet known before its frames are written.
 
 import "contract:errors"
 
-PACKET_NUMBER_SIZE :: 4
-LONG_HEADER_LENGTH_SIZE :: 2
-SMALLEST_FRAMES_ROOM :: 8 // A packet with less room for frames is not made.
+PACKET_NUMBER_SIZE :: 4 // The bytes of the packet number of each packet that this side sends: always 4, the longest form (RFC 9000, section 17.1), so the size of a header does not depend on the number.
+LONG_HEADER_LENGTH_SIZE :: 2 // The bytes of the Length field of each long header that this side sends: a variable-length integer of 2 bytes, which counts up to 16 383 bytes. A packet has 1200 bytes at most.
+SMALLEST_FRAMES_ROOM :: 8 // The least room for frames, in bytes, for which a packet is made: with less left in the datagram, the space waits for the next datagram.
 
-// What one packet of a datagram carries, before it is sealed.
+// What one packet of a datagram carries, before it is sealed: the result of
+// the first pass of `connection_datagram_send` for one encryption level.
 @(private)
 Packet_Plan :: struct {
-	built:          bool,
-	payload_length: int,
-	ack_eliciting:  bool,
-	record:         Sent_Packet,
+	built:          bool, // The level has a packet in this datagram.
+	payload_length: int, // The bytes of its frames in `Connection.payloads`, with the PADDING frames that were added.
+	ack_eliciting:  bool, // The packet carries a frame that the peer must acknowledge: it gets a `Sent_Packet` record.
+	record:         Sent_Packet, // What the packet carries, for that record: its ranges of data and its control frames.
 }
 
-// connection_datagram_send writes the next datagram to send in buffer, and
-// gives its length: 0 when nothing waits, or when a limit stops it (the
-// congestion window, the anti-amplification limit of a server).
+// connection_datagram_send writes the next datagram to send in `buffer`, and
+// gives its length.
+//
+// The caller calls it in a loop until it gives 0, after each receive, each
+// call of `connection_time_passes` and each write on a stream. A datagram that
+// it gave counts as sent: its packets have their numbers and their records,
+// and the timers started. The caller sends it to the remote of the connection;
+// a datagram that the caller cannot send is a lost datagram, and loss
+// detection sends its data again.
+//
+// **Parameters**
+//
+// - `connection`: the record.
+// - `buffer`: where the datagram goes. Give `MAX_DATAGRAM_SIZE` bytes: the
+//   call uses no more, and with less a datagram that must have 1200 bytes cannot
+//   be made.
+// - `now`: the time, in microseconds.
+//
+// **Result**: the bytes of the datagram, 1 to 1200, or 0 when no datagram goes
+// now:
+//
+// - the connection is idle, draining or closed, or it is closing and its
+//   CONNECTION_CLOSE went;
+// - nothing waits: no data, no control frame, no probe, and no ACK frame that
+//   is due;
+// - the congestion window is full: new data waits for an acknowledgement. A
+//   probe and an ACK frame go all the same;
+// - the anti-amplification limit of a server that did not validate its client
+//   leaves too little room (`amplification_budget`);
+// - a packet could not be sealed: the connection closes with INTERNAL_ERROR.
+//
+// **What one datagram holds**
+//
+// - One packet at most for each space whose keys are installed, Initial first.
+//   The 1-RTT space sends only after the handshake completed.
+// - In each packet: an ACK frame when one waits, a CRYPTO frame, the control
+//   frames, one STREAM frame, or a PING for a probe with nothing else
+//   (`payload_build`).
+// - In the closing state: only a CONNECTION_CLOSE in each packet.
+// - PADDING up to 1200 bytes when the datagram holds an Initial packet of a
+//   client, or an ack-eliciting Initial packet of a server (RFC 9000, section
+//   14.1).
+//
+// A client discards its Initial space when it first sends a Handshake packet
+// (RFC 9001, section 4.9.1).
+//
+// ```odin
+// for {
+// 	length := quic.connection_datagram_send(&connection, buffer[:], now)
+// 	if length == 0 {
+// 		break
+// 	}
+// 	// ... send buffer[:length] to the remote ...
+// }
+// ```
 connection_datagram_send :: proc "contextless" (connection: ^Connection, buffer: []u8, now: u64) -> int {
 	switch connection.state {
 	case .Idle, .Draining, .Closed:
@@ -133,6 +194,17 @@ connection_datagram_send :: proc "contextless" (connection: ^Connection, buffer:
 	return end
 }
 
+// packet_header_size gives the bytes of the header of a packet of a level,
+// with its packet number: the first pass subtracts it from the room of the
+// datagram.
+//
+// - A 1-RTT packet has a short header (RFC 9000, section 17.3.1): 1 byte, the
+//   connection identifier of the peer, and the packet number.
+// - An Initial and a Handshake packet have a long header (RFC 9000, section
+//   17.2): 1 byte, the version, the two connection identifiers each with its
+//   length, the Length field and the packet number.
+// - An Initial packet also has its token, with its length: empty, or the Retry
+//   token of a client after a Retry.
 @(private)
 packet_header_size :: proc "contextless" (connection: ^Connection, level: Encryption_Level) -> int {
 	if level == .Application {
@@ -148,8 +220,20 @@ packet_header_size :: proc "contextless" (connection: ^Connection, level: Encryp
 	return size
 }
 
-// packet_write_and_seal writes the header of a packet at position, then its
-// frames, and seals it. It gives the byte after the packet.
+// packet_write_and_seal writes the header of a packet at `position` in the
+// buffer, copies its frames after it, and seals the packet: the payload is
+// encrypted and authenticated, and the header is protected (`packet_seal`).
+//
+// - `level`: the encryption level: it gives the form of the header, the keys
+//   and the packet number.
+// - `position`: the first byte of the packet in `buffer`: after the packet
+//   before it in the datagram.
+// - `payload_length`: the bytes of the frames in `Connection.payloads` of the
+//   level.
+//
+// It gives `end`, the byte after the packet, and `ok` false when the seal
+// failed. The version in a long header is always 1. The caller adds 1 to the
+// packet number of the space after it.
 @(private)
 packet_write_and_seal :: proc "contextless" (connection: ^Connection, level: Encryption_Level, buffer: []u8, position: int, payload_length: int) -> (end: int, ok: bool) {
 	space := &connection.spaces[level]
@@ -185,6 +269,16 @@ packet_write_and_seal :: proc "contextless" (connection: ^Connection, level: Enc
 	return packet_seal(connection.cryptography, &space.send_keys, buffer, start, number_offset, payload_length, space.next_packet_number, &error)
 }
 
+// sent_packet_record takes a free place of the space for an ack-eliciting
+// packet that was just sealed: its number, its time, its size on the wire and
+// what it carried.
+//
+// Its bytes join `Connection.bytes_in_flight`, and the probe timeout of the
+// space starts again from `now`. The first ack-eliciting packet after a packet
+// of the peer also moves the last activity of the idle timeout (RFC 9000,
+// section 10.1); the next ones do not, so the probes to a peer that went
+// silent do not keep the connection alive. `payload_build` checked that a
+// place is free.
 @(private)
 sent_packet_record :: proc "contextless" (connection: ^Connection, level: Encryption_Level, record: ^Sent_Packet, size: u64, now: u64) {
 	space := &connection.spaces[level]
@@ -210,16 +304,37 @@ sent_packet_record :: proc "contextless" (connection: ^Connection, level: Encryp
 	}
 }
 
+// sent_slot_is_free says if the space can record one more ack-eliciting
+// packet: fewer than `SENT_PACKET_LIMIT` wait. With no place, the space sends
+// no ack-eliciting frame, because a packet that is not recorded could not be
+// sent again.
 @(private)
 sent_slot_is_free :: proc "contextless" (space: ^Packet_Number_Space) -> bool {
 	return space.ack_eliciting_in_flight < SENT_PACKET_LIMIT
 }
 
-// payload_build writes the frames of one packet: an ACK frame when one is
-// due, then CRYPTO data, the control frames, STREAM data, and a PING for a
-// probe with nothing else. It gives the length of the frames and whether
-// they are ack-eliciting; 0 when the packet would carry nothing that must
-// go now.
+// payload_build writes the frames of one packet of a level, in the order of
+// their importance: an ACK frame when one waits, then CRYPTO data, the control
+// frames, one STREAM frame, and a PING for a probe with nothing else.
+//
+// - `payload`: where the frames go: its length is the room of the packet.
+// - `record`: what the packet carries, filled for the `Sent_Packet` record.
+// - `congestion_allows`: one more datagram fits in the congestion window. When
+//   false, only a probe carries ack-eliciting frames.
+//
+// It gives the length of the frames and whether they are ack-eliciting. It
+// gives 0 when the packet would carry nothing that must go now, and it then
+// changed nothing.
+//
+// **When an ACK frame goes alone.** In the Initial and Handshake spaces, at
+// once. In the 1-RTT space, after two ack-eliciting packets of the peer, or at
+// the deadline of `MAX_ACK_DELAY_OF_THIS_SIDE` (RFC 9000, section 13.2.1). An
+// ACK frame that waits goes with any ack-eliciting packet before that.
+//
+// Ack-eliciting frames need a free place for the record of the packet
+// (`sent_slot_is_free`). The control frames and the STREAM frame go only in
+// the 1-RTT space. A probe that carried an ack-eliciting frame takes one from
+// the probes that the space owes.
 @(private)
 payload_build :: proc "contextless" (connection: ^Connection, level: Encryption_Level, payload: []u8, record: ^Sent_Packet, congestion_allows: bool, now: u64) -> (length: int, ack_eliciting: bool) {
 	space := &connection.spaces[level]
@@ -265,9 +380,17 @@ payload_build :: proc "contextless" (connection: ^Connection, level: Encryption_
 	return writer.position, ack_eliciting
 }
 
-// ack_frame_write writes an ACK frame of the packets of the peer in a
-// space, from the largest range down, with as many ranges as fit (16 at
-// most).
+// ack_frame_write writes an ACK frame of the packets of the peer in a space
+// (RFC 9000, section 19.3), from the largest range down.
+//
+// It writes as many ranges as fit in the room of the packet,
+// `ACK_RANGES_SEND_LIMIT` at most: it drops the oldest ranges until the frame
+// fits. The ACK Delay field is the time since the largest packet came, in
+// units of 8 microseconds (`ACK_DELAY_EXPONENT_OF_THIS_SIDE`), in the 1-RTT
+// space only: the Initial and Handshake spaces send 0. It sends no ECN counts.
+//
+// It gives false, with nothing written, when no packet of the peer was
+// recorded or when not even one range fits.
 @(private)
 ack_frame_write :: proc "contextless" (connection: ^Connection, level: Encryption_Level, writer: ^Frame_Writer, now: u64) -> bool {
 	space := &connection.spaces[level]
@@ -314,8 +437,13 @@ ack_frame_write :: proc "contextless" (connection: ^Connection, level: Encryptio
 	return !writer.failed
 }
 
-// crypto_frame_write writes one CRYPTO frame: the bytes of a lost packet
-// first, then new bytes.
+// crypto_frame_write writes one CRYPTO frame of the handshake bytes of a
+// space: the bytes of a lost packet first, then new bytes.
+//
+// The frame takes the room that is left, so a long message of TLS goes in
+// several packets. It notes the range in `record`, and moves the mark of what
+// was sent. It gives false, with nothing written, when no handshake byte waits
+// or when the room does not hold the fields and one byte.
 @(private)
 crypto_frame_write :: proc "contextless" (space: ^Packet_Number_Space, writer: ^Frame_Writer, record: ^Sent_Packet) -> bool {
 	crypto := &space.crypto
@@ -349,8 +477,18 @@ crypto_frame_write :: proc "contextless" (space: ^Packet_Number_Space, writer: ^
 	return true
 }
 
-// control_frames_write writes the control frames that wait, each one when
-// it fits: those of the connection, then those of one stream.
+// control_frames_write writes the control frames that wait, each one when it
+// fits: those of the connection, then those of one stream.
+//
+// Each frame carries the value of now: MAX_DATA carries
+// `Connection.receive_max_data`, MAX_STREAMS and STREAMS_BLOCKED the limit of
+// streams of their side, PATH_RESPONSE the bytes of the last challenge. A
+// frame that went leaves `Connection.pending_controls` and is noted in
+// `record`; a frame that did not fit waits for the next packet.
+//
+// A packet carries the control frames of the first stream record that has
+// some, and of no other: its `Sent_Packet` record names one stream. The other
+// streams wait for the next packets. It gives true when it wrote a frame.
 @(private)
 control_frames_write :: proc "contextless" (connection: ^Connection, writer: ^Frame_Writer, record: ^Sent_Packet) -> bool {
 	written := false
@@ -404,7 +542,17 @@ control_frames_write :: proc "contextless" (connection: ^Connection, writer: ^Fr
 }
 
 // stream_control_frames_write writes the control frames of one stream that
-// wait, each one when it fits.
+// wait, each one when it fits: MAX_STREAM_DATA, RESET_STREAM, STOP_SENDING.
+//
+// - MAX_STREAM_DATA carries `receive_limit`, the flow control limit of the
+//   stream that this side gives.
+// - RESET_STREAM carries the code of the reset and the final size: the largest
+//   offset that this side sent, which `stream_reset_send` put in `send_length`.
+//   The peer counts it for flow control (RFC 9000, section 4.5).
+// - STOP_SENDING carries the code of the application.
+//
+// The frames that went leave `pending_controls` of the stream, and `record`
+// names them with the stream identifier. It gives false when none fits.
 @(private)
 stream_control_frames_write :: proc "contextless" (stream: ^Stream, writer: ^Frame_Writer, record: ^Sent_Packet) -> bool {
 	identifier_size := variable_length_integer_size(stream.identifier)
@@ -439,9 +587,16 @@ stream_control_frames_write :: proc "contextless" (stream: ^Stream, writer: ^Fra
 	return true
 }
 
-// stream_frame_write writes one STREAM frame: of the first stream, from
-// the record of its turn, that has bytes or its end to send. Each stream
-// then gets its turn.
+// stream_frame_write writes one STREAM frame: of the first stream, from the
+// record of its turn, that has bytes or its end to send. Each stream then gets
+// its turn.
+//
+// A packet carries one STREAM frame, so the order decides which stream moves.
+// The search starts at `Connection.stream_send_turn` and goes round the table;
+// the turn then moves to the record after the one that sent. A stream with
+// much to send therefore does not starve the others. Streams send only in the
+// state `Connected`, and a stream that this side reset sends no more data. It
+// gives false when no stream has anything to send within its limits.
 @(private)
 stream_frame_write :: proc "contextless" (connection: ^Connection, writer: ^Frame_Writer, record: ^Sent_Packet) -> bool {
 	if connection.state != .Connected {
@@ -462,10 +617,25 @@ stream_frame_write :: proc "contextless" (connection: ^Connection, writer: ^Fram
 	return false
 }
 
-// stream_frame_write_of writes one STREAM frame of a stream: the bytes of
-// a lost packet first, then new bytes within the limits of the peer for
-// the stream and for the connection, and the end of the stream when the
-// last byte goes.
+// stream_frame_write_of writes one STREAM frame of a stream (RFC 9000, section
+// 19.8): the bytes of a lost packet first, then new bytes within the limits of
+// the peer, and the end of the stream when the last byte goes.
+//
+// - **Bytes to send again** come first. The ranges that the peer acknowledged
+//   since are removed before, because new bytes of the application can have
+//   taken their place in the ring.
+// - **New bytes** go up to the least of: the bytes that the application wrote,
+//   the flow control limit of the stream (`send_limit`), and the room that the
+//   flow control limit of the connection leaves (`Connection.peer_max_data`).
+//   Only new bytes count against the limit of the connection.
+// - **The end** (the FIN bit) is set when the frame carries the last byte that
+//   the application wrote, after `stream_write` got `finish`. A frame with no
+//   byte and the FIN bit goes when every byte went before.
+//
+// The frame always has a Length field, and an Offset field when the offset is
+// not 0. It takes the room that is left in the packet. It notes its range in
+// `record`. It gives false, with nothing written, when the stream has nothing
+// to send now or when the room is too small.
 @(private)
 stream_frame_write_of :: proc "contextless" (connection: ^Connection, stream: ^Stream, writer: ^Frame_Writer, record: ^Sent_Packet) -> bool {
 	// The bytes that the peer acknowledged may be written over by new
@@ -523,11 +693,20 @@ stream_frame_write_of :: proc "contextless" (connection: ^Connection, stream: ^S
 	return true
 }
 
-// close_frame_write writes the CONNECTION_CLOSE of this side in one packet.
-// The close of an application is a frame 0x1d in a 1-RTT packet; in an
-// Initial or Handshake packet it is a frame 0x1c with APPLICATION_ERROR, so
-// that no code of the application goes out before the handshake (RFC 9000,
-// section 10.2.3).
+// close_frame_write writes the CONNECTION_CLOSE of this side in one packet
+// (RFC 9000, section 19.19), and gives its length, or 0 when it does not fit.
+//
+// - A close of the transport (`connection_fail`) is a frame of type 0x1c with
+//   the error code and the type of the frame that caused it.
+// - A close of the application (`connection_close`) is a frame of type 0x1d
+//   with the code of the application, in a 1-RTT packet only. In an Initial or a
+//   Handshake packet it is a frame of type 0x1c with APPLICATION_ERROR and the
+//   frame type 0, so that no code of the application goes out before the
+//   handshake (RFC 9000, section 10.2.3).
+//
+// The reason phrase is always empty. In the closing state each space with keys
+// sends this frame, so that a peer at any point of the handshake can read one
+// of them.
 @(private)
 close_frame_write :: proc "contextless" (connection: ^Connection, level: Encryption_Level, payload: []u8) -> int {
 	writer := Frame_Writer{bytes = payload}
