@@ -8,7 +8,8 @@ import "core:sync"
 import "core:thread"
 import "core:time"
 
-// The parallel build of the modules. Each module is built by its own
+// The parallel build of the modules, and the pool of processes that it
+// shares with the boot volumes (boot_volumes.odin). Each module is built by its own
 // process of this tool (the command `module`), which runs one compiler.
 // The compiler uses its own threads too: its output does not depend on
 // their count (docs/REPRODUCIBLE_BUILD.md, section 7). The tool runs at
@@ -34,20 +35,75 @@ import "core:time"
 // `kerneltool build <processes>` and `repeat all <count> <processes>` set it.
 module_build_processes := 0
 
-// What one module process gave.
-Module_Build_Outcome :: struct {
-	started: bool,
-	success: bool,
-	output:  []u8, // Its standard output, then its standard error.
+// What one process of a build gave.
+Build_Process_Outcome :: struct {
+	started:  bool,
+	success:  bool,
+	output:   []u8, // Its standard output, then its standard error.
+	duration: time.Duration, // From its start to its end: a measure.
 }
 
-// The work of one level, which the worker threads share.
-Module_Build_Level :: struct {
-	module_indexes: []int, // Indexes in module_builds.
-	next:           int, // The next place in module_indexes to take (atomic).
-	failed:         bool, // A module of the level failed: no new process starts (atomic).
-	outcomes:       []Module_Build_Outcome, // By index in module_builds.
-	tool_path:      string,
+// The processes of one step of a build, which the worker threads share:
+// the modules of one level, or the boot volumes that must be built.
+Build_Process_Pool :: struct {
+	commands: [][]string, // One command for each process.
+	next:     int, // The next place in commands to take (atomic).
+	failed:   bool, // A process failed: no new process starts (atomic).
+	outcomes: []Build_Process_Outcome, // By place in commands.
+}
+
+// build_processes_run runs each command in its own process, at most
+// `processes` at once, and keeps the output of each one. After a failure no
+// new process starts; the processes that run end. The outcomes have the
+// order of the commands; the caller frees the output of each one.
+build_processes_run :: proc(commands: [][]string, processes: int, allocator := context.allocator) -> []Build_Process_Outcome {
+	pool := Build_Process_Pool {
+		commands = commands,
+		outcomes = make([]Build_Process_Outcome, len(commands), allocator),
+	}
+	workers := make([]^thread.Thread, max(0, min(processes, len(commands))), context.temp_allocator)
+	for &worker in workers {
+		worker = thread.create_and_start_with_data(&pool, build_process_worker)
+	}
+	thread.join_multiple(..workers)
+	for worker in workers {
+		thread.destroy(worker)
+	}
+	return pool.outcomes
+}
+
+// build_process_worker takes the commands of a pool one at a time and runs
+// each one.
+build_process_worker :: proc(data: rawptr) {
+	pool := (^Build_Process_Pool)(data)
+	for {
+		place := sync.atomic_add(&pool.next, 1)
+		if place >= len(pool.commands) || sync.atomic_load(&pool.failed) {
+			return
+		}
+		command := pool.commands[place]
+		started := time.tick_now()
+		state, standard_output, standard_error, error := os.process_exec({command = command}, context.allocator)
+		output := make([]u8, len(standard_output) + len(standard_error))
+		copy(output, standard_output)
+		copy(output[len(standard_output):], standard_error)
+		if error != nil {
+			delete(output)
+			output = transmute([]u8)fmt.aprintfln("kerneltool: cannot start %s: %v", command[0], error)
+		}
+		delete(standard_output)
+		delete(standard_error)
+		success := error == nil && state.exited && state.success
+		pool.outcomes[place] = {
+			started  = true,
+			success  = success,
+			output   = output,
+			duration = time.tick_since(started),
+		}
+		if !success {
+			sync.atomic_store(&pool.failed, true)
+		}
+	}
 }
 
 // module_levels gives the level of each module of the table: 0 with no
@@ -114,7 +170,7 @@ build_modules_in_parallel :: proc() -> bool {
 	// The folder that every module process writes under exists before the
 	// first process starts.
 	make_folder(module_build_folder) or_return
-	outcomes := make([]Module_Build_Outcome, len(module_builds))
+	outcomes := make([]Build_Process_Outcome, len(module_builds))
 	defer {
 		for outcome in outcomes {
 			delete(outcome.output)
@@ -149,14 +205,23 @@ build_modules_in_parallel :: proc() -> bool {
 			}
 		}
 		build_measure.record_checks += time.tick_since(checks_started)
-		level := Module_Build_Level{module_indexes = indexes[:], outcomes = outcomes, tool_path = tool_path}
-		workers := make([]^thread.Thread, min(processes, len(indexes)), context.temp_allocator)
-		for &worker in workers {
-			worker = thread.create_and_start_with_data(&level, module_build_worker)
+		// Each setting of the build that this process holds goes to the
+		// module process as an argument: a setting that stays here gives a
+		// module of another build, with no error.
+		commands := make([][]string, len(indexes), context.temp_allocator)
+		for index, place in indexes {
+			command := make([]string, 6, context.temp_allocator)
+			command[0] = tool_path
+			command[1] = "module"
+			command[2] = module_builds[index].name
+			command[3] = test_build_checks ? "with_checks" : "without_checks"
+			command[4] = measure_run ? "measure_run" : "usual_run"
+			command[5] = debug_information ? "with_debug_information" : "without_debug_information"
+			commands[place] = command
 		}
-		thread.join_multiple(..workers)
-		for worker in workers {
-			thread.destroy(worker)
+		level_outcomes := build_processes_run(commands, processes, context.temp_allocator)
+		for index, place in indexes {
+			outcomes[index] = level_outcomes[place]
 		}
 		failed := false
 		for index in indexes {
@@ -197,38 +262,6 @@ build_modules_in_parallel :: proc() -> bool {
 		fmt.printfln("kerneltool: %d of %d modules kept, %d built: %s%s", kept_count, len(module_builds), built_count, strings.to_string(built_names), more)
 	}
 	return true
-}
-
-// module_build_worker takes the modules of a level one at a time and runs
-// the command `module` of this tool for each one.
-module_build_worker :: proc(data: rawptr) {
-	level := (^Module_Build_Level)(data)
-	for {
-		place := sync.atomic_add(&level.next, 1)
-		if place >= len(level.module_indexes) || sync.atomic_load(&level.failed) {
-			return
-		}
-		index := level.module_indexes[place]
-		// Each setting of the build that this process holds goes to the
-		// module process as an argument: a setting that stays here gives a
-		// module of another build, with no error.
-		command := [?]string{level.tool_path, "module", module_builds[index].name, test_build_checks ? "with_checks" : "without_checks", measure_run ? "measure_run" : "usual_run", debug_information ? "with_debug_information" : "without_debug_information"}
-		state, standard_output, standard_error, error := os.process_exec({command = command[:]}, context.allocator)
-		output := make([]u8, len(standard_output) + len(standard_error))
-		copy(output, standard_output)
-		copy(output[len(standard_output):], standard_error)
-		if error != nil {
-			delete(output)
-			output = transmute([]u8)fmt.aprintfln("kerneltool: cannot start %s: %v", level.tool_path, error)
-		}
-		delete(standard_output)
-		delete(standard_error)
-		success := error == nil && state.exited && state.success
-		level.outcomes[index] = {started = true, success = success, output = output}
-		if !success {
-			sync.atomic_store(&level.failed, true)
-		}
-	}
 }
 
 // The command module: build one module of the table in this process. The

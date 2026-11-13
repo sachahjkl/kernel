@@ -284,9 +284,10 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 
 | Command | What it does |
 |---|---|
-| `build [whole] [processes]` | Builds the modules, the boot images and the boot programs: the usual one, and one for each volume that a test needs (a start that fails, a shortage of frames, the volumes of the trusted boot that the boot program must refuse, the volumes of Secure Boot, one for each self test of the kernel). It keeps each module and the boot volumes when their inputs are the same; `build whole` keeps nothing ("The incremental build") |
+| `build [whole] [processes]` | Builds the modules, the boot images and the boot programs: the usual one, and one for each volume that a test needs (a start that fails, a shortage of frames, the volumes of the trusted boot that the boot program must refuse, the volumes of Secure Boot, one for each self test of the kernel). It keeps each module and each boot volume when its inputs are the same; `build whole` keeps nothing ("The incremental build") |
 | `module <name> ...` | Builds one module of the table, and its debug object. The parallel build runs it; run it by hand to see the errors of one module alone |
-| `run [without_checks]` | Builds, then starts the machine under QEMU in a window, with the log of the kernel on the terminal. The data disk stays from run to run. It starts the peer that takes the calls of `kerneltool call` |
+| `volume <name>` | Builds one boot volume: its boot image with the system description, its boot program, and the volume file. The build runs it for each volume that it must build; run it by hand, after a build, to see the errors of one volume alone |
+| `run [without_checks]` | Builds the modules and the main boot volume, then starts the machine under QEMU in a window, with the log of the kernel on the terminal. The data disk stays from run to run. It starts the peer that takes the calls of `kerneltool call` |
 | `call <key> "<call>"` | Calls an export of a service of the machine that `run` started, through the program `remote` over QUIC, and prints the typed result |
 | `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "kerneltool: all tests passed", then the times of the test (below) |
 | `measure ...` | A machine that measures with no other load: the locks, `scheduler N`, `windows`, `address_space`, `shortage`. The numbers are measures, never conditions |
@@ -325,6 +326,15 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `ranges` | The machines of the ranges of storage |
 | `power` | The loss of power: of the storage, of the settings, of the ranges |
 | `trusted_boot` | The volumes of the trusted boot; `trusted_boot tpm` adds the two machines with a software TPM |
+
+A part builds only the boot volumes that its machines boot ("The incremental build", "The volumes of a command"). Each part boots the main boot volume, `build/boot_volume.img`, with these differences:
+
+| Part | The boot volumes that its build builds |
+|---|---|
+| `shortage` | The volume of the shortage of frames only |
+| `return_fault` | The main volume, and the volume of the kernel with one check skipped |
+| `trusted_boot` | The main volume, the five volumes that the boot program must refuse, the volume of the other system, and the two volumes of Secure Boot with the variable store |
+| Each other part | The main volume only |
 
 The persistence and the self tests of the kernel have no part of their own: only the whole run starts them. An argument that is not a part is refused before the build: the command prints the parts that it knows and ends with the exit code 2.
 
@@ -397,15 +407,47 @@ In every other case the module is built: no record, a damaged record, a changed 
 
 **When no record is written.** The tool writes no record for a module when the compiler gave no list, or when it cannot prove that the hash and the compiler read the same bytes: an input file must be older than the start of the build by one second, and its size and its time must be the same after the build. A file that was saved during the build, or in the last second before it, costs one more build of its modules.
 
-**The boot volumes.** The 18 boot volumes and the variable store of Secure Boot have one build record, `build/boot_volumes.build_record`. Its key covers the three boot images, the debug image and the two kernels as they are now, the sources of the boot program (the list of its compiler, with the same rule of the folders), its assembly files, the test keys, the programs that build and sign, and the tool. Its outputs are each volume, its boot image, the boot program and its object, and the variable store. With the signing key of the publisher of the system (`SYSTEM_SIGNING_KEY`), the volumes are never kept, and the tool never hashes that key.
+**The boot volumes.** The build has 18 boot volumes. Each one has its own boot program, because the boot program holds its boot image and its kernel (`#load`).
+
+| Volume | Its boot image | What differs from the main volume |
+|---|---|---|
+| `main` (`build/boot_volume.img`) | `boot.image`: every module of the image | The system as it is |
+| `fails` | `boot_fails.image`: no compositor | The start must fail |
+| `shortage` | `boot_shortage.image`: no input service | The root service starts only the program `shortage` |
+| `without_return_check` | `boot.image` | The kernel `kernel_without_return_check` |
+| `changed_module`, `stated_hash` | `boot.image` | One byte of a module, or its stated hash, changed after the system description was made |
+| `wrong_signature`, `without_description` | `boot.image` | One bit of the description signature changed; no description |
+| `changed_kernel` | `boot.image` | One byte of the kernel changed after the description was made |
+| `other_system` | `boot.image` | One byte of a module changed before the description was made |
+| `secure_boot`, `secure_boot_changed` | `boot.image` | The boot program signed with the firmware signing key; the same with one byte changed |
+| `self_test_1` to `self_test_6` | `boot.image` | The flag `SELF_TEST` of the compiler of the boot program |
+
+Each volume has its own object folder, `build/boot/<name>/`, and its own build record, `build/boot/<name>.build_record`. The build key of a volume covers:
+
+- the boot image of the build that its boot image is made from, its kernel, the debug image and the public key of the system, as they are now;
+- the sources of the boot program: the list of its compiler, with the same rule of the folders as for a module;
+- the commands of the compiler, of the assembler and of the linker with each flag, and what the volume is (its self test, its change, its firmware signature);
+- the assembly files, the test keys, the programs that build and sign, and the tool.
+
+The outputs of the record are the volume, its boot image, the file that says which key signed it, the boot program and its object; for a volume of Secure Boot the signed boot program, and for `secure_boot` the variable store. A volume is kept by the three conditions of a module. With the signing key of the publisher of the system (`SYSTEM_SIGNING_KEY`), no volume is kept, and the tool never hashes that key.
+
+**Which volumes a change builds.** Every volume holds the debug image, which has the debug object of each module of the table. So a change of the code of one program builds each of the 18 volumes that the command needs: the boot image tells apart only three groups (a change of the compositor does not change `boot_fails.image`, a change of the input service does not change `boot_shortage.image`), and the debug image removes that difference. A change of the boot program builds every volume. A change that gives the same module and the same debug object (a host test that a build tag leaves out) builds no volume: the module is built again, its bytes are the same, and so are the boot image and the debug image.
+
+**The volumes are built at the same time.** Each volume that must be built has its own process of the tool (the command `volume`), as each module has. Two volume processes write no common file: each writes its object folder, its boot image, its volume and the files beside it, and each of these paths holds the name of the volume. The public key of the system, which every boot program loads, is written one time before the first volume process starts. The variable store of Secure Boot is written by the process of the volume `secure_boot` only. The count of processes at once is the count of `build <processes>`, or the count of the processors, at most 8: one volume process runs one compiler with `-o:speed` on a program that holds a boot image of 11 MB, mostly on one thread, and holds the volume of 64 MiB in its memory, so the bound keeps the memory of all the processes under a few gigabytes on a host with many processors.
+
+**The volumes of a command.** A command builds only the volumes that it boots. `build`, `test` with no part, `check` and `screenshots` build the 18 volumes. `test <part>` builds the volumes of its part ("The parts of the machine test"); `run` and `film` build the main volume; `measure` builds the main volume and the volume of the shortage. The table is in the tool (`test_part_volumes`, `command_volumes`), with the procedures that start the machines of each part: a host test reads the sources of the tool and fails when such a procedure names a volume that is not in its row, or when a part has no row.
+
+A volume that a command does not need is not built and not checked. It stays with its record, and the next command that needs it compares the record with the inputs of that time. A machine never starts from such a volume: the tool starts a machine only from a volume that the build of the same process built or kept, and refuses any other with an error.
+
+**The volume file.** A volume is 64 MiB, and its files fill its start. The tool writes the bytes up to the last byte that is not zero, then gives the file its whole size: the file system stores no block for the end, and a read of it gives zero bytes. QEMU reads the volume as a raw disk and sees the same bytes; the hash of the build record is the hash of the content, with the zero bytes.
 
 **What runs at each build.** The debug image, the pointer themes, the glyph caches and the three boot images are built at each build: each one reads outputs of the modules or files of the repository, and its time is in the measure.
 
 **How to force a whole build.** `kerneltool build whole` ignores every record, builds each module and each boot volume, and writes new records. The commands that prove the build always build whole, with no option: `check`, `screenshots` and `repeat`, and the two procedures of the second build set it themselves, so no caller can compare two builds of which one kept its outputs. `nix flake check` builds in an empty folder, with no record.
 
-**What costs a whole build.** A change of a file of `tools/kerneltool`, or of a package that the tool imports, changes the identity of the tool, so every module is built again: a scenario of a machine test is such a file. A change of the compiler or of a program of the build does the same. A change of a file of a package builds again each module that imports the package, also when the file is a host test that a build tag leaves out.
+**What costs a whole build.** A change of a file of `tools/kerneltool`, or of a package that the tool imports, changes the identity of the tool, so every module and every boot volume that the command needs is built again: a scenario of a machine test is such a file. A change of the compiler or of a program of the build does the same. A change of a file of a package builds again each module that imports the package, also when the file is a host test that a build tag leaves out.
 
-**The measure.** Each `build` prints its measure, lines that start with `kerneltool: measure: the build`: the whole time, the time of the hash of the input files with their count and their bytes, the time of the modules with the count of the modules built and kept (and in it the checks and the writes of the records), then one line for each later step: the debug image, the pointer themes, the glyph caches, the three boot images, the boot volumes, and inside the boot volumes the signed boot images, the compiler of the boot program, the link, and the volume files. Each number is a measure: nothing reads one.
+**The measure.** Each `build` prints its measure, lines that start with `kerneltool: measure: the build`: the whole time, the time of the hash of the input files with their count and their bytes, the time of the modules with the count of the modules built and kept (and in it the checks and the writes of the records), then one line for each later step: the debug image, the pointer themes, the glyph caches, the three boot images, the checks and the writes of the build records of the boot volumes, and the boot volumes in all. One line gives the count of the volumes built, kept and not needed by the command, with the count of volume processes at once; then one line for each built volume gives the whole time of its process. The process of a volume prints its own line, `kerneltool: measure: the build of the boot volume <name>`: the signed boot image, the compiler of the boot program, the assembler with the link and the firmware signature, and the volume file. Each number is a measure: nothing reads one.
 
 One whole build before the incremental build, on a host with 16 processors, read in the times of the files that it wrote: 83 s from the first LLVM IR file to the last module (84 modules, one compiler process for each processor), under 1 s for the debug image, the pointer themes and the three boot images, then 51 s for the 18 boot volumes, one after the other, 2.8 s each.
 

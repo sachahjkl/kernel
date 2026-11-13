@@ -399,19 +399,29 @@ hash_as_hexadecimal_and_back :: proc(t: ^testing.T) {
 	testing.expect(t, !upper, "the record writes lower case only")
 }
 
-// The measure of a build says the counts of the modules and each later step.
+// The measure of a build says the counts of the modules, each later step,
+// the counts of the boot volumes, and the time of each built volume.
 @(test)
 build_measure_lines_name_the_counts_and_the_steps :: proc(t: ^testing.T) {
 	steps := make([dynamic]Build_Step_Time, context.temp_allocator)
 	append(&steps, Build_Step_Time{name = "the debug image", duration = 250 * time.Millisecond})
-	measure := Build_Measure{input_files = 1200, input_bytes = 9000000, input_hash = 200 * time.Millisecond, modules = 4 * time.Second, modules_built = 3, modules_kept = 81, steps = steps, volumes_built = 18, volume_compiles = 30 * time.Second}
+	volume_times := make([dynamic]Build_Step_Time, context.temp_allocator)
+	append(&volume_times, Build_Step_Time{name = "main", duration = 3 * time.Second}, Build_Step_Time{name = "shortage", duration = 2500 * time.Millisecond})
+	measure := Build_Measure{input_files = 1200, input_bytes = 9000000, input_hash = 200 * time.Millisecond, modules = 4 * time.Second, modules_built = 3, modules_kept = 81, steps = steps, volumes_built = 2, volumes_kept = 1, volumes_not_needed = 15, volume_processes = 2, volume_times = volume_times}
 	lines := build_measure_lines(measure, 60 * time.Second)
-	testing.expect_value(t, len(lines), 3)
+	testing.expect_value(t, len(lines), 5)
 	testing.expect(t, strings.contains(lines[0], "the hash of 1200 input files (9000000 bytes) 0.20 s"), lines[0])
 	testing.expect(t, strings.contains(lines[0], "3 built, 81 kept"), lines[0])
 	testing.expect(t, strings.contains(lines[1], "0.25 s: the debug image"), lines[1])
-	testing.expect(t, strings.contains(lines[2], "in the 18 boot volumes"), lines[2])
-	measure.volumes_kept = true
+	testing.expect(t, strings.contains(lines[2], "the boot volumes: 2 built, 1 kept, 15 not needed by this command; 2 volume processes at once"), lines[2])
+	testing.expect(t, strings.contains(lines[3], "3.00 s: the process of the boot volume main"), lines[3])
+	testing.expect(t, strings.contains(lines[4], "2.50 s: the process of the boot volume shortage"), lines[4])
+	// A build with no volume to build names the kept ones, and no process.
+	measure.volumes_built = 0
+	measure.volumes_kept = 18
+	measure.volumes_not_needed = 0
+	measure.volume_times = nil
 	lines = build_measure_lines(measure, time.Second)
-	testing.expect(t, strings.contains(lines[2], "the boot volumes are kept"), lines[2])
+	testing.expect_value(t, len(lines), 3)
+	testing.expect(t, strings.contains(lines[2], "0 built, 18 kept, 0 not needed"), lines[2])
 }
