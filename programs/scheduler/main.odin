@@ -1037,7 +1037,7 @@ weight_limits :: proc "contextless" () -> bool {
 }
 
 // No gain by writes, on what the kernel reports (docs/SCHEDULING.md, "The
-// schedule of a live thread"). The thread report gives the distance that
+// schedule of a live thread"). The thread report gives the lag that
 // EEVDF keeps for a thread that is held (`Thread_Report.lag`): below 0 the
 // thread owes time, above 0 it is owed time. A write must never make that
 // number larger, and must leave a number below 0 as it is. The conditions compare
@@ -1046,7 +1046,7 @@ OWING_ROUNDS :: 200
 
 // What the rounds saw: the last three values are measures.
 Owing_Result :: struct {
-	rounds:  u64, // Rounds where each operation gave Ok and the thread was held.
+	rounds:  u64, // The rounds that ran.
 	grew:    u64, // Writes after which the reported lag was larger.
 	forgave: u64, // Writes after which a thread that owed time did not owe the same time.
 	owing:   u64, // Rounds where the held thread owed time.
@@ -1087,13 +1087,44 @@ owing_step :: proc "contextless" (result: ^Owing_Result, thread: system.Handle, 
 	return lag
 }
 
+// spinner_with_company gives a spinner that runs on a processor whose
+// queue holds another spinner, from the thread report: a Stop of it finds
+// other threads in its queue, so its lag is taken against them. With none
+// it gives the first spinner; the choice is a help, not a condition.
+spinner_with_company :: proc "contextless" (count: int) -> int {
+	if self_slot == 0 || !threads_of(self_slot, self_serial) {
+		return 0
+	}
+	items := thread_table.threads[:min(thread_table.count, op.THREAD_REPORT_CAPACITY)]
+	for index in 0 ..< count {
+		number := intrinsics.atomic_load(&spinners[index].number) - 1
+		for &item in items {
+			if item.number != number || item.processor == 0 {
+				continue
+			}
+			for &other in items {
+				if other.number != number && other.queued == 1 && other.home == item.processor - 1 {
+					return index
+				}
+			}
+		}
+	}
+	return 0
+}
+
 // owing_kept: one spinner more than the processors, so that a queue has
-// two threads. In each round the first spinner gets the weight 1 while it
-// runs or is in a list, then a Stop holds it; in the hold it gets the full
-// weight, the request 1 us, the longest request, the weight 1 and the full
-// weight again; then a Resume. These are the sequences that take a thread
-// through both forms of its position: a weight down in the list and up in
-// the hold, and a short request around a hold.
+// two threads. In each round a spinner gets the weight 1 while it runs or
+// is in a list, then a Stop holds it; in the hold it gets the full weight,
+// the request 1 us, the longest request, the weight 1 and the full weight
+// again; then a Resume. These are the sequences that take a thread through
+// both forms of its position: a weight down in the list and up in the
+// hold, and a short request around a hold.
+//
+// A round where the held spinner has the lag 0 checks nothing. So the
+// rounds go on after the first OWING_ROUNDS until the kernel reported the
+// held spinner with a lag below 0 at least one time: a state of the
+// kernel, not a speed. The hang bound ends the rounds if that state never
+// comes, and the case then fails and says so.
 owing_kept :: proc "contextless" (processors: u64) -> bool {
 	result: Owing_Result
 	before, set_status := system.strategy_set(machine, .Eevdf)
@@ -1103,14 +1134,13 @@ owing_kept :: proc "contextless" (processors: u64) -> bool {
 	count := min(int(processors) + 1, SPINNER_LIMIT)
 	numbers: [SPINNER_LIMIT]u64
 	started := spinners_start(0, count, full_weight) && spinner_machine_numbers(0, count, &numbers)
-	thread := spinner_threads[0].handle
 	long := op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_LIMIT}
-	started &&= system.thread_schedule_write(thread, 0, long) == .Ok
-	for _ in 0 ..< OWING_ROUNDS {
-		if !started {
-			break
-		}
-		number := intrinsics.atomic_load(&spinners[0].number) - 1
+	rounds, wrong_rounds: u64
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	for started && wrong_rounds == 0 && (rounds < OWING_ROUNDS || result.owing == 0) && system.time() < deadline {
+		target := spinner_with_company(count)
+		thread := spinner_threads[target].handle
+		number := intrinsics.atomic_load(&spinners[target].number) - 1
 		round_right := system.thread_schedule_write(thread, 0, {weight = 1, request = op.REQUEST_LIMIT}) == .Ok
 		_, stop_status := system.call(.Thread_Control, u64(thread), 0, u64(op.Thread_Control_Command.Stop))
 		if stop_status == .Ok {
@@ -1133,17 +1163,28 @@ owing_kept :: proc "contextless" (processors: u64) -> bool {
 		} else {
 			round_right = false
 		}
-		result.rounds += u64(round_right)
+		rounds += 1
+		wrong_rounds += u64(!round_right)
 		// The spinner runs again before the next round. The pause is no
-		// condition: a round where the thread owes nothing is counted, not
-		// refused.
+		// condition.
 		system.sleep(system.time() + 1)
 	}
+	result.rounds = rounds
 	spinners_stop(0, count)
 	system.strategy_set(machine, before)
-	as_it_must := started && result.rounds == OWING_ROUNDS && result.grew == 0 && result.forgave == 0
-	system.log("scheduler: ", u64(OWING_ROUNDS), " rounds on a spinner under EEVDF: the weight 1 written while it ran, a Stop, then in the hold the full weight, the request 1 us, the longest request, the weight 1 and the full weight, a Resume: the lag that the kernel reports grew after ", result.grew, " writes, and a lag below 0 changed after ", result.forgave, " writes", as_it_must ? string(": as it must") : string(": WRONG"))
-	system.log("scheduler: in these rounds the kernel reported the held spinner with a lag below 0 ", result.owing, " times and above 0 ", result.owed, " times; the lowest lag was minus ", result.largest, " weighted cycles (measures)")
+	checked := started && wrong_rounds == 0 && rounds >= OWING_ROUNDS
+	as_it_must := checked && result.owing != 0 && result.grew == 0 && result.forgave == 0
+	ending := string(": as it must")
+	switch {
+	case !checked:
+		ending = ": a round did not run: WRONG"
+	case result.owing == 0:
+		ending = ": no round had a lag below 0, so nothing was checked: WRONG"
+	case !as_it_must:
+		ending = ": WRONG"
+	}
+	system.log("scheduler: rounds on a spinner under EEVDF, at least ", u64(OWING_ROUNDS), " and until the kernel reported the held spinner with a lag below 0: the weight 1 written while it ran, a Stop, then in the hold the full weight, the request 1 us, the longest request, the weight 1 and the full weight, a Resume: the lag that the kernel reports grew after ", result.grew, " writes, and a lag below 0 changed after ", result.forgave, " writes", ending)
+	system.log("scheduler: in ", result.rounds, " rounds the kernel reported the held spinner with a lag below 0 ", result.owing, " times and above 0 ", result.owed, " times; the lowest lag was minus ", result.largest, " weighted cycles (measures)")
 	return as_it_must
 }
 

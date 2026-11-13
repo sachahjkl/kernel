@@ -171,6 +171,12 @@ Thread :: struct #align (64) {
 	lag:              i64, // At the last wait: EEVDF, the lag; fair, the distance to the queue clock.
 	queued:           bool,
 	placed:           bool, // The strategy placed the thread: virtual means something.
+	// EEVDF: the weight that `lag` was taken with at the last wait. The
+	// wake scales the lag back with it, not with the weight of now: a
+	// weight written during the wait then changes nothing of what the
+	// thread owes. In the hot line because a wake reads it with `lag`; it
+	// takes two of its free bytes. A weight is at most 1024.
+	lag_weight:       u16,
 	frame:        Frame,
 	extended_state: Extended_State_Area, // Complete while the thread is on no processor: schedule saves it when a processor leaves the thread, and restores it when a processor takes it (docs/ARCHITECTURE.md, "The extended state of the processor").
 	program:      u32,
@@ -225,7 +231,8 @@ Thread :: struct #align (64) {
 	weight_limit: u32,
 }
 
-#assert(offset_of(Thread, placed) < 64)
+#assert(offset_of(Thread, lag_weight) + size_of(u16) <= 64)
+#assert(op.WEIGHT_FULL <= max(u16))
 #assert(offset_of(Thread, frame) == 64)
 
 // word_address gives the physical address of a 32-bit word of a program,

@@ -951,7 +951,7 @@ Do not use: min_vruntime.
 
 The lag of a thread, under EEVDF, is the average virtual time of its queue minus its own virtual time: what the thread is owed.
 
-A positive lag makes the thread eligible. Across a wait the kernel keeps the lag against the other threads: their average minus the virtual time of the thread. The weight of the thread is not in that number, so a weight written during the wait changes nothing of it. Above 0 it is kept within two requests (at least one tick); below 0 within the longest turn at the weight 1, a bound that no written value changes. So a thread that slept is neither punished nor paid for its sleep without limit, and a write of its schedule takes nothing away that it owes.
+A positive lag makes the thread eligible. The lag is kept across a wait: above 0 within two requests (at least one tick), below 0 within the longest turn at the weight of the thread, a bound with no request in it. The thread also keeps the weight that the lag was taken with, and the wake places it with that weight: a weight written during the wait changes nothing of what the thread owes. So a thread that slept is neither punished nor paid for its sleep without limit, and a write of its schedule takes nothing away that it owes.
 
 Do not use: debt, credit.
 
