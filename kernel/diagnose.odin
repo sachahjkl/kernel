@@ -575,9 +575,17 @@ handles_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 				}
 			}
 		case .Thread_Control:
-			// The right depends on the command: Write for a write.
+			// The right depends on the command: Write for a write of the
+			// registers, Control for a write of the schedule. A command of
+			// the schedule also takes the machine handle, with Schedule
+			// and Inspect.
 			if n == 0 && v[2] <= u64(max(op.Thread_Control_Command)) {
-				rights = op.thread_control_rights(op.Thread_Control_Command(v[2]))
+				command := op.Thread_Control_Command(v[2])
+				rights = op.thread_control_rights(command)
+				machine_rights, by_machine_number := op.thread_control_machine_rights(command)
+				if slot, found := read_handle_find(program, v[0], .None); found && slot.kind == .Machine && by_machine_number {
+					kind, rights = .Machine, machine_rights
+				}
 			}
 		}
 		if handle_explain(record, program, n + 1, v[n], kind, rights) {
@@ -1099,9 +1107,12 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 	case .Thread_Control:
 		// A refused write: the value and the part that the check refused, as
 		// the operation kept them on this processor from its own copy. The
-		// command itself is a choice, below.
+		// command itself is a choice, below. A weight, a request and a
+		// weight limit have a largest value, which the operation kept too:
+		// for a weight it is the full weight, or the weight that the thread
+		// had then when its own program wrote a higher one.
 		if cpu := processor_self(); cpu.thread_write_refusal != .None {
-			record_set(record, .Bad_Value, .None, 4, cpu.thread_write_refused_value, 0, u64(cpu.thread_write_refusal))
+			record_set(record, .Bad_Value, .None, 4, cpu.thread_write_refused_value, cpu.thread_write_refused_limit, u64(cpu.thread_write_refusal))
 			return true
 		}
 	case .Fault_Handler_Set:
@@ -1115,9 +1126,13 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		}
 		return true
 	case .Thread_Create:
+		// The most of a weight is the weight limit of the calling thread,
+		// which is the full weight unless the holder of the machine
+		// lowered it.
+		weight_limit := u64(intrinsics.atomic_load(&threads[processor_self().current].weight_limit))
 		switch {
-		case v[4] > op.WEIGHT_FULL:
-			record_set(record, .Bad_Value, .None, 5, v[4], op.WEIGHT_FULL, 0)
+		case v[4] > weight_limit:
+			record_set(record, .Bad_Value, .None, 5, v[4], weight_limit, 0)
 		case v[5] > op.REQUEST_LIMIT:
 			record_set(record, .Bad_Value, .None, 6, v[5], op.REQUEST_LIMIT, 0)
 		case:

@@ -171,6 +171,62 @@ strategy_clear :: proc "contextless" (thread: ^Thread) {
 	thread.placed = false
 }
 
+// strategy_weight_raised gives a thread whose weight was raised the zero
+// values of its strategy fields, and places it again as a new thread when
+// it is in the list: what a change of strategy does to each thread, for
+// the same reason. The place of a thread is a history under its old
+// weight. A place far from the other threads is harmless at a small
+// weight, which moves the average of the queue little; the same place at
+// a large weight moves the average far, and the other threads then wait.
+// A thread placed as new is at the average: it has no such place. Only
+// the holder of the machine raises a weight, so no program gets these
+// zero values for its own thread. A thread on a processor is placed at
+// its next tick or when it leaves; a thread that waits or that a stop
+// holds is placed when it enters the list again. The caller holds the run
+// lock of the queue, which is the queue of the home of the thread, and
+// wrote the new weight.
+//
+// A write that lowers a weight or changes a request calls nothing here:
+// the fields stay, and the next charge, the next turn and the next bound
+// use the new values (docs/SCHEDULING.md, "The schedule of a live
+// thread").
+strategy_weight_raised :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread) {
+	strategy_clear(thread)
+	if thread.queued {
+		strategy_of(queue).ready(queue, home, thread, .New)
+	}
+}
+
+// strategy_leaves_list keeps the position of a thread that leaves the list
+// of its queue with no turn: a stop of Thread_Control holds it. The thread
+// leaves as a thread that starts to wait, with no time to charge, and the
+// Resume places it as a woken thread: a thread that owes time still owes
+// it after a Stop and a Resume. The caller holds the run lock of the
+// queue; the thread is still in the list.
+//
+// Under EEVDF the lag of a thread that leaves its processor is V minus its
+// virtual time, where V counts the thread. A thread of the list is in V
+// only while its budget has time. So its lag is taken here from the
+// average of the other threads, times W / (W + w), with W their weights
+// and w its own: the same value, with no read of its budget. The
+// difference is clamped as a key of the average is (2^44), and the
+// weights sum to at most 2^18.
+strategy_leaves_list :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread) {
+	if !thread.placed {
+		return
+	}
+	if queue.strategy != .Eevdf {
+		strategy_of(queue).stopping(queue, processors[home], thread, 0, true)
+		return
+	}
+	lag: i64
+	if average, others := eevdf_average(queue, home, thread); others != 0 {
+		lag = clamp(i64(average - thread.virtual), -KEY_LIMIT, KEY_LIMIT) * others / (others + i64(thread.weight))
+	}
+	bound := i64(eevdf_bound(thread))
+	thread.lag = clamp(lag, -bound, bound)
+}
+
 // strategy_tick charges the time of the thread that runs on this processor
 // to its strategy, under the run lock of the processor: the home of a
 // thread that runs is its processor. true: the turn ends.
@@ -379,9 +435,10 @@ eevdf_bound :: #force_inline proc "contextless" (thread: ^Thread) -> u64 {
 // eevdf_average gives V for a queue: the threads of the list that a budget
 // lets run, and the thread that runs on the processor of the queue, each
 // with its weight; and the sum of their weights. A thread that is not
-// placed does not count. The keys are clamped (KEY_LIMIT): a product is at
+// placed does not count, and `without` does not count: the average of the
+// other threads of a thread. The keys are clamped (KEY_LIMIT): a product is at
 // most 2^54, the sum of 256 threads at most 2^62.
-eevdf_average :: proc "contextless" (queue: ^Run_Queue, home: u32) -> (average: u64, weight: i64) {
+eevdf_average :: proc "contextless" (queue: ^Run_Queue, home: u32, without: ^Thread = nil) -> (average: u64, weight: i64) {
 	clock := queue.virtual
 	sum: i64
 	add :: #force_inline proc "contextless" (thread: ^Thread, clock: u64, sum: ^i64, weight: ^i64) {
@@ -392,14 +449,14 @@ eevdf_average :: proc "contextless" (queue: ^Run_Queue, home: u32) -> (average: 
 		}
 	}
 	for index := queue.head; index != 0; index = threads[index].queue_next {
-		if !budget_spent(threads[index].budget) {
+		if &threads[index] != without && !budget_spent(threads[index].budget) {
 			add(&threads[index], clock, &sum, &weight)
 		}
 	}
 	// A processor that starts runs schedule before the first processor
 	// puts its record in `processors`: no record, no thread on it.
 	if cpu := processors[home]; cpu != nil {
-		if running := cpu.current; running != 0 {
+		if running := cpu.current; running != 0 && &threads[running] != without {
 			add(&threads[running], clock, &sum, &weight)
 		}
 	}
