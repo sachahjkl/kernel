@@ -147,8 +147,9 @@ Root_Command :: enum u32 {
 	// rule no longer gives.
 	// The completion: values[0] the handle, values[1..4] the hash of the
 	// file of the program, values[5] its principal. A refusal has the kind
-	// `No_Grant` with the unit `Debug_Access`, and `found` is 1 + the grant
-	// that refuses. The grant is `debug` in `Grants`, a grant of the
+	// `No_Grant` with the unit `Debug_Access`, and `found` is 1 + the start
+	// grant that refuses (start_grant.Grant), which the sentence of the
+	// record names. The grant is `debug` in `Grants`, a grant of the
 	// caller; `Revoke` ends each handle that came from it, and the
 	// debugging with them. With values[5] not 0, the service says that it
 	// ended the debugging of the program for that caller: the root service
@@ -299,6 +300,13 @@ root_argument_name :: proc "contextless" (command: i64, argument: i64) -> string
 // can revoke while the program runs (the command `Revoke`). Each grant is a
 // handle of the context, or a connection that the root service made; a
 // revocation ends each handle and each mapping that came from it.
+//
+// A recorded grant is not a start grant (contract:start_grant). A start
+// grant says what the role of a program gives, and its name has capital
+// letters (`Inspect`). A recorded grant says which handle the root service
+// gave, and its name is in lower case (`machine`): the console types it.
+// Several start grants are one recorded grant: `Inspect`, `Stop`,
+// `Schedule` and `Events` are rights of the one handle `machine`.
 Root_Grant :: enum u32 {
 	Log         = 0, // Write on the log.
 	Machine     = 1, // The machine, with the rights of the role.

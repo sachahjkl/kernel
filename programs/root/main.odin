@@ -82,70 +82,14 @@ import "support:principals"
 import "support:storage"
 import "contract:settings"
 import "contract:palette_table"
+import "contract:start_grant"
 
 ROOT_MARK :: "root: ok"
 
-// What a program receives, by name. A program that is not here receives a
-// ring to the compositor and nothing else.
-Grant :: enum {
-	Root_Ring, // Start and stop programs.
-	Inspect, // The machine, with the right Inspect.
-	Stop, // The machine, with the right Stop.
-	Image, // Read the boot image.
-	Log_Records, // Read the records of the log.
-	Serve, // A service: other programs call its exports through connections.
-	Terminal, // The program has no surface: it writes records to a terminal, and reads keys from it.
-	Store, // A private store in the storage service: a connection to it names the program, with a limit of blocks.
-	Acts_For_Principal, // The program acts for the principal of its session: a service shows it what it holds for all callers.
-	Data_Disk, // A block service of the data disk, and its block ring.
-	Scratch_Disk, // A block service of the disk of the measures, and its block ring.
-	Replacements, // Read the replacement table of the machine.
-	Replace, // Change the replacement table of the machine (Root_Command.Replace).
-	Network, // An endpoint in the network service, with the grant of endpoint_of: datagrams, or segments of TCP.
-	Network_Device, // The frame service of the network device and its frame ring, and a control ring from this service.
-	Connect, // A ring to this service that serves Connect and Disconnect only, to the services of callable_of.
-	Schedule, // The machine, with the right Schedule: change the scheduling strategy of the machine.
-	Settings, // The settings page with Write (contract:settings): the one writer of the settings of the machine.
-	Clock, // The date page with Write and the two ports of the real-time clock (contract:date): the one writer of the date.
-	History_Store, // A store of its own in the storage service for the line history of the program, apart from its private store (Root_Command.Connect_History).
-	Events, // The machine, with the right Events: give the event table of the machine (kernel events of every program).
-	Principals, // A ring to this service for Principal_Record and Principal_Unlock only: the program that keeps the records of the named principals (docs/PRINCIPALS.md).
-	Debug_Image, // The debug image, read-only: the names of the procedures and the source lines of a stop report (debug_image.odin).
-	Debugger, // A ring to this service for Debug only: the service that debugs a program on behalf of a caller of its connections (Root_Command.Debug).
-	Palette, // The palette provider of the desktop: the entry table with Write and the ring to the compositor (Root_Command.Palette_Provide).
-	System_Part, // A part of the system that this service starts by itself, with handles that no other grant names: the screen and the input ring (the compositor), a device (a device service), the text of another program (a terminal). No program asks for it and no caller holds it.
-}
-
-// The name of each grant, as the log writes it.
-@(rodata)
-grant_names := [Grant]string {
-	.Root_Ring          = "Root_Ring",
-	.Inspect            = "Inspect",
-	.Stop               = "Stop",
-	.Image              = "Image",
-	.Log_Records        = "Log_Records",
-	.Serve              = "Serve",
-	.Terminal           = "Terminal",
-	.Store              = "Store",
-	.Acts_For_Principal = "Acts_For_Principal",
-	.Data_Disk          = "Data_Disk",
-	.Scratch_Disk       = "Scratch_Disk",
-	.Replacements       = "Replacements",
-	.Replace            = "Replace",
-	.Network            = "Network",
-	.Network_Device     = "Network_Device",
-	.Connect            = "Connect",
-	.Schedule           = "Schedule",
-	.Settings           = "Settings",
-	.Clock              = "Clock",
-	.History_Store      = "History_Store",
-	.Events             = "Events",
-	.Principals         = "Principals",
-	.Debug_Image        = "Debug_Image",
-	.Debugger           = "Debugger",
-	.Palette            = "Palette",
-	.System_Part        = "System_Part",
-}
+// What a program receives, by name: a start grant. The list and the name of
+// each one are a contract, because the reader of an error record names the
+// start grant that refused a debug access (contract/start_grant).
+Grant :: start_grant.Grant
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	switch name {
@@ -1571,7 +1515,7 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 	}
 	if grant, refuses := debug_refusing_grant(caller, target); refuses {
 		values^ = errors.ring_fail(kind, .No_Grant, .Debug_Access, 1, 0, 0, 1 + i64(grant))
-		system.log_in("programs", .Info, "root: refused ", system.Module_Name{system.name_of(caller.name[:])}, " the debug access to ", system.Module_Name{name}, ": the grant ", grant_names[grant], " of the program refuses it")
+		system.log_in("programs", .Info, "root: refused ", system.Module_Name{system.name_of(caller.name[:])}, " the debug access to ", system.Module_Name{name}, ": the grant ", start_grant.GRANT_NAMES[grant], " of the program refuses it")
 		return .Bad_State
 	}
 	// One debugger for one program: the kernel has the same rule.

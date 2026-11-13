@@ -18,6 +18,7 @@ import "contract:errors"
 import "contract:fixed_addresses"
 import module "contract:module"
 import op "contract:operation"
+import "contract:start_grant"
 
 SITE_TYPES_FOLDER :: SITE_REFERENCE_FOLDER + "/types"
 SITE_TYPES_FILE :: "tools/kerneltool/site_types.odin"
@@ -25,7 +26,7 @@ SITE_MODULE_CONTRACT_DOCUMENT :: "docs/MODULE_CONTRACT.md"
 // The packages whose types the site documents: the packages whose files the
 // reference tables read, and the module contract, whose types the
 // descriptions of the exports use.
-SITE_TYPE_PACKAGES :: [?]string{"contract/operation", "contract/errors", "contract/fixed_addresses", "contract/module"}
+SITE_TYPE_PACKAGES :: [?]string{"contract/operation", "contract/errors", "contract/fixed_addresses", "contract/module", "contract/start_grant"}
 // A short card shows at most this many fields, members or bits; the page of
 // the types shows them all.
 SITE_TYPE_CARD_ROWS :: 8
@@ -246,6 +247,8 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"module", "Error", type_info_of(module.Error)},
 		{"module", "Bound_Import", type_info_of(module.Bound_Import)},
 		{"module", "Replacement", type_info_of(module.Replacement)},
+		// contract/start_grant
+		{"start_grant", "Grant", type_info_of(start_grant.Grant)},
 	}
 	list := make([]Site_Type_Row, len(rows), context.temp_allocator)
 	copy(list, rows[:])

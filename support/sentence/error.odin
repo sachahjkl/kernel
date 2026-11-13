@@ -3,11 +3,14 @@ package sentence
 import "contract:errors"
 import module "contract:module"
 import op "contract:operation"
+import "contract:start_grant"
 
 // The sentence of an error record (docs/MODULE_CONTRACT.md, section 8). The
 // record holds values only: the names come from the operation table of the
 // kernel, or from the description of the export. The record can come from
 // another program: a value out of an enumeration is written as a number.
+// A value inside an enumeration of the contract is written as its name: a
+// start grant is "the grant Store", never its number.
 
 // rights_text writes a set of rights from a field of an error record.
 @(private = "file")
@@ -271,9 +274,18 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, "the caller has no grant for this: ")
 		write_part(writer, unit)
 		if errors.Unit(record.unit) == .Debug_Access && record.found != 0 {
-			write_part(writer, ": the program holds a grant that the caller does not hold, the grant ")
-			write_part(writer, record.found - 1)
-			write_part(writer, " of the root service")
+			// The words of the log of the root service for the same refusal.
+			// A number that names no start grant comes from a root service of
+			// a later build: the sentence gives the number and says so.
+			if name, known := start_grant.grant_name(record.found - 1); known {
+				write_part(writer, ": the grant ")
+				write_part(writer, name)
+				write_part(writer, " of the program refuses it")
+			} else {
+				write_part(writer, ": a grant of the program refuses it, the start grant number ")
+				write_part(writer, record.found - 1)
+				write_part(writer, ", which this program does not know")
+			}
 		}
 	case .Malformed:
 		write_part(writer, "the module of ")

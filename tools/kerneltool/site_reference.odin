@@ -18,6 +18,7 @@ SITE_ERRORS_FILE :: "contract/errors/errors.odin"
 SITE_FIXED_ADDRESSES_FILE :: "contract/fixed_addresses/fixed_addresses.odin"
 SITE_SYSTEM_GRANTS_FILE :: "support/system/grants.odin"
 SITE_ROOT_FILE :: "programs/root/main.odin"
+SITE_START_GRANT_FILE :: "contract/start_grant/start_grant.odin"
 SITE_MODULES_FILE :: "tools/kerneltool/modules.odin"
 SITE_CONSOLE_COMMAND_FILES :: [?]string{"programs/console/commands.odin", "programs/console/debugger_commands.odin", "programs/console/tables.odin"}
 
@@ -52,7 +53,7 @@ Site_Reference :: struct {
 	error_kinds:      []Site_Enumeration_Member,
 	error_units:      []Site_Enumeration_Member,
 	unit_names:       map[string]string,
-	start_grants:     []Site_Enumeration_Member, // Grant of programs/root: what a program receives at its start.
+	start_grants:     []Site_Enumeration_Member, // Grant of contract/start_grant: what a program receives at its start.
 	root_grants:      []Site_Enumeration_Member, // Root_Grant of support/system: what the root service records and can revoke.
 	root_grant_names: map[string]string,
 	program_grants:   []Site_Name_Case,
@@ -134,6 +135,7 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	fixed_text := site_read(SITE_FIXED_ADDRESSES_FILE) or_return
 	grants_text := site_read(SITE_SYSTEM_GRANTS_FILE) or_return
 	root_text := site_read(SITE_ROOT_FILE) or_return
+	start_grant_text := site_read(SITE_START_GRANT_FILE) or_return
 	problem: string
 
 	members: []Site_Enumeration_Member
@@ -156,7 +158,7 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	note(&problems, problem)
 	reference.unit_names, problem = site_names_read(errors_text, SITE_ERRORS_FILE, "UNIT_NAMES")
 	note(&problems, problem)
-	reference.start_grants, problem = site_enumeration_read(root_text, SITE_ROOT_FILE, "Grant")
+	reference.start_grants, problem = site_enumeration_read(start_grant_text, SITE_START_GRANT_FILE, "Grant")
 	note(&problems, problem)
 	reference.root_grants, problem = site_enumeration_read(grants_text, SITE_SYSTEM_GRANTS_FILE, "Root_Grant")
 	note(&problems, problem)
@@ -192,7 +194,7 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	reference.statuses_about = site_comment_above(operation_text, "Status :: enum")
 	reference.error_kinds_about = site_comment_above(errors_text, "Kind :: enum")
 	reference.error_units_about = site_comment_above(errors_text, "Unit :: enum")
-	reference.start_grants_about = site_comment_above(root_text, "Grant :: enum")
+	reference.start_grants_about = site_comment_above(start_grant_text, "Grant :: enum")
 	reference.root_grants_about = site_comment_above(grants_text, "Root_Grant :: enum")
 	reference.fixed_ranges_about = site_comment_above(fixed_text, "Fixed_Range :: enum")
 	reference.context_about = site_comment_above(operation_text, "CONTEXT_HANDLES ::")
@@ -718,9 +720,9 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 	{
 		b := strings.builder_make(context.temp_allocator)
 		strings.write_string(&b, "<h1>Grants of the root service</h1>\n<p>The root service starts the programs and gives each one only the handles of its role.</p>\n<h2 id=\"at-start\">What a program receives at its start</h2>\n")
-		site_about_paragraph(site, &b, site_page_file(SITE_GRANTS_FOLDER), reference.start_grants_about, SITE_ROOT_FILE, "Grant")
-		site_enumeration_table(site, &b, site_page_file(SITE_GRANTS_FOLDER), reference.start_grants, SITE_ROOT_FILE, "start-grant", "What a program receives at its start", {"Place", "Grant", "What the root service gives"}, .Grant)
-		site_source_line(site, &b, SITE_ROOT_FILE)
+		site_about_paragraph(site, &b, site_page_file(SITE_GRANTS_FOLDER), reference.start_grants_about, SITE_START_GRANT_FILE, "Grant")
+		site_enumeration_table(site, &b, site_page_file(SITE_GRANTS_FOLDER), reference.start_grants, SITE_START_GRANT_FILE, "start-grant", "What a program receives at its start", {"Place", "Grant", "What the root service gives"}, .Grant)
+		site_source_line(site, &b, SITE_START_GRANT_FILE)
 		strings.write_string(&b, "<h2 id=\"recorded\">What the root service records and can revoke</h2>\n")
 		site_about_paragraph(site, &b, site_page_file(SITE_GRANTS_FOLDER), reference.root_grants_about, SITE_SYSTEM_GRANTS_FILE, "Root_Grant")
 		grants_table := site_table_start(&b, "Grants", {{"Bit", .Number}, {"Grant", .Name}, {"Name in the console", .Name}, {"What it gives", .Prose}}, {.None, .Grant, .Grant, .None})
@@ -760,7 +762,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		strings.write_string(&b, "</tr>\n")
 		site_table_end(&b, programs_table)
 		site_source_line(site, &b, SITE_ROOT_FILE)
-		add(site, entries, site_page_file(SITE_GRANTS_FOLDER), "Grants of the root service", fmt.tprintf("The %d grants that the root service of %s gives at the start of a program, the %d that it records, and the grants of each program.", len(reference.start_grants), len(reference.root_grants), SITE_SYSTEM_NAME), "What the root service gives each program at its start, and what it records and can revoke.", SITE_ROOT_FILE, len(reference.start_grants) + len(reference.root_grants), .Grant, &b, SITE_ROOT_FILE, SITE_SYSTEM_GRANTS_FILE)
+		add(site, entries, site_page_file(SITE_GRANTS_FOLDER), "Grants of the root service", fmt.tprintf("The %d grants that the root service of %s gives at the start of a program, the %d that it records, and the grants of each program.", len(reference.start_grants), len(reference.root_grants), SITE_SYSTEM_NAME), "What the root service gives each program at its start, and what it records and can revoke.", SITE_ROOT_FILE, len(reference.start_grants) + len(reference.root_grants), .Grant, &b, SITE_ROOT_FILE, SITE_START_GRANT_FILE, SITE_SYSTEM_GRANTS_FILE)
 	}
 
 	// The fixed ranges.

@@ -111,12 +111,11 @@ DEBUG_TARGET_LINE_OF_THE_STORE :: "79"
 DEBUG_TARGET_TEXT_OF_THE_STORE :: "\tintrinsics.volatile_store(sum, before + step)"
 
 DEBUG_TARGET_RUNS :: "debug_target: 64 more rounds ran, so the program is not held: as it must"
-DEBUG_ACCESS_REFUSED_BY_THE_GRANT :: "debugger.attach: the caller has no grant for this: the debug access to this program: the program holds a grant that the caller does not hold, the grant "
-// The number of a grant in the enumeration Grant of programs/root/main.odin.
-GRANT_NUMBER_INSPECT :: "1"
-GRANT_NUMBER_SERVE :: "5"
-GRANT_NUMBER_STORE :: "7"
-GRANT_NUMBER_SYSTEM_PART :: "25" // After the grant Palette.
+// The sentence of a refused debug access names the start grant that
+// refuses, by its name (contract/start_grant): the name goes between the
+// two parts.
+DEBUG_ACCESS_REFUSED_BY_THE_GRANT :: "debugger.attach: the caller has no grant for this: the debug access to this program: the grant "
+REFUSES_THE_DEBUG_ACCESS :: " of the program refuses it (-4)"
 
 @(rodata)
 scenario_debugger_commands := [?]Step {
@@ -223,13 +222,13 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "compositor: surface notes"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "debug(\"notes\")"},
-	{kind = .Wait, text = DEBUG_ACCESS_REFUSED_BY_THE_GRANT + GRANT_NUMBER_STORE + " of the root service (-4)"},
+	{kind = .Wait, text = DEBUG_ACCESS_REFUSED_BY_THE_GRANT + "Store" + REFUSES_THE_DEBUG_ACCESS},
 	// A service: refused for each caller. A device service: a grant that
 	// no caller holds.
 	{kind = .Type, text = "debug(\"storage\")"},
-	{kind = .Wait, text = DEBUG_ACCESS_REFUSED_BY_THE_GRANT + GRANT_NUMBER_SERVE + " of the root service (-4)"},
+	{kind = .Wait, text = DEBUG_ACCESS_REFUSED_BY_THE_GRANT + "Serve" + REFUSES_THE_DEBUG_ACCESS},
 	{kind = .Type, text = "debug(\"block\")"},
-	{kind = .Wait, text = DEBUG_ACCESS_REFUSED_BY_THE_GRANT + GRANT_NUMBER_SYSTEM_PART + " of the root service (-4)"},
+	{kind = .Wait, text = DEBUG_ACCESS_REFUSED_BY_THE_GRANT + "System_Part" + REFUSES_THE_DEBUG_ACCESS},
 
 	// A revocation ends a debugging that the rule no longer gives. clock
 	// holds the machine with Inspect, and so does the console: the access
@@ -248,7 +247,7 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "root: revoked the grant machine of console, holdings ended: "},
 	{kind = .Wait, text = "root: ended the debugging of clock for console: the rule no longer gives the debug access, after a revocation"},
 	{kind = .Type, text = "debug(\"clock\")"},
-	{kind = .Wait, text = DEBUG_ACCESS_REFUSED_BY_THE_GRANT + GRANT_NUMBER_INSPECT + " of the root service (-4)"},
+	{kind = .Wait, text = DEBUG_ACCESS_REFUSED_BY_THE_GRANT + "Inspect" + REFUSES_THE_DEBUG_ACCESS},
 
 	// The grant to act for the principal is revoked while the console
 	// holds a thread of debug_target: the root service ends the debugging,
@@ -284,7 +283,7 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Call, text = "debugger.attach(\"notes\")", outcome = .Failed, expected = "error: debugger.attach: no free place: the table has its 1 programs that the debugger service debugs for this caller (-3)"},
 	{kind = .Call, text = "debugger.detach()", expected = "1 rows of Detached"},
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
-	{kind = .Call, text = "debugger.attach(\"notes\")", outcome = .Failed, expected = "error: " + DEBUG_ACCESS_REFUSED_BY_THE_GRANT + GRANT_NUMBER_STORE + " of the root service (-4)"},
+	{kind = .Call, text = "debugger.attach(\"notes\")", outcome = .Failed, expected = "error: " + DEBUG_ACCESS_REFUSED_BY_THE_GRANT + "Store" + REFUSES_THE_DEBUG_ACCESS},
 
 	// The console lost the machine: QEMU ends the machine.
 	{kind = .Quit},
