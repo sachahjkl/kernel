@@ -1,8 +1,8 @@
 # Glossary
 
-This file is the one place that defines the terms of the project. Each concept has one term. Documents, code and conversation use that term and no synonym.
+The glossary defines each term of the system. Each concept has one term, and one term names one concept: the documents, the code and the names of the programs use that term and no synonym. A reader who knows another system finds here the word that this system uses, and why it does not use the word that he expects.
 
-Each term is a heading of level 3 in its group. The first paragraph under it is its short definition: one sentence that stands alone, because the site shows it alone in a tooltip, in a search result and in the page graph. The paragraphs after it explain the term: what it is for, how a program gets it and uses it, its neighbours, what it is not, an example from the system, and where its full design is. The last paragraph starts with "Do not use:" and lists the words that the term replaces. `kerneltool check` refuses an entry that does not have this form, and lists the terms that have no explanation yet.
+An entry starts with one sentence that says what the term is. The paragraphs after it explain it: what it is for, how a program gets it and uses it, the terms next to it, what it is not, an example from the system, and where its full design is. The last line, "Do not use", lists the words of other systems that the term replaces here.
 
 ## Code
 
