@@ -115,7 +115,7 @@ Tables as parameters: one description, three ways to call (a direct call, a call
 
 ![A developer tool: the address space of the console as a band scaled by pages, with each gap folded, the table of its mappings with the pages that have a frame, its modules, its threads with the state of the scheduler; a sample each 250 ms with its cost](docs/screenshots/inspect.png)
 
-![The same tool on a program that stopped on a fault: the stack trace as module + offset, near the export before it](docs/screenshots/inspect_stopped.png)
+![The same tool on a program that stopped on a fault: each frame of the stack trace with its procedure and its source line, from the debug image](docs/screenshots/inspect_stopped.png)
 
 ![After a loss of power during the write of a root: the storage service takes the root before it, and notes finds its note and its count](docs/screenshots/power_loss.png)
 
@@ -143,7 +143,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 - The root service loads all other programs in user space and grants their handles.
 - The input service reads the keyboard and the mouse through granted ports and interrupts.
 - A block service drives a virtio disk with device memory and a message interrupt; its client gives the memory that the device reads and writes.
-- The storage service keeps a private store for each program on the data disk: each change is one commit, and a stop of the machine never shows a part of one. `notes` finds its state after a restart of the machine, after QEMU was ended during its commits, and after its last root block was cut.
+- The storage service keeps a private store for each program on the data disk: each change is one commit, and a stop of the machine never shows a part of one. `notes` finds its state after a restart of the machine, after QEMU was ended during its commits, and after its last root block was cut. An object is a tree of blocks of up to 4 TiB, and a block of zero bytes costs nothing; a program writes ranges and commits them in one step, and a commit hashes the blocks that it changed, never the whole object.
 - The network: a frame service drives a virtio network device, and the network service gives a program an endpoint of UDP datagrams that reaches only the remote of its grant. The kernel has no network code.
 - `kerneltool call <key> "monitor.programs()"` calls an export of a service of the running machine from the host, and prints the typed result: a table with its field names, a record, a text, or the sentence of its error record. The call goes over QUIC to the program `remote`, whose public key (`<key>`, in its window) the host pins; the root service decides which services it reaches, and the console revokes its grant with `revoke("remote", "acts_for_principal")`. The test reads the place of the pointer from the compositor before each press, and waits for log records with typed fields through `log.records()`.
 - `inspect` shows one program live: its address space, its modules, its threads with the state of the scheduler, the stop report of a program that faulted, and the bytes of its own memory, from reports of the kernel that give no byte of another program.
@@ -179,7 +179,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `docs/FIRST_MILESTONE.md` | What the code does now, the choices made, the gaps |
 | `docs/TOOLS.md` | The developer tools, and what each one reads |
 | `docs/SITE.md` | The site of the system: what `kerneltool site` writes, and where each part of the page comes from |
-| `docs/GLOSSARY.md` | The terms of the project. One term per concept |
+| `docs/GLOSSARY.md` | The terms of the project. One term per concept: its short definition, then what it is for, how it works, and what it is not |
 | `docs/DESIGN.md` | The design rules: how a program of the system looks. The boot display is the model |
 | `docs/POINTERS.md` | The pointer pictures: Xcursor, hyprcursor and the others; the format and the manifest of the system; the license of the Posy theme |
 | `docs/TRUSTED_BOOT.md` | The trusted boot: what verifies what at the start, with which key; the signing key; the measure; what each layer does not protect |

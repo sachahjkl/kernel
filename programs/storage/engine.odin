@@ -8,6 +8,7 @@ import "contract:ring"
 import format "contract:store"
 import answers "support:storage"
 import "support:storage_mount"
+import block_tree "support:storage_object"
 import "support:storage_retention"
 import tree "support:storage_tree"
 import "support:system"
@@ -19,10 +20,9 @@ import "support:system"
 BLOCK_SIZE :: format.BLOCK_SIZE
 ROOT_MAGIC :: format.ROOT_MAGIC
 STORE_CAPACITY :: format.STORE_CAPACITY
-LIST_CAPACITY :: format.LIST_CAPACITY
 NAME_CAPACITY :: format.NAME_CAPACITY
 DISK_BLOCKS_LIMIT :: format.DISK_BLOCKS_LIMIT
-OBJECT_BLOCKS_LIMIT :: format.OBJECT_BLOCKS_LIMIT
+OBJECT_LEVEL_LIMIT :: format.OBJECT_LEVEL_LIMIT
 REGION_BLOCKS :: 64 // The data region that the block service reads and writes.
 RETENTION_INTERVAL :: 60 * 1000 // The retention rule runs on an object at most one time in this many milliseconds.
 
@@ -32,7 +32,8 @@ Root :: format.Root
 Store_Block :: format.Store_Block
 Entry :: format.Entry
 Entry_Name :: format.Entry_Name
-List :: format.List
+Object_Node :: format.Object_Node
+Object_Child :: format.Object_Child
 Version_Entry :: format.Version_Entry
 Version_Leaf :: format.Version_Leaf
 Version_Index :: format.Version_Index
@@ -41,7 +42,7 @@ Block :: [BLOCK_SIZE]u8
 #assert(BLOCK_SIZE == block.BLOCK_SIZE)
 
 // What the service knows of the disk. The store block of each store stays
-// in memory; nodes, lists, versions and data are read when a caller asks. The blocks
+// in memory; nodes, object nodes, versions and data are read when a caller asks. The blocks
 // in use and the reference count of each one are in `opened`, the state of
 // the open (support/storage_mount), which the service keeps up to date.
 root: Root
@@ -67,7 +68,7 @@ check_of :: format.check
 root_check :: format.root_check
 
 // Damage: a block that a valid root names has a wrong check. The service
-// does not use the block. An object with such a list or such data is
+// does not use the block. An object with such an object node or such data is
 // damaged: a read of it gives ERROR_DAMAGED, and a write or a remove
 // replaces it; the open and each read keep the wrong blocks in
 // `opened.wrong_blocks`. A store with such a store block or node is
@@ -288,6 +289,52 @@ read_single :: proc "contextless" (pointer: Pointer, into: ^Block) -> Read {
 	return state
 }
 
+// read_raw reads one block with no check.
+read_raw :: proc "contextless" (number: u64, into: ^Block) -> Read {
+	if number < 2 || number >= disk_size {
+		return .Wrong
+	}
+	if !transfer(.Read, {{number = number, slot = 0}}) {
+		return .Device
+	}
+	intrinsics.mem_copy_non_overlapping(into, raw_data(slot(0)), BLOCK_SIZE)
+	return .Good
+}
+
+// The block trees of the objects (support/storage_object) read their
+// object nodes through the cache, checked, and their blocks of data with
+// no check: the tree checks each one by its value at its place.
+object_source := block_tree.Source {
+	read_node  = object_read_node,
+	read_block = object_read_block,
+}
+
+object_read_node :: proc "contextless" (_: ^block_tree.Source, pointer: Pointer, into: ^block_tree.Block) -> block_tree.Read {
+	if pointer.block < 2 || pointer.block >= disk_size {
+		return .Wrong
+	}
+	switch read_single(pointer, into) {
+	case .Good:
+		return .Good
+	case .Wrong:
+		storage_mount.wrong_block_set(&opened, pointer.block)
+		return .Wrong
+	case .Device:
+	}
+	return .Device
+}
+
+object_read_block :: proc "contextless" (_: ^block_tree.Source, number: u64, into: ^block_tree.Block) -> block_tree.Read {
+	switch read_raw(number, into) {
+	case .Good:
+		return .Good
+	case .Wrong:
+		return .Wrong
+	case .Device:
+	}
+	return .Device
+}
+
 Mount :: storage_mount.Mount
 
 // The open of the disk: the same code as the check of the kernel tool on
@@ -382,9 +429,7 @@ store_find :: proc "contextless" (name: string) -> int {
 	return -1
 }
 
-blocks_of :: proc "contextless" (size: u64) -> u64 {
-	return (size + BLOCK_SIZE - 1) / BLOCK_SIZE
-}
+blocks_of :: format.object_blocks
 
 // ---------------------------------------------------------------------
 // The plan of one commit. A commit is planned in memory: the blocks to
@@ -396,12 +441,14 @@ blocks_of :: proc "contextless" (size: u64) -> u64 {
 // The capacities of one commit. A commit that needs more is refused with
 // Full and the unit Commit_Blocks, not with a full disk. Half of
 // DELTA_CAPACITY is the count of the blocks whose names one commit changes:
-// 65536, more than a store can hold today. The writes: the leaves of a whole
-// version index (a compaction or the retention rule), the data and the list
-// of an object, and the leaves and indexes that thinning at the limit
-// rewrites in other objects.
-DELTA_CAPACITY :: 1 << 17 // Power of 2.
-WRITE_CAPACITY :: 1024
+// 262144, each block of a disk, so the remove of an object as large as the
+// disk is one commit. The writes: the blocks of data that one commit
+// changes (the pending changes of an object, PENDING_BLOCK_CAPACITY), the
+// object nodes above them (block_tree.NODE_SLOT_CAPACITY), the leaves of a
+// whole version index (a compaction or the retention rule), and the leaves
+// and indexes that thinning at the limit rewrites in other objects.
+DELTA_CAPACITY :: 1 << 19 // Power of 2.
+WRITE_CAPACITY :: 4096
 LEAF_WORK_CAPACITY :: 300 // More than the leaves of one index.
 REFERENCE_LIMIT :: storage_mount.REFERENCE_LIMIT
 
@@ -423,12 +470,6 @@ Leaf_Work :: struct {
 	original: Pointer, // No block: a new leaf.
 	changed:  bool,
 	leaf:     Version_Leaf,
-}
-
-// A list that the commit stops naming one time, with the size of its state.
-Release :: struct {
-	list: Pointer,
-	size: u64,
 }
 
 Plan :: struct {
@@ -465,12 +506,13 @@ Plan :: struct {
 	leaf_count:   int,
 	versions_change: i64,
 	thinned:      u64, // Versions that the plan removes.
-	// Staging of the blocks that the plan writes, other than leaves.
-	data:         [OBJECT_BLOCKS_LIMIT]Block,
-	list:         Block,
+	// Staging of the blocks that the plan writes, other than leaves and
+	// the blocks of the trees of objects.
 	store_block_bytes: Block,
 	index_blocks: [PLAN_ENTRY_CAPACITY]Block,
-	list_read:    Block,
+	// The object nodes of the releases, one for each level: a release walks
+	// down the nodes that lose their last name.
+	release_nodes: [OBJECT_LEVEL_LIMIT + 1]Object_Node,
 }
 
 plan: Plan
@@ -597,6 +639,13 @@ plan_allocate :: proc "contextless" () -> u64 {
 
 // plan_write writes a block of the plan to a new block, and gives its Pointer.
 plan_write :: proc "contextless" (bytes: ^Block) -> Pointer {
+	return plan_write_checked(bytes, 0, false)
+}
+
+// plan_write_checked writes a block of the plan with a check that the
+// caller gives (a block of data: the check of its value), or with the hash
+// of its bytes.
+plan_write_checked :: proc "contextless" (bytes: ^Block, given_check: u64, given: bool) -> Pointer {
 	if plan.write_count >= WRITE_CAPACITY {
 		capacity_reached(WRITE_CAPACITY)
 		return {}
@@ -607,46 +656,94 @@ plan_write :: proc "contextless" (bytes: ^Block) -> Pointer {
 	}
 	plan.writes[plan.write_count] = {number = number, bytes = bytes}
 	plan.write_count += 1
-	return {block = number, check = check_of(bytes[:])}
+	return {block = number, check = given ? given_check : check_of(bytes[:])}
 }
 
-// list_name counts one more name of a list (a current version or a version).
-list_name :: proc "contextless" (list: Pointer) {
-	if list.block != 0 {
-		delta_add(list.block, 1)
+// state_name counts one more name of the root of a state of an object (a
+// current version, a version, a clone).
+state_name :: proc "contextless" (root: Pointer) {
+	if root.block != 0 {
+		delta_add(root.block, 1)
 	}
 }
 
-// list_release counts one name less of a list of a state of `size` bytes.
-// When no name is left, its blocks of data lose one name each: the list is
-// read for that. A list with a wrong check, or a size of more blocks than an
-// object has, gives its blocks no change: the open did not count them when
-// it found the list wrong, and a list that went wrong since keeps its
-// blocks in use until the next start, which counts again (the safe
-// direction: a block in use is never given to another name).
-list_release :: proc "contextless" (list: Pointer, size: u64) {
-	if list.block == 0 {
+// state_damaged says if a state of an object has a wrong block that the
+// service knows: under its root, the open or a read found one.
+state_damaged :: proc "contextless" (root: Pointer) -> bool {
+	return root.block != 0 && (storage_mount.wrong_block(&opened, root.block) || storage_mount.damaged_under(&opened, root.block))
+}
+
+// state_release counts one name less of the root of a state of `size`
+// bytes; a block that loses its last name frees what it names
+// (child_release).
+state_release :: proc "contextless" (root: Pointer, size: u64) {
+	if root.block == 0 {
 		return
 	}
-	delta_add(list.block, -1)
-	if count_after(list.block) != 0 {
+	if size > format.OBJECT_SIZE_LIMIT {
+		return // The open found it wrong, and did not count under it.
+	}
+	child_release({block = root.block, check = root.check}, format.object_levels(size))
+}
+
+// child_release counts one name less of an object node of `level`, or of a
+// block of data at level 0. When an object node has no name left, each of
+// its children loses one name: the node is read for that. A node that is
+// wrong, or under which a block is wrong, gives its children no change: the
+// open did not count under a wrong block, and a block that went wrong
+// since keeps the blocks under it in use until the next start, which
+// counts again (the safe direction: a block in use is never given to
+// another name).
+child_release :: proc "contextless" (child: Object_Child, level: int) {
+	delta_add(child.block, -1)
+	if level == 0 || count_after(child.block) != 0 || level > OBJECT_LEVEL_LIMIT {
 		return
 	}
-	count := blocks_of(size)
-	if count > OBJECT_BLOCKS_LIMIT || storage_mount.wrong_block(&opened, list.block) {
+	if storage_mount.wrong_block(&opened, child.block) || storage_mount.damaged_under(&opened, child.block) {
 		return
 	}
-	switch read_single(list, &plan.list_read) {
+	node := &plan.release_nodes[level]
+	switch read_single({block = child.block, check = child.check}, (^Block)(node)) {
 	case .Device:
 		plan.device = true
 	case .Wrong:
-		storage_mount.wrong_block_set(&opened, list.block)
+		storage_mount.wrong_block_set(&opened, child.block)
 	case .Good:
-		data := (^List)(&plan.list_read)
-		for pointer in data.data[:count] {
-			delta_add(pointer.block, -1)
+		if node.header.magic != format.OBJECT_NODE_MAGIC || int(node.header.level) != level {
+			storage_mount.wrong_block_set(&opened, child.block)
+			return
+		}
+		for item in node.children {
+			if item.block != 0 {
+				child_release(item, level - 1)
+			}
 		}
 	}
+}
+
+// The names and the writes of the work of a commit on an object
+// (support/storage_object): through the plan.
+object_counter := block_tree.Counter {
+	name       = counter_name,
+	release    = counter_release,
+	write_node = counter_write_node,
+	write_data = counter_write_data,
+}
+
+counter_name :: proc "contextless" (_: ^block_tree.Counter, block: u64) {
+	delta_add(block, 1)
+}
+
+counter_release :: proc "contextless" (_: ^block_tree.Counter, child: Object_Child, level: int) {
+	child_release(child, level)
+}
+
+counter_write_node :: proc "contextless" (_: ^block_tree.Counter, bytes: ^block_tree.Block) -> Pointer {
+	return plan_write(bytes)
+}
+
+counter_write_data :: proc "contextless" (_: ^block_tree.Counter, bytes: ^block_tree.Block, check: u64) -> Pointer {
+	return plan_write_checked(bytes, check, true)
 }
 
 // index_load gives the version work of an object of the plan.
@@ -677,7 +774,7 @@ index_load :: proc "contextless" (entry_index: int) -> ^Index_Work {
 // index_drop drops the versions of an object whose index has a wrong check
 // or a count that the format does not permit: they are not known. The
 // object keeps its current version, and a write or a remove of it works.
-// The leaves and the lists under the index are not released: the open did
+// The leaves and the states under the index are not released: the open did
 // not count them when it found the index wrong.
 index_drop :: proc "contextless" (work: ^Index_Work) {
 	work.index = {}
@@ -718,7 +815,7 @@ leaf_load :: proc "contextless" (entry_index: int, position: int) -> ^Leaf_Work 
 
 // leaf_drop drops the versions of a leaf with a wrong check or a count that
 // the format does not permit, as index_drop does for an index: the plan
-// writes no leaf in its place, and its lists are not released.
+// writes no leaf in its place, and its states are not released.
 leaf_drop :: proc "contextless" (work: ^Leaf_Work) {
 	work.leaf = {}
 	work.changed = true
@@ -819,7 +916,7 @@ version_remove_first :: proc "contextless" (entry_index: int) {
 	index.index.version_count -= 1
 	plan.versions_change -= 1
 	plan.thinned += 1
-	list_release(entry.list, entry.size)
+	state_release(entry.root, entry.size)
 }
 
 // versions_release removes all the versions of an object (its remove).
@@ -831,7 +928,7 @@ versions_release :: proc "contextless" (entry_index: int) {
 			return
 		}
 		for entry in leaf.leaf.entries[:leaf.leaf.count] {
-			list_release(entry.list, entry.size)
+			state_release(entry.root, entry.size)
 		}
 		plan.versions_change -= i64(leaf.leaf.count)
 		leaf.leaf.count = 0
@@ -881,7 +978,7 @@ retention :: proc "contextless" (entry_index: int, now: u64) {
 				leaf.leaf.entries[kept] = entry
 				kept += 1
 			} else {
-				list_release(entry.list, entry.size)
+				state_release(entry.root, entry.size)
 				plan.thinned += 1
 				plan.versions_change -= 1
 				index.index.version_count -= 1

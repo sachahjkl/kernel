@@ -35,7 +35,7 @@ PAGE_COUNT :: (CASE_CAPACITY + CASES_ON_A_PAGE - 1) / CASES_ON_A_PAGE
 // One case can have a sentence of two lines (a load error that names an
 // export and its difference): the window has one line for it.
 HEIGHT :: TOP + CASES_ON_A_PAGE * CASE_HEIGHT + LINE + 8 + LINE + 8
-SENTENCE_CAPACITY :: 240
+SENTENCE_CAPACITY :: 480 // A stack trace of four named frames, with their files and lines.
 SHOWN :: (WIDTH - 40) / 8 // The characters of a line of the window.
 
 // The colors of docs/DESIGN.md: a name is dim, a value (the sentence of a
@@ -89,6 +89,7 @@ machine: system.Handle
 
 image: []u8
 image_memory: system.Handle
+debug_names: system.Debug_Names // The debug image and the verdicts of its objects: the names of the stack of fault.
 client: storage.Client
 connected: bool
 ctx_log: system.Handle
@@ -458,7 +459,7 @@ case_byte :: proc "contextless" (writer: ^system.Writer) -> bool {
 }
 
 case_limit :: proc "contextless" (writer: ^system.Writer) -> bool {
-	return storage_case(writer, "write", .Over_Limit, "large", "one block of data, and its list")
+	return storage_case(writer, "write", .Over_Limit, "large", "one block of data, in a store of two blocks")
 }
 
 case_size :: proc "contextless" (writer: ^system.Writer) -> bool {
@@ -498,7 +499,7 @@ case_fault :: proc "contextless" (writer: ^system.Writer) -> bool {
 	all_in_fault := len(frames) >= 4
 	for &frame, number in frames {
 		system.write_part(writer, number == 0 ? "" : ", ")
-		system.frame_text(writer, image, &frame)
+		system.frame_text(writer, image, &debug_names, &frame, number)
 		all_in_fault &&= frame.hash == fault_hash
 	}
 	return report.code == op.STOP_CODE_FAULT + 14 && all_in_fault
@@ -851,6 +852,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if address, status := system.memory_map(image_memory, {}); status == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
+	debug_names = system.debug_names_of(ctx)
 	client, connected = storage.open(ctx)
 	math_load()
 	tally_load()

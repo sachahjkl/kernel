@@ -41,6 +41,7 @@ It does not protect against:
 - **an older system that the same key signed.** The boot program accepts each description that the key signed. No counter refuses an older one.
 - **a stolen private key.** A person who has it can sign a system that the boot program accepts.
 - **the firmware, and the kernel after the start.** The checks run once, at the start. A fault of the kernel or a device that writes memory directly (DMA) is not in their scope.
+- **a changed debug image.** The debug image (`DEBUG/OBJECTS.IMG`, beside the boot program) is not in the boot image, the system description does not list it, and the boot program reads it with no check. A person who can write the boot volume can make a stop report show false names of procedures and lines. No code comes from it, and each reader checks the form of each debug object before it reads it (`MODULE_CONTRACT.md`, "Debug information").
 
 The second check, by the root service, finds a fault of the path from the boot program to the first program: a fault of the copy of the boot image, or of the kernel. It does not find an attacker: no program can write the pages of the boot image before it. Its time on the test machine: ____ (the line `root: the boot image agrees ...` of the log gives it at each boot).
 

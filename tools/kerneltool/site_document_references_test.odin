@@ -6,7 +6,6 @@ import "core:testing"
 // A site with the guide of the architecture, whose page has a few headings
 // of known ids. The file of the guide is read for its title only when the
 // site has no guide for it: here the guide gives the title.
-@(private = "file")
 reference_test_site :: proc() -> Site {
 	site := test_site()
 	site.documents["docs/ARCHITECTURE.md"] = "docs/guides/ARCHITECTURE/index.html"
@@ -363,7 +362,10 @@ site_document_pointers_of_the_repository :: proc(t: ^testing.T) {
 	}
 	glossary, glossary_ok := site_read_quiet(SITE_GLOSSARY_FILE)
 	testing.expect(t, glossary_ok)
-	site.terms = site_glossary_terms(glossary)
+	glossary_terms, glossary_problems := glossary_read(glossary)
+	testing.expectf(t, len(glossary_problems) == 0, "the glossary: %v", glossary_problems)
+	site.glossary = glossary_terms
+	site.terms = site_glossary_terms(site.glossary)
 	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
 	// The links of the comments name rows, exports and declarations.
 	testing.expect(t, site_reference_read(&site))

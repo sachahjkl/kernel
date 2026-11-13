@@ -60,7 +60,7 @@ What these rules forbid, so that nobody adds it later:
 
 ### 1.2 The hard points
 
-**A large object that changes.** An object of 64 GiB is a tree of blocks. A write of a range makes new blocks for the range, and new nodes on the path from them to the root: copy on write, as the store does now. The hash of an object and the check of a block are one mechanism. BLAKE3 is itself a tree of chunks of 1 KiB: the hash of an object is the root of the chaining values of its chunks. If the check of a block is the chaining value of its 4 chunks, the hash of the object comes from the checks of its blocks, and a write of a range computes the hash of the changed blocks and of the parents above them only, about 2 log2(n) compressions of 64 bytes for n blocks. A chaining value depends on the offset of the chunk: two equal blocks at two offsets have two checks. Not built: today the check of a block is the hash of its 4096 bytes alone (8 bytes kept), and an object keeps a second hash of its bytes (section 3). The cost of the hash at each write is measured by the test of section 6: the time of a commit is printed.
+**A large object that changes.** Built: section 4.6. An object is a tree of blocks. A commit of range writes makes new blocks for the changed blocks, and new object nodes on the paths from them to the root: copy on write, as the store does. The value of a block (its BLAKE3 chaining value at its place) is its check, and the hash of the object comes from the values: a commit hashes the changed blocks, the nodes above them and the path of the last block, never the whole object. One change of the model: a hole has the value zero, so the hash of an object with a hole is not the BLAKE3 hash of its bytes (section 4.6, "The hash of an object").
 
 **Removal.** Two trees can name one object. A remove takes a name out of a tree: it does not erase the bytes while another tree, or a version, names them. What a remove guarantees: the name is gone from the tree at the commit, and the blocks that nothing else names are free after the removal finishes (section 4.4). To erase bytes for certain needs the end of each version that names them, and then a write of zero bytes over their blocks: not built.
 
@@ -80,7 +80,7 @@ What these rules forbid, so that nobody adds it later:
 |---|---|---|
 | A private store: one table of 39 named objects | A store of one program: it names one tree, with trees inside it | Built: section 3 |
 | The name of an object (1 to 39 bytes) | A name of an entry of a tree (1 to 64 bytes) | Built |
-| An object of a store, with its list of blocks | An entry of a tree that names an object: its hash and, in this step, where its blocks are | Built: the hash is kept; the blocks are still found through the entry, not by the hash |
+| An object of a store, with its block tree | An entry of a tree that names an object: its hash and the root of its block tree | Built: the hash is kept; the blocks are still found through the entry, not by the hash |
 | The versions of an object, their thinning | The history of a store | Kept for each object; the history of a store is not built |
 | The system description (a signed list of hashes) | The tree of the system, signed by the publisher of the system | Not built |
 | The boot image | The transport of the first objects | Not built: the image is still the one source of modules |
@@ -90,16 +90,18 @@ What these rules forbid, so that nobody adds it later:
 
 ## 3. The format on the disk
 
-Built. The format is the contract `contract/store`, `STORAGE3`. A disk of `STORAGE2` is not read.
+Built. The format is the contract `contract/store`, `STORAGE4`. A disk of `STORAGE3` is not read: an object there is a list of blocks.
 
 ### 3.1 The blocks
 
 - **Root block**: the generation, and one store entry for each store: its name, its limit of blocks, the blocks that it uses, and the pointer of its store block. The disk has two places for the root block.
 - **Store block**: one for each store: the root node of its tree, the root node of its removal queue, and its counts (objects, trees, the blocks of the current objects, the nodes of its trees, the trees that the removal queue holds).
 - **Node**: a node of the B+ tree of one tree. A leaf holds up to 24 entries; a branch up to 50 children. Each tree of a store is its own B+ tree: a tree inside a tree is an entry whose pointer names the root node of the inner tree.
-- **List, data, version index, version leaf**: the blocks of an object and of its versions, as before.
+- **Object node**: a node of the block tree of one state of an object: 64 children, each an object node of the level below, a block of data, or a hole (section 4.6).
+- **Data**: 4096 bytes of an object, at one place of it.
+- **Version index, version leaf**: the versions of an object, as before; a version names the root of the block tree of its state.
 
-A pointer is a block number and a check: the first 8 bytes of the BLAKE3 hash of the block.
+A pointer is a block number and a check. The check of a block of data is the first 8 bytes of its value (section 4.6); the check of each other block is the first 8 bytes of the BLAKE3 hash of its 4096 bytes.
 
 ### 3.2 An entry
 
@@ -109,8 +111,8 @@ A pointer is a block number and a check: the first 8 bytes of the BLAKE3 hash of
 | Kind | object | tree |
 | Size | its bytes | its entries |
 | Generation, time, date | of its last change | of its last change |
-| Hash | BLAKE3 of its bytes | zero (not built) |
-| Pointer | its list of blocks | its root node; none when it is empty |
+| Hash | the hash of the object (section 4.6) | zero (not built) |
+| Pointer | the root of its block tree: an object node, or its one block of data when it has one block; none when each of its bytes is zero | its root node; none when it is empty |
 | Versions | its version index | none |
 
 A name is one step: it has no separator, and it never names the tree above. So a name that a program looks up under a place never reaches a node outside it.
@@ -121,7 +123,7 @@ In a branch, the name of the record 0 is a bound that the search never reads. It
 
 A commit is one change of one store. It changes the entries of the trees on one or two paths from the root of the store. Each changed node of each tree is written to a free block, then the node above it, up to the root node of the store, then the store block, then the root block: copy on write, as before. A loss of power leaves the disk with the last commit or the one in flight, never a mix: the tool checks each image that a loss can leave (section 6).
 
-The open of the disk at the start walks each node of each tree once, checks each block, and counts the names of each block. A node that breaks a rule (its count, its level, the order of its keys) is damage, as a wrong check. A wrong node damages its store: the service gives nothing of that store and changes nothing in it. A wrong list or a wrong block of data damages its object only.
+The open of the disk at the start walks each node of each tree once, checks each block, and counts the names of each block. A block of data is checked by its value at its place; an object node by its check, by the rules of its format, and by the counts and the values of its children. A block that an earlier state named is not read again. A node that breaks a rule (its count, its level, the order of its keys) is damage, as a wrong check. A wrong node damages its store: the service gives nothing of that store and changes nothing in it. A wrong object node or a wrong block of data damages the state of the object that names it only: a read of it gives Damaged, and a write or a remove replaces it.
 
 ### 3.4 The limits
 
@@ -130,8 +132,11 @@ The open of the disk at the start walks each node of each tree once, checks each
 | A name | 1 to 64 bytes | A key of 64 bytes gives 24 entries in a leaf with their hash: a store of a million objects has its entries in about 60000 blocks, inside the 262144 blocks of a disk |
 | The levels of one B+ tree | 8 | With nodes a third full, 8 levels hold more entries than a disk can name. The open takes a deeper tree for damage |
 | The trees on a path | 32 | A place holds the names of its path; a commit rewrites one tree on each level. 32 bounds both |
-| The entries that one call adds | 256 | One commit writes at most 1024 blocks |
-| An object | 32 blocks (128 KiB) | Unchanged: large objects are a later step |
+| The entries that one call adds | 256 | One commit writes at most 4096 blocks |
+| An object | 4 TiB: five levels of object nodes of 64 children, 64^5 blocks | A commit copies one node of each level for each changed block, and the open takes a deeper tree for damage. 4 TiB is more than the disk, and a sixth level costs one more node on each path |
+| A write of a whole object | The call region: 64 KiB | The data comes in the call region. A larger object is written by ranges |
+| The pending changes | 1024 blocks (4 MiB) and 16 objects, for all the connections | The blocks of data that one commit writes. A range write past it is refused (Full, unit Pending): the caller commits first |
+| The blocks that one commit releases | 262144: each block of the disk | The remove of an object as large as the disk is one commit |
 | The disk | 262144 blocks (1 GiB) | Unchanged |
 | The entries of a tree | No limit but the disk | |
 
@@ -148,8 +153,11 @@ A connection to the storage service is a handle on a store or on a part of it. A
 | `open(place, name)` | The place of the tree `name` under `place` |
 | `close(place)` | Frees the place |
 | `add(place, rows, names)` | Adds up to 256 entries in one commit: each one an empty object or an empty tree. All or none |
-| `write(place, name, data)` | Makes the object `name` the bytes of data, in one commit. The state before is a version |
-| `read(place, name, result)`, `size(place, name)` | The bytes, the size |
+| `write(place, name, data)` | Makes the object `name` the bytes of data, in one commit: the same mechanism as a commit of ranges (a cut or an extension to the size of data, and a change of each of its blocks). The state before is a version |
+| `read(place, name, result)`, `size(place, name)` | The bytes (the range from 0 to the end), the size; with the pending changes of the connection |
+| `read_range(place, name, offset, result)` | The bytes from `offset` up to the end, with the pending changes of the connection; a hole reads as zero bytes |
+| `write_range(place, name, offset, data)`, `set_size(place, name, size)` | A pending change of the connection: no commit, no hash (section 4.6, "Ranges") |
+| `commit(place, name)` | Puts the pending changes of the connection on the object in one commit, and gives a row: the generation and the measure of the commit |
 | `list(place, after, rows, names)` | A page of the entries after the name `after`, in the order of the names: a table of rows (the place of the name in `names`, its count of bytes, the kind, the size, the generation) and the bytes of the names. A tree of a million entries is never given whole |
 | `rename(place, name, to_place, to_name)` | Moves an entry, in one commit, inside one store. Refused when `to_name` exists, or when a tree moves into itself |
 | `remove(place, name)` | Removes an object, or a tree and all under it (section 4.4) |
@@ -177,13 +185,75 @@ A remove of a tree is one commit: its entry leaves its tree, and the tree goes i
 
 ### 4.5 Budgets
 
-The limit of blocks of a store holds as before: it counts the nodes of its trees, its lists, its data and its versions. A limit for a part of a store is not built.
+The limit of blocks of a store holds as before: it counts the nodes of its trees, its object nodes, its blocks of data and its versions. A hole costs nothing: an object of 8 GiB with three blocks of data counts 13 blocks. A limit for a part of a store is not built.
+
+### 4.6 Large objects
+
+Built.
+
+#### The block tree
+
+An object is a tree of blocks. The block n of an object holds its bytes from n × 4096. A block whose bytes are all zero is a hole: nothing names it, it costs no block, and it reads as zero bytes. The service never writes a block of zero bytes: a write that leaves one makes a hole, so the blocks of a state come from its bytes alone. The open takes a block of data of zero bytes for damage.
+
+The object nodes are above the blocks. A node has 64 children: 64 is a power of two, so a node covers a whole subtree of the BLAKE3 tree of the bytes. A child holds its block number, its check, the count of blocks under it (itself included), and its value. The level of the root comes from the size: level 0 when the object has at most one block (the root is that block), else the least level whose node covers each block. A child whose blocks start at or past the size is a hole. A node with no child is a hole too.
+
+The value of a part of an object is the BLAKE3 chaining value of its bytes as a subtree of the BLAKE3 tree of the object, with zero bytes past the size. The value of a block is the chaining value of its 4 chunks of 1 KiB at its place: it is the check of the block. The value of a node is the parent of the values of its children, two by two; a whole part with no block (a hole) has the value zero, and two halves of value zero give zero.
+
+#### The hash of an object
+
+The hash of an object of at most 4096 bytes is the BLAKE3 hash of its bytes. For a larger object, it is the root of the BLAKE3 tree of its chunks, where each whole part before the last block takes its value from the block tree, and the parts of the last block come from its bytes, up to the size.
+
+- When no block before the last one is a hole, the hash is the BLAKE3 hash of the bytes. The host test computes the official vectors of BLAKE3 through the block tree.
+- When a block before the last one is a hole, the hash counts the value zero for that whole part, in place of the chaining value of its zero bytes. So the hash differs from the BLAKE3 hash of the bytes.
+
+The reason: BLAKE3 puts the place of each chunk in its compression, so zero bytes at two places have two chaining values. The BLAKE3 hash of an object of 8 GiB with three blocks costs the hash of 8 GiB of zero bytes, and the hash of a write in a hole costs the hash of the hole around it. With the value zero, a hole costs nothing.
+
+The hash is still a function of the bytes only: a block of zero bytes is always a hole, so two objects with the same bytes have the same hash. The size is in the hash: the last chunk carries its length and its place.
+
+The hash of a module (P11) is the BLAKE3 hash of its file. A module with an aligned block of 4096 zero bytes before its last block has another hash as an object. The work on objects by their hash (section 5) must name the module by one of the two: it is not decided here.
+
+#### Ranges
+
+A connection changes an object by ranges in two steps:
+
+1. `write_range` and `set_size` are pending changes of the connection. The service keeps a copy of each changed block, as the connection sees it: the block of the last commit, read and checked at the first change of a part of it (a whole block that a write covers is not read), with the change on it. Nothing is written and nothing is hashed. A read of the connection sees its pending changes; another connection sees the last commit.
+2. `commit` makes the pending changes one commit, on the disk at its return. The state before becomes a version.
+
+A pending change starts from the state of the object at the first pending change. Another change of the object before the commit (a write, a restore, a remove, a rename, or a commit of another connection) comes first: the commit is refused (Absent, unit Pending, found 1), and the pending changes are dropped. A loss of power before the commit loses the pending changes and nothing else: the disk has the last commit. The end of a connection drops its pending changes.
+
+This is the grouping of property 9: a program sends each change when it happens, and says which changes are one step. A whole write is the same mechanism: one call that cuts or extends the object to the size of its data, changes each of its blocks, and commits. A block that keeps its bytes keeps its block: its value is the value of the old block.
+
+#### The cost of a commit
+
+A commit of K changed blocks in an object of N blocks, with L levels of object nodes (L is the least level with 64^L at least N, at most 5):
+
+| Work | Count |
+|---|---|
+| Blocks of data hashed | K, and the last block of the object: K + 1 at most; one more when an object of one block grows past it (its block becomes a child, with its value). Each one is 64 compressions of its chunks and 3 of their parents |
+| Object nodes hashed | The nodes on the paths of the K blocks: at most K × L, and at most N / 64^l at the level l. Each one is 63 parent compressions for its value and one BLAKE3 hash of its block for its check |
+| The hash of the object | The nodes on the path of the last block: at most 64 × L parent compressions from their values, and the bytes of the last block |
+| Blocks read | A block that a range changes in part: at most K, each one read once; a hole and a whole block are not read. The nodes on the paths, through the cache |
+| Blocks written | K blocks of data and the object nodes hashed; then the nodes of the trees of the store on the path of the entry, the version leaf and index, the store block and the root |
+
+No count depends on N but through L. A write of a range computes nothing: a copy of the bytes in the service. The service writes one line for each commit of ranges: the blocks changed, the blocks and the object nodes hashed, the blocks written, and the time, as a measure. The export `commit` gives the same counts to the caller.
+
+The test of section 6 makes 1000 writes of 16 bytes at scrambled places of an object of 8 GiB (2097152 blocks), each one in its own object node of level 1, then one commit. The commit hashes 1000 blocks and the last block, and about 1018 object nodes (1000 of level 1, 16 of level 2, one of level 3 and the root): it checks that the counts are bounded by the blocks changed (at most K + 1 blocks, at most 4K nodes), and prints the time as a measure.
+
+#### Versions, thinning and the limit
+
+A version names the root of the block tree of its state. A commit copies the nodes on the paths that it changes; the new state names each other node and block of the state before. Each block counts its names: the nodes that name it, and the entries and the versions that name a root. A release of a state takes one name of its root; a node with no name left gives one name less to each of its children. So the thinning of a version frees only the blocks that no kept state reaches: after the 1000 writes, the version before them holds 4 blocks of its own (the root and the path of the first block), and its other blocks are shared. `versions` gives the blocks of its own of each state.
+
+The count of a store counts the blocks that its objects hold: each node and each block of data of the current state, and each block of the versions once. A hole counts nothing.
+
+#### A loss of power
+
+A commit of ranges is a commit as any other: its new blocks first, then a Flush, then the root. The tool checks each image that a loss of power can leave during a loop of commits of range writes (`kerneltool test power`): each image gives the durable commit or the commit of range writes in flight, never a mix; each object byte for byte when it has at most 1 MiB, else block for block by the values of its blocks, and the hash of each entry against its block tree.
 
 ## 5. Not built: the next steps
 
 Each step is one tested capability on a system that works.
 
-1. **Large objects and ranges.** An object is a tree of blocks with no limit of 32 blocks; `read` and `write` of a range; a sparse object (a hole is a block that nothing names); the check of a block is its BLAKE3 chaining value, and the hash of the object comes from the checks (section 1.2). The disk past 1 GiB.
+1. **Large objects and ranges.** Built (section 4.6), but the disk past 1 GiB: an object can hold 4 TiB, and the disk has 262144 blocks.
 2. **The history of a store.** A version is a tree that a store named; the versions of an object are found in it. The thinning applies to the history of the store. The versions of each object go.
 3. **Objects by their hash.** An index of the store from a hash to the blocks of an object: an object that two entries name is kept one time. The hash of a tree on its entries (section 1.3).
 4. **The first objects from storage.** The boot image carries only what the storage service needs; the root service loads the other modules, the fonts and the pointer themes from the tree of the system, by hash.
@@ -194,6 +264,8 @@ Each step is one tested capability on a system that works.
 ## 6. The tests
 
 - Host tests of the B+ tree (`support/storage_tree`): inserts in a random order that split leaves and branches, a branch whose record 0 keeps a stale name, removes that merge and rebalance, the order of the keys, the pages of a listing, copy on write (the tree before a commit is still whole), the sizes of the format, the names that are refused.
-- Host tests of the open (`support/storage_mount`): damage of a node and of a list, the recount of a store.
+- Host tests of the block tree (`support/storage_object`): the official vectors of BLAKE3 through the block tree, past one and two levels of nodes; a sparse object of 8 GiB with its hash computed again from its definition, its holes and a read across a block edge; a change across a block edge and across a level edge, with the state before whole; a cut to 10 bytes that lowers the levels to 0, an extension, a block of zero bytes that becomes a hole; a whole write that keeps the blocks whose bytes did not change.
+- Host tests of the open (`support/storage_mount`): damage of a node, of an object node and of a block of data, a block tree that two states share, the recount of a store.
 - The machine test of `hierarchy`: 100000 entries in trees inside trees, the listing in pages, a rename, the removal of a tree, 6000 names added to one tree in a fixed scrambled order (leaves and branches split in their middle) and half of them removed in another order (merges), then a second machine that opens the same disk and checks the counts and the contents. Each refusal of the confinement (`..`, `/`, a place of another connection, a change through a read-only share, a call after `unshare`). The time of the commits is printed as a measure.
-- The losses of power (`kerneltool test power`): each image that a loss can leave opens, and gives the commit before or the commit in flight, each entry and each version byte for byte.
+- The machine test of `ranges` (`kerneltool test ranges`): an object of 8 GiB from three range writes holds 13 blocks and reads them back, with its holes and a read across a block edge; 1000 writes at scrambled places and one commit, bounded by the blocks changed; the version before them and the blocks of its own; a version of a small object reads its old bytes after a range write, and `compare` gives the one range written; a cut of 70 blocks to 6000 bytes, then an extension to 1 GiB; a read at the end and past it; a place of another store, a place of no connection, a commit with no pending change, and a commit after another change are refused; a loop of 200 commits of range writes. A second machine reads each of them back after the open of the disk.
+- The losses of power (`kerneltool test power`): each image that a loss can leave opens, and gives the commit before or the commit in flight, each entry and each version byte for byte, or block for block for a large one. The third loss comes in the loop of range commits of `ranges`: the commit in flight is a commit of range writes.

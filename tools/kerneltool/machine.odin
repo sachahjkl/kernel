@@ -64,7 +64,7 @@ Step_Kind :: enum {
 	Film, // Save the screen 25 times in one second, for x milliseconds, as the next pictures of the film.
 	Quit, // End QEMU: the machine does not stop by itself.
 	Monitor, // Send the line text to the QEMU monitor, as it is (for example "nmi": a non-maskable interrupt to each processor).
-	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool names each frame from the linked file of its module, and the names start with `names`.
+	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool takes the name that the system wrote in a frame, or names a frame "module + offset" from the debug object of its module, and the names start with `names`.
 	Record, // A log record with the program `program`, the channel `channel`, the level `level` and a text that has `text`, after the record of the last Record step: the tool reads log.records() through the remote service (call.odin). With any_order, the next Record step searches from the same place.
 	Agree, // The program `text`: the mapped pages and the threads that inspect.mappings() and inspect.threads() give are the ones that monitor.programs() gives (two tools, two reports of the kernel).
 	Power_Loss, // The disk that the tool serves loses its power at the first write of a root after a seeded count of writes (1 to 40 after this step): it answers nothing more, and the tool ends QEMU with no warning (power_loss.odin).
@@ -670,9 +670,24 @@ object_damage :: proc(path: string, store_name: string, object_name: string) -> 
 		disk_block(file, entry.store.block, &block) or_return
 		object, found := tree_entry_find(file, block.tree, object_name) or_return
 		if found && object.kind == .Object && object.pointer.block != 0 {
-			list: store.List
-			disk_block(file, object.pointer.block, &list) or_return
-			number := list.data[0].block
+			// The first block of data: down the first child of each object
+			// node, or the root of an object of one block.
+			number := object.pointer.block
+			for level := store.object_levels(object.size); level >= 1 && number != 0; level -= 1 {
+				node: store.Object_Node
+				disk_block(file, number, &node) or_return
+				next: u64
+				for child in node.children {
+					if child.block != 0 {
+						next = child.block
+						break
+					}
+				}
+				number = next
+			}
+			if number == 0 {
+				break
+			}
 			at := i64(number * store.BLOCK_SIZE)
 			one: [1]u8
 			if count, err := os.read_at(file, one[:], at); err != nil || count != 1 {
@@ -1483,7 +1498,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "kernel: program agenda stopped: invalid instruction"},
 	{kind = .Wait, text = ", which replaces "},
 	{kind = .Wait, text = "[console] error: the program agenda stopped: invalid instruction"},
-	{kind = .Wait, text = "[console] error: the instruction is at offset "},
+	// The debug image names the procedure of the instruction, in the module
+	// that ran: calendar_fixed, not calendar.
+	{kind = .Wait, text = "[console] error: the instruction is at "},
+	{kind = .Wait, text = " in calendar_fixed"},
 	{kind = .Wait, text = "... runs in place of calendar "},
 	{kind = .Type, text = "replacements()"},
 	{kind = .Wait, text = "...: replaced by calendar_fixed "},
@@ -1705,7 +1723,7 @@ scenario := [?]Step {
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: block stopped with code 0"},
 	// The storage service runs since the boot (the boot pass of settings
 	// needs it), with the block service of the data disk. The console has a
-	// private store of 4 blocks, by its name; it acts for the principal, so it
+	// private store of 3 blocks, by its name; it acts for the principal, so it
 	// also sees all the stores.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"storage\")"},
@@ -1717,9 +1735,10 @@ scenario := [?]Step {
 	{kind = .Generation, text = "[console] "},
 	{kind = .Type, text = "storage.read(0, \"greeting\")"},
 	{kind = .Wait, text = "[console] kept on the disk"},
-	// The limit of the store: one more object needs two more blocks.
+	// The limit of the store: one more object needs one more block: its one
+	// block of data.
 	{kind = .Type, text = "storage.write(0, \"second\", \"one block more\")"},
-	{kind = .Wait, text = "[console] error: storage.write: the call needs 6 blocks in all, with no earlier version kept; the limit is 4 blocks (-2)"},
+	{kind = .Wait, text = "[console] error: storage.write: the call needs 4 blocks in all, with no earlier version kept; the limit is 3 blocks (-2)"},
 	// A change of the object at the limit: the version of its state before
 	// does not fit, and the same commit thins it.
 	// Each line commits the line history after it: the base and 1 after
@@ -1727,7 +1746,7 @@ scenario := [?]Step {
 	// this write is the commit 4.
 	{kind = .Type, text = "storage.write(0, \"greeting\", \"changed at the limit\")"},
 	{kind = .Wait, text = "[console] {generation+4}"},
-	{kind = .Record, program = "storage", level = "info", text = "storage: the store console is at its limit of 4 blocks: the commit of generation {generation+4} thinned 1 version, the oldest of the store first", any_order = true},
+	{kind = .Record, program = "storage", level = "info", text = "storage: the store console is at its limit of 3 blocks: the commit of generation {generation+4} thinned 1 version, the oldest of the store first", any_order = true},
 	// An error of a service is a record: the console writes it as a sentence.
 	{kind = .Type, text = "storage.write(0, \"\", \"x\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the argument name is empty; it must have 1 to 64 bytes (-3)"},
@@ -1736,7 +1755,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "storage.size(0, \"greeting\")"},
 	{kind = .Wait, text = "[console] 20"},
 	{kind = .Type, text = "storage.stores()"},
-	{kind = .Wait, text = "[console] console: 1 objects, 0 trees, 0 versions, 4 of 4 blocks, 0 shared, 1 connection"},
+	{kind = .Wait, text = "[console] console: 1 objects, 0 trees, 0 versions, 3 of 3 blocks, 0 shared, 1 connection"},
 	// The person sees the grant and revokes it: the store stays on the disk,
 	// and the console cannot reach it.
 	{kind = .Type, text = "grants(\"console\")"},
@@ -1746,7 +1765,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "storage.write(0, \"greeting\", \"changed\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the caller has no grant for this: a private store (-1)"},
 	{kind = .Type, text = "storage.stores()"},
-	{kind = .Wait, text = "[console] console: 1 objects, 0 trees, 0 versions, 4 of 4 blocks, 0 shared, 0 connections"},
+	{kind = .Wait, text = "[console] console: 1 objects, 0 trees, 0 versions, 3 of 3 blocks, 0 shared, 0 connections"},
 	{kind = .Type, text = "grants(\"console\")"},
 	{kind = .Wait, text = "[console] console lost: store"},
 	{kind = .Shot, text = "storage"},
@@ -1807,6 +1826,10 @@ scenario := [?]Step {
 	// after any case.
 	{kind = .Wait, text = "compositor: surface errors", any_order = true},
 	{kind = .Trace, text = "errors: stack of fault: ", names = "fault::three fault::two fault::one entry"},
+	// The program errors names each frame from the debug image: the
+	// instruction of the write at its line, and the call of two.
+	{kind = .Wait, text = " in fault (programs/fault/main.odin:15), fault::two + 0x"},
+	{kind = .Wait, text = " in fault (programs/fault/main.odin:20), fault::one + 0x"},
 	{kind = .Wait, text = "errors: t the pages of another program (Inspect, Pages): Inspect: the argument index has the value 1, which the call refuses"},
 	{kind = .Wait, text = "errors: u the pages past the end of the user half: Inspect: the argument address has the value 140737488351232, which the call refuses; it takes at most 140737488093184"},
 	{kind = .Wait, text = "errors: v a wrapper: display.open of 0 by 100 pixels: display.open: the argument width has the value 0, which the call refuses; it takes at most 2048"},
@@ -1870,7 +1893,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "inspect: network: "},
 	{kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"},
 	{kind = .Type, text = "fault"},
-	{kind = .Wait, text = "inspect: fault stopped: page fault at 0x0; stack: fault + "},
+	{kind = .Wait, text = "inspect: fault stopped: page fault at 0x0; stack: fault::three + 0x"},
+	{kind = .Wait, text = " in fault (programs/fault/main.odin:15), fault::two + 0x"},
 	{kind = .Shot, text = "inspect_stopped"},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "inspect: the bytes of the memory of inspect"},

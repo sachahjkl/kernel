@@ -45,7 +45,7 @@ BUILD_FOLDER :: "build"
 // flake.nix gives the same two flags to the compiler when it builds this tool.
 CONTRACT_LIBRARY :: "-collection:contract=contract"
 SUPPORT_LIBRARY :: "-collection:support=support"
-CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "datagram", "date", "errors", "fixed_addresses", "frame", "glyph_cache", "isolated", "module", "operation", "pointer_pictures", "release", "remote", "ring", "settings", "store", "cut_mark", "system_description"}
+CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "datagram", "date", "errors", "fixed_addresses", "frame", "glyph_cache", "isolated", "module", "operation", "pointer_pictures", "release", "remote", "ring", "settings", "store", "cut_mark", "system_description", "debug_object"}
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/BOOTX64.EFI"
 BOOT_VOLUME :: BUILD_FOLDER + "/boot_volume.img"
@@ -107,7 +107,7 @@ Command :: struct {
 
 COMMANDS :: [?]Command {
 	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one process for each module, as many at once as the processors, or `build <processes>`", run = run_build},
-	{name = "module", about = "module <name> with_checks|without_checks measure_run|usual_run: build one module of the table (the parallel build runs this command)", run = run_module},
+	{name = "module", about = "module <name> with_checks|without_checks measure_run|usual_run with_debug_information|without_debug_information: build one module of the table, and its debug object with the debug information (the parallel build runs this command)", run = run_module},
 	{name = "test", about = "build, start the machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test principals`, `test tcp`, `test quic`, `test quic-real`, `test random`, `test extended_state`, `test return_fault`, `test trusted_boot`: one part only; `test trusted_boot tpm`: with the two machines that have a software TPM", run = run_test},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
 	{name = "screenshots", about = "test and the second build, then write the measure record " + MEASURE_RECORD_FILE + " and copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER + "; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
@@ -127,7 +127,7 @@ COMMANDS :: [?]Command {
 	{name = "news", about = "new <subject> | check: the news entries of " + NEWS_FOLDER + ", dated reports in prose of what a person can now see or use, for the page of the news of the site", run = run_news},
 	{name = "site", about = "write the site of the system in " + SITE_FOLDER + ": the pages from the documents, the code, the news, the pictures and the logs of the last machine tests, an index and one small script for the search, and the feed of the news; no request to another server", run = run_site},
 	{name = "release_number", about = "print the release number of the system: the newest release of " + CHANGELOG_FILE, run = run_release_number},
-	{name = "check", about = "odin check -vet and odin test of the host code, the checks of the sources (among them the rule on comments), changelog check, news check, then test", run = run_check},
+	{name = "check", about = "odin check -vet and odin test of the host code, the checks of the sources (among them the rule on comments and the form of the glossary), changelog check, news check, then test", run = run_check},
 	{name = "key", about = "key new <folder outside the repository>: write a new signing key of the system description (the private key, readable by its owner only, and the public key); `key show`: print the public key that the build uses (" + SIGNING_KEY_VARIABLE + ", or the test signing key)", run = run_key},
 }
 
@@ -245,9 +245,12 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int, k
 		program_path = BOOT_PROGRAM_SIGNED
 	}
 	program := read_file(program_path) or_return
-	volume, fits := volume_encode({{path = BOOT_PROGRAM_PATH, data = program}}, context.temp_allocator)
+	// The debug image is a file of its own beside the boot program: the boot
+	// program and the boot image are the same bytes with and without it.
+	debug_image := read_file(DEBUG_IMAGE) or_return
+	volume, fits := volume_encode({{path = BOOT_PROGRAM_PATH, data = program}, {path = DEBUG_IMAGE_VOLUME_PATH, data = debug_image}}, context.temp_allocator)
 	if !fits {
-		fmt.eprintln("kerneltool: the boot program does not fit in the boot volume")
+		fmt.eprintln("kerneltool: the boot program and the debug image do not fit in the boot volume")
 		return false
 	}
 	if write_err := os.write_entire_file(volume_path, volume); write_err != nil {
@@ -307,7 +310,7 @@ run_test :: proc(args: []string) -> int {
 	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) {
 		return EXIT_FAILURE
 	}
-	// `test network`, `test main`, `test power`, `test hierarchy`, `test tcp`, `test random`, `test extended_state`, `test return_fault`, `test fault_ring`, `test kernel_events`, `test trusted_boot`: one part only, for the work on it.
+	// `test network`, `test main`, `test power`, `test hierarchy`, `test ranges`, `test tcp`, `test random`, `test extended_state`, `test return_fault`, `test fault_ring`, `test kernel_events`, `test trusted_boot`: one part only, for the work on it.
 	if len(args) == 1 && args[0] == "trusted_boot" {
 		return trusted_boot_tests_run() ? 0 : EXIT_FAILURE
 	}
@@ -321,8 +324,11 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "hierarchy" {
 		return hierarchy_tests_run() ? 0 : EXIT_FAILURE
 	}
+	if len(args) == 1 && args[0] == "ranges" {
+		return ranges_tests_run() ? 0 : EXIT_FAILURE
+	}
 	if len(args) == 1 && args[0] == "power" {
-		return power_loss_run() && power_loss_settings_run() ? 0 : EXIT_FAILURE
+		return power_loss_run() && power_loss_settings_run() && power_loss_ranges_run() ? 0 : EXIT_FAILURE
 	}
 	if len(args) == 1 && args[0] == "main" {
 		return machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
@@ -375,7 +381,7 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "quic-real" {
 		return quic_real_tests_run() ? 0 : EXIT_FAILURE
 	}
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !trusted_boot_tests_run() || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !fault_ring_tests_run() || !kernel_events_tests_run() || !cryptography_tests_run() || !persistence_run() || !principals_tests_run() || !hierarchy_tests_run() || !power_loss_run() || !power_loss_settings_run() || !test_modules() || !test_descriptions() {
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !trusted_boot_tests_run() || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !fault_ring_tests_run() || !kernel_events_tests_run() || !cryptography_tests_run() || !persistence_run() || !principals_tests_run() || !hierarchy_tests_run() || !ranges_tests_run() || !power_loss_run() || !power_loss_settings_run() || !power_loss_ranges_run() || !test_modules() || !test_descriptions() || !test_debug_objects() {
 		return EXIT_FAILURE
 	}
 	fmt.println("kerneltool: all tests passed")
@@ -553,7 +559,7 @@ run_check :: proc(args: []string) -> int {
 	// compiler assembles runtime/memory_for_host_tests.asm itself and links
 	// its object by its path (a library found through `-L/` is refused by
 	// the linker of the Nix sandbox).
-	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/sentence", "support/cryptography/vectors", "modules/cryptography", "support/quic", "contract/date", "support/storage_mount", "support/storage_tree", "support/storage_retention", "support/principals", "support/calendar", "support/line_editor", "support/console_language", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/bootscreen/image_card", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool", "contract/fixed_addresses", "contract/settings", "modules/text_shaping", "support/text_shaping", "support/mark", "support/terminal", "contract/cut_mark", "runtime/without_vector_registers", "support/instruction_sets", "contract/system_description", "contract/operation"}) {
+	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/sentence", "support/cryptography/vectors", "modules/cryptography", "support/quic", "contract/date", "support/storage_mount", "support/storage_object", "support/storage_tree", "support/storage_retention", "support/principals", "support/calendar", "support/line_editor", "support/console_language", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/bootscreen/image_card", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool", "contract/fixed_addresses", "contract/settings", "modules/text_shaping", "support/text_shaping", "support/mark", "support/terminal", "contract/cut_mark", "runtime/without_vector_registers", "support/instruction_sets", "contract/system_description", "contract/operation", "contract/debug_object"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE
@@ -578,6 +584,9 @@ run_check :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	if !comment_rule_check() {
+		return EXIT_FAILURE
+	}
+	if !glossary_check() {
 		return EXIT_FAILURE
 	}
 	if !changelog_check() {

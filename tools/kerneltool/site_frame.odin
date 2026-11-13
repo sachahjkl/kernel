@@ -159,6 +159,7 @@ Site :: struct {
 	release:      string,
 	build_time:   string,
 	documents:    map[string]string, // A Markdown file ("docs/NETWORK.md" and "NETWORK.md") to its page.
+	glossary:     Glossary, // docs/GLOSSARY.md, as glossary_read gives it.
 	terms:        []Site_Term,
 	not_rendered: [dynamic]string,
 	copies:       map[string]string, // A path in the site to the file of the repository that it copies.
@@ -489,35 +490,23 @@ site_git_commit :: proc() -> string {
 	return ""
 }
 
-// site_glossary_terms reads the terms of docs/GLOSSARY.md: the first cell
-// of each row of each table whose header starts with "| Term |". The
-// longest come first, so that "Module metadata" is found before "Module".
-site_glossary_terms :: proc(content: string) -> []Site_Term {
+// site_glossary_terms gives the terms of the glossary as the pages, the
+// search and the page graph use them, with their short definition. The
+// longest come first, so that "Module metadata" is found before "Module";
+// the sort keeps the order of the file among names of one length. A name of
+// two letters is too short to link. A name that the glossary has twice links
+// to its first entry.
+site_glossary_terms :: proc(glossary: Glossary) -> []Site_Term {
 	terms := make([dynamic]Site_Term, context.temp_allocator)
-	in_terms := false
-	row := 0
-	for line in site_lines(content) {
-		if !strings.has_prefix(line, "|") {
-			in_terms = false
+	names := make(map[string]bool, context.temp_allocator)
+	for term in glossary_terms_in_order(glossary) {
+		if len(term.name) < 3 {
 			continue
 		}
-		cells := site_table_row_cells(line)
-		if !in_terms {
-			in_terms = len(cells) > 0 && cells[0] == "Term"
-			row = 0
-			continue
-		}
-		row += 1
-		if row == 1 || len(cells) == 0 {
-			continue // The line of dashes.
-		}
-		name := site_term_name(cells[0])
-		if len(name) >= 3 {
-			definition := len(cells) > 1 ? cells[1] : ""
-			append(&terms, Site_Term{name = name, id = strings.concatenate({"term-", site_slug(name)}, context.temp_allocator), definition = definition})
-		}
+		append(&terms, Site_Term{name = term.name, id = term.id, definition = term.definition, second_of_name = term.name in names})
+		names[term.name] = true
 	}
-	slice.sort_by(terms[:], proc(a, b: Site_Term) -> bool {return len(a.name) > len(b.name)})
+	slice.stable_sort_by(terms[:], proc(a, b: Site_Term) -> bool {return len(a.name) > len(b.name)})
 	return terms[:]
 }
 
@@ -613,7 +602,15 @@ site_build :: proc(address: string) -> bool {
 		site.documents[path] = page
 		site.documents[name] = page
 	}
-	site.terms = site_glossary_terms(glossary_text)
+	glossary_problems: []string
+	site.glossary, glossary_problems = glossary_read(glossary_text)
+	if len(glossary_problems) > 0 {
+		for problem in glossary_problems {
+			fmt.eprintfln("kerneltool: site: %s, %s", SITE_GLOSSARY_FILE, problem)
+		}
+		return false
+	}
+	site.terms = site_glossary_terms(site.glossary)
 	// The sources of the reference tables are read before any guide is
 	// rendered: a code span of a guide links to their rows.
 	site_reference_read(&site) or_return

@@ -55,18 +55,19 @@ Grant :: enum {
 	History_Store, // A store of its own in the storage service for the line history of the program, apart from its private store (Root_Command.Connect_History).
 	Events, // The machine, with the right Events: give the event table of the machine (kernel events of every program).
 	Principals, // A ring to this service for Principal_Record and Principal_Unlock only: the program that keeps the records of the named principals (docs/PRINCIPALS.md).
+	Debug_Image, // The debug image, read-only: the names of the procedures and the source lines of a stop report (debug_image.odin).
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	switch name {
 	case "console":
-		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Acts_For_Principal, .Replacements, .Replace, .History_Store}
+		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Acts_For_Principal, .Replacements, .Replace, .History_Store, .Debug_Image}
 	case "flood":
 		return {.Terminal}
 	case "inspect":
 		// A developer tool: it reads the reports of the machine and the names
 		// of the modules, and serves the same facts (docs/TOOLS.md).
-		return {.Inspect, .Image, .Serve}
+		return {.Inspect, .Image, .Serve, .Debug_Image}
 	case "monitor":
 		return {.Inspect, .Serve} // It serves programs() and counts() to a caller that acts for the principal.
 	case "processors", "pages", "flow", "crowd", "clock":
@@ -116,8 +117,10 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Store, .Principals}
 	case "hierarchy":
 		return {.Store} // The test of the trees of a store.
+	case "ranges":
+		return {.Store} // The test of the large objects of a store, written by ranges.
 	case "errors":
-		return {.Store, .Image, .Inspect, .Connect} // It makes errors in its store, loads modules and starts fault from the boot image, counts the locks, and asks for connections that the root service refuses (callable_of gives it none).
+		return {.Store, .Image, .Inspect, .Connect, .Debug_Image} // It makes errors in its store, loads modules and starts fault from the boot image, counts the locks, and asks for connections that the root service refuses (callable_of gives it none).
 	case "imports":
 		return {.Inspect, .Image} // It loads modules of the boot image, and measures with the cycle counter.
 	case "cryptography_vectors":
@@ -204,13 +207,15 @@ may_connect :: proc "contextless" (caller: string, service: string) -> bool {
 store_limit_of :: proc "contextless" (name: string) -> u64 {
 	switch name {
 	case "console":
-		return 4 // A small limit: the test reaches it.
+		return 3 // A small limit: the test reaches it.
 	case "errors":
 		return 2 // One object is over the limit.
 	case "notes":
 		return 4500 // The versions of a run of 1000 commits of the count (4 blocks each), then thinning at the limit.
 	case "hierarchy":
 		return 12000 // 100000 empty objects in 1110 trees: about 9500 nodes, and room for the copies of a commit.
+	case "ranges":
+		return 12000 // A commit of 1000 blocks spread over an object of 8 GiB holds about 2000 blocks, with its version; the loop of range commits about 4000.
 	}
 	return 64
 }
@@ -312,11 +317,13 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "block", "frame":
 		return {pages = 256, programs = 1, threads = 1}
 	case "storage":
-		// About 16 MB of tables: the count of names of each block of the
-		// disk, the changes of one commit, the leaves of one version index,
-		// the versions of one object for versions(), the nodes of the trees
-		// of one commit and of one read, and the walks of the trees.
-		return {pages = 6144, programs = 1, threads = 1}
+		// About 34 MB of tables: the count of names of each block of the
+		// disk, the changes of one commit (8 MB: each block of the disk), the
+		// leaves of one version index, the versions of one object for
+		// versions(), the nodes of the trees of one commit and of one read,
+		// the walks of the trees, the pending blocks of the ranges (4 MB),
+		// and the object nodes that one commit copies (7 MB).
+		return {pages = 10240, programs = 1, threads = 1}
 	case "disk":
 		return {pages = 2048, programs = 1, threads = 1}
 	case "imports":
@@ -534,6 +541,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	image = ([^]u8)(address)[:ctx.values[op.ROOT_VALUE_BOOT_IMAGE_SIZE]]
 	system.log(ROOT_MARK, ", ", u64(len(system.image_entries(image))), " modules in the boot image")
+	debug_image_take(ctx)
 	// The screen first: a failure of the check below stays on it.
 	if pixels, map_status := system.memory_map(ctx.handles[op.ROOT_FRAMEBUFFER], {.Write}); map_status == .Ok {
 		screen = {
@@ -981,7 +989,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	slot.principal = principal // The name of its store carries the principal.
 	// The connection to the private store, in the context: the call ring, the
 	// call region, the storage service with the right Read, and its file.
-	// The storage file, the date page, the settings page, five glyph caches, the file of a service.
+	// The storage file, the date page, the settings page, five glyph caches, the file of a service, the debug image.
 	mappings: [12]system.Mapping
 	mapping_count := 0
 	// This service closes its handles of the connection after the start.
@@ -1107,6 +1115,9 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	}
 	// Each program: the date page, read-only.
 	date_page_give(mappings[:], &mapping_count, &values)
+	if .Debug_Image in role {
+		debug_image_give(mappings[:], &mapping_count, &values)
+	}
 	// A program with a surface: the settings page and the glyph cache, read-only.
 	if .Terminal not_in role {
 		text_settings_give(mappings[:], &mapping_count, &values)

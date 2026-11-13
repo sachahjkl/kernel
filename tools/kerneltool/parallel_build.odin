@@ -94,7 +94,7 @@ build_modules_in_parallel :: proc() -> bool {
 	}
 	// The folder that every module process writes under exists before the
 	// first process starts.
-	make_folder(MODULE_BUILD_FOLDER) or_return
+	make_folder(module_build_folder) or_return
 	outcomes := make([]Module_Build_Outcome, len(module_builds))
 	defer {
 		for outcome in outcomes {
@@ -158,7 +158,7 @@ module_build_worker :: proc(data: rawptr) {
 		// Each setting of the build that this process holds goes to the
 		// module process as an argument: a setting that stays here gives a
 		// module of another build, with no error.
-		command := [?]string{level.tool_path, "module", module_builds[index].name, test_build_checks ? "with_checks" : "without_checks", measure_run ? "measure_run" : "usual_run"}
+		command := [?]string{level.tool_path, "module", module_builds[index].name, test_build_checks ? "with_checks" : "without_checks", measure_run ? "measure_run" : "usual_run", debug_information ? "with_debug_information" : "without_debug_information"}
 		state, standard_output, standard_error, error := os.process_exec({command = command[:]}, context.allocator)
 		output := make([]u8, len(standard_output) + len(standard_error))
 		copy(output, standard_output)
@@ -180,12 +180,16 @@ module_build_worker :: proc(data: rawptr) {
 // The command module: build one module of the table in this process. The
 // parallel build runs it; a person can run it to build one module.
 run_module :: proc(args: []string) -> int {
-	if len(args) != 3 || (args[1] != "with_checks" && args[1] != "without_checks") || (args[2] != "measure_run" && args[2] != "usual_run") {
-		fmt.eprintln("kerneltool: module <name> with_checks|without_checks measure_run|usual_run")
+	if len(args) != 4 || (args[1] != "with_checks" && args[1] != "without_checks") || (args[2] != "measure_run" && args[2] != "usual_run") || (args[3] != "with_debug_information" && args[3] != "without_debug_information") {
+		fmt.eprintln("kerneltool: module <name> with_checks|without_checks measure_run|usual_run with_debug_information|without_debug_information")
 		return EXIT_USAGE
 	}
 	test_build_checks = args[1] == "with_checks"
 	measure_run = args[2] == "measure_run"
+	// A module with no debug information goes to a folder of its own: the
+	// modules of the build stay as they are.
+	debug_information = args[3] == "with_debug_information"
+	module_build_folder = debug_information ? MODULE_BUILD_FOLDER : MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION
 	for build in module_builds {
 		if build.name == args[0] {
 			return build_module(build) ? 0 : EXIT_FAILURE

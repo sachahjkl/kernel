@@ -438,18 +438,21 @@ site_reference_add :: proc(site: ^Site) -> bool {
 
 	// The glossary.
 	{
-		content := site_read("docs/GLOSSARY.md") or_return
 		glossary_page := site_page_file(SITE_GLOSSARY_FOLDER)
-		renderer := site_renderer_make(site, glossary_page, "docs/GLOSSARY.md")
+		renderer := site_renderer_make(site, glossary_page, SITE_GLOSSARY_FILE)
 		renderer.glossary = true
-		site_render_markdown(&renderer, content)
+		site_glossary_write(&renderer, site.glossary)
 		b := strings.builder_make(context.temp_allocator)
 		strings.write_string(&b, "<article class=\"prose\">\n")
+		fmt.sbprintf(&b, "<h1 id=\"%s\">", site_slug(site.glossary.title))
+		site_escape(&b, site.glossary.title)
+		strings.write_string(&b, "</h1>\n")
 		strings.write_string(&b, strings.to_string(renderer.builder))
 		strings.write_string(&b, "</article>\n")
-		title := site_document_title(content)
-		site_page_add(site, Site_Page{path = glossary_page, title = title, description = site_description_cut(fmt.tprintf("The %d terms of %s: one term for each concept, with its definition and the words that it replaces.", len(site.terms), SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources("docs/GLOSSARY.md"), layout = .Documentation})
-		append(&entries, Site_Reference_Entry{path = glossary_page, title = title, what = "Each term of the project, with its definition. A term on another page links here.", source = "docs/GLOSSARY.md", count = len(site.terms), kind = .Term})
+		title := site.glossary.title
+		term_count := len(glossary_terms_in_order(site.glossary))
+		site_page_add(site, Site_Page{path = glossary_page, title = title, description = site_description_cut(fmt.tprintf("The %d terms of %s: one term for each concept, with its definition, what it is for, how it differs from the word of other systems, and the words that it replaces.", term_count, SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_GLOSSARY_FILE), layout = .Documentation})
+		append(&entries, Site_Reference_Entry{path = glossary_page, title = title, what = "Each term of the project: its definition, what it is for, and how it works. A term on another page links here.", source = SITE_GLOSSARY_FILE, count = term_count, kind = .Term})
 	}
 
 	// The commands of the tool.

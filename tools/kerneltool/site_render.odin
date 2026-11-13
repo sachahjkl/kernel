@@ -31,9 +31,10 @@ Site_List_Item :: struct {
 
 // A term of the glossary: the page links its first use in each other page.
 Site_Term :: struct {
-	name:       string,
-	id:         string,
-	definition: string, // The cell after the term: its text in the search index.
+	name:           string,
+	id:             string,
+	definition:     string, // Its short definition: its text in the search index and in the page graph.
+	second_of_name: bool, // The glossary has a term of this name before it: a page links the name to that one.
 }
 
 Site_Renderer :: struct {
@@ -46,7 +47,7 @@ Site_Renderer :: struct {
 	items:        [dynamic]Site_List_Item,
 	section:      string,
 	linked_terms: map[string]bool,
-	glossary:     bool, // The page of the glossary: its terms get anchors, and no term links.
+	glossary:     bool, // The page of the glossary: a term links to its entry on the same page.
 	in_heading:   bool,
 	// A source comment, not a document (docs/SITE.md, "The Markdown of a
 	// source comment"): a heading, a table, a quote, a line of HTML and a
@@ -430,7 +431,6 @@ site_render_table :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 		return end
 	}
 	header := site_table_row_cells(lines[start])
-	term_table := renderer.glossary && len(header) > 0 && header[0] == "Term"
 	// The box of the table: a region that the keyboard reaches, named by the
 	// heading above the table. A column of a document has no known kind: it
 	// gets the general least width, and a cell that holds only a number or
@@ -447,12 +447,7 @@ site_render_table :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 	strings.write_string(b, "</tr></thead>\n<tbody>\n")
 	for row in lines[start + 2:end] {
 		cells := site_table_row_cells(row)
-		if term_table && len(cells) > 0 {
-			name := site_term_name(cells[0])
-			fmt.sbprintf(b, "<tr id=\"%s\">", site_unique_id(renderer, strings.concatenate({"term-", site_slug(name)}, context.temp_allocator)))
-		} else {
-			strings.write_string(b, "<tr>")
-		}
+		strings.write_string(b, "<tr>")
 		for cell_index in 0 ..< len(header) {
 			kind := cell_index < len(cells) ? site_cell_kind(cells[cell_index]) : Site_Column_Kind.Any
 			fmt.sbprintf(b, "<td class=\"%s\">", site_column_classes[kind])
@@ -575,8 +570,8 @@ site_write_list :: proc(renderer: ^Site_Renderer, items: []Site_Pending_Item, po
 	strings.write_string(b, ordered ? "</ol>\n" : "</ul>\n")
 }
 
-// site_term_name gives the term of a cell of the glossary: its text with
-// no code marks.
+// site_term_name gives the name of a term from the heading of its entry in
+// the glossary: its text with no code marks.
 site_term_name :: proc(cell: string) -> string {
 	name, _ := strings.remove_all(cell, "`", context.temp_allocator)
 	return strings.trim_space(name)
@@ -892,11 +887,12 @@ site_term_at :: proc(text: string, index: int, name: string) -> (length: int, fo
 }
 
 // site_write_with_terms writes plain text, escaped, with a link on the first
-// use of each term of the glossary on the page. Not in a heading, and not on
-// the page of the glossary.
+// use of each term of the glossary on the page. Not in a heading. On the page
+// of the glossary, the link names the entry on the same page, and each entry
+// links each other term once (site_glossary_write).
 site_write_with_terms :: proc(renderer: ^Site_Renderer, text: string) {
 	b := &renderer.builder
-	if renderer.glossary || renderer.in_heading || renderer.comment || renderer.site == nil || len(renderer.site.terms) == 0 {
+	if renderer.in_heading || renderer.comment || renderer.site == nil || len(renderer.site.terms) == 0 {
 		site_escape(b, text)
 		return
 	}
@@ -910,7 +906,7 @@ site_write_with_terms :: proc(renderer: ^Site_Renderer, text: string) {
 		matched := false
 		// The terms are sorted from the longest: "Module metadata" before "Module".
 		for term in renderer.site.terms {
-			if term.id in renderer.linked_terms {
+			if term.second_of_name || term.id in renderer.linked_terms {
 				continue
 			}
 			length, found := site_term_at(text, index, term.name)
@@ -918,7 +914,19 @@ site_write_with_terms :: proc(renderer: ^Site_Renderer, text: string) {
 				continue
 			}
 			site_escape(b, text[written:index])
-			fmt.sbprintf(b, "<a class=\"term\" href=\"%s#%s\">", site_page_link(renderer.site, renderer.page, site_page_file(SITE_GLOSSARY_FOLDER)), term.id)
+			if renderer.glossary {
+				fmt.sbprintf(b, "<a class=\"term\" href=\"#%s\">", term.id)
+			} else {
+				// The short definition is the tooltip of the link: a reader
+				// learns the term without leaving the page.
+				fmt.sbprintf(b, "<a class=\"term\" href=\"%s#%s\"", site_page_link(renderer.site, renderer.page, site_page_file(SITE_GLOSSARY_FOLDER)), term.id)
+				if term.definition != "" {
+					strings.write_string(b, " title=\"")
+					site_plain(b, term.definition)
+					strings.write_string(b, "\"")
+				}
+				strings.write_string(b, ">")
+			}
 			site_escape(b, text[index:index + length])
 			strings.write_string(b, "</a>")
 			renderer.linked_terms[term.id] = true

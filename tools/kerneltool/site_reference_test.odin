@@ -42,7 +42,7 @@ site_operations_of_the_repository :: proc(t: ^testing.T) {
 			continue
 		}
 		operation := site_operation_parts(member)
-		testing.expect(t, strings.has_prefix(operation.parameters, "memory, program or 0 for self"))
+		testing.expect(t, strings.has_prefix(operation.parameters, "memory, program, address"))
 		testing.expect_value(t, operation.result, "address")
 	}
 	statuses, status_problem := site_enumeration_read(text, SITE_OPERATION_FILE, "Status")

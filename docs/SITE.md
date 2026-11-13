@@ -37,7 +37,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `docs/guides/` | The table "Documents" of `README.md`, then the other documents of `docs/` by name |
 | `docs/guides/<name>/` | Each document of `docs/` but the working records `HANDOFF.md`, `REVIEWS.md`, `SITE.md` and `FIRST_MILESTONE.md` (`SITE_WORKING_RECORDS`), which stay out of the site: only the guides that explain the system are published. A link of a page to a working record names the file in the repository. The glossary is a page of the reference |
 | `docs/reference/` | The list of the reference tables below |
-| `docs/reference/glossary/` | `docs/GLOSSARY.md`: each row of a table whose first column is "Term" has the anchor `term-<name>` |
+| `docs/reference/glossary/` | `docs/GLOSSARY.md`: each term is an entry with the anchor `term-<name>` (see "The glossary") |
 | `docs/reference/commands/` | `COMMANDS` in `tools/kerneltool/main.odin`: the name and the text of each command |
 | `docs/reference/numbers/` | The list `site_measures`, the measure record `docs/measures/measures.txt` and the logs of `build/` that are newer than it |
 | `docs/reference/licenses/` | See "The licenses" |
@@ -116,13 +116,40 @@ Links:
 - A link to an address of another host stays a link.
 - A code span that names a row of a reference table becomes a link to the row. The rule: the whole text of the span, with its case, is the name of one kernel operation (`Memory_Map`), one error kind (`No_Grant`) or one module (`math`); or the span is a call of a built-in command of the console (`load("math")`, `help()`). A name that two tables have links nowhere: `Bad_Address` is a status and an error kind. A status, a unit and a grant are not linked: their names (`Pages`, `Store`, `Person`) are also common words of the code. A document of `docs/` comes first, then a row, then a file of the repository.
 - A code span that names a declaration of the sources (`blend_coverage_row_in_order`, `graphics.mix`, `layout_place()`) is a link to it, with a declaration card; a code span that is a fragment of Odin (`square_root[(d * d) >> 12]`) is colored as a block of code. A document, a row and a file come first. See "The declarations of the sources".
-- The first use of each term of the glossary on a page links to the term. The rule: the letters of the term with no regard to case, a whole word, or the word with an `s`; outside code, links and headings; the longest terms first; once for each term on a page.
+- The first use of each term of the glossary on a page links to the term, with its short definition as the tooltip of the link. The rule: the letters of the term with no regard to case, a whole word, or the word with an `s`; outside code, links and headings; the longest terms first; once for each term on a page. On the page of the glossary the rule holds inside each entry, and an entry never links its own term.
 
 What it does not render, shown as text and listed by the command: a mermaid diagram (shown as its code), a line of HTML, a table with no line of dashes, a fence with no end, a link to a file that is not in the repository. A `_` is text.
 
 The same renderer writes the source comments, in its mode for comments (see "The Markdown of a source comment").
 
 Each guide has the documentation layout (see "The two layouts"): its headings of levels 2 and 3 are in "On this page". It links to the guides before and after it.
+
+## The glossary
+
+The glossary (`docs/GLOSSARY.md`) is one source, read by one reader: `glossary_read` (`tools/kerneltool/glossary.odin`). The page of the glossary, the links to a term on the other pages, the entries of the search, the page graph, the references to a term and the check of the tool all take the terms that it gives.
+
+### The form of an entry
+
+- A group is a heading of level 2. The text under it, before its first term, is its introduction.
+- A term is a heading of level 3 in its group. Its name is the text of the heading, with no code marks. Its anchor is `term-<name>`, the name as the rule of the ids gives it; a second term of the same name gets `-2`, as a heading does.
+- The first paragraph under the heading is the short definition: one sentence that stands alone, with no document reference. The site shows it alone: as the tooltip (`title`) of each link to the term on another page, in a result of the search, and as the `description` of the term in the page graph.
+- The paragraphs after it are the explanation, in the Markdown of the guides: what the term is for, how a program gets and uses it, its neighbours, what it is not, an example from the system, and a document reference to its full design.
+- The last paragraph starts with "Do not use: " and lists the words that the term replaces. It is optional.
+
+`glossary_read` refuses a table of terms (the form before this one), a term before the first group, a term with no short definition or whose first paragraph is a list, a table, a quote or a fence, a heading of level 4 or more inside an entry, and a line "Do not use" that is not the last paragraph of its entry. `kerneltool check` and `kerneltool site` stop on each of them, with the line.
+
+### The terms with no explanation
+
+`kerneltool check` prints the count of the terms that have a short definition and no explanation, and their names by group, as a warning: a short definition alone is the summary that a reader of another system cannot use. The warning becomes a failure when every group has its explanations.
+
+### The page
+
+- Each group is a `<section class="glossary-group">` with its heading `<h2>`.
+- Each term is a `<div class="term-entry">`: its heading `<h3 id="term-<name>">`, its short definition in `<p class="term-definition">` (a rule at its left, in bold), its explanation, then `<p class="term-avoided">` with the label "Do not use" and the words, dim. A word in code marks stays code; no word links.
+- Inside an entry, the first use of each other term links to its entry on the same page (`#term-<name>`): a reader who opens one entry finds its neighbours there. The short definition links too. The words to avoid never link.
+- The list "On this page" holds each group and each term: it is the index of the terms, at the right of the text from 1100 pixels, above it under that width.
+
+The page stays one page, at its address of before: each anchor `term-<name>` stays where the links of the other pages and of other sites point. The command prints the bytes of each page. If the glossary page passes 1 MB, the page splits into one page for each group, and the page of today keeps its address with a script that sends each old anchor to the page of its group.
 
 ## The news
 
@@ -164,7 +191,7 @@ The owner asked for it on 2026-11-12: "une doc riche et auto générée, avec re
 
 - An entry has a title (what the match reads), its page (an index of `pages`), an anchor (an id of the page, or empty for the page itself), a kind (an index of `kinds`) and a text (the line under the list for the chosen row).
 - A kind is its name and the name of its value kind (see "The kinds of values"), whose icon and color the list shows. One table, `site_search_kinds`, gives each kind its name, its value kind and the folder of the one page that lists every entry of the kind (none for the pages and the exports).
-- The kinds, in their tie order: page, module, program, export, operation, error kind, console command, term, guide section, property, news entry, release, gap, license row, type. Each page of the site is an entry. The others come from the same data as their page: the modules and their exports (`module.export`, with the signature as the console prints it), the kernel operations, the error kinds, the commands of the console, the terms of the glossary with their definition, the headings of levels 2 and 3 of each guide with their first paragraph, the properties with their status, the news entries, the releases with their date and their first change, the gaps, and the rows of the two tables of licenses (each row has the id `license-<what it is>`).
+- The kinds, in their tie order: page, module, program, export, operation, error kind, console command, term, guide section, property, news entry, release, gap, license row, type. Each page of the site is an entry. The others come from the same data as their page: the modules and their exports (`module.export`, with the signature as the console prints it), the kernel operations, the error kinds, the commands of the console, the terms of the glossary with their short definition, the headings of levels 2 and 3 of each guide with their first paragraph, the properties with their status, the news entries, the releases with their date and their first change, the gaps, and the rows of the two tables of licenses (each row has the id `license-<what it is>`).
 - The bounds: a title has at most 128 bytes (`NAME_SCAN_LIMIT` of the match: it reads no more); a text has at most 120 bytes, cut at the start of a character; the index has at most 4096 entries (`CANDIDATE_SCAN_LIMIT`: one ranking of the console reads no more names, and the script reads them all only under that count) and at most 1 MiB. The command prints the count of entries and of bytes, and stops over a bound.
 - The checks: each page of the site has at least one entry, and each entry names a page that the command writes and an id of that page.
 - The JSON escapes each character that can end a string or a line of a script: the quote, the backslash, the control characters, `<`, `>`, `&` (so no `</script>`), U+2028 and U+2029. A byte that is not UTF-8 becomes U+FFFD.
@@ -263,7 +290,7 @@ One `@graph` for each page, built from the data that the page shows; no value is
 | `WebPage`, or `CollectionPage` for an index | `<canonical address>#page` | Each page | `url`, `name`, `description`, `inLanguage`, `isPartOf` the site, `primaryImageOfPage` the card, `breadcrumb`, `mainEntity`, `image` the pictures that it shows |
 | `BreadcrumbList` | `#breadcrumb` | Each page below the home | A `ListItem` for each crumb of the line above the content, then the page |
 | `TechArticle` | `#article` | A guide | `headline` (at most 110 bytes), `description`, `inLanguage`, `url`, `mainEntityOfPage`, `isPartOf`, `about`, `image`. No `dateModified` and no `datePublished`: the tool does not read the history of a document, and a false date is worse than none |
-| `DefinedTermSet`, `DefinedTerm` | `#terms`; a term by its anchor `#term-<name>` | The glossary | Each term with its `name`, its definition as `description`, its `url` and `inDefinedTermSet` |
+| `DefinedTermSet`, `DefinedTerm` | `#terms`; a term by its anchor `#term-<name>` | The glossary | Each term with its `name`, its short definition as `description`, its `url` and `inDefinedTermSet` |
 | `ItemList` | `#modules` | The index of the modules | `numberOfItems`, a `ListItem` for each module page with its `position`, `name` and `url` |
 | `Blog`, `BlogPosting` | `#blog`; an entry by its anchor `#news-<file>` | The news | A `BlogPosting` for each entry: `headline`, `description` (its first sentence), `url`, `inLanguage`, `datePublished` and `dateModified` (the date of its head: an entry is never updated), `articleSection` (its kind), `isPartOf`, `mainEntityOfPage`, `about`, `image` (its picture, else the card) |
 
@@ -721,7 +748,7 @@ A comment of the source names a document for a person who reads the code: a docu
 - `choice <n>`, `decision <n>`, `item <n>`: the one top-level item of an ordered list with that number, inside the part of the heading "Choices ..." or "Decisions ..." when the document has one. The reference shows its words in bold, else its first sentence.
 - A quoted label that no heading has, as the last label: the words in bold at the start of a line (`- **The frame caches** ...`) of the part. The reference shows them and links to the heading above them.
 - `sections 4 and 5`: two references.
-- The glossary: a quoted label is first a term, whose row has the anchor `term-<name>`; else a heading.
+- The glossary: a quoted label is first a term, whose entry has the anchor `term-<name>`; else the heading of a group.
 
 A pointer whose labels do not all find their place names the document alone: the reference shows the title, never the label, and the command counts the pointer as not resolved. A path that names no document of `docs/` is not a pointer: its text stays.
 

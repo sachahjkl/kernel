@@ -65,6 +65,39 @@ hash_in_form :: proc "contextless" (input: []u8, side_by_side: bool) -> (result:
 	return
 }
 
+// A chaining value: the 8 words that a part of the tree gives to its
+// parent. The storage service keeps the chaining value of each block of an
+// object, so that a change of a few blocks hashes those blocks and their
+// parents only (docs/STORAGE.md, "The hash of an object").
+Chaining_Value :: [8]u32
+
+// subtree_chaining_value gives the chaining value of a part of an input that
+// is not its root: the chunks from the chunk `chunk_counter`, as the tree of
+// the whole input cuts it (a power of two of whole chunks, or the part at
+// the end).
+subtree_chaining_value :: proc "contextless" (input: []u8, chunk_counter: u64) -> Chaining_Value {
+	return subtree_value(input, chunk_counter, ODIN_ARCH == .amd64)
+}
+
+// parent_chaining_value gives the chaining value of a parent that is not
+// the root, from the chaining values of its two children.
+parent_chaining_value :: proc "contextless" (left, right: Chaining_Value) -> Chaining_Value {
+	return first_half(compress(INITIAL_VALUE, parent_block(left, right), 0, BLOCK_SIZE, {.Parent}))
+}
+
+// root_of_children gives the hash of an input of more than one chunk, from
+// the chaining values of the two children of its root.
+root_of_children :: proc "contextless" (left, right: Chaining_Value) -> (result: Hash) {
+	words := first_half(compress(INITIAL_VALUE, parent_block(left, right), 0, BLOCK_SIZE, {.Parent, .Root}))
+	for word, i in words {
+		result[i * 4 + 0] = u8(word)
+		result[i * 4 + 1] = u8(word >> 8)
+		result[i * 4 + 2] = u8(word >> 16)
+		result[i * 4 + 3] = u8(word >> 24)
+	}
+	return
+}
+
 // left_size gives the size of the left subtree of an input of more than one
 // chunk: the largest power of two of chunks that is less than the input.
 @(private)

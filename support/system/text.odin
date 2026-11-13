@@ -70,6 +70,7 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Par
 		}
 		for len(bytes) > 0 {
 			taken := copy(buffer[count:], bytes)
+			log_control_bytes_replace(buffer[count:][:taken])
 			count += taken
 			bytes = bytes[taken:]
 			if count == len(buffer) && len(bytes) > 0 {
@@ -86,6 +87,21 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Par
 		}
 	}
 	send(handle, buffer[:count], level, packed)
+}
+
+// log_control_bytes_replace writes "?" in place of each control byte of ASCII
+// (below 0x20, and 0x7F) of a text that goes to the log. The kernel writes
+// a line of the log to the serial port as it is, and a terminal of the host
+// acts on a carriage return or an escape sequence: a text that a program
+// took from data (a name of a debug object, a name of a file) could forge or
+// hide a line of the log. The kernel ends each line itself, so a line feed
+// in a text is replaced too.
+log_control_bytes_replace :: proc "contextless" (bytes: []u8) {
+	for &value in bytes {
+		if value < 0x20 || value == 0x7F {
+			value = '?'
+		}
+	}
 }
 
 // LOG_CALL_LIMIT is the bytes of text that the kernel takes in one Log call:
@@ -110,7 +126,11 @@ log_text :: proc "contextless" (text: string) {
 			part = part[:whole > 0 ? whole : len(part)]
 		}
 		rest = rest[len(part):]
-		call(.Log, u64(handle), u64(uintptr(raw_data(part))), u64(len(part)), u64(op.Log_Level.Info), 0, 0)
+		// A copy: the bytes of the caller are not changed.
+		copied: [LOG_CALL_LIMIT]u8
+		count := copy(copied[:], part)
+		log_control_bytes_replace(copied[:count])
+		call(.Log, u64(handle), u64(uintptr(raw_data(copied[:]))), u64(count), u64(op.Log_Level.Info), 0, 0)
 		if len(rest) == 0 {
 			break
 		}

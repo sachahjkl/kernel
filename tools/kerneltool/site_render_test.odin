@@ -65,9 +65,6 @@ site_render_links_the_first_use_of_a_term :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(html, "<a class=\"term\" href=\"../../../docs/reference/glossary/index.html#term-module-metadata\">module metadata</a>"))
 	testing.expect(t, strings.contains(html, "of a <a class=\"term\" href=\"../../../docs/reference/glossary/index.html#term-module\">module</a>."))
 	testing.expect_value(t, strings.count(html, "#term-module\""), 1)
-	glossary, _ := render(&site, "| Term | Definition |\n|---|---|\n| Module | A module |\n", glossary = true)
-	testing.expect(t, strings.contains(glossary, "<tr id=\"term-module\">"))
-	testing.expect(t, !strings.contains(glossary, "class=\"term\""))
 }
 
 @(test)
