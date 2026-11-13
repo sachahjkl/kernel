@@ -151,6 +151,13 @@ List :: struct {
 	matched_count: int, // The entries that match the typed part, shown or not.
 	provider:      Provider_State, // What the list has of a provider.
 	sequence:      u32, // For the owner: the number of the request that this list answers.
+	query:         [TYPED_CAPACITY]u8, // The typed part that the rows answer.
+	query_length:  int, // The bytes of `query` in use.
+	// A hash of all that the panel shows of the list: the typed part, the
+	// counts, the provider, and each row with its entry. Two lists with one
+	// hash show the same rows: the panel adopts the second one with no
+	// change of its choice and no new frame.
+	content:       u64,
 	snapshot:      palette_table.Snapshot, // The checked copy of the table of the provider.
 	// The memory of one ranking. It is here and not on a stack: a thread
 	// with a small stack runs the ranking.
@@ -175,6 +182,10 @@ Panel :: struct {
 	choice:        int, // The chosen row, or NO_ROW.
 	first_row:     int, // The first row that the panel shows.
 	pressed_row:   int, // The row where the left button of the pointer went down, until it goes up; or NO_ROW.
+	// A list that came for the same typed part moved the choice to another
+	// entry, and no frame showed it yet: Enter runs nothing until the owner
+	// drew the panel (panel_drawn). The palette runs the row that is drawn.
+	choice_undrawn: bool,
 	recents:       [RECENT_CAPACITY]Recent, // The chosen entries, the newest first.
 	recent_count:  int, // The remembered choices in use.
 	form:          Form, // Arguments: the fields of the chosen entry.
@@ -271,28 +282,103 @@ list_collect :: proc "contextless" (list: ^List, recents: []Recent, program_name
 //
 // A panel that asked for a second Enter goes back to the search: the entry
 // that it showed can be gone.
-entries_collect :: proc "contextless" (panel: ^Panel, program_names: []string, windows: []Window) {
+entries_collect :: proc "contextless" (panel: ^Panel, program_names: []string, windows: []Window) -> Adoption {
+	// The list is made in its own memory: what the panel showed is kept
+	// first.
+	shown := panel_shown(panel)
 	list_collect(panel.list, panel.recents[:clamp(panel.recent_count, 0, RECENT_CAPACITY)], program_names, windows, nil)
-	list_build(panel)
-}
-
-// list_build makes the list of a panel again for its typed part, and
-// chooses its first entry.
-list_build :: proc "contextless" (panel: ^Panel) {
 	list_rank(panel.list, typed_text(panel))
-	panel_adopt(panel, panel.list)
+	return panel_adopt_after(panel, panel.list, shown)
 }
 
-// panel_adopt gives a panel a list that its owner made, and chooses its
-// first entry. A panel that asked for a second Enter goes back to the
-// search: the entry that it showed can be gone.
-panel_adopt :: proc "contextless" (panel: ^Panel, list: ^List) {
+// list_build makes the list of a panel again for its typed part, in its
+// own memory, and adopts it (panel_adopt).
+list_build :: proc "contextless" (panel: ^Panel) -> Adoption {
+	shown := panel_shown(panel)
+	list_rank(panel.list, typed_text(panel))
+	return panel_adopt_after(panel, panel.list, shown)
+}
+
+// What the panel showed before a new list: the typed part and the content
+// of its list, and the chosen entry by what it is, not by its row.
+Shown :: struct {
+	listed:        bool, // The panel had a list.
+	query:         [TYPED_CAPACITY]u8, // The typed part of that list.
+	query_length:  int,
+	content:       u64, // List.content of that list.
+	chosen:        bool, // The list had a chosen entry.
+	kind:          Entry_Kind, // The kind of the chosen entry.
+	name:          [NAME_CAPACITY]u8, // Its name.
+	name_length:   int,
+}
+
+// panel_shown gives what the panel shows now.
+panel_shown :: proc "contextless" (panel: ^Panel) -> (shown: Shown) {
+	list := panel.list
+	if list == nil {
+		return shown
+	}
+	shown.listed = true
+	shown.query_length = copy(shown.query[:], list.query[:clamp(list.query_length, 0, TYPED_CAPACITY)])
+	shown.content = list.content
+	if entry := chosen_entry(panel); entry != nil {
+		shown.chosen = true
+		shown.kind = entry.kind
+		shown.name_length = copy(shown.name[:], entry_name(entry))
+	}
+	return shown
+}
+
+// What the adoption of a list did to the choice of a panel.
+Adoption :: enum u8 {
+	Same  = 0, // The list shows what the list before showed: nothing changed, and no frame is needed.
+	Kept  = 1, // The rows changed. The chosen entry is still chosen, at the row that it has now; or the list answers a new typed part, or the panel is closed, and the first entry is chosen.
+	Moved = 2, // The list answers the same typed part, and the chosen entry left it: the first entry is chosen now. Enter runs nothing before a frame shows it.
+}
+
+// panel_adopt gives a panel a list that its owner made.
+//
+// The choice is an entry, not a row. When the list answers the typed part
+// that the list before answered, the chosen entry stays chosen, at
+// whatever row it has now, and the rows that the panel shows follow it.
+// Only when that entry left the list does the choice go to the first
+// entry: the panel then waits for a frame before Enter runs anything
+// (choice_undrawn), and a panel that asked for a second Enter goes back to
+// the search. A list for a new typed part chooses its first entry: it is
+// the answer to the keys of the input, and its best match is what Enter
+// means. A panel with a form keeps its question: the form holds its own
+// copy of its entry.
+panel_adopt :: proc "contextless" (panel: ^Panel, list: ^List) -> Adoption {
+	return panel_adopt_after(panel, list, panel_shown(panel))
+}
+
+// panel_adopt_after is panel_adopt for a list that was made in the memory
+// of the list before: shown is what the panel showed, taken before.
+panel_adopt_after :: proc "contextless" (panel: ^Panel, list: ^List, shown: Shown) -> Adoption {
 	panel.list = list
-	if panel.state == .Confirm {
+	panel.pressed_row = NO_ROW
+	same_typed_part := panel.state != .Closed && shown.listed && string(shown.query[:shown.query_length]) == string(list.query[:clamp(list.query_length, 0, TYPED_CAPACITY)])
+	if same_typed_part && shown.content == list.content {
+		return .Same
+	}
+	if same_typed_part && shown.chosen {
+		name := string(shown.name[:shown.name_length])
+		for row, index in list.rows[:list.row_count] {
+			if row.kind != .Entry || int(row.entry) >= list.entry_count {
+				continue
+			}
+			entry := &list.entries[row.entry]
+			if entry.kind == shown.kind && entry_name(entry) == name {
+				panel.choice = index
+				view_follow_choice(panel)
+				return .Kept
+			}
+		}
+	}
+	if panel.state == .Confirm && !panel.form.active {
 		panel.state = .Search
 	}
 	panel.first_row = 0
-	panel.pressed_row = NO_ROW
 	panel.choice = NO_ROW
 	for row, index in list.rows[:list.row_count] {
 		if row.kind == .Entry {
@@ -300,6 +386,27 @@ panel_adopt :: proc "contextless" (panel: ^Panel, list: ^List) {
 			break
 		}
 	}
+	if same_typed_part && shown.chosen {
+		panel.choice_undrawn = true
+		return .Moved
+	}
+	return .Kept
+}
+
+// panel_drawn tells the panel that a frame showed it as it is now: Enter
+// runs the chosen entry again.
+panel_drawn :: proc "contextless" (panel: ^Panel) {
+	panel.choice_undrawn = false
+}
+
+// action_runs says if an action runs, sends or opens an entry: such an
+// action does nothing while the choice is not drawn (Panel.choice_undrawn).
+action_runs :: proc "contextless" (action: Action) -> bool {
+	#partial switch action {
+	case .Run, .Confirm, .Submit, .Submit_All, .Open_In_Console:
+		return true
+	}
+	return false
 }
 
 // kind_tie_order gives the place of a kind among entries of one score: a
@@ -407,6 +514,51 @@ prefix_admits :: proc "contextless" (prefix: Prefix, kind: Entry_Kind) -> bool {
 // order of their table. A group with no entry is absent. The entries that
 // destroy and the entries of a provider show only for a typed part.
 list_rank :: proc "contextless" (list: ^List, query: string) {
+	list.query_length = copy(list.query[:], query)
+	rows_rank(list, query)
+	list.content = list_content(list)
+}
+
+// list_content gives the hash of what a panel shows of a list (FNV-1a, 64
+// bits): the typed part, the counts, the state and the generation of the
+// provider, and each row with the entry that it shows.
+@(private)
+list_content :: proc "contextless" (list: ^List) -> u64 {
+	mix :: proc "contextless" (hash: u64, bytes: []u8) -> u64 {
+		mixed := hash
+		for value in bytes {
+			mixed = (mixed ~ u64(value)) * 0x0000_0100_0000_01B3
+		}
+		return mixed
+	}
+	number :: proc "contextless" (hash: u64, value: u64) -> u64 {
+		bytes := transmute([8]u8)value
+		return mix(hash, bytes[:])
+	}
+	hash: u64 = 0xCBF2_9CE4_8422_2325
+	hash = mix(hash, list.query[:clamp(list.query_length, 0, TYPED_CAPACITY)])
+	hash = number(hash, u64(list.entry_count))
+	hash = number(hash, u64(list.matched_count))
+	hash = number(hash, u64(list.provider))
+	hash = number(hash, u64(list.snapshot.generation))
+	for row in list.rows[:list.row_count] {
+		hash = number(hash, u64(row.kind))
+		places := transmute(u128)row.places
+		hash = number(hash, u64(places & 0xFFFF_FFFF_FFFF_FFFF))
+		hash = number(hash, u64(places >> 64))
+		if row.kind == .Entry && int(row.entry) < list.entry_count {
+			entry := &list.entries[row.entry]
+			flags := transmute(u8)entry.flags
+			hash = number(hash, u64(entry.kind) | u64(entry.mark) << 8 | u64(flags) << 16 | u64(entry.windows) << 24 | u64(entry.number) << 32)
+			hash = mix(hash, entry.name[:entry.name_length])
+		}
+	}
+	return hash
+}
+
+// rows_rank makes the rows of list_rank.
+@(private)
+rows_rank :: proc "contextless" (list: ^List, query: string) {
 	list.row_count = 0
 	list.matched_count = 0
 	prefix, rest := prefix_of(query)

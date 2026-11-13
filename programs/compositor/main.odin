@@ -858,6 +858,7 @@ draw :: proc "contextless" (now: u64) {
 	if palette_is_open() {
 		palette_frames += 1
 		palette_time += spent
+		palette_frame_drawn() // The screen shows the chosen entry: Enter runs it.
 	}
 	if dragging >= 0 {
 		move_frames += 1

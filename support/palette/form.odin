@@ -28,6 +28,10 @@ Form :: struct {
 	shown:            [palette_table.CANDIDATE_CAPACITY]u8, // The candidates that the text of the field matches, in their order.
 	shown_count:      int, // The shown candidates in use.
 	candidate_choice: int, // The chosen one, as an index in `shown`; NO_ROW with none.
+	// The owner asked the provider for the candidates of the current field,
+	// and no answer came yet. Tab then waits: it never goes to the next
+	// field while a candidate that it can take is on its way.
+	candidates_pending: bool,
 	message:          [MESSAGE_CAPACITY]u8, // Why the last key or a field was refused.
 	message_length:   int, // 0: no message.
 }
@@ -194,6 +198,7 @@ form_field_move :: proc "contextless" (panel: ^Panel, step: int) -> bool {
 
 @(private)
 form_candidates_clear :: proc "contextless" (form: ^Form) {
+	form.candidates_pending = false
 	form.candidate_count = 0
 	form.shown_count = 0
 	form.candidate_choice = NO_ROW
@@ -230,9 +235,14 @@ candidate_name :: proc "contextless" (form: ^Form, shown: int) -> string {
 
 // form_candidates_filter keeps the candidates that the text of the current
 // field matches, by the fuzzy match of the list, in the order that the
-// provider gave; the first one is chosen. The work is one match for each
-// of at most 96 short names.
+// provider gave. The chosen candidate stays chosen when it is still shown,
+// at the place that it has now; else the first one is chosen. The work is
+// one match for each of at most 96 short names.
 form_candidates_filter :: proc "contextless" (form: ^Form) {
+	chosen_before := -1
+	if form.candidate_choice >= 0 && form.candidate_choice < form.shown_count {
+		chosen_before = int(form.shown[form.candidate_choice])
+	}
 	form.shown_count = 0
 	typed := field_text(form, form.current)
 	for &candidate, index in form.candidates[:clamp(form.candidate_count, 0, palette_table.CANDIDATE_CAPACITY)] {
@@ -243,6 +253,31 @@ form_candidates_filter :: proc "contextless" (form: ^Form) {
 		}
 	}
 	form.candidate_choice = form.shown_count > 0 ? 0 : NO_ROW
+	for shown, place in form.shown[:form.shown_count] {
+		if int(shown) == chosen_before {
+			form.candidate_choice = place
+		}
+	}
+}
+
+// form_tab says what Tab does in a form: it waits while the candidates of
+// the field are on their way; it takes the chosen candidate when the field
+// does not hold it yet; else it goes to the next field.
+Tab_Effect :: enum u8 {
+	Waits = 0, // The candidates of the field did not come yet: the owner applies Tab when they come.
+	Takes = 1, // The chosen candidate goes in the field.
+	Moves = 2, // The caret goes to the next field.
+}
+
+form_tab :: proc "contextless" (form: ^Form) -> Tab_Effect {
+	if form.candidates_pending {
+		return .Waits
+	}
+	name := candidate_name(form, form.candidate_choice)
+	if name != "" && name != field_text(form, form.current) {
+		return .Takes
+	}
+	return .Moves
 }
 
 // form_candidate_move moves the choice in the shown candidates, from the

@@ -73,6 +73,11 @@ Ranking :: struct {
 palette_ranking: Ranking
 palette_published_seen: u32 // The value of `published` that the loop saw last.
 palette_enter_waits: bool // Enter came while the list of the typed part was not made yet: it runs when the list comes.
+palette_tab_waits: bool // Tab came while the candidates of the field were on their way: it acts when they come.
+// The measures of one open of the panel: the lists that the loop adopted
+// while it was open, and how many of them showed what the list before
+// showed.
+palette_adoptions, palette_adoptions_same: u64
 
 // The palette provider, as the root service gave it: its ring and its
 // entry table, read-only (contract:palette_table). The table is hostile
@@ -234,26 +239,47 @@ palette_turn :: proc "contextless" () {
 	}
 	palette_published_seen = published
 	asked := palette_panel.state == .Confirm
-	palette.panel_adopt(&palette_panel, &palette_lists[intrinsics.atomic_load_explicit(&palette_ranking.published_list, .Relaxed) & 1])
+	// The choice is an entry: it stays on its entry at whatever row the
+	// new list gives it (palette.panel_adopt).
+	adoption := palette.panel_adopt(&palette_panel, &palette_lists[intrinsics.atomic_load_explicit(&palette_ranking.published_list, .Relaxed) & 1])
 	// The thread can now write the other list.
 	intrinsics.atomic_store(&palette_ranking.adopted, published)
 	system.word_wake(&palette_ranking.adopted)
 	if !palette_is_open() {
 		return
 	}
-	if asked {
-		system.log_in("surfaces", .Info, "compositor: the palette goes back to the search: the entries changed")
-	}
-	if palette_list_is_current() {
-		palette_list_log()
-		if palette_enter_waits {
+	palette_adoptions += 1
+	if adoption == .Same {
+		// The list shows what the list before showed: no line of the
+		// log, no frame. Enter that waited for this list runs now: the
+		// screen shows its entry already.
+		palette_adoptions_same += 1
+	} else {
+		if asked && palette_panel.state != .Confirm {
+			system.log_in("surfaces", .Info, "compositor: the palette goes back to the search: the entries changed")
+		}
+		if adoption == .Moved {
+			system.log_in("surfaces", .Info, "compositor: the chosen entry of the palette left the list: the first entry is chosen, and Enter waits for a frame")
 			palette_enter_waits = false
-			if palette_panel.state == .Search {
-				palette_act(.Run, .Enter, 0, "")
-			}
+		}
+		if palette_list_is_current() {
+			palette_list_log()
+		}
+		palette_refresh()
+	}
+	if palette_enter_waits && palette_list_is_current() {
+		palette_enter_waits = false
+		if palette_panel.state == .Search {
+			palette_act(.Run, .Enter, 0, "")
 		}
 	}
-	palette_refresh()
+}
+
+// palette_frame_drawn tells the panel that a frame showed it: Enter runs
+// the chosen entry again after a list moved the choice. The compositor
+// calls it at the end of each frame.
+palette_frame_drawn :: proc "contextless" () {
+	palette.panel_drawn(&palette_panel)
 }
 
 // palette_provider_add takes the ring and the entry table of the palette
@@ -363,10 +389,21 @@ palette_answer :: proc "contextless" (record: ring.Record) {
 	outcome := record.values[0]
 	if record.tag != 0 && record.tag == palette_candidates_awaited {
 		palette_candidates_awaited = 0
+		// An answer that gives no candidate ends the wait of Tab too.
+		palette_panel.form.candidates_pending = false
+		if outcome != u64(palette_table.Outcome.Candidates_Ready) && palette_tab_waits && palette_panel.state == .Arguments {
+			palette_tab_waits = false
+			palette_act(.Field_Next, .Tab, 0, "")
+		}
 		if outcome == u64(palette_table.Outcome.Candidates_Ready) && palette_panel.state == .Arguments {
 			form := &palette_panel.form
 			palette.form_candidates_set(form, palette_ranking.table, record.values[2], record.values[1])
 			system.log_in("surfaces", .Info, "compositor: the palette has ", u64(form.candidate_count), " candidates for the field ", u64(form.current))
+			// Tab that came before the candidates acts now, on them.
+			if palette_tab_waits {
+				palette_tab_waits = false
+				palette_act(.Field_Next, .Tab, 0, "")
+			}
 			palette_refresh()
 		}
 		return
@@ -494,6 +531,16 @@ palette_key :: proc "contextless" (code: u32, character: u8, pressed: bool, modi
 // outside the panel is Close). cause: what closes the panel, for the log.
 palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, character: u8, cause: string) {
 	panel := &palette_panel
+	// The palette runs the row that is drawn: after a list moved the
+	// choice to another entry, Enter does nothing until a frame showed it.
+	if panel.choice_undrawn && palette.action_runs(action) {
+		system.log_in("surfaces", .Info, "compositor: the palette drops Enter: the choice changed and no frame showed it yet")
+		palette_refresh()
+		return
+	}
+	if action != .Field_Next {
+		palette_tab_waits = false // Another key came: Tab waits for nothing more.
+	}
 	chosen := palette.chosen_of(panel)
 	state_next := palette.state_after(panel.state, action, chosen)
 	switch action {
@@ -600,10 +647,19 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 			palette_refresh()
 		}
 	case .Field_Next:
-		if palette.form_candidate_take(&panel.form) {
+		switch palette.form_tab(&panel.form) {
+		case .Waits:
+			// The candidates of the field are on their way: Tab acts
+			// when they come, and never jumps to the next field before.
+			palette_tab_waits = true
+			system.log_in("surfaces", .Info, "compositor: Tab waits for the candidates of the field")
+		case .Takes:
+			palette.form_candidate_take(&panel.form)
 			system.log_in("surfaces", .Info, "compositor: the palette takes the candidate ", palette.field_text(&panel.form, panel.form.current))
-		} else if palette.form_field_move(panel, 1) {
-			palette_candidates_ask()
+		case .Moves:
+			if palette.form_field_move(panel, 1) {
+				palette_candidates_ask()
+			}
 		}
 		palette_refresh()
 	case .Field_Previous:
@@ -696,7 +752,9 @@ palette_candidates_ask :: proc "contextless" () {
 		palette_tags = 1
 	}
 	palette_candidates_awaited = palette_tags
-	system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Candidates), tag = palette_tags, values = {0 = u64(form.generation), 1 = u64(form.entry.number), 2 = palette_table.name_hash(palette.entry_name(&form.entry)), 3 = u64(form.current)}})
+	// Until the answer, Tab waits (palette.form_tab). A ring that takes
+	// no record gives no answer: Tab then does not wait.
+	form.candidates_pending = system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Candidates), tag = palette_tags, values = {0 = u64(form.generation), 1 = u64(form.entry.number), 2 = palette_table.name_hash(palette.entry_name(&form.entry)), 3 = u64(form.current)}})
 }
 
 // palette_entry_send sends a chosen entry with no parameter to the
@@ -754,7 +812,10 @@ palette_entry_run :: proc "contextless" (picked: ^palette.Entry) {
 	case .Window:
 		system.log_in("surfaces", .Info, "compositor: the palette brings ", name_text, " to the front")
 		for position in 0 ..< order_count {
-			if order[position] == number {
+			// The place of the client table can hold another window now:
+			// the title is checked, so the choice never reaches a window
+			// that the row did not name.
+			if order[position] == number && system.name_of(clients[number].title[:]) == name_text {
 				raise(position)
 				system.log_in("surfaces", .Info, "compositor: window ", system.name_of(clients[number].title[:]), " in front")
 				break
@@ -762,7 +823,11 @@ palette_entry_run :: proc "contextless" (picked: ^palette.Entry) {
 		}
 		palette_entries_refresh() // The choice is the newest recent one, also when the window was in front.
 	case .Close_Window:
-		if number < CLIENT_CAPACITY && clients[number].surface.pixels != nil {
+		// The window that the row named, and no other one that took its
+		// place in the client table: the name of the row is "close" and
+		// the title.
+		close_start := palette.CLOSE_NAME_START
+		if number < CLIENT_CAPACITY && clients[number].surface.pixels != nil && len(name_text) > len(close_start) && system.name_of(clients[number].title[:]) == name_text[len(close_start):] {
 			system.send(&control.completions, ring.Record{kind = u32(display.Control.Stop), values = {0 = u64(clients[number].ring_memory)}})
 			system.log_in("surfaces", .Info, "compositor: the palette closes the window ", system.name_of(clients[number].title[:]))
 		}
@@ -905,8 +970,11 @@ palette_close :: proc "contextless" (cause: string) {
 	longest := palette_ranking.longest
 	palette_ranking.longest = 0
 	system.unlock(&palette_ranking.lock)
-	system.log_in("surfaces", .Info, "compositor: the palette was open for ", palette_frames, " frames, ", per_frame / 1000, ".", per_frame / 100 % 10, " us per frame; the longest list of the ranking thread ", longest / 1000, ".", longest / 100 % 10, " us")
+	system.log_in("surfaces", .Info, "compositor: the palette was open for ", palette_frames, " frames, ", per_frame / 1000, ".", per_frame / 100 % 10, " us per frame; the longest list of the ranking thread ", longest / 1000, ".", longest / 100 % 10, " us; ", palette_adoptions, " lists adopted, ", palette_adoptions_same, " of them the same")
 	palette_frames, palette_time = 0, 0
+	palette_adoptions, palette_adoptions_same = 0, 0
+	palette_tab_waits = false
+	palette.panel_drawn(&palette_panel)
 	// The list of an empty typed part, ready for the next open.
 	palette_entries_refresh()
 	if cause != "" {

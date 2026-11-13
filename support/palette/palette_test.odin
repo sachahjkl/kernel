@@ -1292,3 +1292,130 @@ a_signature_is_cut_at_a_parameter :: proc(t: ^testing.T) {
 	nested := "(table: Table(Reading, Read)) -> Integer"
 	testing.expect_value(t, signature_fit(nested, 20, buffer[:]), "(...)")
 }
+
+// The choice is an entry, not a row. A list that comes for the same typed
+// part keeps the chosen entry chosen, at the row that it has now. Only an
+// entry that left the list moves the choice to the first row, and Enter
+// then runs nothing before a frame showed it.
+@(test)
+the_choice_follows_its_entry :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	panel_of_test(panel)
+	panel_open(panel)
+	type_text(panel, "pla")
+	// plasma (window), plasma (program), close plasma. The input goes
+	// down to the program.
+	testing.expect(t, choice_move(panel, .Next))
+	testing.expect_value(t, row_text(panel, panel.choice), "plasma (program)")
+	// The window of plasma closes behind the panel: the program is now
+	// the first row, and it is still the chosen entry.
+	adoption := entries_collect(panel, PROGRAMS[:], {{title = "console", number = 3, focus = true}})
+	testing.expect_value(t, adoption, Adoption.Kept)
+	testing.expect_value(t, panel.choice, 0)
+	testing.expect_value(t, row_text(panel, panel.choice), "plasma (program)")
+	testing.expect(t, !panel.choice_undrawn)
+	// The same list again: nothing changes, and the owner draws nothing.
+	testing.expect_value(t, entries_collect(panel, PROGRAMS[:], {{title = "console", number = 3, focus = true}}), Adoption.Same)
+	testing.expect_value(t, panel.choice, 0)
+	// A window appears: the chosen program goes down one row, and stays
+	// chosen there. This is the fault that the rule ends: Enter must not
+	// run the row that took the place of the chosen one.
+	adoption = entries_collect(panel, PROGRAMS[:], {{title = "plasma", number = 7, focus = true}, {title = "console", number = 3}})
+	testing.expect_value(t, adoption, Adoption.Kept)
+	testing.expect_value(t, panel.choice, 1)
+	testing.expect_value(t, row_text(panel, panel.choice), "plasma (program)")
+	testing.expect_value(t, entry_name(chosen_entry(panel)), "plasma")
+	testing.expect_value(t, chosen_entry(panel).kind, Entry_Kind.Program)
+	// The chosen entry leaves the list: the first entry is chosen, and the
+	// panel waits for a frame before an action that runs an entry.
+	adoption = entries_collect(panel, PROGRAMS[:5], {{title = "plasma", number = 7, focus = true}})
+	testing.expect_value(t, adoption, Adoption.Moved)
+	testing.expect_value(t, panel.choice, 0)
+	testing.expect_value(t, row_text(panel, 0), "plasma (window)")
+	testing.expect(t, panel.choice_undrawn)
+	for action in Action {
+		runs := action == .Run || action == .Confirm || action == .Submit || action == .Submit_All || action == .Open_In_Console
+		testing.expect_value(t, action_runs(action), runs)
+	}
+	panel_drawn(panel)
+	testing.expect(t, !panel.choice_undrawn)
+	// A list for a new typed part is the answer to the keys of the input:
+	// its first entry is chosen, and Enter means it.
+	testing.expect(t, choice_move(panel, .Next))
+	type_text(panel, "s")
+	testing.expect_value(t, panel.choice, 0)
+	testing.expect(t, !panel.choice_undrawn)
+	// The question of an entry that destroys follows its entry too: it
+	// stays while the entry is in the list, at its new row, and ends when
+	// the entry leaves.
+	line_editor.line_clear(&panel.line)
+	type_text(panel, "close")
+	testing.expect_value(t, row_text(panel, panel.choice), "close plasma (close a window)")
+	panel.state = .Confirm
+	adoption = entries_collect(panel, PROGRAMS[:], {{title = "console", number = 3, focus = true}, {title = "plasma", number = 7}})
+	testing.expect_value(t, adoption, Adoption.Kept)
+	testing.expect_value(t, panel.state, State.Confirm)
+	testing.expect_value(t, row_text(panel, panel.choice), "close plasma (close a window)")
+	adoption = entries_collect(panel, PROGRAMS[:], {{title = "console", number = 3, focus = true}})
+	testing.expect_value(t, adoption, Adoption.Moved)
+	testing.expect_value(t, panel.state, State.Search)
+	testing.expect_value(t, row_text(panel, panel.choice), "close console (close a window)")
+	testing.expect(t, panel.choice_undrawn)
+	// A closed panel has no choice to keep: its next open shows the first
+	// entry.
+	panel_close(panel)
+	panel_drawn(panel)
+	list_build(panel)
+	testing.expect_value(t, panel.choice, 1)
+	testing.expect(t, !panel.choice_undrawn)
+}
+
+// Tab before the candidates of a field came waits for them: it never goes
+// to the next field while a candidate that it can take is on its way. The
+// chosen candidate stays chosen when the text of the field narrows the
+// list.
+@(test)
+tab_waits_for_the_candidates :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	table := table_make(FORMS[:])
+	defer delete(table)
+	collect_with_table(panel, table)
+	type_text(panel, "revoke")
+	form_open(panel, chosen_entry(panel))
+	form := &panel.form
+	// With no request, and no candidate: Tab goes to the next field.
+	testing.expect_value(t, form_tab(form), Tab_Effect.Moves)
+	// The owner asked: Tab waits, and the caret stays in its field.
+	form.candidates_pending = true
+	testing.expect_value(t, form_tab(form), Tab_Effect.Waits)
+	testing.expect_value(t, form.current, 0)
+	names := [?]string{"console", "plasma", "paint"}
+	for name, index in names {
+		candidate := (^palette_table.Candidate)(&table[palette_table.CANDIDATES_OFFSET + index * size_of(palette_table.Candidate)])
+		candidate.length = u8(copy(candidate.name[:], name))
+	}
+	for character in transmute([]u8)string("pa") {
+		form_field_edit(panel, .Character, character)
+	}
+	// The answer: the wait ends, and Tab takes the candidate that the
+	// typed text chose.
+	form_candidates_set(form, table, u64(len(names)), u64(palette_table.Candidate_Kind.Program))
+	testing.expect(t, !form.candidates_pending)
+	testing.expect_value(t, form_tab(form), Tab_Effect.Takes)
+	testing.expect_value(t, candidate_name(form, form.candidate_choice), "plasma")
+	// The input goes down to paint; one more letter keeps paint chosen,
+	// at its new place.
+	testing.expect(t, form_candidate_move(form, 1))
+	testing.expect_value(t, candidate_name(form, form.candidate_choice), "paint")
+	form_field_edit(panel, .Character, 'i')
+	testing.expect_value(t, form.shown_count, 1)
+	testing.expect_value(t, candidate_name(form, form.candidate_choice), "paint")
+	testing.expect(t, form_candidate_take(form))
+	testing.expect_value(t, form_tab(form), Tab_Effect.Moves)
+	// A move to another field ends the wait for the field before.
+	form.candidates_pending = true
+	form_field_move(panel, 1)
+	testing.expect(t, !form.candidates_pending)
+}

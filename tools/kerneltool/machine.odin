@@ -1060,9 +1060,12 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	// The settings: the palette starts the program settings, then ":"
 	// lists one entry for each value of each setting. The font changes
-	// behind the open panel, and the value in use has the mark. The typed
-	// part is typed again before the second choice: the first row is then
-	// the chosen one, whatever list came meanwhile.
+	// behind the open panel, and the value in use has the mark. After the
+	// first choice a new list comes for the same typed part (the console
+	// has new commands, and the chosen entry is a recent one): the choice
+	// stays on its entry at whatever row it has, so one arrow down from
+	// "spleen" is "vector" in each order of the two rows, and Enter runs
+	// the row that the screen shows.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = "settings"},
@@ -1083,9 +1086,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the settings changed: font spleen", any_order = true},
 	{kind = .Wait, text = "compositor: the palette did: set font to spleen"},
 	{kind = .Shot, text = "palette_settings"},
-	{kind = .Key, text = "backspace"},
-	{kind = .Keys, text = "t"},
-	{kind = .Wait, text = " for \":font\": set font to vector (setting), set font to spleen (setting)"},
+	{kind = .Key, text = "down"},
+	{kind = .Wait, text = "compositor: the palette chooses set font to vector (setting)"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "console: the palette runs setting(\"font\", \"vector\")"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector", any_order = true},
@@ -2684,6 +2686,14 @@ key_name :: proc(character: u8) -> string {
 		return "bracket_right"
 	case '^':
 		return "shift-6"
+	case '>':
+		return "shift-dot"
+	case '<':
+		return "shift-comma"
+	case '?':
+		return "shift-slash"
+	case '@':
+		return "shift-2"
 	}
 	return ""
 }
