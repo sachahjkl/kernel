@@ -1,7 +1,7 @@
 package console
 
 import module "contract:module"
-import "support:system"
+import "support:console_results"
 
 // Tables: a value that holds records of one record description, one after
 // the other (module.Type.Table). A Table result of an export gives one, and
@@ -13,6 +13,7 @@ import "support:system"
 //   join(left, right, field)     each pair of rows with the same value of a field
 //   columns(table, "a b c")      the rows with some fields only
 //   first(table, count)          the first rows
+//   skip(table, count)           the rows after the first rows
 //   rows(table)                  the count of rows
 //   row(table, number)           one row, as a Record, from 1
 //
@@ -24,8 +25,7 @@ import "support:system"
 TABLE_ARENA :: 256 * 1024 // The memory of the tables of one line.
 TABLE_KEPT :: 32 * 1024 // The bytes of the rows that a variable keeps.
 DESCRIPTION_SIZE :: 2048 // The bytes of a description that join or columns makes.
-TEXT_COLUMN :: 24 // The widest column of a Text field when a table is printed.
-COLUMN_CAPACITY :: 40
+COLUMN_CAPACITY :: console_results.COLUMN_LIMIT
 
 table_memory: [TABLE_ARENA]u8
 table_used: int
@@ -143,9 +143,9 @@ table_argument :: proc "contextless" (command: string, value: Value, name: strin
 // memory of the line: the table of its argument does not change.
 //
 // The tables of one line share 256 KiB; a variable keeps at most 32 KiB of
-// rows. The console prints a table as a line of the names of its fields, a
-// line for each row, and the count: "2 rows of Import". A text longer than
-// 24 characters ends with "..".
+// rows. The console draws a table as a line of the names of its fields, a
+// line for each row, and the count: "2 rows of Import"
+// (docs/CONSOLE.md, "Results and their drawers").
 tables_start :: proc "contextless" () {
 	// Gives the rows of a table whose field has a value, in their order.
 	//
@@ -216,6 +216,13 @@ tables_start :: proc "contextless" () {
 	// Gives the first rows of a table, at most a count: a count larger than
 	// the table gives the whole table, and 0 or less gives no row.
 	command("first", {.Table, .Integer}, .Table, "the first rows of a table", table_first)
+	// Gives the rows of a table after its first rows: a count larger than
+	// the table gives no row, and 0 or less gives the whole table.
+	//
+	// The console draws the first 20 rows of a table. `skip(table, 20)`
+	// gives the rows after them, and `first(skip(table, 20), 20)` the next
+	// 20.
+	command("skip", {.Table, .Integer}, .Table, "the rows of a table after its first rows", table_skip)
 	// Gives the count of rows of a table, as an `Integer`.
 	//
 	// Its name is not `count`: the module `probe` exports `count`, and a
@@ -286,84 +293,16 @@ table_sort :: proc "contextless" (arguments: []Value) -> Value {
 	return sorted
 }
 
-// A field of a record that join or columns makes, and where its bytes come
-// from: a field of the left table (0) or of the right table (1).
-Column :: struct {
-	name:   string,
-	type:     module.Type,
-	detail:   u32,
-	unsigned: bool,
-	side:     int,
-	from:   u32, // The offset of the field in the record of its table.
-	offset: u32, // The offset of the field in the new record.
-}
-
 // description_make writes the description of one record in the format of
 // the module contract, in the memory of the tables of the line, and gives
-// the offset of each column and the size of the record.
+// the offset of each column and the size of the record
+// (console_results.description_write).
 description_make :: proc "contextless" (name: string, columns: []Column) -> (file: []u8, size: u32, ok: bool) {
-	Directory :: [module.TABLE_COUNT]module.Table_Entry
-	file = table_bytes(DESCRIPTION_SIZE)
-	if file == nil || len(columns) == 0 {
+	buffer := table_bytes(DESCRIPTION_SIZE)
+	if buffer == nil {
 		return nil, 0, false
 	}
-	alignment := u32(1)
-	for &column in columns {
-		column_alignment: u32 = column.type == .Text ? 1 : module.field_size(column.type, column.detail)
-		size = (size + column_alignment - 1) / column_alignment * column_alignment
-		column.offset = size
-		size += module.field_size(column.type, column.detail)
-		alignment = max(alignment, column_alignment)
-	}
-	size = (size + alignment - 1) / alignment * alignment
-	if size > module.RECORD_SIZE_LIMIT {
-		return nil, size, false
-	}
-	directory: Directory
-	place := u32(size_of(module.Header) + size_of(Directory))
-	records := place
-	place += 2 * size_of(module.Record)
-	fields := place
-	place += u32(len(columns) + 1) * size_of(module.Field)
-	strings := place
-	text_count := u32(1) // Byte 0 of the string table is zero.
-	text :: proc "contextless" (file: []u8, strings: u32, count: ^u32, value: string) -> (offset: u32, ok: bool) {
-		if int(strings + count^) + len(value) > len(file) {
-			return 0, false
-		}
-		copy(file[strings + count^:], value)
-		offset = count^
-		count^ += u32(len(value))
-		return offset, true
-	}
-	record := module.Record {
-		size        = size,
-		first_field = 1,
-		field_count = u32(len(columns)),
-		name_count  = u32(len(name)),
-	}
-	record.name_offset = text(file, strings, &text_count, name) or_return
-	if int(fields) + (len(columns) + 1) * size_of(module.Field) > len(file) {
-		return nil, size, false
-	}
-	(^module.Record)(&file[records + size_of(module.Record)])^ = record
-	for column, index in columns {
-		item := module.Field {
-			offset     = column.offset,
-			type       = column.type,
-			detail     = column.detail,
-			unsigned   = column.unsigned,
-			name_count = u32(len(column.name)),
-		}
-		item.name_offset = text(file, strings, &text_count, column.name) or_return
-		(^module.Field)(&file[fields + u32(index + 1) * size_of(module.Field)])^ = item
-	}
-	directory[module.Table_Kind.Records] = {offset = u64(records), count = 2, record_size = size_of(module.Record)}
-	directory[module.Table_Kind.Fields] = {offset = u64(fields), count = u32(len(columns) + 1), record_size = size_of(module.Field)}
-	directory[module.Table_Kind.Strings] = {offset = u64(strings), count = text_count, record_size = 1}
-	(^module.Header)(&file[0])^ = {magic = module.MAGIC, version = module.VERSION, header_size = size_of(module.Header), machine = .X86_64, table_count = module.TABLE_COUNT}
-	(^Directory)(&file[size_of(module.Header)])^ = directory
-	return file[:strings + text_count], size, true
+	return console_results.description_write(buffer, name, columns)
 }
 
 // columns_of adds the fields of a table to a list of columns. With skip,
@@ -509,6 +448,17 @@ table_first :: proc "contextless" (arguments: []Value) -> Value {
 	return result
 }
 
+table_skip :: proc "contextless" (arguments: []Value) -> Value {
+	table, ok := table_of(arguments[0])
+	if !ok {
+		return fail("skip: the table has no valid description")
+	}
+	skipped := arguments[1].integer <= 0 ? 0 : arguments[1].integer >= i64(table.rows) ? table.rows : int(arguments[1].integer)
+	result := arguments[0]
+	result.record = result.record[skipped * table.size:]
+	return result
+}
+
 table_count :: proc "contextless" (arguments: []Value) -> Value {
 	table, ok := table_of(arguments[0])
 	if !ok {
@@ -534,80 +484,6 @@ table_one :: proc "contextless" (arguments: []Value) -> Value {
 	return {kind = .Record, record = bytes, file = arguments[0].file, detail = arguments[0].detail}
 }
 
-// table_print prints a table: a line with the names of the fields, a line
-// for each row, and the count of rows. A Text longer than TEXT_COLUMN ends
-// with "..".
-table_print :: proc "contextless" (value: Value) {
-	table, ok := table_of(value)
-	if !ok {
-		print("a table with no valid description\n")
-		return
-	}
-	field_count := min(int(table.record.field_count), COLUMN_CAPACITY)
-	items: [COLUMN_CAPACITY]module.Field
-	widths: [COLUMN_CAPACITY]int
-	for number in 0 ..< field_count {
-		items[number], _ = module.field(table.file, table.record, u32(number))
-		widths[number] = int(items[number].name_count)
-	}
-	for index in 0 ..< table.rows {
-		row := table_row(table, value, index)
-		for number in 0 ..< field_count {
-			widths[number] = max(widths[number], cell_width(row_value(row, items[number])))
-		}
-	}
-	line: [256]u8
-	writer := system.Writer {
-		buffer = line[:],
-	}
-	for number in 0 ..< field_count {
-		cell_write(&writer, module.string_at(table.file, items[number].name_offset, items[number].name_count), widths[number], number == field_count - 1)
-	}
-	print(system.written(&writer), "\n")
-	for index in 0 ..< table.rows {
-		row := table_row(table, value, index)
-		system.writer_reset(&writer)
-		for number in 0 ..< field_count {
-			cell := row_value(row, items[number])
-			text := cell.text
-			if cell.kind != .Text {
-				buffer: [24]u8
-				text = system.format(buffer[:], cell.integer)
-				cell_write(&writer, text, widths[number], number == field_count - 1)
-				continue
-			}
-			cell_write(&writer, text, widths[number], number == field_count - 1)
-		}
-		print(system.written(&writer), "\n")
-	}
-	print(i64(table.rows), table.rows == 1 ? " row of " : " rows of ", type_text(table.file, .Record, value.detail), "\n")
-}
-
-cell_width :: proc "contextless" (cell: Value) -> int {
-	if cell.kind == .Text {
-		return min(len(cell.text), TEXT_COLUMN)
-	}
-	buffer: [24]u8
-	return len(system.format(buffer[:], cell.integer))
-}
-
-// cell_write writes one cell of a table and the space after it.
-cell_write :: proc "contextless" (writer: ^system.Writer, text: string, width: int, last: bool) {
-	shown := text
-	if len(shown) > width {
-		shown = shown[:max(width - 2, 0)]
-	}
-	system.write_part(writer, shown)
-	if len(shown) < len(text) {
-		system.write_part(writer, "..")
-	}
-	if last {
-		return
-	}
-	for _ in min(len(text), width) ..< width + 2 {
-		system.write_part(writer, " ")
-	}
-}
 // The buffer of a Table result of a direct call: the free part of the
 // memory of the tables of the line.
 Table_Buffer :: struct {

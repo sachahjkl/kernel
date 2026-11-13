@@ -7,9 +7,10 @@
 // the system. It shows that a [command](term:command) is a function: the
 // console reads the [record description](term:record-description) of each
 // [export](term:export) of a module, types each argument from it, calls the
-// export, and prints the typed result as a value or a table. No command
-// parses a line of text, and no command prints text for another command to
-// parse. The same description serves a [direct call](term:direct-call), an
+// export, and draws the typed result by its kind: an Integer, a Text, a
+// Record, a Table, a Handle, Bytes or an error. No command parses a line of
+// text, and no command prints: a command gives a result, and the console
+// draws it (docs/CONSOLE.md, "Results and their drawers"). The same description serves a [direct call](term:direct-call), an
 // [isolated call](term:isolated-call) and a call to a [service](term:service).
 //
 // **What a reader sees.** The root service starts the console at each
@@ -21,8 +22,8 @@
 // enters goes to the log too, after the prompt `> `.
 //
 // **The language** (`language.odin`): a line is an expression or
-// `name = expression`. A value is an Integer, a Text, a Record, a Handle or
-// a Table. Examples of lines:
+// `name = expression`. A value is an Integer, a Text, a Record, a Handle, a
+// Table or Bytes. Examples of lines:
 //
 // ```
 // help()
@@ -32,7 +33,8 @@
 // log.records(0)
 // where(log.records(0), "level", "error")
 // start("life")
-// grants("remote")
+// where(grants("remote"), "state", "held")
+// sort(where(programs(), "state", "waiting"), "name")
 // ```
 //
 // **The commands of the console itself** (`commands.odin`, `tables.odin`):
@@ -40,16 +42,25 @@
 // - Modules: `modules()`, `load(name)` (a direct call: the module runs with
 //   the memory and the handles of the console), `isolate(name)` (an
 //   isolated call: the module runs in a [call host](term:call-host), with
-//   nothing of the console), `unload(name)`.
+//   nothing of the console), `unload(name)`, `loaded()`.
 // - Services: `connect(name)` makes each export of a running service a
 //   command `name.export`.
-// - Programs: `programs()`, `start(name)`, `stop(name)`, `grants(name)`,
-//   `revoke(name, grant)`.
+// - Programs: `programs()` (the export `monitor.programs`, under a short
+//   name), `program_modules()`, `start(name)`, `stop(name)`,
+//   `grants(name)`, `revoke(name, grant)`.
 // - Principals: `principal_create(name)`, `lock()`, `principals()`.
 // - Replacements: `replace(module, other)`, `replacements()`.
-// - Tables: `where`, `sort`, `join`, `columns`, `first`, `rows`, `row`.
-// - Others: `memory()`, `time()`, `hash(text)`, `buffer(pages)`,
+// - Tables: `where`, `sort`, `join`, `columns`, `first`, `skip`, `rows`,
+//   `row`.
+// - Others: `help()`, `describe(name)`, `memory()`, `locks()`, `time()`,
+//   `hash(text)`, `buffer(pages)`, `bytes(memory, first, count)`,
 //   `variables()`, `clear()`, `shutdown()`, `history_clear()`.
+//
+// **The log records of a line.** While a line calls an export, the console
+// shows under the line the log records that the called program writes, by
+// channel, with each value in the color of its value kind. It reads them
+// as any caller does: from the service `log`
+// (docs/CONSOLE.md, "The log records of a line").
 //
 // **The keys** (docs/CONSOLE.md, "1. The keys"): Enter runs the line; Tab
 // and the typed name open the [completion list](term:completion-list); Up
@@ -67,8 +78,8 @@
 // commands:
 //
 // - **Root_Ring**: start and stop programs, and connect to every service.
-// - **Inspect**: `programs()` and `memory()` read the reports of the
-//   machine.
+// - **Inspect**: `memory()`, `locks()` and `program_modules()` read the
+//   reports of the machine.
 // - **Stop**: `shutdown()` stops the machine.
 // - **Image** and **Debug_Image**: `load` and `isolate` read modules of the
 //   boot image; a stop report of an isolated call names its procedures.
@@ -140,7 +151,6 @@ draft: line_editor.Line
 // parts of that size, each one a line of the log: nothing is cut.
 log_line: [system.LOG_CALL_LIMIT]u8
 log_count: int
-line_tone: terminal.Tone // The tone of the output line that the console writes now.
 
 ctx: ^system.Context
 
@@ -395,56 +405,79 @@ edit_show :: proc "contextless" () {
 	completion_show()
 }
 
-// print writes output: runs of text on the terminal, and each full line on
-// the log of the kernel. A line that starts with "error" has the tone Bad.
-// Each part goes whole, at any length: a Text part is written as it is,
-// with no buffer between, and a number is formatted on its own.
-print :: proc "contextless" (parts: ..system.Part) {
-	system.lock(&output_lock)
-	defer system.unlock(&output_lock)
-	for part in parts {
-		if text, is_text := part.(string); is_text {
-			print_text(text)
-			continue
-		}
-		number: [32]u8
-		print_text(system.format(number[:], part))
-	}
-}
+// The columns of the window of the console: the root service gives its
+// terminal 96 columns (programs/root, terminal_of). The terminal draws no
+// byte past its last column, so the console starts a new row there: a long
+// value goes on under its own start, and no byte of it is lost.
+WINDOW_COLUMNS :: 96
 
-// print_text writes one text, in parts at each end of a line. The caller
-// holds output_lock.
-print_text :: proc "contextless" (given: string) {
-	text := given
-	for len(text) > 0 {
-		end := 0
-		for end < len(text) && text[end] != '\n' {
-			end += 1
-		}
-		part := text[:end]
-		ends := end < len(text)
-		text = text[min(end + 1, len(text)):]
-		if log_count == 0 && len(part) >= 5 && part[:5] == "error" {
-			line_tone = .Bad
-		}
+output_column: int // The column after the last byte of the row that the console writes now.
+output_continuation: int // The column where a line that is too long goes on.
+output_logged := true // The lines also go to the log of the kernel.
+
+// emit writes one part of an output line: on the terminal with its style,
+// and in the line of the log of the kernel. A line longer than the window
+// goes on in the next row, at output_continuation; the log has the line
+// whole. The caller holds output_lock.
+emit :: proc "contextless" (text: string, style: terminal.Style) {
+	if output_logged {
 		// The log: a line longer than one Log call goes in parts.
-		rest := part
-		for len(rest) > 0 {
-			taken := copy(log_line[log_count:], rest)
+		logged := text
+		for len(logged) > 0 {
+			taken := copy(log_line[log_count:], logged)
 			log_count += taken
-			rest = rest[taken:]
+			logged = logged[taken:]
 			if log_count == len(log_line) {
 				system.log_text(string(log_line[:log_count]))
 				log_count = 0
 			}
 		}
-		terminal.write(&output, terminal.Run{part, {tone = line_tone, flags = ends ? {.End_Line} : {}}})
-		if ends {
-			if log_count > 0 {
-				system.log_text(string(log_line[:log_count]))
+	}
+	rest := text
+	for len(rest) > 0 {
+		if output_column >= WINDOW_COLUMNS {
+			terminal.write(&output, terminal.Run{"", {flags = {.End_Line}}})
+			blank := "                                                "
+			output_column = clamp(output_continuation, 0, len(blank))
+			if output_column > 0 {
+				terminal.write(&output, terminal.Run{blank[:output_column], {}})
 			}
-			log_count, line_tone = 0, .Default
 		}
+		part := rest[:min(len(rest), WINDOW_COLUMNS - output_column)]
+		terminal.write(&output, terminal.Run{part, style})
+		output_column += len(part)
+		rest = rest[len(part):]
+	}
+}
+
+// emit_end ends the output line: on the terminal, and on the log when the
+// line has bytes. The caller holds output_lock.
+emit_end :: proc "contextless" () {
+	terminal.write(&output, terminal.Run{"", {flags = {.End_Line}}})
+	output_column = 0
+	if output_logged && log_count > 0 {
+		system.log_text(string(log_line[:log_count]))
+		log_count = 0
+	}
+}
+
+// print writes a text of the console itself, as its first line: plain
+// lines on the terminal and on the log. No command prints: the result of a
+// line goes through the drawers (results.odin).
+print :: proc "contextless" (text: string) {
+	system.lock(&output_lock)
+	defer system.unlock(&output_lock)
+	rest := text
+	for len(rest) > 0 {
+		end := 0
+		for end < len(rest) && rest[end] != '\n' {
+			end += 1
+		}
+		emit(rest[:end], {})
+		if end < len(rest) {
+			emit_end()
+		}
+		rest = rest[min(end + 1, len(rest)):]
 	}
 }
 
@@ -452,5 +485,6 @@ print_text :: proc "contextless" (given: string) {
 screen_clear :: proc "contextless" () {
 	system.lock(&output_lock)
 	terminal.clear(&output)
+	output_column = 0
 	system.unlock(&output_lock)
 }

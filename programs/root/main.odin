@@ -113,8 +113,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// each grant:
 		// - **Root_Ring**: `start`, `stop`, `grants`, `revoke`, `connect`
 		//   and the commands of the principals ask this service.
-		// - **Inspect**: `programs`, `memory` and `modules` read the reports
-		//   of the machine.
+		// - **Inspect**: `memory`, `locks` and `program_modules` read the
+		//   reports of the machine.
 		// - **Stop**: `shutdown` stops the machine.
 		// - **Image**: `load` and `isolate` map the modules of the boot image.
 		// - **Debug_Image**: a stop report names the procedures and the

@@ -206,7 +206,7 @@ site_console_commands_of_the_repository :: proc(t: ^testing.T) {
 		testing.expectf(t, command.about != "", "the command %s has no help", command.name)
 		signatures[command.name] = site_console_signature(command)
 	}
-	testing.expect_value(t, signatures["help"], "help()")
+	testing.expect_value(t, signatures["help"], "help() -> Table")
 	testing.expect_value(t, signatures["repeat"], "repeat(Text, Integer) -> Text")
 	testing.expect_value(t, signatures["where"], "where(Table, Text, Value) -> Table")
 	// Each built-in command has its documentation above its line: the help

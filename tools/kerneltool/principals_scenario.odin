@@ -30,7 +30,7 @@ scenario_principals_first := [?]Step {
 	{kind = .Wait, text = "unlock: no named principal: the machine runs as principal 0, with no unlock", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0"},
 	{kind = .Type, text = "principals()"},
-	{kind = .Wait, text = "[console] principal 0 \"machine\": the machine, no unlock, the system not measured"},
+	{kind = .Wait, text = "[console]      0  machine  machine"},
 	// A note of principal 0: the console starts notes in its own session.
 	{kind = .Type, text = "start(\"notes\")"},
 	{kind = .Wait, text = "root: started notes"},
@@ -41,14 +41,13 @@ scenario_principals_first := [?]Step {
 	{kind = .Wait, text = "notes: the note is \"of the machine\", generation "},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "grants(\"notes\")"},
-	{kind = .Wait, text = "[console] notes runs for principal 0 \"machine\""},
+	{kind = .Wait, text = "[console] notes    log    held           0  machine"},
 	{kind = .Type, text = "stop(\"notes\")"},
 	{kind = .Wait, text = "root: notes stopped with code "},
 	// The creation: the name in the console, the passphrase in the window
 	// of unlock, never in the console, which keeps its lines.
 	{kind = .Type, text = "principal_create(\"alice\")"},
 	{kind = .Wait, text = "root: started unlock"},
-	{kind = .Wait, text = "[console] the principal alice is created in the window of unlock: type its passphrase there", any_order = true},
 	{kind = .Wait, text = "compositor: surface unlock"},
 	{kind = .Front, text = "unlock"},
 	{kind = .Type, text = PRINCIPAL_PASSPHRASE},
@@ -73,10 +72,10 @@ scenario_principals_first := [?]Step {
 	// The grant records name the principal.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "grants(\"notes\")"},
-	{kind = .Wait, text = "[console] notes has: log, store"},
-	{kind = .Wait, text = "[console] notes runs for principal 1 \"alice\""},
+	{kind = .Wait, text = "[console] notes    log    held           1  alice"},
+	{kind = .Wait, text = "[console] notes    store  held           1  alice"},
 	{kind = .Type, text = "grants(\"console\")"},
-	{kind = .Wait, text = "[console] console runs for principal 0 \"machine\""},
+	{kind = .Wait, text = "  held           0  machine"},
 	// The console was started outside the session: it acts for principal
 	// 0, never for principal 1.
 	{kind = .Type, text = "connect(\"storage\")"},
@@ -92,13 +91,13 @@ scenario_principals_first := [?]Step {
 	// The lines of stores() all come before the answer of the next line: a
 	// line of the store of alice there would end the wait as a failure.
 	{kind = .Type, text = "principals()"},
-	{kind = .Wait, text = "[console] principal 1 \"alice\": unlocked: its session runs, public key ", fails_on = "[console] notes.principal.1: "},
+	{kind = .Wait, text = "[console]      1  alice    unlocked  ", fails_on = "[console] notes.principal.1: "},
 	// The lock: the programs of the session stop, and unlock asks again.
 	{kind = .Type, text = "lock()"},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" ends: 1 programs stopped"},
 	{kind = .Wait, text = "root: notes stopped with code ", any_order = true},
 	{kind = .Wait, text = "unlock: principal 1 \"alice\" is locked: its passphrase opens its session", any_order = true},
-	{kind = .Wait, text = "[console] locked: 1 programs of the session stopped", any_order = true},
+	{kind = .Wait, text = "[console] 1", any_order = true},
 	{kind = .Wait, text = "compositor: surface unlock"},
 	// A wrong passphrase opens nothing.
 	{kind = .Front, text = "unlock"},
@@ -106,7 +105,7 @@ scenario_principals_first := [?]Step {
 	{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" is wrong: the seal does not open, nothing is unlocked (1 in all)"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "principals()"},
-	{kind = .Wait, text = "[console] principal 1 \"alice\": locked, public key "},
+	{kind = .Wait, text = "[console]      1  alice    locked   "},
 	// The right one: the dots in the window, then Enter.
 	{kind = .Front, text = "unlock"},
 	{kind = .Keys, text = PRINCIPAL_PASSPHRASE},
@@ -122,7 +121,7 @@ scenario_principals_first := [?]Step {
 	{kind = .Type, text = "revoke(\"notes\", \"store\")"},
 	{kind = .Wait, text = "root: revoked the grant store of notes, connections changed: 1"},
 	{kind = .Type, text = "grants(\"notes\")"},
-	{kind = .Wait, text = "[console] notes lost: store"},
+	{kind = .Wait, text = "[console] notes    store  lost           1  alice"},
 	// The session runs: no window of unlock opens after the console came
 	// to the front, so the last line goes to the console.
 	{kind = .Type, text = "shutdown()"},

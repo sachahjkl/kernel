@@ -2117,6 +2117,26 @@ The rule: `docs/PROPERTIES.md`, "Zero is initialization (ZII)".
 
 Do not use: default constructor.
 
+### Result drawer
+
+A result drawer is the one procedure of the console that draws the results of one kind: an Integer, a Text, a Record, a Table, a Handle, Bytes or an error.
+
+A command of the console gives a result and never writes to the terminal; the console draws the one result of a line with the drawer of its kind. A drawer knows no command: for a record or a table it reads the description of the record, so one drawer serves each table of each service and of each built-in command. It writes parts of a line with what each part is (a number, a type, a label), and the console gives a value the color of its value kind. The drawers have no state and make no kernel call (`support/console_results`). It is not a formatter of one command, and it is not the terminal: the terminal draws the cells that the console sends.
+
+The design: `docs/CONSOLE.md`, "Results and their drawers".
+
+Do not use: printer, formatter, renderer, pretty-printer.
+
+### Short name of an export
+
+A short name of an export is a built-in name of the console that calls one export of a service: `programs()` calls `monitor.programs()`.
+
+The fact that the command gives is a fact of the service, and the console holds no copy of it. The command connects to the service when the console has no connection to it yet, then calls the export through the connection, as any call of `service.export`. When the service does not run, the line fails with the error of the connection. It is not a second implementation of the command in the console.
+
+The design: `docs/CONSOLE.md`, "The built-in commands and the services".
+
+Do not use: alias, shortcut, wrapper command.
+
 ## Devices
 
 ### Physical address
