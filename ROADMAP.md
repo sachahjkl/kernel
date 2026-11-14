@@ -5,7 +5,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 ## Now
 
 - **Every program that draws imports the drawing module.** The programs that draw a picture, the terminal and the compositor use the drawing module, as 23 programs do today. The code of the drawing is then loaded one time, and one correction reaches every program. [Design](src/md/api/library_modules.md)
-- **The same module with and without debug information.** The compiler gives the same bytes of a module when the build asks for debug information and when it does not. A developer can then make the debug object of a module later, from the same sources. [Design](src/md/infrastructure/debug_information_and_code.md)
 - **The sources in one folder.** Everything that becomes the system moves into the folder `src`, and the code that the programs share becomes the source library `modus`. A developer then finds each part of the system by one rule. [Design](src/md/infrastructure/repository_layout.md)
 
 ## Next
@@ -21,6 +20,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The IOMMU.** A device reaches only the memory that its service was granted. A device service that has a fault then damages no other program.
 - **A guest.** A program runs another system in a guest, with the virtualization support of the processor. The first guest writes to a port, and the write arrives as a record in the program that runs it. [Design](src/md/features/foreign_systems.md)
 - **A window never shows a picture that is being drawn.** Each program draws its next picture apart, and the compositor shows it only when it is complete, as `terminal`, `manual` and `heron` do today. A window then shows no frame that mixes two pictures. [Design](src/md/features/heron_program.md)
+- **The option for the debug information in the compiler of the Odin project.** The kind of debug information that adds no instruction is offered to the Odin project. A developer then builds the modules of the system with the compiler of that project, with no fork. [Design](src/md/infrastructure/debug_information_and_code.md)
 - **No text over a text, and no cut text, in three windows.** The two pages of the program `manual` that show a module and its tables draw each text in its own box, and the window of `notes` draws its note whole. A reader then reads every line of these windows.
 
 ## Later

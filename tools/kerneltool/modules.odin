@@ -331,8 +331,12 @@ module_compile_command :: proc(build: Module_Build) -> []string {
 	// The module itself has no byte of it: the converter copies the
 	// segments only, and `check` proves that each module is the same bytes
 	// without it.
+	// The kind of debug information that never changes the code: the build
+	// gives the compiler the same program as a build with none. A plain
+	// `-debug` adds aids for a debugger that are instructions, and it sets
+	// a constant that a source can read.
 	if debug_information {
-		append(&compile, "-debug")
+		append(&compile, "-debug-info:same-code")
 	}
 	for define in build.defines {
 		append(&compile, strings.concatenate({"-define:", define}, context.temp_allocator))
@@ -355,7 +359,12 @@ module_compile_command :: proc(build: Module_Build) -> []string {
 module_object_command :: proc(build: Module_Build) -> []string {
 	folder := join(module_build_folder, "/", build.name)
 	llc := make([dynamic]string, context.temp_allocator)
-	append(&llc, "llc", "-O3", "--frame-pointer=all", "-relocation-model=pic", "--function-sections", "--data-sections", "-filetype=obj")
+	// -misched-topdown: with debug instructions in a block, the instruction
+	// scheduler of this LLVM (18) orders some register copies in another
+	// way in its bottom-up direction, so the code differs with and without
+	// debug information. The top-down direction gives the same code for
+	// both (docs/REPRODUCIBLE_BUILD.md, section 8).
+	append(&llc, "llc", "-O3", "-misched-topdown", "--frame-pointer=all", "-relocation-model=pic", "--function-sections", "--data-sections", "-filetype=obj")
 	if build.kernel {
 		// The kernel has no x87, SSE or AVX instruction: the registers of a
 		// program stay live through each kernel entry, and only the switch
