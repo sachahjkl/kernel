@@ -83,6 +83,7 @@ The intent of the parts that were built before this folder is in other documents
 - [api/library_modules.md](api/library_modules.md): which shared library becomes a module that programs import, where the border goes, and why there is no second kind of import
 - [features/foreign_systems.md](features/foreign_systems.md): why a foreign system runs whole inside a guest, and the forms of a Linux and an NT layer that were refused
 - [features/gpu_access.md](features/gpu_access.md): the access to a GPU through a driver domain and one serialization of commands, and the forms that were refused
+- [features/heron_program.md](features/heron_program.md): the program that plays the animations of the mark: one source of each rule in `support/mark`, a move on the grid against the free way, and why its window has two pictures
 - [features/key_path.md](features/key_path.md): why no queue between the keyboard and a program drops a key in silence, and the two forms of a full queue
 - [features/palette.md](features/palette.md): the palette as a panel of the compositor with the console as its provider, and why no program gets a new right
 - [features/scheduling_policy.md](features/scheduling_policy.md): the placement of a thread in the kernel, the share for each program outside it, and the hazards that decided both

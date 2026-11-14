@@ -271,6 +271,7 @@ COMMANDS :: [?]Command {
 	//
 	// - no argument, or `terminal`: the film of the terminal.
 	// - `palette`: the film of the palette.
+	// - `heron`: the film of the program heron.
 	{name = "film", about = "build, start the machine, film a scenario (" + FILM_NAMES + "; no argument: terminal), and write " + FILM_FOLDER + "/<name>.mp4, " + FILM_FOLDER + "/<name>.webm, a copy of the MP4 file in a new folder of " + DEVELOPMENT_LOG_FOLDER + ", and " + FILM_DOCUMENT_FOLDER + "/<name>.webm when a news entry names the film (needs ffmpeg)", run = run_film},
 	// Converts the BDF file of the font of the terminal (Spleen 8x16, from
 	// `FONT_SOURCE`) to Odin data in `support/graphics/font.odin`. The result

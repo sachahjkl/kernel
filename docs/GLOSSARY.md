@@ -5490,7 +5490,7 @@ Do not use: news item, post, announcement, blog post, changelog entry.
 
 A film is the pictures of the screen of a test machine, taken 30 times in one second while a scenario of the tool sends its keys, as one file that a player shows at the speed of the machine.
 
-`kerneltool film <name>` makes a film: `terminal` or `palette`. It writes an MP4 file with H.264 and a WebM file with AV1 from the same pictures, in the build folder. A film is not a test: only its scenario has steps with a fixed time, the period between two typed keys and the hold of a state for its viewer.
+`kerneltool film <name>` makes a film: `terminal`, `palette` or `heron`. It writes an MP4 file with H.264 and a WebM file with AV1 from the same pictures, in the build folder. A film is not a test: only its scenario has steps with a fixed time, the period between two typed keys and the hold of a state for its viewer.
 
 A news entry can name a film, `film: docs/films/<name>.webm`. The command then writes the WebM file in the repository too, which holds it as it holds a screen picture: at most 4 MiB. The site shows it on the page of the news in a `video` element that plays only when the reader starts it, with the picture of the entry in its place before that. A card of the home, the feed and a browser that does not play AV1 show the picture.
 

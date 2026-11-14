@@ -36,13 +36,28 @@
 //   by pixel. The way on the grid draws cells; it is not a filter over the
 //   free picture.
 //
-// **The log.** `heron: ok` after the first picture. When an animation that
-// a key or a call asked for ends: `heron: dash played: 17 frames, the heron
-// left the window and came back, on the grid`, and once, the measure of
-// its pictures (`heron: a picture of dash took ... us to draw and damaged
-// ... pixels`). When the key `l` or the key `g` changes what the window
-// shows: `heron: shows dash at frame 3 of 17, held, on the grid: the form
-// run, ...`. An animation of the order of chance writes no line.
+// **The window is shown whole or not at all.** Its surface has two
+// pictures: the program draws one while the compositor reads the other,
+// and it draws only when the compositor took the picture before.
+//
+// **The log.** `heron: ok, a window of two pictures: ...` after the first
+// picture. Each key writes one line, after the program presented its
+// state:
+//
+// - an animation that a key or a call asked for, when it ends: `heron:
+//   dash played: 17 frames, the heron left the window and came back, on
+//   the grid`, and once, the measure of its pictures (`heron: a picture of
+//   dash took ... us to draw and damaged ... pixels`);
+// - Space: `heron: paused`, `heron: plays again`;
+// - `s`: `heron: slow`, `heron: full speed`;
+// - `z`: `heron: cells of 8 pixels`;
+// - `l`, `g`, `.`, and an animation key while the play is paused: `heron:
+//   shows dash at frame 3 of 17, held, on the grid: the form run, ...`.
+//
+// An animation of the own order writes `heron: blink played in its own
+// order: 1 frames` when it ends. Only the first 32 of them have a line:
+// the heron plays for as long as its window is open, and the log of the
+// system is not its diary.
 //
 // **Its grant**: **Serve**, its exports. It needs no other.
 //
@@ -146,8 +161,9 @@ cell_size_index: int // The index in cell_sizes of the cell size.
 order_memory: mark.Order_Memory // The animations that were played in this round.
 program_generator: random.Generator // The numbers of chance of the order and of the still times.
 
-// The animation that plays was asked for by a key or by a call: the log
-// gets one line when it ends. These count its pictures.
+// asked: the animation that plays was asked for by a key or by a call.
+// The log gets one line when an animation ends; the values below count the
+// pictures of the animation that plays, for that line.
 asked: bool
 asked_frames: u32 // One bit for each frame that a picture showed.
 asked_ways: u32 // One bit for each way that a picture was drawn in.
@@ -155,9 +171,17 @@ asked_left_the_window: bool // A picture had the heron wholly outside the stage.
 asked_pictures: u64
 asked_draw_time: u64 // Nanoseconds: the sum of the times of its pictures.
 asked_damage: u64 // Pixels: the sum of the damage of its pictures.
-played_line_waits: bool // The asked animation ended: its line is written after the picture.
+played_line_waits: bool // An animation ended: its line is written after the picture.
 measure_line_written: bool // The measure of the pictures is on the log: the program writes it once.
-shows_line_waits: bool // A key or a call changed the lines or the way: the line of what the window shows is written after the picture.
+shows_line_waits: bool // A key or a call changed what the window shows (the lines, the way, a held frame): its line is written after the picture.
+pause_line_waits: bool // Space paused the play or let it go on: its line is written after the picture.
+speed_line_waits: bool // The key s changed the speed: its line is written after the picture.
+cell_line_waits: bool // The key z changed the cell size: its line is written after the picture.
+// The lines of the animations of the own order that the log has. The heron
+// plays for as long as its window is open: a line for each animation would
+// fill the log of the system, so only the first ones have a line.
+own_order_lines: int
+OWN_ORDER_LINES_MOST :: 32
 
 // The pixels of the stage, and of the form picture, where a pixel that no
 // cell covers is PICTURE_EMPTY. The stage takes the heron from the form
@@ -190,9 +214,10 @@ shown: Scene
 home_body: interface.Rectangle // The rectangle of the natural heron in its place.
 
 // The memory of the interface package for the window (docs/INTERFACE.md):
-// one Picture record for each tile, then the records of the band.
-records_now, records_before: [TILE_COUNT + 96]interface.Draw_Record
-text_now, text_before: [1024]u8
+// one Picture record for each tile, then the records of the band. The
+// surface has two pictures, so the package keeps the table of each one.
+records_now, records_before, records_second: [TILE_COUNT + 96]interface.Draw_Record
+text_now, text_before, text_second: [1024]u8
 drawing: interface.Window_Drawing
 
 // One row of the table of animations().
@@ -307,7 +332,7 @@ still_start :: proc "contextless" () {
 
 // animation_end ends the animation that plays: the heron stands again.
 animation_end :: proc "contextless" () {
-	played_line_waits = asked
+	played_line_waits = true
 	still_start()
 }
 
@@ -356,30 +381,41 @@ frame_step :: proc "contextless" () {
 	if !paused || state != .Animation {
 		return
 	}
+	shows_line_waits = true
 	frame := frame_now()
 	if frame >= mark.animation_frame_count(animation) {
 		// The reader went through the frames by hand: the animation did
-		// not play, so its end writes no line.
-		asked = false
+		// not play, so its end has no line of a play. The line of what
+		// the window shows says that the heron stands.
 		animation_end()
+		played_line_waits = false
 		return
 	}
 	animation_time = mark.animation_frame_start(animation, frame + 1) * 1000
+}
+
+// animation_key_take starts the animation of a key. While the play is
+// paused the window holds its first frame, and the log says so.
+animation_key_take :: proc "contextless" (wanted: mark.Animation) {
+	animation_start(wanted, true)
+	shows_line_waits = paused
 }
 
 // key_take does what a key of the window asks.
 key_take :: proc "contextless" (character: u8) {
 	switch {
 	case character >= '1' && character <= '9':
-		animation_start(mark.Animation(character - '1'), true)
+		animation_key_take(mark.Animation(character - '1'))
 	case character >= 'a' && character <= 'f':
-		animation_start(mark.Animation(9 + character - 'a'), true)
+		animation_key_take(mark.Animation(9 + character - 'a'))
 	case character == ' ':
 		paused = !paused
+		pause_line_waits = true
 	case character == '.':
 		frame_step()
 	case character == 's':
 		slow = !slow
+		speed_line_waits = true
 	case character == 'l':
 		lines_shown = !lines_shown
 		shows_line_waits = true
@@ -388,6 +424,7 @@ key_take :: proc "contextless" (character: u8) {
 		shows_line_waits = true
 	case character == 'z':
 		cell_size_index = (cell_size_index + 1) % len(cell_sizes)
+		cell_line_waits = true
 	}
 }
 // The keys 1 to 9 and a to f name each animation.
@@ -721,15 +758,28 @@ damage_pixels :: proc "contextless" (count: int) -> u64 {
 	return total
 }
 
-// played_line_write writes the line of an asked animation that ended: the
-// frames that its pictures showed, what the heron did, and the way of its
-// pictures. The measure of its pictures follows once: the mean time of a
-// picture and the mean damage, which no test compares to a bound.
+// played_line_write writes the line of an animation that ended: the frames
+// that its pictures showed, and, for an animation that a key or a call
+// asked for, what the heron did and the way of its pictures. An animation
+// of the own order of the heron has a shorter line, and only the first
+// ones have a line. The measure of the pictures of an asked animation
+// follows once: the mean time of a picture and the mean damage, which no
+// test compares to a bound.
 played_line_write :: proc "contextless" () {
 	name := mark.animation_names[animation]
 	frames: u64
 	for bit in 0 ..< 32 {
 		frames += u64(asked_frames >> uint(bit) & 1)
+	}
+	if !asked {
+		if own_order_lines < OWN_ORDER_LINES_MOST {
+			own_order_lines += 1
+			// Not the start of the line of an asked animation: a reader
+			// of the log that waits for "dash played: " must not take
+			// a dash of the own order for the dash that it asked for.
+			system.log("heron: ", name, " played in its own order: ", frames, " frames")
+		}
+		return
 	}
 	what := ""
 	if mark.animation_moves(animation) {
@@ -759,7 +809,8 @@ played_line_write :: proc "contextless" () {
 }
 
 // shows_line_write writes the line of what the window shows, after a
-// change of the lines or of the way. Each value of the line is what the
+// change of the lines or of the way, a step of a frame, or an animation
+// key while the play is paused. Each value of the line is what the
 // program drew: the animation and its frame, whether the play holds it,
 // the way with the form and the place of support/mark or with the size of
 // the stretched frame, the lines, and the cells that the frame changed.
@@ -797,7 +848,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	service, _ := system.service_open(ctx)
-	window, ok := display.open(ctx, WIDTH, HEIGHT, "heron")
+	// Two pictures: the program draws one while the compositor reads the
+	// other, so the screen never shows a picture that is being drawn. With
+	// one picture the compositor can read a damage rectangle after the
+	// program cleared it and before the program drew the heron in it.
+	window, ok := display.open(ctx, WIDTH, HEIGHT, "heron", two_pictures = true)
 	if !ok {
 		system.stop(1)
 	}
@@ -805,9 +860,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for &picture, index in pictures {
 		picture = graphics.view(stage, index % TILE_COLUMNS * TILE, index / TILE_COLUMNS * TILE, TILE, TILE)
 	}
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:], records_second[:], text_second[:])
 	drawing.now.pictures = pictures[:]
 	drawing.before.pictures = pictures[:]
+	drawing.before_second.pictures = pictures[:]
 	order_memory = mark.ORDER_MEMORY_EMPTY
 	still_start()
 	last := system.nanoseconds()
@@ -825,10 +881,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				interface.draw_whole_window_next(&drawing)
 			}
 		}
+		// The compositor did not take the last picture yet: it can still
+		// read the picture that the program would draw in. The keys are
+		// taken; the picture waits. The time since the last picture goes
+		// on, so the play loses nothing.
+		if !display.canvas_free(&window) {
+			retry: system.Wait
+			display.wait_events(&retry, &window)
+			system.service_wait(&retry, &service)
+			system.wait_end(&retry, system.time() + 1)
+			continue
+		}
 		start := system.nanoseconds()
 		advance(start - last)
 		last = start
-		counted := state == .Animation && asked && !paused
+		counted := state == .Animation && !paused
 		stage_draw()
 		frame := interface.window_frame_begin(&drawing, &window)
 		for generation, index in tile_generations {
@@ -847,12 +914,30 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		if !logged {
-			system.log("heron: ok")
+			if window.two {
+				system.log("heron: ok, a window of two pictures: the screen never shows a picture that is being drawn")
+			} else {
+				system.log("heron: wrong: the window has one picture, so the screen can show a picture that is being drawn")
+			}
 			logged = true
 		}
 		if played_line_waits {
 			played_line_waits = false
 			played_line_write()
+		}
+		if pause_line_waits {
+			pause_line_waits = false
+			pause_line := paused ? "heron: paused" : "heron: plays again"
+			system.log(pause_line)
+		}
+		if speed_line_waits {
+			speed_line_waits = false
+			speed_line := slow ? "heron: slow" : "heron: full speed"
+			system.log(speed_line)
+		}
+		if cell_line_waits {
+			cell_line_waits = false
+			system.log("heron: cells of ", u64(cell_sizes[cell_size_index]), " pixels")
 		}
 		if shows_line_waits {
 			shows_line_waits = false
