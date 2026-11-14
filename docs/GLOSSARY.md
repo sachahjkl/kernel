@@ -5522,7 +5522,7 @@ Do not use: search box, search bar, omnibox.
 
 The mark is the picture that stands for the system: a heron on a grid of 24 by 24 square cells, each part filled with one gradient.
 
-`support/mark` holds it as data: the rows of the still heron, the colors of each part and the animations of the mark. Every picture of the mark comes from that one table: `kerneltool logo` writes the files of `resources/logo`, the site draws its own pictures and its icons, and the system draws it on the boot display. The squares follow the design of the system: rectangular forms, no rounded blob.
+`support/mark` holds it as data: the rows of the still heron, the colors of each part and the animations of the mark. Every picture of the mark comes from that one table. One generator of the tool draws each picture file, in the variant of the mark that its use names: `kerneltool logo` asks it for the files of `resources/logo`, `kerneltool site` for the pictures and the icons of the site, and `kerneltool mark` for one picture. The system draws the mark on the boot display and in the bar. The squares follow the design of the system: rectangular forms, no rounded blob.
 
 The design: `docs/DESIGN.md`, "11. The mark".
 
@@ -5562,7 +5562,7 @@ Do not use: rest pose, idle frame, base frame (a base frame is another thing: se
 
 An animation of the mark is a short list of frames in which a few cells of the still heron change.
 
-In a frame a cell takes the letter of another part, or becomes empty. Each frame has a duration in milliseconds, and starts from the still heron or from an earlier frame of the same animation, its base frame. After its last frame the heron is still again. The animations are data in `support/mark/animation.odin`: 15 of them, from the blink of one cell to the dash. The data does not say when one plays: the order of play of the place that shows them chooses which one comes next. On the site, `mark_animation.js` plays them from the sprite sheet, and a move of the heron goes with four of them.
+In a frame a cell takes the letter of another part, or becomes empty. Each frame has a duration in milliseconds, and starts from the still heron or from an earlier frame of the same animation, its base frame. After its last frame the heron is still again. The animations are data in `support/mark/animation.odin`: 15 of them, from the blink of one cell to the dash. The data does not say when one plays: the order of play of the place that shows them chooses which one comes next. On the site, `mark_animation.js` plays them from a tile map, and a move of the heron goes with four of them.
 
 The design: `docs/DESIGN.md`, "11. The mark".
 
@@ -5608,15 +5608,25 @@ The design: `docs/DESIGN.md`, "The moves".
 
 Do not use: scaled frame, deformation, sampled frame.
 
-### Sprite sheet
+### Variant of the mark
 
-The sprite sheet is one PNG file of the site that holds each distinct frame of the animations of the mark, in rows of 16 from the top left, with the still heron first.
+A variant of the mark is one of the two ways to color the pixels of the heron: smooth, where each pixel takes the gradient at its own place, or cells, where each cell is one color.
 
-The script of the mark shows one sprite at a time by its place in the file, so the page loads one picture for all the animations. A frame that two animations share is in the file once. The sheet has one pixel for each cell of the heron, so a sprite is 24 by 24 pixels; the style sheet of the page gives a cell its size, a whole count of pixels, with no smoothing. Under the sprites the sheet holds the drawn forms of the moves of the heron. The site has one sheet for each color scheme.
+A request for a picture of the mark names its variant: a procedure of `support/mark` that draws the heron takes it as an argument, and nothing chooses it from the cell size. A picture is the smooth variant: the head of the home of the site, the files of `resources/logo`, the boot display. A small icon, one pixel for a cell, is the cells variant: the bar of the site, the bar of the desktop, the icon of a tab. The smooth variant needs at least 2 pixels for a cell; at one pixel the picture is the cells variant, and a request for the smooth one is refused. Example: at 8 pixels for a cell, a cell of the body holds up to 64 colors in the smooth variant and one in the cells variant.
 
-The design: `docs/SITE.md`, "The mark on the site".
+The design: `docs/DESIGN.md`, "The variants of the mark".
 
-Do not use: atlas, film strip.
+Do not use: style, mode, rendering, pixel art mode.
+
+### Tile map
+
+A tile map is one PNG file that holds each distinct frame of the animations of the mark as a tile, in rows from the top left with the still heron first, and under them, for a place that shows the moves, a tile for each drawn form.
+
+A script that plays the animations shows one tile at a time by its place in the file, so a page loads one picture for all the animations. A frame that two animations share is in the file once. The generator of the pictures of the mark draws a tile map in a variant of the mark, at a cell size, in a color scheme, and writes its table: the place and the size of each tile, the times, the moves in cells. The site has three: one for each color scheme of the home, in the smooth variant at 8 pixels for a cell, with the drawn forms; and one for the icon of the tab, in the cells variant at one pixel for a cell, with the frames only. `kerneltool mark tile_map` writes one.
+
+The design: `docs/SITE.md`, "The moves of the heron".
+
+Do not use: sprite sheet, atlas, film strip.
 
 ### Site
 

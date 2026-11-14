@@ -463,7 +463,7 @@ site_icons_of_the_site :: proc(t: ^testing.T) {
 	for icon in site_icons {
 		drawing := 24 * icon.heron_cell
 		testing.expectf(t, drawing <= icon.size && (icon.size - drawing) % 2 == 0, "the icon of %d has a drawing of %d", icon.size, drawing)
-		data, encoded := site_mark_encode(site_icon_picture(icon))
+		data, encoded := mark_picture_png(site_icon_picture(icon))
 		testing.expect(t, encoded)
 		width, height, _ := site_png_size(data)
 		testing.expect_value(t, width, icon.size)
@@ -644,11 +644,11 @@ site_pictures_opaque_and_compressed :: proc(t: ^testing.T) {
 	testing.expect(t, !damaged_ok)
 
 	// The picture for other sites that the tool draws.
-	for picture in site_mark_pictures {
+	for picture in mark_uses_pictures(.Site, .Picture) {
 		if picture.file_name != SITE_MARK_CARD {
 			continue
 		}
-		data, encoded := site_mark_encode(picture)
+		data, encoded := mark_picture_png(picture)
 		testing.expect(t, encoded)
 		card_width, card_height, _ := site_png_size(data)
 		testing.expect_value(t, card_width, SITE_CARD_WIDTH)
@@ -664,7 +664,7 @@ metadata_test_files :: proc() -> map[string]int {
 	for path in ([]string{SITE_STYLE_SHEET, SITE_SEARCH_SCRIPT, SITE_MARK_ANIMATION_SCRIPT, SITE_MARK_FONT, SITE_FAVICON, SITE_NEWS_FEED, SITE_RELEASES_FEED, SITE_MANIFEST, "pictures/a.png"}) {
 		files[path] = 1
 	}
-	for name in ([]string{SITE_ICON_SVG, SITE_ICON_TOUCH, SITE_MARK_HERON, SITE_MARK_HERON_LIGHT, SITE_MAKER_PICTURE}) {
+	for name in ([]string{SITE_ICON_SVG, SITE_ICON_TOUCH, SITE_MARK_BAR, SITE_MARK_BAR_LIGHT, SITE_MAKER_PICTURE}) {
 		files[strings.concatenate({SITE_PICTURE_FOLDER, "/", name}, context.temp_allocator)] = 1
 	}
 	return files

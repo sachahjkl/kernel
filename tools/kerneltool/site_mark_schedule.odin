@@ -1,7 +1,7 @@
 // Which animation of the mark plays next on the home of the site, and how
 // long the heron is still before it (docs/SITE.md, "The rhythm of the
 // animations"). How the heron moves on the page during an animation is in
-// site_mark_moves.odin.
+// mark_tile_map.odin.
 //
 // The rule of the choice is written two times: here, as a model that the
 // host tests run, and in mark_animation.js, which the page runs. The two

@@ -828,12 +828,13 @@ site_who_class :: proc(who: string) -> string {
 // (one line: the first sentence of the lead of README.md) and the links to
 // the sections. The rest of the lead is not in the head.
 site_home_head :: proc(site: ^Site, b: ^strings.Builder) {
-	// The picture has one pixel for each cell of the heron; the page shows
-	// it at a whole count of pixels for a cell, and the style sheet asks
-	// for no smoothing (site_mark_animation_rules).
+	// The still picture of the home, as the table of the uses of the mark
+	// gives it: the smooth variant, at its own size.
+	home_picture, _ := mark_use_picture(SITE_MARK_HOME)
+	width, height := mark_picture_size(home_picture)
 	strings.write_string(b, "<header class=\"home-head\">\n<picture>")
-	fmt.sbprintf(b, "<source media=\"(prefers-color-scheme: light)\" srcset=\"%s/%s\">", SITE_PICTURE_FOLDER, SITE_MARK_HERON_LIGHT)
-	fmt.sbprintf(b, "<img class=\"mark\" src=\"%s/%s\" width=\"%d\" height=\"%d\" alt=\"", SITE_PICTURE_FOLDER, SITE_MARK_HERON, SITE_MARK_HOME_SIZE, SITE_MARK_HOME_SIZE)
+	fmt.sbprintf(b, "<source media=\"(prefers-color-scheme: light)\" srcset=\"%s/%s\">", SITE_PICTURE_FOLDER, SITE_MARK_HOME_LIGHT)
+	fmt.sbprintf(b, "<img class=\"mark\" src=\"%s/%s\" width=\"%d\" height=\"%d\" alt=\"", SITE_PICTURE_FOLDER, SITE_MARK_HOME, width, height)
 	site_plain(b, site_heron_description(site.readme.mark_description))
 	strings.write_string(b, "\"></picture>\n<div>\n<h1>" + SITE_MARK_NAME_HTML + "</h1>\n<p class=\"lead\">")
 	site_inline(b, site.readme.tagline)

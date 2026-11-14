@@ -25,6 +25,7 @@ SITE_ICON_MASKABLE :: "icon_512_maskable.png"
 Site_Icon :: struct {
 	file_name:  string, // In the picture folder; "" for an entry of favicon.ico only.
 	size:       int, // Width and height in pixels.
+	variant:    mark.Variant, // The variant of the mark: cells for the icon of one pixel for a cell, smooth for the others.
 	heron_cell: int, // The cell size: 24 cells of this many pixels.
 	opaque:     bool, // On the dark background, in the dark form.
 	in_favicon: bool, // An entry of favicon.ico.
@@ -37,17 +38,19 @@ Site_Icon :: struct {
 // grid of the heron is inside that circle. 16 pixels cannot hold the 24
 // cells: there is no icon of 16, and a browser scales the 32.
 site_icons := [?]Site_Icon {
-	{file_name = "", size = 32, heron_cell = 1, in_favicon = true},
-	{file_name = "", size = 48, heron_cell = 2, in_favicon = true},
-	{file_name = SITE_ICON_TOUCH, size = 180, heron_cell = 7, opaque = true},
-	{file_name = SITE_ICON_192, size = 192, heron_cell = 8},
-	{file_name = SITE_ICON_512, size = 512, heron_cell = 21},
-	{file_name = SITE_ICON_MASKABLE, size = 512, heron_cell = 12, opaque = true},
+	{file_name = "", size = 32, variant = .Cells, heron_cell = 1, in_favicon = true},
+	{file_name = "", size = 48, variant = .Smooth, heron_cell = 2, in_favicon = true},
+	{file_name = SITE_ICON_TOUCH, size = 180, variant = .Smooth, heron_cell = 7, opaque = true},
+	{file_name = SITE_ICON_192, size = 192, variant = .Smooth, heron_cell = 8},
+	{file_name = SITE_ICON_512, size = 512, variant = .Smooth, heron_cell = 21},
+	{file_name = SITE_ICON_MASKABLE, size = 512, variant = .Smooth, heron_cell = 12, opaque = true},
 }
 
-// site_icon_picture gives the picture of the mark that an icon is.
-site_icon_picture :: proc(icon: Site_Icon) -> Site_Mark_Picture {
-	return Site_Mark_Picture{file_name = icon.file_name, heron_cell = icon.heron_cell, on_light = !icon.opaque, opaque = icon.opaque, width = icon.size, height = icon.size}
+// site_icon_picture gives the picture of the mark that an icon is: the
+// request that the generator of the pictures of the mark draws
+// (mark_pictures.odin).
+site_icon_picture :: proc(icon: Site_Icon) -> Mark_Picture {
+	return Mark_Picture{file_name = icon.file_name, variant = icon.variant, heron_cell = icon.heron_cell, on_light = !icon.opaque, opaque = icon.opaque, width = icon.size, height = icon.size}
 }
 
 // site_icon_files gives each icon file of the site, by its path in the site:
@@ -57,7 +60,7 @@ site_icon_files :: proc() -> (files: map[string][]u8, ok: bool) {
 	files = make(map[string][]u8, context.temp_allocator)
 	favicon_pictures := make([dynamic][]u8, context.temp_allocator)
 	for icon in site_icons {
-		data := site_mark_encode(site_icon_picture(icon)) or_return
+		data := mark_picture_png(site_icon_picture(icon)) or_return
 		if icon.in_favicon {
 			append(&favicon_pictures, data)
 			continue

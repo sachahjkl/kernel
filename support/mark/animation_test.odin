@@ -116,8 +116,8 @@ frame_pixels_are_the_pixels_of_the_mark :: proc(t: ^testing.T) {
 	for on_light in backgrounds {
 		for y in 0 ..< heron_size(2) {
 			for x in 0 ..< heron_size(2) {
-				frame_color, frame_covered := cells_pixel(&still, 2, x, y, on_light)
-				still_color, still_covered := mark_pixel(2, x, y, on_light)
+				frame_color, frame_covered := cells_pixel(&still, 2, x, y, .Smooth, on_light)
+				still_color, still_covered := mark_pixel(2, x, y, .Smooth, on_light)
 				if frame_color != still_color || frame_covered != still_covered {
 					testing.expectf(t, false, "pixel %d, %d differs from mark_pixel", x, y)
 					return
@@ -125,7 +125,7 @@ frame_pixels_are_the_pixels_of_the_mark :: proc(t: ^testing.T) {
 			}
 		}
 	}
-	_, refused := cells_pixel(&still, CELL_SIZE_LIMIT + 1, 0, 0, false)
+	_, refused := cells_pixel(&still, CELL_SIZE_LIMIT + 1, 0, 0, .Smooth, false)
 	testing.expect(t, !refused)
 	look, _ := animation_frame_cells(.Look, 1)
 	SIDE :: 64
@@ -138,12 +138,12 @@ frame_pixels_are_the_pixels_of_the_mark :: proc(t: ^testing.T) {
 	view := graphics.Canvas{pixels = ([^]graphics.Color)(&buffer[VIEW_LEFT * SIDE + VIEW_LEFT]), width = VIEW_SIDE, height = VIEW_SIDE, stride = SIDE}
 	PLACE_X :: -9
 	PLACE_Y :: 3
-	cells_draw(view, &look, PLACE_X, PLACE_Y, 2, false)
+	cells_draw(view, &look, PLACE_X, PLACE_Y, 2, .Smooth, false)
 	for y in 0 ..< SIDE {
 		for x in 0 ..< SIDE {
 			expected := DRAW_TEST_SENTINEL
 			if x >= VIEW_LEFT && x < VIEW_LEFT + VIEW_SIDE && y >= VIEW_LEFT && y < VIEW_LEFT + VIEW_SIDE {
-				if color, covered := cells_pixel(&look, 2, x - VIEW_LEFT - PLACE_X, y - VIEW_LEFT - PLACE_Y, false); covered {
+				if color, covered := cells_pixel(&look, 2, x - VIEW_LEFT - PLACE_X, y - VIEW_LEFT - PLACE_Y, .Smooth, false); covered {
 					expected = color
 				}
 			}

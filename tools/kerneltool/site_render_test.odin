@@ -3,6 +3,7 @@ package kerneltool
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "support:mark"
 
 test_site :: proc() -> Site {
 	site: Site
@@ -272,16 +273,21 @@ site_stages_of_the_start :: proc(t: ^testing.T) {
 
 @(test)
 site_size_of_the_pictures_of_the_mark :: proc(t: ^testing.T) {
-	for picture in site_mark_pictures {
-		width, height := site_mark_size(picture)
-		drawing_width, drawing_height := site_mark_drawing_size(picture)
+	for picture in mark_uses_pictures(.Site, .Picture) {
+		width, height := mark_picture_size(picture)
+		drawing_width, drawing_height := mark_picture_drawing_size(picture)
 		testing.expectf(t, drawing_width <= width && drawing_height <= height, "%s: the drawing does not fit", picture.file_name)
-		// The heron of a page has one pixel for each cell: the bar shows
-		// it as it is, and the head of the home at 8 pixels for a cell.
-		if picture.file_name == SITE_MARK_HERON || picture.file_name == SITE_MARK_HERON_LIGHT {
+		// The bar is a small icon: the cells variant, one pixel for a cell.
+		// The head of the home is a picture: the smooth variant.
+		if picture.file_name == SITE_MARK_BAR || picture.file_name == SITE_MARK_BAR_LIGHT {
 			testing.expect_value(t, width, 24)
 			testing.expect_value(t, height, 24)
-			testing.expect_value(t, picture.heron_cell, 1)
+			testing.expect_value(t, picture.variant, mark.Variant.Cells)
+		}
+		if picture.file_name == SITE_MARK_HOME || picture.file_name == SITE_MARK_HOME_LIGHT {
+			testing.expect_value(t, width, 192)
+			testing.expect_value(t, height, 192)
+			testing.expect_value(t, picture.variant, mark.Variant.Smooth)
 		}
 		// A picture of a page is the heron alone: the name is text in the
 		// font of the name of the mark. Only the picture for other sites

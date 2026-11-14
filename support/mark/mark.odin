@@ -142,32 +142,78 @@ heron_size :: proc "contextless" (cell_size: int) -> int {
 	return HERON_GRID_SIZE * cell_size
 }
 
+// A variant of the mark: how the gradient of a part is drawn. The mark is
+// one drawing of cells; a place that shows it names the variant that it
+// wants. A procedure never chooses the variant from a size.
+Variant :: enum u8 {
+	Smooth, // Each pixel takes the gradient of its part at its own centre: a cell holds several colors. For a picture: it needs several pixels for a cell.
+	Cells, // Each cell is one color: the gradient of its part at the centre of the cell. For a small icon, where a cell is one pixel.
+}
+
+// The name of each variant, for a command and a caption.
+@(rodata)
+variant_names := [Variant]string {
+	.Smooth = "smooth",
+	.Cells  = "cells",
+}
+
+// The smallest cell size of the smooth variant. With one pixel for a cell,
+// the pixel is the cell: the smooth mark would be the cells variant under
+// another name. So the smooth variant is not drawn there, and a caller
+// that wants one pixel for a cell asks for the cells variant.
+SMOOTH_CELL_SIZE_LEAST :: 2
+
+// variant_is_drawn tells whether the procedures of this package draw a
+// variant at a cell size: the cell size is accepted, and the smooth variant
+// has at least SMOOTH_CELL_SIZE_LEAST pixels for a cell.
+variant_is_drawn :: proc "contextless" (variant: Variant, cell_size: int) -> bool {
+	return cell_size_is_accepted(cell_size) && (variant == .Cells || cell_size >= SMOOTH_CELL_SIZE_LEAST)
+}
+
 // mark_pixel gives the color of the pixel (x, y) of the heron, from its top
-// left corner, when a cell is a square of cell_size pixels. A pixel of an
-// empty cell, or outside the heron, is not covered: the background shows.
-// A cell size that is not accepted covers no pixel.
-mark_pixel :: proc "contextless" (cell_size, x, y: int, on_light: bool) -> (color: u32, covered: bool) {
-	if !cell_size_is_accepted(cell_size) || x < 0 || y < 0 || x >= heron_size(cell_size) || y >= heron_size(cell_size) {
+// left corner, when a cell is a square of cell_size pixels, in a variant.
+// A pixel of an empty cell, or outside the heron, is not covered: the
+// background shows. A variant that is not drawn at the cell size covers no
+// pixel.
+mark_pixel :: proc "contextless" (cell_size, x, y: int, variant: Variant, on_light: bool) -> (color: u32, covered: bool) {
+	if !variant_is_drawn(variant, cell_size) || x < 0 || y < 0 || x >= heron_size(cell_size) || y >= heron_size(cell_size) {
 		return 0, false
 	}
 	index, found := heron_cell_part(x / cell_size, y / cell_size)
 	if !found {
 		return 0, false
 	}
-	return part_pixel(index, cell_size, x, y, on_light), true
+	return part_pixel(index, cell_size, x, y, variant, on_light), true
+}
+
+// cell_of_pixel gives the cell of a line of cells that holds a pixel: the
+// pixel divided by the cell size, rounded down also for a pixel before the
+// first cell, which a form of the heron has at its left and above it.
+@(private)
+cell_of_pixel :: proc "contextless" (pixel, cell_size: int) -> int {
+	if pixel >= 0 {
+		return pixel / cell_size
+	}
+	return -((-pixel + cell_size - 1) / cell_size)
 }
 
 // part_pixel gives the color of the pixel (x, y) of the heron in a cell of
 // the part number index: its flat color, or its gradient over the box of the
 // part in the still heron. A frame of an animation colors its cells with the
-// same procedure, so a cell that moves keeps the gradient of its part. The
-// caller checks the cell size and keeps the pixel inside the heron.
+// same procedure, so a cell that moves keeps the gradient of its part. In
+// the smooth variant the gradient is taken at the centre of the pixel; in
+// the cells variant at the centre of the cell of the pixel, which is the
+// pixel of the same place when a cell is one pixel. The caller checks that
+// the variant is drawn at the cell size.
 @(private)
-part_pixel :: proc "contextless" (index, cell_size, x, y: int, on_light: bool) -> u32 {
+part_pixel :: proc "contextless" (index, cell_size, x, y: int, variant: Variant, on_light: bool) -> u32 {
 	part := parts[index]
 	base := part.color_on_light if on_light else part.color_on_dark
 	if part.flat {
 		return base
+	}
+	if variant == .Cells {
+		return gradient_color(base, part.box, 1, cell_of_pixel(x, cell_size), cell_of_pixel(y, cell_size))
 	}
 	return gradient_color(base, part.box, cell_size, x, y)
 }
@@ -303,17 +349,18 @@ color_in_order :: #force_inline proc "contextless" (color: u32, order: Channel_O
 }
 
 // mark_draw draws the heron into a canvas, with its top left corner at
-// (x, y) of the canvas, at a cell size. It writes only the covered pixels,
-// so the empty cells keep what the canvas had there. It writes nothing
-// outside the canvas: a place partly or fully outside draws the part that is
-// inside. A cell size that is not accepted draws nothing.
+// (x, y) of the canvas, at a cell size, in a variant that the caller names.
+// It writes only the covered pixels, so the empty cells keep what the
+// canvas had there. It writes nothing outside the canvas: a place partly or
+// fully outside draws the part that is inside. A variant that is not drawn
+// at the cell size (variant_is_drawn) draws nothing.
 //
 // The cost: one call of mark_pixel for each pixel of the heron inside the
 // canvas, 576 * cell_size * cell_size at most. A call makes two integer
 // divisions to find the cell, and one more for each of the three channels of
 // a pixel of a gradient. A caller that draws the heron each
 // frame draws it once into a picture of its own and copies that picture.
-mark_draw :: proc "contextless" (canvas: graphics.Canvas, x, y, cell_size: int, on_light: bool, order := Channel_Order.Red_In_High_Byte) {
+mark_draw :: proc "contextless" (canvas: graphics.Canvas, x, y, cell_size: int, variant: Variant, on_light: bool, order := Channel_Order.Red_In_High_Byte) {
 	size := heron_size(cell_size)
 	first_x, first_y, last_x, last_y, inside := place_in_canvas(canvas, x, y, size, size)
 	if !inside {
@@ -321,7 +368,7 @@ mark_draw :: proc "contextless" (canvas: graphics.Canvas, x, y, cell_size: int, 
 	}
 	for canvas_y in first_y ..< last_y {
 		for canvas_x in first_x ..< last_x {
-			if color, covered := mark_pixel(cell_size, canvas_x - x, canvas_y - y, on_light); covered {
+			if color, covered := mark_pixel(cell_size, canvas_x - x, canvas_y - y, variant, on_light); covered {
 				canvas.pixels[canvas_y * canvas.stride + canvas_x] = color_in_order(color, order)
 			}
 		}
