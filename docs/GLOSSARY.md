@@ -5455,6 +5455,40 @@ The design: `changelog.d/README.md`.
 
 Do not use: changeset, news file, entry (for the file).
 
+### Roadmap
+
+The roadmap is the file `ROADMAP.md`: the planned work of the system, in three sections, Now, Next and Later.
+
+It is the one place of the plans, and the other half of the changelog: the changelog lists the work that is done, the roadmap the work that is planned. **Now** holds the work that is in progress, **Next** the work that is decided and comes after, **Later** the work that is wanted and has no order. The file is plain Markdown that a reader understands with no tool: a title, the three sections, and in each a list of roadmap entries. It gives no date, and it names no decision and no person.
+
+The file is written by hand. A work that is planned gets an entry; a work that is done loses its entry in the commit of its changelog fragment. `kerneltool roadmap check` checks the form of the file, and `kerneltool check` runs it. The site shows the file at `roadmap/`, as three columns of cards.
+
+It is not the status page, which gives the state of each property and the gaps of what is built. It is not a list of gaps: a gap is a difference between the code and the documents, and a gap becomes planned work only when an entry names it. It is not a promise of an order: only the sections order the entries.
+
+The design: `docs/TOOLS.md`, "The roadmap", and `docs/SITE.md`, "The roadmap".
+
+Do not use: plan, backlog, to-do list, next steps, milestones.
+
+### Roadmap entry
+
+A roadmap entry is one item of a section of the roadmap: a short bold summary, then one or two sentences on what the work gives the user.
+
+An entry names one planned work in the words of its user: a user of the system, or a developer who builds on it. It says what that reader gets, not how the code changes. Its form is one item of a list:
+
+```
+- **A window for the debugger.** The debugger gets a window over the exports that the console uses today. A step over a call stops after the call returns.
+```
+
+The summary is plain text of at most 80 bytes, with its period inside the bold. When an intent file of `src/md` holds the design of the work, the entry ends with a design link, `[Design](src/md/<file>.md)`, and the file must exist. No two entries have the same summary: the summary is the name of the entry in the search of the site and its address on the page, `roadmap-<summary>`.
+
+An entry has no date, no state of its own and no number: its section is its state, and it moves from one section to another by hand. When its work is done, the entry is removed in the commit that adds the changelog fragment of the work. A fragment that takes the summary of the entry as its bold summary makes `kerneltool roadmap check` fail until the entry is gone, so the removal is not forgotten.
+
+On the site an entry is a card in the column of its section, with the accent of the section: the color of a program for Now, the color of the kernel for Next, the dim color for Later.
+
+The design: `docs/TOOLS.md`, "The roadmap".
+
+Do not use: ticket, issue, task, story, item (for an entry), feature request.
+
 ### News entry
 
 A news entry is a dated report in prose, for a reader who is not a developer of the system, of one thing that the reader can see or use, with its picture.
@@ -5692,13 +5726,13 @@ Do not use: API page, package page.
 
 ### Status page
 
-The status page is the page of the site that gives the state of each property, with its evidence items and its gaps, then all the gaps and the next steps.
+The status page is the page of the site that gives the state of each property, with its evidence items and its gaps, then all the gaps.
 
-It writes no sentence of its own: each cell is a part of `docs/PROPERTIES.md` or of `docs/FIRST_MILESTONE.md`. An evidence item or a gap belongs to a property when its text names it. What is not done is on it as plainly as what is done. It is a section of the bar of its own, outside the docs.
+It writes no sentence of its own: each cell is a part of `docs/PROPERTIES.md` or of `docs/FIRST_MILESTONE.md`. An evidence item or a gap belongs to a property when its text names it. What is not done is on it as plainly as what is done. It is a section of the bar of its own, outside the docs. It is not the roadmap: the status page says what is built and what is missing, the roadmap says what work is planned, and one line of the status page leads to it.
 
 The design: `docs/SITE.md`, "The status page".
 
-Do not use: roadmap, progress page, "what runs today".
+Do not use: progress page, "what runs today".
 
 ### Site address
 

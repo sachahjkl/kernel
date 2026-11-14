@@ -1,11 +1,12 @@
 // The status page of the site (docs/SITE.md, "The status page"): the state
 // of each property in the words of docs/PROPERTIES.md, the evidence items
-// and the gaps of docs/FIRST_MILESTONE.md that name it, then the gaps and
-// the next steps as tables, and for each property what it promises and what
-// the machine test shows of it (docs/DEMONSTRATIONS.md). What is not done is
-// shown as plainly as what is done. No sentence of the page but the one that
-// says how to read a state is a summary that the tool writes: each cell is a
-// part of one of the three documents.
+// and the gaps of docs/FIRST_MILESTONE.md that name it, then the gaps as a
+// table, and for each property what it promises and what the machine test
+// shows of it (docs/DEMONSTRATIONS.md). What is not done is shown as plainly
+// as what is done. No sentence of the page but the one that says how to
+// read a state is a summary that the tool writes: each cell is a part of
+// one of the three documents. The planned work is not on this page: one
+// line leads to the page of the roadmap (site_roadmap.odin).
 package kerneltool
 
 import "core:fmt"
@@ -224,17 +225,13 @@ site_status_add :: proc(site: ^Site) -> bool {
 	}
 	site.gaps = gaps
 	evidence := make([dynamic]Site_List_Item, context.temp_allocator)
-	next_steps := make([dynamic]Site_List_Item, context.temp_allocator)
 	for item in milestone.items {
-		switch item.section {
-		case "evidence":
+		if item.section == "evidence" {
 			append(&evidence, item)
-		case "next-steps":
-			append(&next_steps, item)
 		}
 	}
-	if len(evidence) == 0 || len(next_steps) == 0 {
-		fmt.eprintfln("kerneltool: site: %s: no numbered item under \"## Evidence\" or under \"## Next steps\"", SITE_MILESTONE_FILE)
+	if len(evidence) == 0 {
+		fmt.eprintfln("kerneltool: site: %s: no numbered item under \"## Evidence\"", SITE_MILESTONE_FILE)
 		return false
 	}
 
@@ -246,7 +243,7 @@ site_status_add :: proc(site: ^Site) -> bool {
 	}
 
 	b := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(&b, "<h1>Status</h1>\n<p>The state of the system in this build: each of the %d properties in the words of its document, with the evidence items and the gaps that name it; then, for each property, what it promises, what the machine test shows today with its pictures, and what is not done; then all %d gaps and the next steps. A gap is a part of the design that the code does not do yet.</p>\n", len(properties), len(gaps))
+	fmt.sbprintf(&b, "<h1>Status</h1>\n<p>The state of the system in this build: each of the %d properties in the words of its document, with the evidence items and the gaps that name it; then, for each property, what it promises, what the machine test shows today with its pictures, and what is not done; then all %d gaps. A gap is a part of the design that the code does not do yet.</p>\n", len(properties), len(gaps))
 	strings.write_string(&b, "<p>A <strong>property</strong> is one fundamental rule of the system: what it does, and what it must never contain. Its <strong>status</strong> says whether the rule is decided. Its <strong>state</strong> says what a machine test shows of it: <em>Shown</em> when the test does the thing for real and checks the result, <em>Shown in part</em> when a named part has no test, <em>Not shown</em> when the system does not have the thing.</p>\n")
 
 	// The properties.
@@ -385,19 +382,10 @@ site_status_add :: proc(site: ^Site) -> bool {
 	site_table_end(&b, gaps_table)
 	site_source_line(site, &b, SITE_MILESTONE_FILE)
 
-	// The next steps.
-	strings.write_string(&b, "<h2 id=\"next-steps\">Next steps</h2>\n")
-	steps_table := site_table_start(&b, "Next steps", {{"Step", .Short}, {"What and its state", .Prose}}, {.Number, .None})
-	for item in next_steps {
-		strings.write_string(&b, "<tr><td class=\"code\">")
-		site_item_links(site, &b, path, SITE_MILESTONE_FILE, []Site_List_Item{item})
-		strings.write_string(&b, "</td>")
-		site_cell(&b, item.text)
-		strings.write_string(&b, "</tr>\n")
-	}
-	site_table_end(&b, steps_table)
-	site_source_line(site, &b, SITE_MILESTONE_FILE)
+	// The planned work is not on this page: it has its own, from its own file.
+	strings.write_string(&b, "<h2 id=\"planned\">What is planned</h2>\n")
+	site_roadmap_link_line(site, &b, path)
 
-	site_page_add(site, Site_Page{path = path, title = "Status", description = site_description_cut(fmt.tprintf("The state of each of the %d properties of %s, with its evidence and its gaps; the %d gaps and the next steps.", len(properties), SITE_SYSTEM_NAME, len(gaps))), section = .Status, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(SITE_PROPERTIES_FILE, SITE_MILESTONE_FILE, SITE_DEMONSTRATIONS_FILE), layout = .Documentation})
+	site_page_add(site, Site_Page{path = path, title = "Status", description = site_description_cut(fmt.tprintf("The state of each of the %d properties of %s, with its evidence and its gaps, and the list of the %d gaps.", len(properties), SITE_SYSTEM_NAME, len(gaps))), section = .Status, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(SITE_PROPERTIES_FILE, SITE_MILESTONE_FILE, SITE_DEMONSTRATIONS_FILE), layout = .Documentation})
 	return true
 }

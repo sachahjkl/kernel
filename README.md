@@ -23,7 +23,7 @@ Each claim names the program that shows it, and its picture below.
 
 The Nix flake supplies every tool. `nix develop`, then `kerneltool run`, builds the system and starts it in a virtual machine. In the machine, type `help()` in the console, or open the menu of the programs with the button "programs" of the bar. The section "Use" lists the other commands.
 
-[`CHANGELOG.md`](CHANGELOG.md) lists what each release brings. `kerneltool release_number` prints the newest release.
+[`CHANGELOG.md`](CHANGELOG.md) lists what each release brings. `kerneltool release_number` prints the newest release. [`ROADMAP.md`](ROADMAP.md) lists the planned work: what is in work now, what comes next, and what comes later.
 
 ## Pictures
 
@@ -220,6 +220,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `docs/SCHEDULING.md` | The scheduling strategies: what the system takes from CFS, EEVDF and `sched_ext`, and how it changes strategy while it runs |
 | `docs/SIMD.md` | Which procedures compute with vectors, in which form, and how to measure each one |
 | `CHANGELOG.md` | What each release brings, newest first. `changelog.d/` holds the changes that are not in a release yet |
+| `ROADMAP.md` | The planned work, in the sections Now, Next and Later: what each work gives the user |
 | `docs/DECISIONS.md` | The record of the decisions of the project, the open questions and the rules of work |
 | `docs/REVIEWS.md` | The reviews: each concession found, and what removes it |
 | `docs/research/` | Research notes with sources, and video transcripts |

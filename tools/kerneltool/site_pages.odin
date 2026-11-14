@@ -747,6 +747,8 @@ site_releases_add :: proc(site: ^Site) {
 	oldest := release_number_text(releases[len(releases) - 1].number)
 	fmt.sbprintf(&b, "<h1>Releases</h1>\n<p>Every release of the system, newest first: %d releases, from %s to %s. The merge of step N on <code>master</code> is the release 0.N.0.</p>\n<p>A release lists its changes by type, in the form of Keep a Changelog: Added, Changed, Deprecated, Removed, Fixed, Security. Each change is written once, in the commit that made it, as one fragment; <code>kerneltool changelog release</code> gathers the fragments into the release. Under a release, a line links to each news entry that names it: the news tell in prose what a reader can now see, and this page lists each change.</p>\n", len(releases), oldest, site.release)
 	site_source_line(site, &b, CHANGELOG_FILE)
+	// This page lists the work that is done; the planned work has its page.
+	site_roadmap_link_line(site, &b, path)
 	for changelog_release in releases {
 		number := release_number_text(changelog_release.number)
 		fmt.sbprintf(&b, "<section class=\"release\">\n<h2 id=\"%s\">%s <span class=\"date\">%s</span></h2>\n", site_release_id(number), number, changelog_release.date)
@@ -948,6 +950,8 @@ site_home_add :: proc(site: ^Site) {
 	newest := site.changelog.releases[0]
 	fmt.sbprintf(&b, "<h2 id=\"release\">The newest release</h2>\n<p><a href=\"%s#%s\">%s</a>, %s: %d changes. ", site_page_link(site, home, site_section_page(.Releases)), site_release_id(site.release), site.release, newest.date, len(newest.entries))
 	fmt.sbprintf(&b, "%d steps so far; each step is one tested commit on <code>master</code>.</p>\n", site.step_count)
+	// One line, not a section: the home shows what runs.
+	site_roadmap_link_line(site, &b, home)
 	site_page_add(site, Site_Page{path = home, is_index = true, title = SITE_SYSTEM_NAME, description = site_description_cut(site.readme.lead), section = .Home, body = strings.to_string(b), sources = site_sources(SITE_README_FILE, CHANGELOG_FILE)})
 }
 

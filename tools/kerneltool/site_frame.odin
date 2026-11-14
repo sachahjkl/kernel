@@ -61,6 +61,7 @@ Site_Section :: enum {
 	Status,
 	News,
 	Releases,
+	Roadmap,
 }
 
 site_section_titles := [Site_Section]string {
@@ -71,6 +72,7 @@ site_section_titles := [Site_Section]string {
 	.Status    = "Status",
 	.News      = "News",
 	.Releases  = "Releases",
+	.Roadmap   = "Roadmap",
 }
 
 // The folder of the page of each section; "" is the root of the site.
@@ -82,6 +84,7 @@ site_section_folders := [Site_Section]string {
 	.Status    = SITE_STATUS_FOLDER,
 	.News      = SITE_NEWS_FOLDER,
 	.Releases  = SITE_RELEASES_FOLDER,
+	.Roadmap   = SITE_ROADMAP_FOLDER,
 }
 
 // The section above each section: the breadcrumbs follow it, and the bar
@@ -96,6 +99,7 @@ site_section_parents := [Site_Section]Site_Section {
 	.Status    = .Home,
 	.News      = .Home,
 	.Releases  = .Home,
+	.Roadmap   = .Home,
 }
 
 // site_section_page gives the file of the page of a section.
@@ -182,6 +186,7 @@ Site :: struct {
 	code_links:   map[string]string, // The text of a code span to the row of a reference table that it names.
 	tile_rules:   string, // The rules of the style sheet for the tiles of the boot image on the home.
 	news:         []Site_News, // Newest first.
+	roadmap:      Roadmap, // ROADMAP.md, as roadmap_read gives it.
 	gaps:         []Site_Gap, // The gaps of docs/FIRST_MILESTONE.md, as the status page shows them.
 	redirects:    map[string]string, // The HTML of each redirect page, by its old path.
 	redirect_counts: [Site_Address_Generation]int, // The redirect pages of each generation of old addresses.
@@ -579,6 +584,8 @@ site_build :: proc(address: string) -> bool {
 	site.release = release_number_text(site.changelog.releases[0].number)
 	// The news names releases of the changelog, pictures and guides.
 	site_news_read(&site) or_return
+	// The planned work: a fault of the form of its file stops the command.
+	site_roadmap_read(&site) or_return
 	site.commit = site_git_commit()
 	now := time.now()
 	year, month, day := time.date(now)
@@ -718,6 +725,7 @@ site_build :: proc(address: string) -> bool {
 	site_status_add(&site) or_return
 	site_news_add(&site)
 	site_releases_add(&site)
+	site_roadmap_add(&site)
 	// The home of the docs before the home: the doors of the home name the
 	// sections that exist. Its text needs the index of the search, so it is
 	// written after the index (site_docs_home_fill).

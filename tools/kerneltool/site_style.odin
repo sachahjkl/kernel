@@ -971,6 +971,8 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	// The colors of the kinds of the module graph, then its rules.
 	site_module_graph_variables(&builder, false)
 	strings.write_string(&builder, SITE_MODULE_GRAPH_RULES)
+	// The columns and the cards of the page of the roadmap.
+	strings.write_string(&builder, SITE_ROADMAP_RULES)
 	// The colors and the widths of the tiles of the boot image: they come
 	// from the image of the build, so they are not fixed rules.
 	strings.write_string(&builder, tile_rules)

@@ -1291,7 +1291,7 @@ site_document_pointer_problems :: proc(site: ^Site) -> []string {
 }
 
 // The documents at the root of the repository that a text can name.
-SITE_ROOT_DOCUMENTS :: [?]string{"README.md", "CHANGELOG.md", "AGENTS.md"}
+SITE_ROOT_DOCUMENTS :: [?]string{"README.md", "CHANGELOG.md", "ROADMAP.md", "AGENTS.md"}
 
 // site_document_names gives the name of each document of the repository: each
 // guide, each working record, and the documents of the root.

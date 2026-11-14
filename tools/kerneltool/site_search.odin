@@ -56,6 +56,7 @@ Site_Search_Kind :: enum u8 {
 	Gap,
 	License_Row,
 	Type,
+	Roadmap_Entry,
 }
 
 // What the site shows of a kind of entry: its name for one entry (the list
@@ -92,6 +93,7 @@ site_search_kinds := [Site_Search_Kind]Site_Search_Kind_Description {
 	.Gap             = {name = "gap", value_kind = .No, folder = SITE_STATUS_FOLDER},
 	.License_Row     = {name = "license row", value_kind = .Grant, folder = SITE_LICENSES_FOLDER},
 	.Type            = {name = "type", value_kind = .Type, folder = SITE_TYPES_FOLDER},
+	.Roadmap_Entry   = {name = "roadmap entry", value_kind = .Status, folder = SITE_ROADMAP_FOLDER},
 }
 
 // site_search_kind_words gives the name of a kind of entry for a count:
@@ -407,6 +409,7 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 	for row, index in site.licenses.build_rows {
 		site_search_add(&entries, row.what, license_page, build_ids[index], .License_Row, strings.concatenate({row.license, ", ", row.author}, context.temp_allocator))
 	}
+	site_roadmap_search_add(site, &entries)
 	return entries[:]
 }
 

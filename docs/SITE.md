@@ -45,6 +45,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `docs/reference/numbers/` | The list `site_measures`, the measure record `docs/measures/measures.txt` and the logs of `build/` that are newer than it |
 | `docs/reference/licenses/` | See "The licenses" |
 | `releases/` | All of `CHANGELOG.md`, newest first; each release has the anchor `release-<number>`, and a line with a link to each news entry that names it |
+| `roadmap/` | All of `ROADMAP.md`: the planned work, in the sections Now, Next and Later; see "The roadmap" |
 | `news/`, `news.xml` | The files of `news/`; see "The news" |
 | `search.json`, `search.js` | The index of the search and its script; see "The search" |
 | `version.json` | The commit and the time of the build; see "A page of an older build" |
@@ -58,7 +59,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `docs/reference/module-graph/` | See "The module graph" |
 | `docs/reference/types/` | See "The types" |
 
-Each page has the bar (the heron and the name at the left, the sections as buttons: Docs, Status, News, Releases; a section appears when its page exists; on a guide or a page of the reference, Docs is the current one), breadcrumbs on each page below the home (Home / Docs / Guides / <guide>; Home / Docs / Reference / <page>; Home / Docs / Reference / Modules / <module>; Home / Status), and a foot that first names the maker ("modus · by Froment Software": the name of the system in the font of the name of the mark, the mark of the maker at 16 pixels, `resources/site/froment_software.png`, and its name as a link to its site, on one line), then names the commit, the release and the time of the build, and the files that the page comes from, as links to the repository at that commit. A reference table names the files that it is read from.
+Each page has the bar (the heron and the name at the left, the sections as buttons: Docs, Status, News, Releases, Roadmap; a section appears when its page exists; on a guide or a page of the reference, Docs is the current one), breadcrumbs on each page below the home (Home / Docs / Guides / <guide>; Home / Docs / Reference / <page>; Home / Docs / Reference / Modules / <module>; Home / Status), and a foot that first names the maker ("modus · by Froment Software": the name of the system in the font of the name of the mark, the mark of the maker at 16 pixels, `resources/site/froment_software.png`, and its name as a link to its site, on one line), then names the commit, the release and the time of the build, and the files that the page comes from, as links to the repository at that commit. A reference table names the files that it is read from.
 
 The tool reads the commit from the files of git (`.git`, `HEAD`, the reference, `packed-refs`), with no program. When it cannot, the foot says so and the links to files of the repository go to `master`.
 
@@ -78,9 +79,9 @@ The owner asked for it on 2026-11-12: "j'aimerais des urls genre /reference/lice
 
 ### The sections
 
-The bar names the sections under the home: Docs, Status, News, Releases (`site_section_parents`). The guides and the reference are the two parts of the docs: their pages are under `docs/`, their breadcrumbs pass through the docs home, and the bar marks Docs on each of their pages. The word of the section and of its page is "Docs" (`GLOSSARY.md`): "Documentation" is already the term for the text that a module carries. "Guides" and "Reference" stay the names of the two parts.
+The bar names the sections under the home: Docs, Status, News, Releases, Roadmap (`site_section_parents`). Releases and Roadmap stand side by side: the work that is done, then the work that is planned. The guides and the reference are the two parts of the docs: their pages are under `docs/`, their breadcrumbs pass through the docs home, and the bar marks Docs on each of their pages. The word of the section and of its page is "Docs" (`GLOSSARY.md`): "Documentation" is already the term for the text that a module carries. "Guides" and "Reference" stay the names of the two parts.
 
-The status page stays at `status/`, a section of the bar: it reports the state of the properties, the gaps and the next steps, not how the system works. The tree of the reference still lists it, as before.
+The status page stays at `status/`, a section of the bar: it reports the state of the properties and the gaps, not how the system works. The planned work is on the page of the roadmap. The tree of the reference still lists it, as before.
 
 ### The redirect pages
 
@@ -249,6 +250,34 @@ An entry can name a film: `film: docs/films/<name>.webm` in its head. The comman
 
 Not done: the page graph of the news names no `VideoObject` for a film.
 
+## The roadmap
+
+The owner asked for it on 2026-11-14: "j'aimerais [...] qu'on [la] rende visible sur le site, la roadmap, joliment, tout simplement, parallèle au changelog".
+
+`roadmap/` shows `ROADMAP.md`, the planned work of the system (`GLOSSARY.md`, "Roadmap"). It is the other half of `releases/`: the releases list the work that is done, the roadmap the work that is planned. The form of the file and its check are in `TOOLS.md`, "The roadmap"; the code of the page is `tools/kerneltool/site_roadmap.odin`.
+
+- `kerneltool site` reads the file with the reader of `kerneltool roadmap check` (`roadmap_read`), before it writes a page. A fault of form stops the command with the line of the fault, and no page is written. The site does not apply the rule of the changelog summaries: that rule is for a commit, not for a page.
+- The page adds no sentence to an entry. Its first paragraphs say what the three sections are and where the work that is done is; a line names the file.
+- The three sections are three columns from 960 pixels, and one column under 960 pixels, in the same order. Why columns: Now, Next and Later are one line of time, read from the left to the right, and a reader sees at once how much is in each. Why 960 and not 720: three columns of a window of 720 pixels are about 220 pixels each, about 28 characters a line. Why not three groups one under the other at every width: a wide window has the room for the three side by side, and under the two others the section Later, the longest, starts far below the first screen. The columns start at the same height and end where their cards end (`align-items: start`): no card is stretched to fill a column.
+- A section has a heading (`now`, `next`, `later` as its id), the count of its entries in the dim color, and one line that says what it holds. A section with no entry says "No entry.".
+- An entry is a card of the site (`.card`): the border of 1 pixel and the bar of 4 by 16 pixels before its title. The title is the summary; the text is the sentences, rendered by the renderer of the guides, so a term of the glossary links once on the page. An entry with a design link has a last line "Design", a link to the intent file in the repository at the commit of the build.
+- The state of an entry is the accent of its card, a color that the site already has: **Now** has the color of a program, the color of what runs (the color of the kind Shown of a news entry); **Next** has the color of the kernel (the color of the kind Decided); **Later** has no accent: its bar and its border take the dim color and the track (`.roadmap-later`). The page has no new color, no new form and no mark of its own. The heading of the column says the state in a word, so the color is never the only sign.
+- No text is cut: a card takes the height of its text, a summary and a sentence break inside a long word (`overflow-wrap: anywhere`), and a column is never narrower than its grid cell allows (`minmax(0, 1fr)`).
+- The id of an entry is `roadmap-<the summary, as a slug>`. The check refuses two entries whose summaries give one slug, so no two entries share an id.
+
+Where a reader finds it:
+
+| Place | What it shows |
+|---|---|
+| The bar and the doors of the home | The section "Roadmap", after "Releases". Under 720 pixels it is one more line of the site menu |
+| `releases/` | One line after the first paragraphs: "What is planned: the roadmap", with the count of each section |
+| The home | The same line, under the newest release. The home has no section for the roadmap: it shows what runs |
+| `status/` | The same line, under the heading "What is planned", in the place of the table of the next steps |
+| The search | Each entry, by its summary (the kind "roadmap entry", with the look of a status) |
+| `llms.txt`, `sitemap.xml` | The page, as each page |
+
+The roadmap has no feed: an entry is not an event with a date, and it leaves the file when its work is done. A reader who follows the system follows the news or the releases.
+
 ## The search
 
 The owner asked for it on 2026-11-12: "une doc riche et auto générée, avec recherche, modules, etc.". The search needs no server and makes no request to another host.
@@ -265,7 +294,7 @@ The owner asked for it on 2026-11-12: "une doc riche et auto générée, avec re
 
 - An entry has a title (what the match reads), its page (an index of `pages`), an anchor (an id of the page, or empty for the page itself), a kind (an index of `kinds`) and a text (the line under the list for the chosen row).
 - A kind is its name and the name of its value kind (see "The kinds of values"), whose icon and color the list shows. One table, `site_search_kinds`, gives each kind its name, its value kind and the folder of the one page that lists every entry of the kind (none for the pages and the exports).
-- The kinds, in their tie order: page, module, program, export, operation, error kind, console command, term, guide section, property, news entry, release, gap, license row, type. Each page of the site is an entry. The others come from the same data as their page: the modules and their exports (`module.export`, with the signature as the console prints it), the kernel operations, the error kinds, the commands of the console, the terms of the glossary with their short definition (at the entry on the page of the group), the headings of levels 2 and 3 of each guide with their first paragraph, the properties with their status, the news entries, the releases with their date and their first change, the gaps, and the rows of the two tables of licenses (each row has the id `license-<what it is>`).
+- The kinds, in their tie order: page, module, program, export, operation, error kind, console command, term, guide section, property, news entry, release, gap, license row, type, roadmap entry. Each page of the site is an entry. The others come from the same data as their page: the modules and their exports (`module.export`, with the signature as the console prints it), the kernel operations, the error kinds, the commands of the console, the terms of the glossary with their short definition (at the entry on the page of the group), the headings of levels 2 and 3 of each guide with their first paragraph, the properties with their status, the news entries, the releases with their date and their first change, the gaps, the rows of the two tables of licenses (each row has the id `license-<what it is>`), and the entries of the roadmap, each by its summary, with its section and its sentences as its text.
 - The bounds: a title has at most 128 bytes (`NAME_SCAN_LIMIT` of the match: it reads no more); a text has at most 120 bytes, cut at the start of a character; the index has at most 4096 entries (`CANDIDATE_SCAN_LIMIT`: one ranking of the console reads no more names, and the script reads them all only under that count) and at most 1 MiB. The command prints the count of entries and of bytes, and stops over a bound.
 - The checks: each page of the site has at least one entry, and each entry names a page that the command writes and an id of that page.
 - The JSON escapes each character that can end a string or a line of a script: the quote, the backslash, the control characters, `<`, `>`, `&` (so no `</script>`), U+2028 and U+2029. A byte that is not UTF-8 becomes U+FFFD.
@@ -573,7 +602,7 @@ The writer of each page states its layout (`Site_Page.layout`); the tool does no
 
 | Layout | Pages | Form |
 |---|---|---|
-| Presentation | The home, the docs home, the news, the releases | One centred column of at most 1152 pixels |
+| Presentation | The home, the docs home, the news, the releases, the roadmap | One centred column of at most 1152 pixels |
 | Documentation (`GLOSSARY.md`) | Each guide, each reference page, the index and the page of each group of the glossary, each module page, the status, and the index pages of the guides, the reference and the modules | The documentation tree, the text, "On this page", over the whole width of the window |
 
 The documentation tree (`GLOSSARY.md`) is one `<nav class="tree" aria-label="Documentation">`. Its first link is the docs home, "Docs", the way back to the door of the docs. Then, on a guide: "Guides" with each guide in the reading order of the page of the guides, "Reference" with each reference page in the order of its index (under the glossary, each of its groups with the count of its terms), "Modules" with a heading for each group (Kernel, Programs, Modules) and the modules of the group under it, and "Status". The tree is whole: it has no `details`, and no part of it is folded. Each list under an item is a list of tree lines (see "The tree lines"). The current page has `aria-current="page"`. It is written once in each page, inside the site menu, after the search: under 720 pixels it is under the sections in the open menu, which scrolls on its own; from 720 pixels the style sheet fixes it at the left of the window (`position: fixed`, its own `overflow-y`), so a long tree never moves the page. With no script, a browser with no `::details-content` shows the tree when the button of the menu opens it, as the sections.
@@ -872,7 +901,7 @@ The checks, after the checks of the pages: `favicon.ico` is at the root, its dir
 | Its evidence items | `FIRST_MILESTONE.md`: the numbered items under `## Evidence`, each a link to its line in the repository (the file is a working record, not a page of the site). An item names a property when its text says `property <n>` (no regard to case) or `P<n>` (a capital P), as a whole word; `properties 3 and 4` names none |
 | Its gaps | The items `- <text>` under `## Gaps`, and the lines that continue them (they start with a space), by the same rule. A line of text between the items (`Performance:`) is the group of the items after it |
 | Gaps | Each gap, with its number (`gap-<n>` on the page, from 1 in the order of the file, with a link to its line), its group and its text |
-| Next steps | The numbered items under `## Next steps`, each with a link to its line in the repository |
+| What is planned | No table: one line with a link to the page of the roadmap and the count of its entries. The planned work has one place, `ROADMAP.md` (see "The roadmap") |
 | What each property promises, and what runs today | For each property, a section `state-<n>`: its promise, the first sentence of its first rule in `PROPERTIES.md`; then the row of the property in the table `## The table` of `DEMONSTRATIONS.md` (`| <n> | <property> | <state> | <what the test shows> | <pictures> | <what no test shows> |`, the pictures as code spans separated by commas): its state and what the test shows, each picture as a link to `docs/screenshots/<name>.png` in the repository, and what no test shows ("—": nothing); then each numbered item of the section `## What removes ...` that names the property, by the rule of the evidence items. A row with another count of cells stops the command with its line |
 
 Under the heading, a paragraph says what a property, its status and its state are. The page renders `PROPERTIES.md` again to read the ids of its headings: the renderer gives the same ids to the same text, so the links reach the guide. It renders `FIRST_MILESTONE.md` for its numbered items and their lines only, and drops the HTML. The status page has the documentation layout; its property rows and its gap rows are symbols of "On this page".
