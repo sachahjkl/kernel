@@ -106,6 +106,14 @@ Site_Search_Chart_Segment :: struct {
 // computes the same segments, and its self test runs the cases of
 // site_search_segment_cases.
 site_search_chart_segments :: proc(counts: []int) -> []Site_Search_Chart_Segment {
+	return site_share_segments(counts, SITE_SEARCH_CHART_LEAST_SHARE)
+}
+
+// site_share_segments gives the segments of one bar for a list of counts,
+// by the rule of site_search_chart_segments, with the least share of a
+// segment in thousandths of the bar: the line of time of the home has
+// fewer segments than the chart of the search and gives each more room.
+site_share_segments :: proc(counts: []int, least_share: int) -> []Site_Search_Chart_Segment {
 	segments := make([]Site_Search_Chart_Segment, len(counts), context.temp_allocator)
 	total, shown, last := 0, 0, -1
 	for count, index in counts {
@@ -118,7 +126,7 @@ site_search_chart_segments :: proc(counts: []int) -> []Site_Search_Chart_Segment
 	if total == 0 {
 		return segments
 	}
-	least := SITE_SEARCH_CHART_LEAST_SHARE
+	least := least_share
 	if shown * least > 1000 {
 		least = 1000 / shown
 	}

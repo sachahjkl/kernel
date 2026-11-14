@@ -5812,6 +5812,42 @@ The design: `docs/SITE.md`, "The carousel of the home".
 
 Do not use: slideshow, banner, rotator.
 
+### Line of time of the start
+
+The line of time of the start is the part of the home of the site that shows each stage of the start of the machine as a segment of a bar whose width is the time of the stage.
+
+It has two bars, because the firmware takes most of the start. The first bar is the whole start on one scale. The second bar is the stages after the first one, on a larger scale, and a sentence under it says how much larger. Under the bars, one row for each stage gives its name and its time, so a reader with no pointer reads them. Each stage has a card: what it does, the code that runs it, the line of the log that gives its time, and its guide. The card of the stage that has the focus or the pointer shows, with no script.
+
+It is not the boot display, which a program of the system draws on the screen of the machine: the line of time is a part of a page, drawn by the tool from the lines of a log.
+
+The design: `docs/SITE.md`, "The line of time of the start".
+
+Do not use: boot chart, start diagram.
+
+### Measure chart
+
+A measure chart is a chart of the home of the site whose bars are the numbers of one line of a log that have one unit, on one scale from zero.
+
+It exists by the rule "a chart or nothing": the home shows a measure only as such a chart, and each other measure is a row of the page of the measured numbers. The tool reads each number from the line and draws the chart only when the line holds every number of the chart, in its unit. Example: the kernel entries in one second with 1, 2 and 4 programs are three bars.
+
+It is not the chart of what the search finds, whose segments are counts of entries of the index.
+
+The design: `docs/SITE.md`, "The charts of the measures".
+
+Do not use: benchmark chart, statistics card.
+
+### Site control
+
+A site control is a part of a page of the site that a reader presses: a button of the bar, a door of the home, a numbered link of the carousel, a line of a menu, a row of a list.
+
+Each one has five states: at rest, with the pointer over it, with the focus of the keyboard, pressed, and current. One table of the tool names every site control, and one procedure writes the rules of its states, in the colors of a button and of a chosen row of the desktop. A state changes a color and never a size, and it shows at once.
+
+It is not a link of a text, which takes the band of the track under the pointer. It is not the control of a thread, which is a capability of the kernel.
+
+The design: `docs/SITE.md`, "The states of a control".
+
+Do not use: widget, clickable.
+
 ### Thumbnail
 
 A thumbnail is the picture that the gallery shows in the place of a picture of the screen: the same picture at one half of its width and of its height, which the tool writes when it writes the site.

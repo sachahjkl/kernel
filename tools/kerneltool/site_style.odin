@@ -111,6 +111,8 @@ site_colors_write :: proc(builder: ^strings.Builder, colors: Site_Colors) {
 		// On the light background an accent as text has too little
 		// contrast: the titles take the text color there.
 		site_variable(builder, "accent-text", colors.on_light ? colors.text : accent.color)
+		// A form that carries a fact in the accent: a segment, a bar.
+		site_variable(builder, "accent-graphic", site_accent_graphic_color(accent, colors.on_light))
 		site_variable(builder, "border-top", graphics.mix(colors.card_top, accent.color, site_percent(28)))
 		site_variable(builder, "border-bottom", graphics.mix(colors.card_bottom, accent.color, site_percent(14)))
 		strings.write_string(builder, "}\n")
@@ -141,7 +143,7 @@ html {
 }
 body { margin: 0; }
 .page { max-width: 1152px; margin: 0 auto; padding: 0 16px; }
-code, pre, kbd, .code, .time, .line, .label, .who { font-family: var(--mono); font-size: 14px; }
+code, pre, kbd, .code, .label { font-family: var(--mono); font-size: 14px; }
 code { color: var(--text); background: var(--track); padding: 0 4px; overflow-wrap: anywhere; }
 pre { background: var(--track); padding: 8px 16px; overflow-x: auto; line-height: 20px; }
 pre code { padding: 0; background: none; overflow-wrap: normal; }
@@ -209,7 +211,7 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
 .bar-menu-button { list-style: none; display: block; position: relative; width: 32px; height: 32px; margin-left: auto; cursor: pointer; background: var(--track); border: 1px solid var(--track); }
 .bar-menu-button::-webkit-details-marker { display: none; }
 .bar-menu-name { position: absolute; left: -9999px; }
-.bar-menu-lines, .bar-menu-lines::before, .bar-menu-lines::after { position: absolute; left: 7px; width: 16px; height: 2px; background: var(--text); }
+.bar-menu-lines, .bar-menu-lines::before, .bar-menu-lines::after { position: absolute; left: 7px; width: 16px; height: 2px; background: currentColor; }
 .bar-menu-lines { top: 14px; }
 .bar-menu-lines::before, .bar-menu-lines::after { content: ""; left: 0; }
 .bar-menu-lines::before { top: -6px; }
@@ -549,10 +551,8 @@ a.declaration-link { color: inherit; text-decoration-thickness: 1px; text-underl
 .card { min-width: 0; padding: 16px; margin-bottom: 8px; background: linear-gradient(var(--card-top), var(--card-bottom)); border: 1px solid var(--border-top); border-image: linear-gradient(var(--border-top), var(--border-bottom)) 1; }
 .card h2, .card h3 { margin: 0 0 16px; font-size: 16px; line-height: 24px; text-transform: uppercase; font-family: var(--mono); }
 .card h2::before, .card h3::before { content: ""; display: inline-block; width: 4px; height: 16px; margin-right: 8px; vertical-align: -2px; background: var(--accent); }
-.card.measure h3 { text-transform: none; font-family: var(--reading); }
 .card p:last-child { margin-bottom: 0; }
-.measures, .pictures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 16px; }
-.line code { display: block; padding: 8px; white-space: pre-wrap; }
+.pictures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 16px; }
 
 /* The home. */
 /* The head takes the height of its picture, the heron alone: the name is
@@ -569,10 +569,6 @@ a.declaration-link { color: inherit; text-decoration-thickness: 1px; text-underl
 .lead { font-size: 18px; line-height: 28px; max-width: 60ch; }
 .doors { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .doors a { display: inline-block; padding: 4px 16px; background: var(--track); text-decoration: none; border-bottom: 2px solid var(--line); }
-.stages { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 8px; }
-.stages li { margin: 0; padding: 4px 8px; background: var(--track); border-top: 2px solid var(--accent); }
-.stages .who { display: block; color: var(--dim); }
-.stages .time { display: block; }
 figure { min-width: 0; margin: 0; padding: 8px; background: var(--card-bottom); border: 1px solid var(--track); }
 figure.wide { grid-column: 1 / -1; }
 figure a { display: block; }
@@ -605,17 +601,21 @@ figcaption { padding-top: 8px; font-size: 14px; }
 .film-link { position: relative; text-decoration: none; }
 .film-mark { position: absolute; left: 0; bottom: 0; padding: 0 8px; font-family: var(--mono); font-size: 12px; line-height: 24px; text-transform: uppercase; color: var(--text); background: var(--card-bottom); border-top: 1px solid var(--line); border-right: 1px solid var(--line); }
 /* The cards of the news on the home: in a row of cards, the title, the
-   line of the kind and the date, the picture and the text of each card
-   start at the same height, whatever the length of a title. Each card
-   takes four rows of the grid of the cards and shares them (subgrid); each
-   part has its row, so a card with no picture keeps its text in line. The
-   picture boxes of a row have one ratio, that of the screen pictures; a
-   picture of another ratio is shown whole inside the box, not cut. */
+   line of the kind and the date, and the picture of each card start at the
+   same height, whatever the length of a title. Each card takes four rows
+   of the grid of the cards and shares them (subgrid): the title, the line
+   of the kind, the picture, the text. The content of a card starts at its
+   top and leaves no empty room between two of its parts: a card with no
+   picture has its text in the row of the pictures, right under its line of
+   the kind, and that text takes the two last rows. The picture boxes of a
+   row have one ratio, that of the screen pictures; a picture of another
+   ratio is shown whole inside the box, not cut. */
 .news-card { display: grid; grid-row: span 4; grid-template-rows: subgrid; row-gap: 0; }
 .news-card > h3 { grid-row: 1; }
 .news-card > .news-meta { grid-row: 2; }
 .news-card > figure { grid-row: 3; align-self: start; }
-.news-card > p:last-child { grid-row: 4; }
+.news-card > p:last-child { grid-row: 4; align-self: start; }
+.news-card-without-picture > p:last-child { grid-row: 3 / span 2; }
 @media (min-width: 720px) {
   .news-card figure img { aspect-ratio: 4 / 3; object-fit: contain; }
 }
@@ -667,7 +667,7 @@ figcaption { padding-top: 8px; font-size: 14px; }
   .news-body.with-picture, .news-cards { grid-template-columns: minmax(0, 1fr); }
 
   .home-head { grid-template-columns: minmax(0, 1fr); }
-  .measures, .pictures { grid-template-columns: minmax(0, 1fr); }
+  .pictures { grid-template-columns: minmax(0, 1fr); }
   figure.wide { grid-column: auto; }
   h1 { font-size: 28px; line-height: 32px; }
 }
@@ -995,6 +995,11 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	strings.write_string(&builder, SITE_ROADMAP_RULES)
 	// The menu of the bar that holds the sections that are not buttons.
 	strings.write_string(&builder, site_project_menu_rules())
+	// The sections of the home: the line of time of the start, the charts
+	// of the measures, the band of the newest release.
+	strings.write_string(&builder, site_home_rules())
+	// The colors of the states of a control, in the dark form.
+	site_control_variables(&builder, false)
 	// The colors and the widths of the tiles of the boot image: they come
 	// from the image of the build, so they are not fixed rules.
 	strings.write_string(&builder, tile_rules)
@@ -1012,6 +1017,7 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	site_polish_variables(&builder, true)
 	site_scroll_variables(&builder, true)
 	site_module_graph_variables(&builder, true)
+	site_control_variables(&builder, true)
 	// The grid of points is a decoration of the dark background only.
 	strings.write_string(&builder, ".section-home { background-image: none; }\n}\n")
 	// Print is plain black text, also in the light form, whose colors of code
@@ -1022,5 +1028,9 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	// room above a picture of the carousel that a link shows is larger than
 	// the room of another target of a link.
 	strings.write_string(&builder, site_gallery_rules())
+	// The states of a control (the pointer over it, the focus, a press):
+	// after the rules of every control, so that a state wins over the look
+	// at rest and over the current mark of a control of the same weight.
+	strings.write_string(&builder, site_control_rules())
 	return strings.to_string(builder)
 }

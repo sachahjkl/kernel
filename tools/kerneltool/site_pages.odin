@@ -754,7 +754,9 @@ site_releases_add :: proc(site: ^Site) {
 		fmt.sbprintf(&b, "<section class=\"release\">\n<h2 id=\"%s\">%s <span class=\"date\">%s</span></h2>\n", site_release_id(number), number, changelog_release.date)
 		site_news_of_release(site, &b, path, number)
 		type_index := -1
-		for entry in changelog_release.entries {
+		// Each change has an id: the band of the newest release of the
+		// home links to a change by its place in its release.
+		for entry, entry_index in changelog_release.entries {
 			if entry.type_index != type_index {
 				if type_index >= 0 {
 					strings.write_string(&b, "</ul>\n")
@@ -762,7 +764,7 @@ site_releases_add :: proc(site: ^Site) {
 				type_index = entry.type_index
 				fmt.sbprintf(&b, "<h3>%s</h3>\n<ul>\n", types[type_index])
 			}
-			strings.write_string(&b, "<li>")
+			fmt.sbprintf(&b, "<li id=\"%s\">", site_change_id(number, entry_index + 1))
 			site_inline(&b, entry_joined(entry.lines))
 			strings.write_string(&b, "</li>\n")
 		}
@@ -834,11 +836,13 @@ site_home_head :: proc(site: ^Site, b: ^strings.Builder) {
 	// gives it: the smooth variant, at its own size.
 	home_picture, _ := mark_use_picture(SITE_MARK_HOME)
 	width, height := mark_picture_size(home_picture)
-	strings.write_string(b, "<header class=\"home-head\">\n<picture>")
+	// The box of the heron: the script of the mark makes it a control that
+	// plays an animation. With no script it is the box of a picture.
+	strings.write_string(b, "<header class=\"home-head\">\n<div class=\"" + SITE_MARK_BOX_CLASS + "\"><picture>")
 	fmt.sbprintf(b, "<source media=\"(prefers-color-scheme: light)\" srcset=\"%s/%s\">", SITE_PICTURE_FOLDER, SITE_MARK_HOME_LIGHT)
 	fmt.sbprintf(b, "<img class=\"mark\" src=\"%s/%s\" width=\"%d\" height=\"%d\" alt=\"", SITE_PICTURE_FOLDER, SITE_MARK_HOME, width, height)
 	site_plain(b, site_heron_description(site.readme.mark_description))
-	strings.write_string(b, "\"></picture>\n<div>\n<h1>" + SITE_MARK_NAME_HTML + "</h1>\n<p class=\"lead\">")
+	strings.write_string(b, "\"></picture></div>\n<div>\n<h1>" + SITE_MARK_NAME_HTML + "</h1>\n<p class=\"lead\">")
 	site_inline(b, site.readme.tagline)
 	strings.write_string(b, "</p>\n<ul class=\"doors\">\n")
 	// A door for each section under the home: the home has the room for
@@ -878,56 +882,23 @@ site_home_add :: proc(site: ^Site) {
 	site_news_home(site, &b)
 	site_home_explanation(site, &b)
 
-	// The path from power to the desktop: the stages that the kernel logged.
-	stages := site.boot_stages
-	strings.write_string(&b, "<section class=\"card accent-kernel\" aria-labelledby=\"start\">\n<h2 id=\"start\">The start of the machine</h2>\n")
-	if len(stages) == 0 {
-		strings.write_string(&b, "<p class=\"missing\">" + SITE_NOT_MEASURED + "</p>\n")
-	} else {
-		strings.write_string(&b, "<ol class=\"stages\">\n")
-		for stage in stages {
-			fmt.sbprintf(&b, "<li class=\"%s\"><span class=\"who\">", site_who_class(stage.who))
-			site_escape(&b, stage.who)
-			strings.write_string(&b, "</span> <span class=\"what\">")
-			site_escape(&b, stage.what)
-			fmt.sbprintf(&b, "</span> <span class=\"time\">%d.%d ms</span></li>\n", stage.microseconds / 1000, stage.microseconds % 1000 / 100)
-		}
-		strings.write_string(&b, "</ol>\n")
-		fmt.sbprintf(&b, "<p class=\"source\">The lines \"kernel: boot: ...\" of <code>%s</code>, one run of the main machine test under QEMU. ", TEST_OUTPUT)
-		site_inline(&b, site_origin_words(site.boot_source, site.measure_record))
-		strings.write_string(&b, ".</p>\n")
-	}
-	strings.write_string(&b, "</section>\n")
+	// The path from power to the first program: the stages that the
+	// kernel logged, on a line of time.
+	site_boot_timeline_write(site, &b, home)
 
 	// The modules of the boot image, as tiles: each a link to its page.
 	site_tiles_write(site, &b, home)
 
-	// A few numbers: the first three that this build measured.
-	strings.write_string(&b, "<h2 id=\"numbers\">Measured</h2>\n<div class=\"measures\">\n")
-	shown := 0
-	for number in site.measured {
-		if !number.found || shown == 3 {
-			continue
-		}
-		shown += 1
-		fmt.sbprintf(&b, "<article class=\"card measure %s\">\n<h3>", site_accent_class(number.measure.accent))
-		site_inline(&b, number.measure.sentence)
-		strings.write_string(&b, "</h3>\n<p class=\"line\"><code>")
-		site_escape(&b, number.text)
-		strings.write_string(&b, "</code></p>\n</article>\n")
-	}
-	fmt.sbprintf(&b, "</div>\n<p><a href=\"%s\">Every measured number, with its log and its conditions</a></p>\n", site_page_link(site, home, site_page_file(SITE_NUMBERS_FOLDER)))
+	// The measures that are a chart: bars of one unit. A measure that is
+	// not a chart is a row of the page of the measured numbers.
+	site_measure_charts_write(site, &b, home)
 
 	// The pictures of the machine: a few of the table of the gallery, one
 	// in view, and the link to the gallery, which shows them all.
 	site_carousel_write(site, &b, home)
 
-	// The newest release.
-	newest := site.changelog.releases[0]
-	fmt.sbprintf(&b, "<h2 id=\"release\">The newest release</h2>\n<p><a href=\"%s#%s\">%s</a>, %s: %d changes. ", site_page_link(site, home, site_section_page(.Releases)), site_release_id(site.release), site.release, newest.date, len(newest.entries))
-	fmt.sbprintf(&b, "%d steps so far; each step is one tested commit on <code>master</code>.</p>\n", site.step_count)
-	// One line, not a section: the home shows what runs.
-	site_roadmap_link_line(site, &b, home)
+	// The newest release, and the line of the roadmap.
+	site_release_band_write(site, &b, home)
 	site_page_add(site, Site_Page{path = home, is_index = true, title = SITE_SYSTEM_NAME, description = site_description_cut(site.readme.lead), section = .Home, body = strings.to_string(b), sources = site_sources(SITE_README_FILE, CHANGELOG_FILE, SITE_GALLERY_SOURCE_FILE), script = SITE_CAROUSEL_SCRIPT})
 }
 
