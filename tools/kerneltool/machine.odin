@@ -48,6 +48,18 @@ MACHINE_STOP_OK :: 1
 KEYS_HELD_LINE :: "1000 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1"
 #assert(len(KEYS_HELD_LINE) == 100)
 
+// The places of the scroll bar of the window of the console, inside its
+// surface (programs/terminal/main.odin, layout; programs/root/main.odin,
+// terminal_of: 96 columns and 26 rows). The surface is 8 + 96 * 8 + 7 + 17
+// = 800 pixels wide; the bar is its last 17 pixels, from y = 0 to the line
+// over the status at 8 + 26 * 16 + 8 - 4 = 428, with an arrow button of 17
+// pixels at each end.
+CONSOLE_SCROLL_BAR_X :: 800 - 9 // The middle column of the bar.
+CONSOLE_SCROLL_BAR_ARROW_UP_Y :: 8 // The middle of the arrow button at the top.
+CONSOLE_SCROLL_BAR_ARROW_DOWN_Y :: 428 - 9 // The middle of the arrow button at the bottom.
+CONSOLE_SCROLL_BAR_THUMB_END_Y :: 428 - 17 - 4 // In the last pixels of the track: the thumb of a view that follows the last lines ends there, and is 8 pixels long at least.
+CONSOLE_SCROLL_BAR_TRACK_START_Y :: 17 + 4 // Near the start of the track: a thumb dragged there is at its first place.
+
 Step_Kind :: enum {
 	Wait, // The log of the kernel has text, after the text of the last Wait.
 	Date, // As Wait; then the number after text is a date of the machine in seconds since 1970, which date_check checks by order against the clock of the host.
@@ -124,7 +136,7 @@ Step :: struct {
 	pointer:    bool, // For Call: when the call has its result, the tool confirms each place of the pointer from now on (pointer_confirm).
 	repeat:     int, // For Call: the calls of the measure of the round trip.
 	least_answer_bytes: int, // For Call: the least bytes of the answer on its stream.
-	inside_window: string, // For Click: (x, y) are inside the surface of the window with this title, as the log of the compositor places it. For Point: from the corner of the window.
+	inside_window: string, // For Click and Drag: (x, y), and the end of a Drag, are inside the surface of the window with this title, as the log of the compositor places it. For Point: from the corner of the window.
 	date_after: string, // For Call: the number after this text in what the tool prints is a date of the machine in milliseconds since 1970, which date_check checks by order against the clock of the host.
 	milliseconds: int, // For Film_Hold: how long the state stays on the screen.
 }
@@ -2084,6 +2096,20 @@ scenario := [?]Step {
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"manual\")"},
 	{kind = .Wait, text = "root: manual stopped"},
+	// The scroll bar of the console, with the pointer: the console holds
+	// more lines than its window shows. A press on the arrow button at the
+	// top moves the view up by one line; a press on the one at the bottom
+	// brings it back to the last lines. The picture has the pointer over
+	// that button: the bar is lit, the button hot. Then the thumb, which
+	// ends over the bottom button, is dragged to the top of the track: the
+	// view starts at the oldest line.
+	{kind = .Click, inside_window = "console", x = CONSOLE_SCROLL_BAR_X, y = CONSOLE_SCROLL_BAR_ARROW_UP_Y},
+	{kind = .Wait, text = "terminal: a press on the arrow up of the scroll bar of console: the view starts at line "},
+	{kind = .Click, inside_window = "console", x = CONSOLE_SCROLL_BAR_X, y = CONSOLE_SCROLL_BAR_ARROW_DOWN_Y},
+	{kind = .Wait, text = "terminal: a press on the arrow down of the scroll bar of console: the view follows the last lines"},
+	{kind = .Shot, text = "scroll_bar"},
+	{kind = .Drag, inside_window = "console", x = CONSOLE_SCROLL_BAR_X, y = CONSOLE_SCROLL_BAR_THUMB_END_Y, to_x = CONSOLE_SCROLL_BAR_X, to_y = CONSOLE_SCROLL_BAR_TRACK_START_Y},
+	{kind = .Wait, text = "terminal: a drag of the thumb of the scroll bar of console: the view starts at line "},
 	{kind = .Type, text = "clear()"},
 	// The terminal: a program gives text as records with a style, in a ring
 	// of 4096 records. The terminal reads them in one thread and draws in
@@ -3377,7 +3403,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			moved_title: string
 			moved_x, moved_y: int
 			before := len(log_read(machine))
-			if step.kind == .Click && step.inside_window != "" {
+			if (step.kind == .Click || step.kind == .Drag) && step.inside_window != "" {
 				window_x, window_y, placed := window_place(machine, step.inside_window)
 				if !placed {
 					fmt.eprintfln("kerneltool: test failed: step %d: the log does not have the place of the window %s", index + 1, step.inside_window)
@@ -3385,6 +3411,10 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 				step.x += window_x + WINDOW_BORDER
 				step.y += window_y + WINDOW_TITLE_HEIGHT
+				if step.kind == .Drag {
+					step.to_x += window_x + WINDOW_BORDER
+					step.to_y += window_y + WINDOW_TITLE_HEIGHT
+				}
 			}
 			if step.kind == .Close {
 				x, y, found := window_place(machine, step.text)

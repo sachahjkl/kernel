@@ -230,7 +230,15 @@ window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^dis
 	// The elements of a window draw their names and titles in the
 	// interface font of the program, when its starter gave it one.
 	drawing.now.interface_font = display.interface_font_of()
-	return frame_begin(&drawing.now, &drawing.state, &drawing.input)
+	return frame_begin(&drawing.now, &drawing.state, &drawing.input, system.time())
+}
+
+// window_scroll_bar_wake gives the time, in milliseconds of the clock of
+// the system, at which a held arrow button of a scroll bar of the window
+// takes its next step: a program that sleeps while nothing changes wakes at
+// that time and builds a frame. due is false when no step is due.
+window_scroll_bar_wake :: proc "contextless" (drawing: ^Window_Drawing) -> (time: u64, due: bool) {
+	return drawing.state.scroll_bar_repeat_at, drawing.state.scroll_bar_repeat_at != 0
 }
 
 // window_frame_end ends the frame: it finds the damage by difference with

@@ -150,11 +150,12 @@ site_bar_menu_rules :: proc(t: ^testing.T) {
 // and the panel of the menu does not pass the right edge of the window.
 // The widths are those of the style sheet; the width of a text is taken
 // at 9 pixels a character, wider than the fonts of the systems give at 16
-// pixels (about 8.3), and the window loses 16 pixels to a scroll bar.
+// pixels (about 8.3), and the window loses 17 pixels to a scroll bar
+// (graphics.SCROLL_BAR_THICKNESS).
 @(test)
 site_bar_fits_one_line_at_720_pixels :: proc(t: ^testing.T) {
 	WINDOW :: 720
-	SCROLL_BAR :: 16
+	SCROLL_BAR :: 17
 	PADDING :: 16 // .bar-inner, at the left and at the right.
 	GAP :: 24 // .bar-inner and .bar-menu-content, between two parts.
 	BUTTON_GAP :: 8 // .bar-sections ul.

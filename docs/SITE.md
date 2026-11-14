@@ -403,12 +403,12 @@ The groups (`site_gallery_groups`), each with a title and one sentence:
 | Modules | 9 |
 | Memory, threads and time | 15 |
 | The developer tools | 4 |
-| The interface and the fonts | 9 |
+| The interface and the fonts | 10 |
 | The network, the cryptography and the randomness | 10 |
 | The storage | 7 |
 | The boot and the trusted boot | 7 |
 
-109 rows. The excluded files:
+110 rows. The excluded files:
 
 | File | Reason |
 |---|---|
@@ -434,7 +434,7 @@ The gallery is not an index page: by the rule of the redirect pages it has the r
 
 ### The thumbnails
 
-The page of the gallery shows 108 pictures (the row with a film shows its film). A browser loads a picture when the reader comes near it, so the bytes of the page are the bytes of what the reader scrolls past. Two forms were measured on 12 pictures of the table, with the encoder of ImageMagick at its level 5 (the tool prints the bytes of its own encoder at each build):
+The page of the gallery shows 109 pictures (the row with a film shows its film); the measure below was made with 108. A browser loads a picture when the reader comes near it, so the bytes of the page are the bytes of what the reader scrolls past. Two forms were measured on 12 pictures of the table, with the encoder of ImageMagick at its level 5 (the tool prints the bytes of its own encoder at each build):
 
 | Form | One picture, mean | The 108 pictures |
 |---|---|---|
@@ -761,7 +761,7 @@ The bar is one line of 41 pixels, and the parts under it are placed by that heig
 | Project: the text (56), 16 of padding, 12 for its mark | 84 |
 | The whole bar | 678 |
 
-A window of 720 pixels with a scroll bar of 16 pixels has 704. The host test `site_bar_fits_one_line_at_720_pixels` computes the bar at 9 pixels a character: 700. With a button for each of the six sections the bar needs 826 pixels at 8 pixels a character: it breaks into two lines up to that width.
+A window of 720 pixels with a scroll bar of 17 pixels has 703. The host test `site_bar_fits_one_line_at_720_pixels` computes the bar at 9 pixels a character: 700. With a button for each of the six sections the bar needs 826 pixels at 8 pixels a character: it breaks into two lines up to that width.
 
 **The menu works with no script.**
 
@@ -1504,27 +1504,33 @@ A host test checks that the style sheet holds each of these rules, has no `outli
 
 ### The scroll bars
 
-The owner asked for it on 2026-11-12, with two pictures of the scroll bar of another program of the same design: "petit détail visuel, mais à mon sens, la scrollbar est trop basique, je la veux plus comme ça (theme justement PROVENANT de TON design à la base)". The rules are `SITE_SCROLL_RULES` and `site_scroll_variables` in `tools/kerneltool/site_style.odin`. They apply to every part that scrolls: the page, the tree, "On this page", the table boxes, the blocks of code, the open menu, the list of the search, the cards of the types and of the declarations, and the row of the carousel of the home.
+The scroll bars of the site are the scroll bar of the system (`DESIGN.md`, "The scroll bar"), written from the same table: `support/graphics/scroll_bar.odin` holds the sizes, the stops of each gradient and the colors of the dark and of the light form. The system draws from it; the kernel tool writes the variables of the style sheet from it. A change of a number of the table changes both. The rules are `SITE_SCROLL_RULES` and `site_scroll_variables` in `tools/kerneltool/site_style.odin`. They apply to every part that scrolls: the page, the tree, "On this page", the table boxes, the blocks of code, the open menu, the list of the search, the cards of the types and of the declarations, and the row of the carousel of the home.
 
-The form, 16 pixels wide (a size of the grid of the design, near the 22 pixels of the pictures), all rectangular:
+The form, 17 pixels wide, all rectangular:
 
-- At each end a square button with a solid triangle of four rows of pixels, in the dim color on the darker panel of the bottom of a card; the text color with the pointer over it; the fill of the thumb while it is pressed.
-- The track: the track color, with a line of 1 pixel at its edge (left for a vertical bar, top for a horizontal one) in the track color moved 25 % toward the dim color.
-- The thumb: a rectangle of the track color moved 35 % toward the dim color (30 % in the light form), with a border of 1 pixel in the dim color, and in its middle a grip of three lines of 8 pixels, 3 pixels apart, across the thumb, in the dim color. With the pointer over it or while it is dragged: the blue of the line at 73 % with a border of the blue at 112 % (the light form: the blue itself, with a border at 73 %), and the grip in the text color (white in the light form). The fill of the pictures is quieter than 3 to 1 on the track; the border carries the contrast of a graphic.
-- The corner where two bars meet: the panel of the buttons.
+- At each end an arrow button of 17 by 17 pixels with a solid triangle of four rows (1, 3, 5 and 7 pixels), on the gradient of the track. With the pointer over it: the blue border, the blue fill and the light triangle. While it is pressed: the stronger blue fill.
+- The track: a gradient across it of three stops (0, 50 and 100 %), with a border of 1 pixel at its two long sides.
+- The thumb: a border of 1 pixel; a gradient across it of four stops (0, 45, 55 and 100 %); an inner line of 1 pixel inside the border, white at 12 % in the dark form and at 40 % in the light form (an inset shadow); in its middle a grip of four lines of 7 by 1 pixels, 1 pixel apart. With the pointer over it: the blue border, the blue fill and the light grip. While it is dragged: the stronger blue fill. A thumb is at least 21 pixels long: a style sheet cannot remove the grip of a short thumb, and the system draws a grip only on a thumb longer than 20 pixels.
+- The corner where two bars meet: the middle color of the track.
 
-The colors come from the table of colors of the site (`site_scroll_colors`, from the colors of each form and the blue of the line), as variables of each form. A data address cannot read a variable of the style sheet: `site_scroll_variables` writes each triangle (4 directions) and each grip (2 directions), at rest and with the pointer, as a data address in the colors of each form, through `site_svg_data_address`: 12 addresses for each form. The rules name only the variables.
+What differs from the scroll bar of the system, because a style sheet cannot say it:
+
+- The system lights the whole bar when the pointer is over any part of it. A style sheet reaches a part only under the pointer: on the site the thumb is blue when the pointer is over the thumb, and a button when the pointer is over that button. An arrow button of the site has no "lit" state between rest and hot.
+- The system draws the inner line as an opaque color. The site gives the browser a translucent white, which the browser blends: the same pixels.
+- The least length of the thumb is 21 pixels on the site; in the system it is 8 % of the track, and 8 pixels at least.
+
+The rules hold no size and no color. `site_scroll_variables` writes, for each form, from the table: the sizes (`--scroll-thickness: 17px`, `--scroll-border: 1px`, `--scroll-thumb-least: 21px`); the flat colors (the borders, the middle of the track); the inner line; each gradient in both directions (`to right` for a vertical bar, `to bottom` for a horizontal one) for the track, the thumb at rest, hot and pressed, and an arrow button hot and pressed. A data address cannot read a variable of the style sheet: the procedure writes each triangle (4 directions) and each grip (2 directions), at rest and with the pointer, as a data address in the colors of each form, through `site_svg_data_address`: 12 addresses for each form. The colors of the scroll bar do not come from the colors of the page: the dark form of the site has the colors of the system, and the light form has the light colors of the table.
 
 What each engine shows:
 
 | Engine | Means | What it shows |
 |---|---|---|
-| Chromium (Chrome, Edge) and WebKit (Safari) | `::-webkit-scrollbar`, `-button:single-button` with `:vertical`/`:horizontal` and `:decrement`/`:increment`, `-track`, `-thumb` with `:hover` and `:active`, `-corner`, inside `@supports selector(::-webkit-scrollbar)` | The whole form: the buttons, the track, the thumb and its grip, the colors with the pointer |
-| Gecko (Firefox) | `scrollbar-color` (the border color of the thumb on the track color) and `scrollbar-width: auto`, inside `@supports not selector(::-webkit-scrollbar)` | The colors only: no button, no border, no grip; the system draws the form and its own color under the pointer |
+| Chromium (Chrome, Edge) and WebKit (Safari) | `::-webkit-scrollbar`, `-button:single-button` with `:vertical`/`:horizontal` and `:decrement`/`:increment`, `-track`, `-thumb` with `:hover` and `:active`, `-corner`, inside `@supports selector(::-webkit-scrollbar)` | The whole form: the arrow buttons, the track, the thumb with its gradient, its inner line and its grip, the colors with the pointer and while a part is pressed |
+| Gecko (Firefox) | `scrollbar-color` (the border color of the thumb at rest on the middle color of the track) and `scrollbar-width: auto`, inside `@supports not selector(::-webkit-scrollbar)` | Two flat colors only. It loses the arrow buttons of the form, each gradient, each border, the inner line, the grip and the blue tones: the operating system of the reader draws the form of the bar and its own color under the pointer |
 
 Chromium, since version 121, draws the standard scroll bar of an element that has `scrollbar-color` or `scrollbar-width`, and ignores the parts `::-webkit-scrollbar` of that element. So the two standard properties are written only for an engine with no such parts: each engine takes its own rules. A Chromium that does not accept a pseudo-element in `@supports selector()` takes the standard colors, which is correct.
 
-The host test `site_style_sheet_scroll_bars` checks: the rules of both engines; the two standard properties written once, inside the test of the engines with no parts of WebKit; no color in the rules themselves; in each form, 12 data addresses, each an SVG picture with no character that ends the address and one color of the scroll bars of its form; a contrast of 3 to 1 of the border of the thumb (at rest and with the pointer) on the track, of a triangle on its button and of the grip on the thumb under the pointer.
+The host test `site_style_sheet_scroll_bars` checks: the rules of both engines; the two standard properties written once, inside the test of the engines with no parts of WebKit; no color, no gradient and no size in pixels in the rules themselves; the variables of both forms with the numbers of the table (the sizes, the gradients of the track, of the thumb and of an arrow button); in each form, 12 data addresses, each an SVG picture with no character that ends the address and one color of the scroll bars of its form; the rectangles of a triangle and of a grip; a contrast of 3 to 1 of each part that the pointer lights: the blue border on the track, a triangle on the track and on the fill of its button, the light grip on the blue thumb. At rest the form is quiet: the border of the thumb has 2.1 to 1 on the track (2.5 in the light form) and the grip 1.7 to 1 on the thumb (2.7). The test prints these two as a measure.
 
 ## The tiles of the boot image
 

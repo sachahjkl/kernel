@@ -1505,8 +1505,8 @@ list_of_rows_draws_icons_matches_and_the_choice :: proc(t: ^testing.T) {
 	testing.expect_value(t, count, 2)
 }
 
-// A list of rows draws only the rows of its area, and shows a bar of 2
-// pixels at the right when the whole list has more rows.
+// A list of rows draws only the rows of its area, and shows a scroll bar
+// at the right when the whole list has more rows.
 @(test)
 list_of_rows_draws_the_rows_of_its_area :: proc(t: ^testing.T) {
 	memory: Tables
@@ -1525,14 +1525,18 @@ list_of_rows_draws_the_rows_of_its_area :: proc(t: ^testing.T) {
 	count, fill := rectangles_of_color(&table, graphics.COLOR_CHOSEN)
 	testing.expect_value(t, count, 1)
 	testing.expect_value(t, int(fill.width), 320 - LIST_ROW_SCROLL_WIDTH)
-	// The bar: its track over the height of the rows, and the part shown.
-	count, fill = rectangles_of_color(&table, graphics.COLOR_TRACK)
+	// The scroll bar: its track over the height of the rows, and its thumb
+	// at the place of the rows shown (the element, with no input).
+	bar_colors := graphics.scroll_bar_colors_dark
+	bar_geometry := scroll_bar_geometry(3 * TABLE_LINE, LIST_ROW_SCROLL_WIDTH, {total = 40, visible = 3, first = 10})
+	count, fill = rectangles_of_color(&table, bar_colors.track_border)
 	testing.expect_value(t, count, 1)
 	testing.expect_value(t, fill.x, 320 - LIST_ROW_SCROLL_WIDTH)
 	testing.expect_value(t, fill.height, 3 * TABLE_LINE)
-	count, fill = rectangles_of_color(&table, graphics.COLOR_DIM)
+	count, fill = rectangles_of_color(&table, bar_colors.thumb_border)
 	testing.expect_value(t, count, 1)
-	testing.expect_value(t, int(fill.y), 10 * 3 * TABLE_LINE / 40)
+	testing.expect_value(t, int(fill.y), bar_geometry.thumb_start)
+	testing.expect_value(t, int(fill.height), bar_geometry.thumb_length)
 	// A name longer than its room is cut: no text passes the list.
 	long := [?]List_Row{{name = "a name that is far longer than the room of a narrow list of rows", right_text = "kind"}}
 	frame = frame_begin(&table, &state, &input)

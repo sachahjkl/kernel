@@ -124,6 +124,7 @@ Client :: struct {
 	x, y:        int,
 	title:       system.Name,
 	pointer_shape: pointer_pictures.Pointer_Shape, // The shape that the program asked for over its surface (pointer_picture.odin).
+	pointer_over: bool, // The last pointer event of the program was over its surface, or with a button down: the program gets one event more when the pointer leaves.
 	presents:    u64, // The Present records that the program sent since it created its surface.
 	present_waits: bool, // A Present changed a part of the screen, and no frame drew it yet.
 }
@@ -706,6 +707,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	// window wider than the screen keeps its close button on the screen.
 	client.x, client.y = bar.new_window_place(client.x, client.y, window_frame_of(client), int(height), screen.width, screen.height)
 	placed += 1
+	pointer_leaves_front()
 	damage_focus()
 	order[order_count] = index
 	order_count += 1
@@ -719,6 +721,7 @@ raise :: proc "contextless" (position: int) {
 	if position == order_count - 1 {
 		return
 	}
+	pointer_leaves_front()
 	damage_focus()
 	damage_window(&clients[index])
 	copy(order[position:order_count - 1], order[position + 1:order_count]) // The last place has no next one.
@@ -842,9 +845,28 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 		client := &clients[order[order_count - 1]]
 		x := pointer_x - client.x - BORDER
 		y := pointer_y - client.y - TITLE_HEIGHT
-		if held || inside(x, y, 0, 0, client.surface.width, client.surface.height) {
+		// One event more when the pointer leaves the surface: the program
+		// then draws at rest what the pointer was over (a scroll bar).
+		over := held || inside(x, y, 0, 0, client.surface.width, client.surface.height)
+		if over || client.pointer_over {
 			send(client, ring.Record{kind = u32(display.Event_Kind.Pointer), values = {0 = u64(i64(x)), 1 = u64(i64(y)), 2 = u64(buttons)}})
 		}
+		client.pointer_over = over
+	}
+}
+
+// pointer_leaves_front tells the program of the window in front that the
+// pointer is no longer over its surface, before another window takes the
+// front: that program receives no pointer event after it. The place of the
+// event is the corner outside the surface, with no button.
+pointer_leaves_front :: proc "contextless" () {
+	if order_count == 0 {
+		return
+	}
+	client := &clients[order[order_count - 1]]
+	if client.pointer_over {
+		client.pointer_over = false
+		send(client, ring.Record{kind = u32(display.Event_Kind.Pointer), values = {0 = u64(i64(-1)), 1 = u64(i64(-1)), 2 = 0}})
 	}
 }
 

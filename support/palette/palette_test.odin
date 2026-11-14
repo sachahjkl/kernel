@@ -572,7 +572,7 @@ the_input_band_is_flush_with_three_edges :: proc(t: ^testing.T) {
 		bottom := y + PANEL_HEIGHT - 1
 		// With no typed part the first row is a heading, on the surface of
 		// the card; with a typed part it is the chosen row. A list with
-		// more rows than the panel shows has its bar of 2 pixels between
+		// more rows than the panel shows has its scroll bar between
 		// the rows and the right border: the row ends before the bar.
 		inside_color := graphics.Color(typed == "" ? graphics.COLOR_CARD_TOP : graphics.COLOR_CHOSEN)
 		bar_width := panel.list.row_count > LIST_ROWS ? interface.LIST_ROW_SCROLL_WIDTH : 0
