@@ -85,6 +85,7 @@ The intent of the parts that were built before this folder is in other documents
 - [features/gpu_access.md](features/gpu_access.md): the access to a GPU through a driver domain and one serialization of commands, and the forms that were refused
 - [features/heron_program.md](features/heron_program.md): the program that plays the animations of the mark: one source of each rule in `support/mark`, a move on the grid against the free way, and why its window has two pictures
 - [features/key_path.md](features/key_path.md): why no queue between the keyboard and a program drops a key in silence, and the two forms of a full queue
+- [features/mark_pictures.md](features/mark_pictures.md): one generator for every picture of the mark, the two variants that a request names, the table of the uses, and why the browser computes no color
 - [features/palette.md](features/palette.md): the palette as a panel of the compositor with the console as its provider, and why no program gets a new right
 - [features/roadmap.md](features/roadmap.md): the planned work in one plain file, the check of its form, the rule that removes an entry with its changelog fragment, and its page of the site
 - [features/scheduling_policy.md](features/scheduling_policy.md): the placement of a thread in the kernel, the share for each program outside it, and the hazards that decided both

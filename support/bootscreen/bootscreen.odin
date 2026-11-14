@@ -447,7 +447,8 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 		NAME_GAP :: 12
 		NAME_CELL_SIZE :: 3
 		channel_order := mark.Channel_Order.Red_In_Low_Byte if red_first else mark.Channel_Order.Red_In_High_Byte
-		mark.mark_draw(canvas, MARK_LEFT, MARK_TOP, MARK_CELL_SIZE, false, channel_order)
+		// Two pixels for a cell: the smooth variant.
+		mark.mark_draw(canvas, MARK_LEFT, MARK_TOP, MARK_CELL_SIZE, .Smooth, false, channel_order)
 		heron_side := mark.heron_size(MARK_CELL_SIZE)
 		_, name_height := mark.name_size(NAME_CELL_SIZE)
 		mark.name_draw(canvas, MARK_LEFT + heron_side + NAME_GAP, MARK_TOP + heron_side - name_height, NAME_CELL_SIZE, false, channel_order)

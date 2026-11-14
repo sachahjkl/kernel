@@ -1606,6 +1606,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done.
 - Where: `SITE.md`, "The gallery", "The buttons and the menu of the bar"; `GLOSSARY.md`, "Project menu"; `src/md/features/site_gallery.md`; `src/md/features/site_bar.md`; `FIRST_MILESTONE.md`, choices 740 and 742.
 
+### D-245 The mark has variants; a picture keeps its gradient; the tool makes the pixels; one generator holds the logic
+- 2026-11-14. Decided by: the owner.
+- Decision: the mark has two variants, smooth and cells. A request names its variant; nothing chooses it from the cell size. A picture is smooth: the head of the home of the site, its tile maps, the files of `resources/logo`, the card, the boot display, the window of the program `heron`. A small icon, one pixel for a cell, is cells: the bar of the site, the bar of the desktop, the icon of a tab. The smooth variant at one pixel for a cell is refused. The tool writes the real pixels of each picture, with a lossless encoding only; a browser computes no color. One generator of the tool draws every picture file of the mark, with one command, `kerneltool mark`; `kerneltool logo` and `kerneltool site` are lists of requests. This replaces the form of the same day in which each picture of the heron of the site had one pixel for a cell and the page made the cell larger.
+- Words: "il faut absolument garder le dégradé, ça donne toute son apparence. [...] pour les icônes petite taille on peut se couper le dégradé, ça n'a pas d'intérêt, ça va juste diminuer la lisibilité, mais en revanche pour les images comme on a fait sur la page d'accueil il faut évidemment avoir le dégradé. Donc on aura un petit peu de variantes du logo et donc des animations [...] pas juste une option quoi, c'est quelle variante du logo on veut en fait"; "non non c'est pas [le] navigateur qui calcule le dégradé"; "je veux un outil puissant où tout est concentré plutôt que éparpillé dans des scripts, un peu de logique ici, un peu de logique là [...] j'essaie de comprimer la complexité d'un sujet [en] un seul endroit".
+- State: done. Left: the icon file and the vector icon of the site in the generator.
+- Where: `DESIGN.md`, "The variants of the mark"; `TOOLS.md`, "The pictures of the mark"; `src/md/features/mark_pictures.md`; `FIRST_MILESTONE.md`, choice 736.
+
 ### D-182 A documentation in the form of the Odin site
 - 2026-11-12. Decided by: the owner.
 - Decision: the documentation has a sidebar of the pages, the technical text in the center, and the symbols of the page at the right, in the manner of the Odin documentation.

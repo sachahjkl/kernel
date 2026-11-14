@@ -480,26 +480,38 @@ form_pixels_are_the_pixels_of_their_cells :: proc(t: ^testing.T) {
 	natural, _ := form_cells(.Natural, .Blink, 0)
 	for y in 0 ..< BODY_ROWS * 2 {
 		for x in 0 ..< BODY_COLUMNS * 2 {
-			form_color, form_covered := form_cells_pixel(&natural, 2, x, y, false)
-			still_color, still_covered := mark_pixel(2, x, y, false)
+			form_color, form_covered := form_cells_pixel(&natural, 2, x, y, .Smooth, false)
+			still_color, still_covered := mark_pixel(2, x, y, .Smooth, false)
 			if form_color != still_color || form_covered != still_covered {
 				testing.expectf(t, false, "pixel %d, %d of the natural form differs from mark_pixel", x, y)
 				return
 			}
 		}
 	}
-	_, in_water := form_cells_pixel(&natural, 2, 20, BODY_ROWS * 2, false)
+	_, in_water := form_cells_pixel(&natural, 2, 20, BODY_ROWS * 2, .Smooth, false)
 	testing.expect(t, !in_water)
-	_, refused := form_cells_pixel(&natural, CELL_SIZE_LIMIT + 1, 0, 0, false)
+	_, refused := form_cells_pixel(&natural, CELL_SIZE_LIMIT + 1, 0, 0, .Smooth, false)
 	testing.expect(t, !refused)
+	// The smooth variant is not drawn at one pixel for a cell; the cells
+	// variant is, and a cell of a form at the left of the heron has the
+	// color of its cell at any cell size.
+	_, smooth_at_one := form_cells_pixel(&natural, 1, 14, 0, .Smooth, false)
+	testing.expect(t, !smooth_at_one)
+	run_form, _ := form_cells(.Run, .Dash, 2)
+	tail_cell, tail_cell_covered := form_cells_pixel(&run_form, 1, -6, 17, .Cells, false)
+	testing.expect(t, tail_cell_covered)
+	for inside in 0 ..< 8 {
+		large, large_covered := form_cells_pixel(&run_form, 8, -48 + inside, 17 * 8 + inside, .Cells, false)
+		testing.expectf(t, large_covered && large == tail_cell, "the pixel %d of the cell of the tail is 0x%06X, the cell is 0x%06X", inside, large, tail_cell)
+	}
 	// The run goes 6 cells past the left edge of the heron: the tip of its
 	// tail is the first cell of its row 15, which is the row 17 of the
 	// grid.
 	run, _ := form_cells(.Run, .Dash, 2)
 	testing.expect_value(t, run.cells[15][0], u8('v'))
-	_, tail := form_cells_pixel(&run, 2, -12, 34, false)
+	_, tail := form_cells_pixel(&run, 2, -12, 34, .Smooth, false)
 	testing.expect(t, tail)
-	_, past_tail := form_cells_pixel(&run, 2, -13, 34, false)
+	_, past_tail := form_cells_pixel(&run, 2, -13, 34, .Smooth, false)
 	testing.expect(t, !past_tail)
 	SIDE :: 96
 	VIEW_LEFT :: 8
@@ -511,13 +523,13 @@ form_pixels_are_the_pixels_of_their_cells :: proc(t: ^testing.T) {
 	view := graphics.Canvas{pixels = ([^]graphics.Color)(&buffer[VIEW_LEFT * SIDE + VIEW_LEFT]), width = VIEW_SIDE, height = VIEW_SIDE, stride = SIDE}
 	PLACE_X :: 5
 	PLACE_Y :: 9
-	form_cells_draw(view, &run, PLACE_X, PLACE_Y, 2, false)
+	form_cells_draw(view, &run, PLACE_X, PLACE_Y, 2, .Smooth, false)
 	written := 0
 	for y in 0 ..< SIDE {
 		for x in 0 ..< SIDE {
 			expected := DRAW_TEST_SENTINEL
 			if x >= VIEW_LEFT && x < VIEW_LEFT + VIEW_SIDE && y >= VIEW_LEFT && y < VIEW_LEFT + VIEW_SIDE {
-				if color, covered := form_cells_pixel(&run, 2, x - VIEW_LEFT - PLACE_X, y - VIEW_LEFT - PLACE_Y, false); covered {
+				if color, covered := form_cells_pixel(&run, 2, x - VIEW_LEFT - PLACE_X, y - VIEW_LEFT - PLACE_Y, .Smooth, false); covered {
 					expected = color
 					written += 1
 				}

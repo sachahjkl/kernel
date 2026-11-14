@@ -472,6 +472,7 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `roadmap check` | Checks the form of `ROADMAP.md`, the planned work, and refuses an entry whose work has an entry of the changelog ("The roadmap") |
 | `key new <folder>`, `key show` | The key that signs the system description |
 | `font`, `vector_fonts`, `pointers`, `logo`, `portrait` | Convert a source (a font, a pointer theme, the mark, a picture) into the files of the repository. A build reads the result, never the source |
+| `mark <what> [options]` | Draws one picture of the mark: the still mark, a frame, a tile map, the table of a tile map, the picture for a developer; `mark uses` prints the table of the uses ("The pictures of the mark") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
 | `film [terminal \| palette \| heron]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4` and `build/films/<name>.webm` ("The film"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
 
@@ -800,6 +801,61 @@ The tool reads the width and the height of the pictures from the file itself (`f
 These times never stand for a condition. After each key of `Film_Type` the tool waits, as in a test, until the system read the key. Each scene waits for its line of the log (a step `Wait`) before its hold: the film never shows a state that the machine did not reach, and a film on a slow host is longer, not wrong. The film of the palette uses the keys and the lines of the main scenario of the machine test: it shows what the test checks. It runs without `remote`: the condition after a key is that the system read each byte of the keyboard.
 
 **The measures.** At `Film_Stop` the tool prints, as measures: the count of the pictures and the rate that they reached, the slots with no picture of their own, the longest time between two pictures, and the time of one picture of QEMU (in the middle, and at most). No number of these makes a film fail. Measured on one host with a bare QEMU: two sockets of the machine protocol at once, and 1.7 ms for one picture of 0.86 MB; a picture of the screen of the system is 2.3 MB. The pictures of one film of 37 s are about 2.5 GB in `build/films/<name>/`; the tool removes them after the encoder.
+
+### The pictures of the mark
+
+One generator draws each picture file of the mark (`tools/kerneltool/mark_pictures.odin`, `mark_tile_map.odin`, `mark_developer_picture.odin`). The data of the mark is in `support/mark`; the generator turns a request into the bytes of a file. Three commands ask it:
+
+| Command | What it asks |
+|---|---|
+| `logo` | Each row of the repository of the table of the uses of the mark, then the font of the name and the picture for a developer |
+| `site` | Each row of the site of the table of the uses, and each icon of the table of the icons |
+| `mark` | One request, from the words of the command |
+
+The table of the uses is in `DESIGN.md`, "The variants of the mark". `logo` and `site` hold no number of a picture: a new file of the mark is a new row of that table.
+
+A request says what to draw and how:
+
+| Part | Values | Meaning |
+|---|---|---|
+| What | `still`, `frame`, `tile_map`, `table` | The still mark; one frame of an animation; a tile map; the table of a tile map, as JSON |
+| `--variant` | `smooth`, `cells` | The variant of the mark. The default is `smooth` |
+| `--cell` | A whole count of pixels | The side of a cell of the heron. The default is 8 |
+| `--scheme` | `dark`, `light` | The colors. The default is `dark` |
+| `--background` | `none`, `scheme` | On nothing, or on the background of the color scheme. The default is `none` |
+| `--size` | `<pixels>` or `<width>x<height>` | The drawing is centred in a picture of that size. With no size the picture has the size of its drawing |
+| `--name-cell`, `--gap` | Whole counts of pixels | The name under the heron, at that cell size, that many pixels under it |
+| `--animation` | A name of `DESIGN.md`, "The animations" | The animation of a frame. For a tile map: that animation only; with no name, every animation |
+| `--frame` | A number from 0 | The frame of the animation; 0 is the still heron |
+| `--forms` | `yes`, `no` | A tile map with the drawn forms of the moves, or with the frames only. The default is `yes` |
+| `--width` | A whole count of pixels | The widest tile map. With no width, a row holds 16 sprites |
+| `--out` | A path | The file. The default is `build/mark_<what>.png`, or `.json` for a table |
+
+Two more words take no option: `mark uses` prints the table of the uses, and `mark developer` writes `build/mark_animations.png`, every frame and every drawn form with its texts.
+
+Examples:
+
+```
+kerneltool mark still --variant cells --cell 1 --scheme light
+kerneltool mark frame --animation dash --frame 2 --cell 16
+kerneltool mark tile_map --animation hop --width 1024
+kerneltool mark table --forms no --variant cells --cell 1
+```
+
+The generator refuses a request with no sense, with a sentence, and writes no file. It never bends a request into another one:
+
+- The smooth variant at one pixel for a cell: that picture is the cells variant.
+- A cell size that is not a whole count of pixels from 1.
+- A picture smaller than its drawing, a width with no height, a side longer than 8192 pixels.
+- A gap with no name.
+- The still mark with an animation or a frame; a frame with no animation, or past the last frame.
+- A tile map with the name, with a background or with a size; a tile map with a frame; a tile map narrower than one tile.
+
+A PNG file of the generator is the smallest that the encoder of the Odin standard library writes for its pixels: the highest level of its deflate, once with each row filter, the smallest kept. No pixel is lost. The picture for a developer is written at the common level, in one pass.
+
+The host tests of the generator are in `mark_pictures_test.odin`: each kind of request, each refusal, the table of the uses, the words of the command, and `only_the_generator_draws_the_mark`, which fails when another file of the tool calls a drawing procedure of `support/mark`.
+
+What the generator does not write yet: the ICO file and the SVG icon of the site (`site_icons.odin`). The PNG entries of the ICO file come from the generator; the SVG icon is the cells as rectangles with the gradients of `support/mark`, and calls no drawing procedure.
 
 ### The roadmap
 

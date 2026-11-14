@@ -262,6 +262,7 @@ kerneltool run
 | `pointers` | Convert the pointer manifests of `resources/pointers/` to pointer theme files in `build/pointers/`, and print a table of each theme (`build` does it too) |
 | `vector_fonts` | Subset the candidate vector fonts to `resources/fonts/`, and draw the picture of the choice `build/fonts/candidates.png` |
 | `portrait` | Convert `programs/temple/portrait.jpg` to `programs/temple/portrait.pixels` |
+| `mark` | `mark still`, `frame`, `tile_map` or `table`, with `--variant smooth\|cells`, `--cell <pixels>`, `--scheme dark\|light`: draw one picture of the mark; `mark uses` prints each file of the mark and its variant |
 | `repeat` | `repeat <module> <count>`: build one module again and again, and count the distinct modules, LLVM IR files and objects; `repeat all <count>`: every module and the boot program, one row each. Each distinct result is kept in `build/different_builds/` |
 | `check` | `odin check -vet` and `odin test` of the host code, then `test` |
 | `site` | Write the site of the system in `build/site/`: one page from the documents, the pictures and the logs of the last machine tests (`docs/SITE.md`) |

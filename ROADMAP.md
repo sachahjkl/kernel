@@ -6,12 +6,12 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 - **Every program that draws imports the drawing module.** The programs that draw a picture, the terminal and the compositor use the drawing module, as 23 programs do today. The code of the drawing is then loaded one time, and one correction reaches every program. [Design](src/md/api/library_modules.md)
 - **The same module with and without debug information.** The compiler gives the same bytes of a module when the build asks for debug information and when it does not. A developer can then make the debug object of a module later, from the same sources. [Design](src/md/infrastructure/debug_information_and_code.md)
-- **One generator for the pictures of the mark.** One command of the tool draws every picture of the mark from one description of the heron. A change of the mark then changes each picture, and no picture is drawn by hand.
 - **The sources in one folder.** Everything that becomes the system moves into the folder `src`, and the code that the programs share becomes the source library `modus`. A developer then finds each part of the system by one rule. [Design](src/md/infrastructure/repository_layout.md)
 
 ## Next
 
 - **A share of the processor for each program.** The program `scheduler` sets the weight of each thread, so that a program with many threads takes no more of the processor than a program with one. A measure run prints the share that each program gets. [Design](src/md/features/scheduling_policy.md)
+- **The icons of the site from the generator of the mark.** The generator of the pictures of the mark also writes the icon file and the vector icon of the site, and the icons are rows of the one table of the files of the mark. A developer then finds every file of the mark in one table. [Design](src/md/features/mark_pictures.md)
 - **A window for the debugger.** The debugger gets a window over the exports that the console uses today: the threads, the stack, the variables and the source lines. A step over a call stops after the call returns, not inside it.
 - **The palette sets the scheduling strategy.** The scheduling strategy is an entry of the palette, as each setting is. A click in a field of the palette puts the input there. [Design](src/md/features/palette.md)
 - **Kind icons in the completion list of the console.** Each row of the completion list shows the kind icon of its name, as each row of the palette does. A reader tells a command from a module or a variable before reading the name.

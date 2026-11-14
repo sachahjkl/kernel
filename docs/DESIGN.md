@@ -444,13 +444,13 @@ The mark is drawn from data, not from a file: one table of cells in `support/mar
 The mark is the picture that stands for the system: a heron in pixel cells, and the name "modus".
 
 - The form: a heron on a grid of 24 by 24 square cells. It stands on one leg in water. Its parts: the crest and the tail (one part, in the color of the firmware), the head and the neck (the text color), the eye, the beak and the legs (two parts, in the color of the boot program), the body (the kernel), the wing (`0x2F6FC0`), the water (memory). No line goes around it.
-- The data: `support/mark` holds the rows of the cells, the table of the parts with their colors and their boxes, and the letters of the name of the mark. Its procedures are pure: `mark_pixel(cell_size, x, y, on_light)` gives the color of one pixel of the heron, `name_pixel` one pixel of the name, `heron_size` and `name_size` their sizes. `mark_draw(canvas, x, y, cell_size, on_light)` and `name_draw` draw into a canvas of `support/graphics`: the covered pixels only, cut to the canvas.
+- The data: `support/mark` holds the rows of the cells, the table of the parts with their colors and their boxes, and the letters of the name of the mark. Its procedures are pure: `mark_pixel(cell_size, x, y, variant, on_light)` gives the color of one pixel of the heron, `name_pixel` one pixel of the name, `heron_size` and `name_size` their sizes. `mark_draw(canvas, x, y, cell_size, variant, on_light)` and `name_draw` draw into a canvas of `support/graphics`: the covered pixels only, cut to the canvas. Each procedure that draws the heron takes the variant: see "The variants of the mark".
 - The cell size: 1 to `CELL_SIZE_LIMIT` (65 536). Another cell size draws nothing and has a size of 0. A pixel outside the heron or the name is not covered.
-- The gradient: each part is filled with one linear gradient, from the top left corner of the box of the part (the color moved 30 % toward white) to its bottom right corner (the color moved 30 % toward black). A pixel takes the gradient at its centre. The eye is one flat color. The arithmetic is in integers, rounded to the nearest value, so that every machine gives the same pixels.
+- The gradient: each part is filled with one linear gradient, from the top left corner of the box of the part (the color moved 30 % toward white) to its bottom right corner (the color moved 30 % toward black). In the smooth variant a pixel takes the gradient at its centre; in the cells variant each pixel of a cell takes the gradient at the centre of the cell. The eye is one flat color. The arithmetic is in integers, rounded to the nearest value, so that every machine gives the same pixels.
 - The two backgrounds: the background of the system `0x0B1018`, and the light background `0xF4F6F8` of a page of another program. On the light background the neck is darker (`0x9FB2C8`), and the name is in `0x0B1018` instead of the text color.
 - The name of the mark: "modus" in letters of 5 by 7 cells, 2 empty columns between two letters, one flat color. The same letters are a font file, for a page that writes the name as text: see "The font of the name".
 - A picture holds the name only where one file must carry the heron and the name. Elsewhere the picture is the heron alone, and the name is drawn or written beside it.
-- The files: `kerneltool logo` writes them, and `kerneltool check` fails with "run kerneltool logo" when a picture does not have the pixels of the data, or when the font does not have the bytes that the data gives.
+- The files: `kerneltool logo` writes them, each a row of the table of the uses of the mark (see "The variants of the mark"), and `kerneltool check` fails with "run kerneltool logo" when a picture does not have the pixels of the data, or when the font does not have the bytes that the data gives.
 
 | File | Size | What it shows |
 |---|---|---|
@@ -469,10 +469,44 @@ The mark is the picture that stands for the system: a heron in pixel cells, and 
 
 | Where | Who draws | What | When the gradients are computed |
 |---|---|---|---|
-| The bar of the desktop | the compositor | the heron, cells of 1 pixel, at (16, 4) | once, at the start, into a picture of 24 x 24 pixels over the pixels of the bar; each frame copies that picture (a Picture record that never changes) |
-| The head of the boot display | `support/bootscreen`: the boot program, the root service, the program `boot` | the heron, cells of 2 pixels (48 x 48) at (20, 12), and the name of the mark, cells of 3 pixels, at its right | at each draw of the display: one call for each of the 2 304 pixels of the box of the heron and the 2 079 pixels of the box of the name, a few integer divisions each |
+| The bar of the desktop | the compositor | the heron, the cells variant, cells of 1 pixel, at (16, 4) | once, at the start, into a picture of 24 x 24 pixels over the pixels of the bar; each frame copies that picture (a Picture record that never changes) |
+| The head of the boot display | `support/bootscreen`: the boot program, the root service, the program `boot` | the heron, the smooth variant, cells of 2 pixels (48 x 48) at (20, 12), and the name of the mark, cells of 3 pixels, at its right | at each draw of the display: one call for each of the 2 304 pixels of the box of the heron and the 2 079 pixels of the box of the name, a few integer divisions each |
 
 - No file of the mark is in the boot image: each place draws from the data.
+
+### The variants of the mark
+
+The heron has two variants. A request for a picture of the mark names one: nothing chooses it from the cell size.
+
+| Variant | What a pixel takes | Where |
+|---|---|---|
+| Smooth | The gradient of its part at the centre of the pixel: a cell of 8 pixels holds up to 64 colors, and the gradient of a part goes from pixel to pixel | A picture: the head of the home of the site, its tile maps, the files of `resources/logo`, the card for other sites, the large icons, the boot display, the window of the program `heron` (12, 8 or 4 pixels for a cell) |
+| Cells | The gradient of its part at the centre of its cell: a cell is one color at every cell size | A small icon, one pixel for a cell: the bar of the site, the bar of the desktop, the icon of 32 pixels of a tab |
+
+- The rule of the choice: a picture is smooth; a small icon is cells.
+- The smooth variant needs at least 2 pixels for a cell (`SMOOTH_CELL_SIZE_LEAST`). With one pixel for a cell the centre of the pixel is the centre of the cell: that picture is the cells variant, and its request must say so. A procedure of `support/mark` draws nothing for the smooth variant at one pixel, and the generator of the tool refuses it with a sentence.
+- The cells variant is allowed at each cell size: it gives the look of one color for a cell at a size where a picture has more pixels.
+- One generator in the tool draws each picture file of the mark (`tools/kerneltool/mark_pictures.odin`; `TOOLS.md`, "The pictures of the mark"). `kerneltool logo` and `kerneltool site` hold no number of a picture: each asks the generator for its rows of the table of the uses, below. `kerneltool mark uses` prints the table.
+
+The table of the uses (`mark_uses`). Each row is one file. "Cell" is the pixels of a side of a cell of the heron.
+
+| File | Written by | Variant | Cell | What |
+|---|---|---|---|---|
+| `resources/logo/modus.png`, `modus_light.png` | `logo` | Smooth | 24 | The heron and the name (cells of 20, 44 pixels under the heron), centred in 1024 x 1024, on the background of its color scheme |
+| `resources/logo/modus_transparent.png`, `modus_light_transparent.png` | `logo` | Smooth | 24 | The same on nothing |
+| `resources/logo/heron_768.png` | `logo` | Smooth | 32 | The heron alone |
+| `resources/logo/heron_24.png` | `logo` | Cells | 1 | The heron alone |
+| `resources/logo/heron_48.png`, `heron_96.png`, `heron_192.png` | `logo` | Smooth | 2, 4, 8 | The heron alone |
+| `.project/image.png` | `logo` | Smooth | 16 | The heron alone, centred in 512 x 512 on the dark background |
+| `pictures/mark_home.png`, `mark_home_light.png` | `site` | Smooth | 8 | The still picture of the head of the home, 192 x 192, one for each color scheme |
+| `pictures/mark_bar.png`, `mark_bar_light.png` | `site` | Cells | 1 | The heron of the bar, 24 x 24, one for each color scheme |
+| `pictures/mark_card.png` | `site` | Smooth | 16 | The heron and the name (cells of 12, 32 pixels under the heron), centred in 1200 x 630 on the dark background |
+| `pictures/mark_animation_home.png`, `mark_animation_home_light.png` | `site` | Smooth | 8 | The tile maps of the home: the frames and the drawn forms of the moves, 3072 x 992 |
+| `pictures/mark_animation_icon.png` | `site` | Cells | 1 | The tile map of the icon of the tab: the frames only, in the light scheme, 384 x 72 |
+
+The icons of the site have their own table (`site_icons`; `SITE.md`, "The icons"), with the same rule: the icon of 32 pixels is the cells variant at one pixel for a cell, and each other icon is the smooth variant. The generator draws them.
+
+What the system draws is not a file, and follows the same rule. The program `heron`: smooth, at each of its cell sizes, because its window is a picture where the gradient matters. The boot display: smooth. The bar of the desktop: cells, one pixel for a cell.
 
 ### The font of the name
 
@@ -517,10 +551,10 @@ The mark has idle animations: 15 of them. They play in three places: on the larg
 - The bounds, which the host tests hold: each animation has its limit of changed cells in the data (`animation_change_limits`): a frame differs from the still heron and from the frame before it by at most 24 cells, 48 for the preen, which moves the whole head onto the back, and 40 for the dash, which moves both legs and draws the lines of speed. A frame lasts 150 to 1000 ms, so the picture changes at most about 6 times each second; the steps of the run of the dash last 70 ms, and only the dash has such frames (`animation_frame_duration_least`). An animation lasts at most 3 s.
 - A frame in which the heron leaves the water (the run and the stop of the dash, the air of the hop, the beats of the flap) has no foot in the two rows of the water, and the water is whole there. A place that moves the heron can then cut the picture at the line of the water: the water stays, and the heron moves.
 - The moves. The frames are the whole animation where the picture cannot move: the icon of a tab, a later mark in the bar of the desktop. During the dash, the hop, the stretch and the flap the heron also takes other forms and other places, on the home of the site and in the program `heron`: see "The moves".
-- The sprite sheets of the site hold 43 sprites: the still heron and 42 distinct frames, in rows of 16 (the heron alone, 192 pixels for each sprite), and under them, in the sheets of the home, the 19 drawn forms of the moves. A sheet of the home is 3072 x 992 pixels: no side is longer than the 8192 pixels that a browser decodes. The sheet of the icon is 512 x 96.
+- The tile maps of the site hold 43 sprites: the still heron and 42 distinct frames, in rows of 16. A tile map of the home is the smooth variant, 192 pixels for each sprite, with the 19 drawn forms of the moves under the sprites: 3072 x 992 pixels, one for each color scheme. No side is longer than the 8192 pixels that a browser decodes. The tile map of the icon of the tab is the cells variant, 24 pixels for each sprite, with no form: 384 x 72 pixels. See "The variants of the mark" and `SITE.md`, "The mark on the site".
 - Where it plays: the large heron of the head of the home of the site, the icon of the tab of the home, and the window of the program `heron`. Not the small mark of the bar of the site: a page of the documentation is read, and a picture that moves at the top of a text takes the eye from it. Not the mark of the bar of the desktop, for the same reason. A reader starts the program `heron` to see the heron move: its window shows nothing else.
 - How often: on the home and in the program `heron` the heron is still for 40 % of the time and moves for 60 %. Each animation plays once before one plays again, in an order of chance, and none follows itself.
-- The program `heron` (`programs/heron`): the heron stands in its water on a stage of 640 by 384 pixels, drawn from the cells at 12, 8 or 4 pixels for a cell. The numbers of chance come from the random generator of the program.
+- The program `heron` (`programs/heron`): the heron stands in its water on a stage of 640 by 384 pixels, drawn from the cells at 12, 8 or 4 pixels for a cell, in the smooth variant: its window is a picture ("The variants of the mark"). The numbers of chance come from the random generator of the program.
   - The moves are real: in the dash the part of the heron above the water leaves the stage by the right and comes in by the left. The program plays the moves of `support/mark` ("The moves"): the same keys and the same drawn forms as the home of the site.
   - On the grid, the way of the program at its start, and the rule of the system. At each picture the program asks `mark.move_pose` for the form and the place of the heron, in whole cells, and draws the form of that frame (`mark.form_cells`, `mark.form_cells_draw`) at that place. The drawing is kept in a picture of the program: a picture of a travel copies it, and only a new frame or a new form draws it again. The program draws cells: it does not draw the free heron first, and nothing rounds a smooth move to the grid.
   - Free, to compare: the key `g` changes the way, and the band says "on the grid" or "free". The free way reads the same keys (`programs/heron/free_way.odin`). It does not draw the form: it stretches the frame of the heron, as it is, to the box of the form of the key, and the box goes from a key to the next one pixel by pixel. So each cell is a rectangle, the eye, the beak and the legs change their form with the box, and the heron stands between two cells. No color is mixed. It shows what the drawn forms are for: the pictures `heron` and `heron_free` show one held frame of the run of the dash in each way.

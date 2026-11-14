@@ -453,7 +453,7 @@ form_picture_draw :: proc "contextless" (form: mark.Form, frame, cell: int) {
 	picture := graphics.Canvas{pixels = raw_data(form_pixels[:]), width = mark.FORM_COLUMNS_MOST * cell, height = mark.FORM_ROWS_MOST * cell, stride = FORM_PICTURE_WIDTH}
 	graphics.fill(picture, 0, 0, picture.width, picture.height, PICTURE_EMPTY)
 	form_drawn, _ = mark.form_cells(form, animation, frame)
-	mark.form_cells_draw(picture, &form_drawn, mark.FORM_REACH_LEFT * cell, mark.FORM_REACH_UP * cell, cell, false)
+	mark.form_cells_draw(picture, &form_drawn, mark.FORM_REACH_LEFT * cell, mark.FORM_REACH_UP * cell, cell, .Smooth, false)
 }
 
 // form_picture_part gives a rectangle of cells of the form picture as a
@@ -486,7 +486,7 @@ water_draw :: proc "contextless" (water: interface.Rectangle, cell: int) {
 	first_line := mark.BODY_ROWS * cell
 	for y in 0 ..< water.bottom - water.top {
 		for x in 0 ..< water.right - water.left {
-			if color, covered := mark.cells_pixel(&frame_cells, cell, x, first_line + y, false); covered {
+			if color, covered := mark.cells_pixel(&frame_cells, cell, x, first_line + y, .Smooth, false); covered {
 				graphics.pixel(stage, water.left + x, water.top + y, color)
 			}
 		}

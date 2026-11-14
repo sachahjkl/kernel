@@ -301,6 +301,28 @@ COMMANDS :: [?]Command {
 	//   repository; `kerneltool check` runs it, so a mark that changed in
 	//   the code and not in the files fails.
 	{name = "logo", about = "draw the files of the mark of the system from support/mark: " + LOGO_FOLDER + " and " + PROJECT_IMAGE + "; `check` verifies them; and " + MARK_ANIMATIONS_PICTURE + ", every frame of the animations of the mark", run = run_logo},
+	// Draws one picture of the mark: the one entry to the generator of the
+	// pictures of the mark, which `logo` and `site` also ask.
+	//
+	// - `still`: the still mark, a PNG file.
+	// - `frame`: one frame of an animation (`--animation`, `--frame`).
+	// - `tile_map`: the tile map of every animation, or of one (`--animation`):
+	//   a tile for each distinct frame and, with `--forms yes`, a tile for
+	//   each drawn form of the moves.
+	// - `table`: the table of that tile map, as JSON: the place and the
+	//   size of each tile, the times, the moves in cells.
+	// - `uses`: prints the table of the uses: each file of the mark of the
+	//   repository and of the site, with its variant.
+	// - `developer`: the picture of every frame and form, with its texts.
+	//
+	// The options say how: `--variant smooth|cells`, `--cell <pixels>`,
+	// `--scheme dark|light`, `--background none|scheme`, `--size <pixels>` or
+	// `--size <width>x<height>`, `--name-cell <pixels>`, `--gap <pixels>`, `--width <pixels>` (the
+	// widest tile map), `--out <file>`. A request with no sense is refused
+	// with a sentence: the smooth variant at one pixel for a cell, a part
+	// of a pixel, a picture smaller than its drawing (docs/TOOLS.md, "The
+	// pictures of the mark").
+	{name = "mark", about = "draw one picture of the mark: still | frame | tile_map | table | uses | developer, with --variant smooth|cells, --cell <pixels>, --scheme dark|light, --background none|scheme, --animation <name>, --frame <number>, --forms yes|no, --width <pixels>, --out <file>", run = run_mark},
 	// Converts the JPEG portrait of the program `temple` to the pixels that the
 	// program holds, `programs/temple/portrait.pixels`. The result is in the
 	// repository, so a build decodes no JPEG.

@@ -1120,7 +1120,9 @@ bar_mark_build :: proc "contextless" () {
 	table := interface.Draw_Table{records = records[:]}
 	bar_background_records(&table, bar.MARK_X + bar.MARK_SIZE)
 	interface.execute(&table, bar_mark_picture, -bar.MARK_X, -bar.MARK_Y)
-	mark.mark_draw(bar_mark_picture, 0, 0, bar.MARK_CELL_SIZE, false)
+	// The mark of the bar is a small icon, one pixel for a cell: the cells
+	// variant.
+	mark.mark_draw(bar_mark_picture, 0, 0, bar.MARK_CELL_SIZE, .Cells, false)
 }
 
 // screen_build builds the draw table of the screen. interface_font: the
