@@ -171,18 +171,50 @@ film_slot_count :: proc(runs: []Film_Run) -> int {
 	return last.first_slot + last.slot_count
 }
 
-// film_encode_command gives the command of the encoder: H.264 in an MP4
-// file, at the constant rate of the film, each pixel doubled with no
-// filter, and the colors converted and named as those of a film in high
-// definition, so that a player shows the colors of the screen.
-film_encode_command :: proc(list_path, output: string) -> []string {
+// The two files of a film, by the suffix of their name.
+FILM_MP4_SUFFIX :: ".mp4"
+FILM_WEBM_SUFFIX :: FILM_DOCUMENT_SUFFIX
+
+// The encoder of the MP4 file: H.264, which each site that takes a film
+// plays. The index of the file is at its start, so a player starts before
+// it has the whole file.
+FILM_MP4_ENCODER :: [8]string{"-c:v", "libx264", "-preset", "slow", "-crf", "18", "-movflags", "+faststart"}
+// The encoder of the WebM file: AV1, about half of the bytes of the MP4
+// file for the same pictures, so this is the file that the repository
+// holds and that the site shows. A film has no sound.
+FILM_WEBM_ENCODER :: [7]string{"-c:v", "libsvtav1", "-preset", "6", "-crf", "45", "-an"}
+
+// film_encode_command gives the command of an encoder of a film, from the
+// list of the timed pictures: the constant rate of the film, each pixel
+// doubled with no filter, and the colors converted and named as those of
+// a film in high definition, so that a player shows the colors of the
+// screen. The two files of a film differ by the arguments of their
+// encoder only.
+@(private = "file")
+film_encode_command :: proc(list_path, output: string, encoder: []string) -> []string {
 	filter := fmt.tprintf("fps=%d,scale=iw*%d:ih*%d:flags=neighbor:out_color_matrix=bt709:out_range=tv", FILM_RATE, FILM_SCALE, FILM_SCALE)
 	command := make([dynamic]string, context.temp_allocator)
 	append(&command, "ffmpeg", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", list_path)
-	append(&command, "-vf", filter, "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-pix_fmt", "yuv420p")
+	append(&command, "-vf", filter)
+	append(&command, ..encoder)
+	append(&command, "-pix_fmt", "yuv420p")
 	append(&command, "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv")
-	append(&command, "-movflags", "+faststart", output)
+	append(&command, output)
 	return command[:]
+}
+
+// film_mp4_encode_command gives the command that writes the MP4 file of a
+// film.
+film_mp4_encode_command :: proc(list_path, output: string) -> []string {
+	encoder := FILM_MP4_ENCODER
+	return film_encode_command(list_path, output, encoder[:])
+}
+
+// film_webm_encode_command gives the command that writes the WebM file of
+// a film.
+film_webm_encode_command :: proc(list_path, output: string) -> []string {
+	encoder := FILM_WEBM_ENCODER
+	return film_encode_command(list_path, output, encoder[:])
 }
 
 // film_key_periods gives the time after each key of a typed text of a
@@ -372,8 +404,8 @@ film_of_name :: proc(name: string) -> (film: Film, found: bool) {
 // run_film makes one film: `film` and `film terminal` the film of the
 // terminal, `film palette` the film of the palette. The two films differ
 // by their scenario only: the worker, the list of the encoder and the
-// encoder are the same. A film is for the development log: it is not a
-// test, and no check runs it.
+// encoder are the same. A film is for the development log, and for the
+// news entry that names it: it is not a test, and no check runs it.
 run_film :: proc(args: []string) -> int {
 	name := "terminal"
 	if len(args) == 1 {
@@ -403,9 +435,10 @@ run_film :: proc(args: []string) -> int {
 film_still_parts := [?]int{1, 2, 3}
 FILM_STILL_DIVISOR :: 4
 
-// film_write makes the file of a film from its pictures, copies it and
-// three of its pictures to a new folder of the development log, and
-// removes the pictures.
+// film_write makes the two files of a film from its pictures, copies the
+// MP4 file and three of its pictures to a new folder of the development
+// log, removes the pictures, and copies the WebM file to the repository
+// when a news entry names the film.
 film_write :: proc(name: string) -> bool {
 	folder := join(FILM_FOLDER, "/", name)
 	paths, listed := files_with_suffix(folder, FILM_PICTURE_SUFFIX)
@@ -432,14 +465,19 @@ film_write :: proc(name: string) -> bool {
 		fmt.eprintfln("kerneltool: cannot write %s: %v", list_path, write_error)
 		return false
 	}
-	output := join(FILM_FOLDER, "/", name, ".mp4")
-	run(film_encode_command(list_path, output)) or_return
+	// Two files from the same timed pictures: the MP4 file for a post on
+	// another site, and the WebM file, which the repository holds when a
+	// news entry names the film.
+	output := join(FILM_FOLDER, "/", name, FILM_MP4_SUFFIX)
+	run(film_mp4_encode_command(list_path, output)) or_return
+	webm_output := join(FILM_FOLDER, "/", name, FILM_WEBM_SUFFIX)
+	run(film_webm_encode_command(list_path, webm_output)) or_return
 	// The name of the folder is the time of the run, in UTC.
 	year, month, day := time.date(time.now())
 	hour, minute, second := time.clock(time.now())
 	log_folder := fmt.tprintf("%s/%04d-%02d-%02d_%02d%02d%02d_film_%s", DEVELOPMENT_LOG_FOLDER, year, int(month), day, hour, minute, second, name)
 	make_folder(log_folder) or_return
-	target := join(log_folder, "/", name, ".mp4")
+	target := join(log_folder, "/", name, FILM_MP4_SUFFIX)
 	if copy_error := os.copy_file(target, output); copy_error != nil {
 		fmt.eprintfln("kerneltool: cannot write %s: %v", target, copy_error)
 		return false
@@ -458,6 +496,9 @@ film_write :: proc(name: string) -> bool {
 		fmt.eprintfln("kerneltool: cannot remove %s: %v", folder, remove_error)
 		return false
 	}
-	fmt.printfln("kerneltool: wrote %s (%d pictures in %d slots of the film, %.1f s) and %s", output, len(paths), slot_count, f64(slot_count) / FILM_RATE, target)
+	fmt.printfln("kerneltool: wrote %s and %s (%d pictures in %d slots of the film, %.1f s), and %s", output, webm_output, len(paths), slot_count, f64(slot_count) / FILM_RATE, target)
+	if film_is_named_by_a_news_entry(name) {
+		film_document_write(name, webm_output) or_return
+	}
 	return true
 }

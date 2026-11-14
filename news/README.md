@@ -5,7 +5,7 @@ This folder holds the news of the system: one file for each news entry (`docs/GL
 The changelog and the news are two records:
 
 - `CHANGELOG.md` is a technical list for each release: every change, for a developer of the system.
-- A news entry is a dated report in prose of one thing that a reader can now see or use, for a reader who is not a developer of the system: a few sentences, one picture, the measured number when there is one, a link to its release and to its guide.
+- A news entry is a dated report in prose of one thing that a reader can now see or use, for a reader who is not a developer of the system: a few sentences, one picture, a film when the thing moves, the measured number when there is one, a link to its release and to its guide.
 
 ## When to write one
 
@@ -29,7 +29,7 @@ guide: docs/CONSOLE.md
 The text, in the Markdown of the site: a few sentences, one fact in each.
 ```
 
-The head has the six keys, each once, one line `key: value` each, then an empty line, then the text:
+The head has the six keys, each once, one line `key: value` each, then an empty line, then the text. A seventh key, `film`, is the one key that an entry can leave out:
 
 | Key | Value |
 |---|---|
@@ -39,6 +39,7 @@ The head has the six keys, each once, one line `key: value` each, then an empty 
 | `picture` | A PNG file of `docs/screenshots/` or `resources/logo/`, or `none` |
 | `kind` | One of the four kinds below |
 | `guide` | A document of `docs/` (`docs/<NAME>.md`) that explains the thing, or `none` |
+| `film` | A WebM file of `docs/films/` (`docs/films/<name>.webm`), or `none`. An entry with no line `film:` has no film: that is the same as `film: none` |
 
 The kinds, the colored mark of the card of the entry:
 
@@ -51,10 +52,21 @@ The kinds, the colored mark of the card of the entry:
 
 The text: at most 1200 bytes; no heading (the title is the heading); no line of HTML. Write in the simplified technical English of the repository: one fact in each sentence, no promotion, no adjective that is not measured, each number with the conditions that its document gives. A longer report belongs in the guide that the entry names. Never write "the owner": a reader of the site does not know that word; say what the thing is now.
 
+## The film
+
+A film shows what a picture cannot: a list that narrows at each key, a window that moves.
+
+- `kerneltool film <name>` writes the file. It films a scenario of the machine and writes `docs/films/<name>.webm` when an entry names that film (`docs/TOOLS.md`, "The film of a document"). So write the line `film:` first, then run the command.
+- The repository holds the file, as it holds the screen pictures. The site copies it and encodes nothing.
+- The file is WebM with AV1, at most 4 MiB (`FILM_DOCUMENT_SIZE_LIMIT`): each version of the file stays in the history of the repository, and a reader loads it on a phone.
+- An entry with a film has a picture. The page of the news shows the picture until the reader starts the film. A card of the home, the feed and a browser that does not play the format show the picture only.
+- The picture is the state of the film that says the most about the thing, not its first frame.
+
 ## The commands
 
 | Command | What it does |
 |---|---|
 | `kerneltool news new <subject>` | Writes a new entry with the date of the host, `release: next`, no title and no text: `news check` fails until a person writes them |
-| `kerneltool news check` | Checks each entry: the head is well formed, each key known and present, the date a date of the calendar and the date of the file name, the picture a PNG file of the repository, the release a release of `CHANGELOG.md` or `next`, the guide a file, the text not empty and at most 1200 bytes, no two titles the same. `kerneltool check` runs it |
-| `kerneltool site` | Writes the page of the news, the three newest entries on the home, the feed `news.xml`, and a link from each release to its entries |
+| `kerneltool news check` | Checks each entry: the head is well formed, each key known and present, the date a date of the calendar and the date of the file name, the picture a PNG file of the repository, the release a release of `CHANGELOG.md` or `next`, the guide a file, the film a WebM file of the repository of at most 4 MiB in an entry that has a picture, the text not empty and at most 1200 bytes, no two titles the same. `kerneltool check` runs it |
+| `kerneltool film <name>` | Films a scenario of the machine, and writes `docs/films/<name>.webm` when an entry names it |
+| `kerneltool site` | Writes the page of the news with the film of each entry that has one, the three newest entries on the home, the feed `news.xml`, and a link from each release to its entries |
