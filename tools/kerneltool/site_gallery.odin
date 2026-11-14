@@ -221,13 +221,15 @@ site_gallery_rows := [?]Site_Gallery_Row {
 // reason. The list is short: a picture is in the table, or it has its
 // reason here.
 Site_Gallery_Excluded :: struct {
-	file:   string,
-	reason: string,
+	file:                  string,
+	reason:                string,
+	not_in_the_repository: bool, // git ignores the file: the folder of a developer can hold it, and a clean copy of the repository does not.
 }
 
 site_gallery_excluded := [?]Site_Gallery_Excluded {
-	{"notes_crash.png", "The picture was taken while the window of notes drew its note: the text of the note is cut. The pictures notes and power_loss show the store after a restart."},
-	{"vector_glyphs.png", "An older picture of the prototype of the vector font: its bar has the words of the system before the mark and the palette. The pictures font_candidates and font_vector show the font of today."},
+	{"notes_crash.png", "The picture was taken while the window of notes drew its note: the text of the note is cut. The pictures notes and power_loss show the store after a restart.", false},
+	{"pointers.png", "The repository does not hold this picture, and git ignores it: it shows a pointer theme whose license allows no commercial use. The folder of a developer has it after a test; the picture pointers_system shows the theme of the system.", true},
+	{"vector_glyphs.png", "An older picture of the prototype of the vector font: its bar has the words of the system before the mark and the palette. The pictures font_candidates and font_vector show the font of today.", false},
 }
 
 // One picture of the table as the pages show it.
@@ -315,7 +317,7 @@ site_gallery_table_problems :: proc(rows: []Site_Gallery_Row, excluded: []Site_G
 		if line.file in named {
 			append(&problems, fmt.tprintf("%s: in the table of the gallery and in the excluded files", line.file))
 		}
-		if line.file not_in in_folder {
+		if line.file not_in in_folder && !line.not_in_the_repository {
 			append(&problems, fmt.tprintf("%s: an excluded file that is not in %s", line.file, SITE_SCREEN_PICTURE_FOLDER))
 		}
 		if line.reason == "" {
