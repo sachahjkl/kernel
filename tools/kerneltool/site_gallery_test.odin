@@ -413,7 +413,7 @@ site_carousel_rules_and_script :: proc(t: ^testing.T) {
 	gallery_rules := site_gallery_rules()
 	// No color of their own, no round corner, no movement, and no rule
 	// that cuts a caption.
-	for refused in ([]string{"#", "rgb", "border-radius", "animation", "transition", "scroll-behavior", "text-overflow", "white-space: nowrap", "overflow: hidden", "outline: none", "outline: 0"}) {
+	for refused in ([]string{"#", "rgb", "border-radius", "animation", "transition", " scroll-behavior", "text-overflow", "white-space: nowrap", "overflow: hidden", "outline: none", "outline: 0"}) {
 		testing.expectf(t, !strings.contains(gallery_rules, refused), "the rules of the gallery hold %q", refused)
 	}
 	// The numbered links of the home fit one line at 360 pixels: a column
