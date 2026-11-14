@@ -323,8 +323,8 @@ form_cells :: proc "contextless" (form: Form, animation: Animation, frame: int) 
 // of the heron and above it. A cell takes the color of its part at its
 // place, as a cell of a frame does: the gradient over the box of the part
 // in the still heron, and past that box the color of the nearer end.
-form_cells_pixel :: proc "contextless" (drawn: ^Form_Cells, cell_size, x, y: int, on_light: bool) -> (color: u32, covered: bool) {
-	if !cell_size_is_accepted(cell_size) {
+form_cells_pixel :: proc "contextless" (drawn: ^Form_Cells, cell_size, x, y: int, variant: Variant, on_light: bool) -> (color: u32, covered: bool) {
+	if !variant_is_drawn(variant, cell_size) {
 		return 0, false
 	}
 	from_left := x - drawn.first_column * cell_size
@@ -336,7 +336,7 @@ form_cells_pixel :: proc "contextless" (drawn: ^Form_Cells, cell_size, x, y: int
 	if !found {
 		return 0, false
 	}
-	return part_pixel(index, cell_size, x, y, on_light), true
+	return part_pixel(index, cell_size, x, y, variant, on_light), true
 }
 
 // form_cells_draw draws a form into a canvas. (x, y) is the place in the
@@ -344,8 +344,8 @@ form_cells_pixel :: proc "contextless" (drawn: ^Form_Cells, cell_size, x, y: int
 // around it, so that the standing leg and the line of the water are where
 // cells_draw puts them. The covered pixels only, nothing outside the
 // canvas.
-form_cells_draw :: proc "contextless" (canvas: graphics.Canvas, drawn: ^Form_Cells, x, y, cell_size: int, on_light: bool, order := Channel_Order.Red_In_High_Byte) {
-	if !cell_size_is_accepted(cell_size) {
+form_cells_draw :: proc "contextless" (canvas: graphics.Canvas, drawn: ^Form_Cells, x, y, cell_size: int, variant: Variant, on_light: bool, order := Channel_Order.Red_In_High_Byte) {
+	if !variant_is_drawn(variant, cell_size) {
 		return
 	}
 	left := x + drawn.first_column * cell_size
@@ -356,7 +356,7 @@ form_cells_draw :: proc "contextless" (canvas: graphics.Canvas, drawn: ^Form_Cel
 	}
 	for canvas_y in first_y ..< last_y {
 		for canvas_x in first_x ..< last_x {
-			if color, covered := form_cells_pixel(drawn, cell_size, canvas_x - x, canvas_y - y, on_light); covered {
+			if color, covered := form_cells_pixel(drawn, cell_size, canvas_x - x, canvas_y - y, variant, on_light); covered {
 				canvas.pixels[canvas_y * canvas.stride + canvas_x] = color_in_order(color, order)
 			}
 		}

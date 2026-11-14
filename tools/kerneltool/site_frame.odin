@@ -643,8 +643,8 @@ site_build :: proc(address: string) -> bool {
 		return false
 	}
 	// The pictures of the mark, and the icons: the heron alone of resources/logo.
-	for picture in site_mark_pictures {
-		data := site_mark_encode(picture) or_return
+	for picture in mark_uses_pictures(.Site, .Picture) {
+		data := mark_picture_png(picture) or_return
 		if picture.file_name == SITE_MARK_CARD {
 			// Other sites show the card on any background and at this size.
 			width, height, _ := site_png_size(data)

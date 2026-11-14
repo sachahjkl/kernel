@@ -8,7 +8,7 @@ import "support:mark"
 
 // The files of the animations read back as the frames of support/mark, and
 // the first sprite of each sheet is the still picture that the site shows
-// with no script: the head of the home, and the 32 of favicon.ico.
+// with no script: the heron of a page in the color scheme of the sheet.
 @(test)
 site_mark_animation_sheets_read_back :: proc(t: ^testing.T) {
 	files, ok := site_mark_animation_files()
@@ -18,49 +18,43 @@ site_mark_animation_sheets_read_back :: proc(t: ^testing.T) {
 	}
 	problems := site_mark_animation_problems(files)
 	testing.expectf(t, len(problems) == 0, "problems: %v", problems)
-	sheets, sheets_ok := site_mark_sheets()
-	testing.expect(t, sheets_ok)
-	sprites, sprites_ok := site_mark_sprites()
-	testing.expect(t, sprites_ok)
-	forms, forms_ok := site_mark_forms(&sprites)
-	testing.expect(t, forms_ok)
-	columns, rows := site_mark_sheet_shape(len(sprites.cells))
-	for sheet in sheets {
-		still_file, encoded := site_mark_encode(sheet.picture)
+	tile_maps, tile_maps_ok := site_mark_tile_maps()
+	testing.expect(t, tile_maps_ok)
+	if !tile_maps_ok {
+		return
+	}
+	// The three files are in the site, with the sizes of their tile maps:
+	// the two of the home with the drawn forms, the one of the icon of
+	// the tab with the frames only.
+	testing.expect_value(t, len(files), SITE_MARK_SHEET_COUNT + 1)
+	testing.expect_value(t, tile_maps.dark.layout.width, 3072)
+	testing.expect_value(t, tile_maps.dark.layout.height, 992)
+	testing.expect_value(t, tile_maps.light.layout, tile_maps.dark.layout)
+	testing.expect_value(t, len(tile_maps.dark.forms.drawn), 19)
+	testing.expect_value(t, tile_maps.icon.layout.width, 384)
+	testing.expect_value(t, tile_maps.icon.layout.height, 72)
+	testing.expect_value(t, len(tile_maps.icon.forms.drawn), 0)
+	testing.expect_value(t, tile_maps.icon.picture.variant, mark.Variant.Cells)
+	testing.expect_value(t, tile_maps.dark.picture.variant, mark.Variant.Smooth)
+	// The first tile of each tile map of the home is the still picture of
+	// the home of its color scheme, pixel for pixel: the heron does not
+	// change when the script starts.
+	stills := [2]string{SITE_MARK_HOME, SITE_MARK_HOME_LIGHT}
+	for tile_map, index in ([2]^Mark_Tile_Map{&tile_maps.dark, &tile_maps.light}) {
+		still_picture, still_found := mark_use_picture(stills[index])
+		testing.expect(t, still_found)
+		still_file, encoded := mark_picture_png(still_picture)
 		testing.expect(t, encoded)
 		still_image, still_error := png.load_from_bytes(still_file, allocator = context.temp_allocator)
-		sheet_image, sheet_error := png.load_from_bytes(files[site_mark_sheet_path(sheet.file_name)], allocator = context.temp_allocator)
+		sheet_image, sheet_error := png.load_from_bytes(files[site_mark_sheet_path(tile_map.picture.file_name)], allocator = context.temp_allocator)
 		if still_error != nil || sheet_error != nil {
-			testing.expectf(t, false, "%s or its still picture does not decode", sheet.file_name)
+			testing.expectf(t, false, "%s or its still picture does not decode", tile_map.picture.file_name)
 			continue
 		}
-		// The sprites of the frames at the top; under them, in a sheet of
-		// the home, the drawn forms of the moves.
-		layout := site_mark_sheet_layout(sheet.picture, len(sprites.cells), len(forms.drawn) if sheet.with_forms else 0)
-		testing.expect_value(t, layout.form_top, still_image.height * rows)
-		testing.expect_value(t, sheet_image.height, layout.height)
-		testing.expect_value(t, sheet_image.width, still_image.width * columns)
-		testing.expect_value(t, sheet_image.width, layout.width)
-		testing.expect(t, (sheet_image.height > layout.form_top) == sheet.with_forms)
-		testing.expect(t, layout.width <= SITE_MARK_SHEET_SIDE_MOST && layout.height <= SITE_MARK_SHEET_SIDE_MOST)
+		testing.expect_value(t, sheet_image.width, tile_map.layout.width)
+		testing.expect_value(t, sheet_image.height, tile_map.layout.height)
 		testing.expect_value(t, sheet_image.channels, still_image.channels)
-		// Each drawn form reads back from its box in the sheet.
-		if sheet.with_forms && sheet_image.channels == 4 {
-			for &drawn, index in forms.drawn {
-				expected := site_mark_form_pixels(sheet.picture, &drawn)
-				form_row_bytes := layout.form_width * 4
-				left := (index % layout.form_columns) * layout.form_width
-				top := layout.form_top + (index / layout.form_columns) * layout.form_height
-				same_form := true
-				for row in 0 ..< layout.form_height {
-					if string(sheet_image.pixels[((top + row) * sheet_image.width + left) * 4:][:form_row_bytes]) != string(expected[row * form_row_bytes:][:form_row_bytes]) {
-						same_form = false
-						break
-					}
-				}
-				testing.expectf(t, same_form, "the drawn form %d of %s is not its cells", index, sheet.file_name)
-			}
-		}
+		testing.expect_value(t, tile_map.layout.sprite_width, still_image.width)
 		row_bytes := still_image.width * still_image.channels
 		sheet_row_bytes := sheet_image.width * sheet_image.channels
 		same := true
@@ -70,14 +64,14 @@ site_mark_animation_sheets_read_back :: proc(t: ^testing.T) {
 				break
 			}
 		}
-		testing.expectf(t, same, "the first sprite of %s is not its still picture", sheet.file_name)
+		testing.expectf(t, same, "the first sprite of %s is not its still picture", tile_map.picture.file_name)
 	}
 	// A sheet in the place of another is found.
 	damaged := make(map[string][]u8, context.temp_allocator)
 	for path, data in files {
 		damaged[path] = data
 	}
-	damaged[SITE_PICTURE_FOLDER + "/" + SITE_MARK_ANIMATION_ICON] = files[SITE_PICTURE_FOLDER + "/" + SITE_MARK_ANIMATION_HOME]
+	damaged[SITE_PICTURE_FOLDER + "/" + SITE_MARK_ANIMATION_HOME] = files[SITE_PICTURE_FOLDER + "/" + SITE_MARK_ANIMATION_HOME_LIGHT]
 	testing.expect(t, len(site_mark_animation_problems(damaged)) == 1)
 }
 
@@ -118,21 +112,22 @@ site_mark_sprites_are_distinct :: proc(t: ^testing.T) {
 	// doze, 1 of the stretch, 2 of the ruffle, 1 of the wade, 3 of the flap.
 	testing.expect_value(t, len(sprites.cells), 43)
 	// A sprite of the home is the heron alone, 192 pixels wide. The sprites
-	// are in rows, and no side of a sheet is longer than a browser decodes.
-	home, _, _, _ := site_mark_animation_pictures()
-	sprite_width, sprite_height := site_mark_size(home)
+	// are in rows, and no side of a tile map is longer than a browser
+	// decodes.
+	home, _ := mark_use_picture(SITE_MARK_HOME)
+	sprite_width, sprite_height := mark_picture_size(home)
 	testing.expect_value(t, sprite_width, mark.heron_size(home.heron_cell))
 	testing.expect_value(t, sprite_height, mark.heron_size(home.heron_cell))
 	columns, rows := site_mark_sheet_shape(len(sprites.cells))
 	testing.expect(t, columns * rows >= len(sprites.cells))
-	testing.expect(t, columns <= SITE_MARK_SHEET_COLUMNS)
-	testing.expect(t, sprite_width * columns <= SITE_MARK_SHEET_SIDE_MOST)
-	testing.expect(t, sprite_height * rows <= SITE_MARK_SHEET_SIDE_MOST)
+	testing.expect(t, columns <= MARK_TILE_MAP_COLUMNS)
+	testing.expect(t, sprite_width * columns <= MARK_PICTURE_SIDE_MOST)
+	testing.expect(t, sprite_height * rows <= MARK_PICTURE_SIDE_MOST)
 	single_columns, single_rows := site_mark_sheet_shape(1)
 	testing.expect_value(t, single_columns, 1)
 	testing.expect_value(t, single_rows, 1)
-	full_columns, full_rows := site_mark_sheet_shape(SITE_MARK_SHEET_COLUMNS + 1)
-	testing.expect_value(t, full_columns, SITE_MARK_SHEET_COLUMNS)
+	full_columns, full_rows := site_mark_sheet_shape(MARK_TILE_MAP_COLUMNS + 1)
+	testing.expect_value(t, full_columns, MARK_TILE_MAP_COLUMNS)
 	testing.expect_value(t, full_rows, 2)
 	for animation in mark.Animation {
 		testing.expect_value(t, len(sprites.of_frame[animation]), mark.animation_frame_count(animation))
@@ -141,19 +136,22 @@ site_mark_sprites_are_distinct :: proc(t: ^testing.T) {
 
 // The addresses of the sheets that a test gives to the table.
 @(private = "file")
-TEST_SHEET_ADDRESSES :: [3]string{"pictures/dark.png?v=1", "pictures/light.png?v=2", "pictures/icon.png?v=3"}
+TEST_SHEET_ADDRESSES :: [SITE_MARK_SHEET_COUNT]string{"pictures/dark.png?v=1", "pictures/light.png?v=2", "pictures/icon.png?v=3"}
 
 // The table in the script is JSON with the counts of support/mark, the
 // moves of the tool, the bounds of the still times and the steps of the
 // model.
 @(test)
 site_mark_animation_table_parses :: proc(t: ^testing.T) {
-	sprites, ok := site_mark_sprites()
-	home, _, _, pictures_ok := site_mark_animation_pictures()
-	testing.expect(t, ok && pictures_ok)
-	forms, forms_ok := site_mark_forms(&sprites)
-	testing.expect(t, forms_ok)
-	table := site_mark_animation_table_json(&sprites, &forms, home, TEST_SHEET_ADDRESSES)
+	tile_maps, tile_maps_ok := site_mark_tile_maps()
+	testing.expect(t, tile_maps_ok)
+	if !tile_maps_ok {
+		return
+	}
+	sprites := tile_maps.dark.sprites
+	forms := tile_maps.dark.forms
+	home := tile_maps.dark.picture
+	table := site_mark_animation_table_json(&tile_maps, TEST_SHEET_ADDRESSES)
 	value, err := json.parse_string(table, .JSON, false, context.temp_allocator)
 	root, is_object := value.(json.Object)
 	testing.expectf(t, err == .None && is_object, "the table does not parse: %v", err)
@@ -163,17 +161,40 @@ site_mark_animation_table_parses :: proc(t: ^testing.T) {
 	count, _ := root["sprites"].(json.Float) // parse_string with no integers: each number is a float.
 	testing.expect_value(t, int(count), len(sprites.cells))
 	columns, _ := root["columns"].(json.Float)
-	testing.expect_value(t, int(columns), SITE_MARK_SHEET_COLUMNS)
-	home_table, _ := root["home"].(json.Object)
-	dark, _ := home_table["dark"].(json.String)
+	testing.expect_value(t, int(columns), MARK_TILE_MAP_COLUMNS)
+	// The three tile maps, by their addresses.
+	sheets_table, _ := root["sheets"].(json.Object)
+	dark, _ := sheets_table["dark"].(json.String)
+	light, _ := sheets_table["light"].(json.String)
+	icon_sheet, _ := sheets_table["icon"].(json.String)
 	testing.expect_value(t, dark, "pictures/dark.png?v=1")
-	water, _ := home_table["water"].(json.Float)
+	testing.expect_value(t, light, "pictures/light.png?v=2")
+	testing.expect_value(t, icon_sheet, "pictures/icon.png?v=3")
+	// A tile of the home is 192 by 192 pixels, and its water 16.
+	tile_table, _ := root["tile"].(json.Object)
+	water, _ := tile_table["water"].(json.Float)
+	sprite_width, _ := tile_table["width"].(json.Float)
+	sprite_height, _ := tile_table["height"].(json.Float)
 	testing.expect_value(t, int(water), mark.WATER_ROWS * home.heron_cell)
-	// Where the drawn forms are in a sheet of the home: under the three
-	// rows of the sprites, twelve boxes of 256 by 208 pixels in a row, the
-	// natural heron 48 pixels from the left of its box and 32 from its top.
+	testing.expect_value(t, int(sprite_width), 192)
+	testing.expect_value(t, int(sprite_height), 192)
+	testing.expect_value(t, int(water), 16)
+	// The icon of the tab: 32 pixels, a tile of 24 pixels of its tile map
+	// 4 pixels from its edges, 16 tiles in a row.
+	icon_table, _ := root["icon"].(json.Object)
+	icon_size, _ := icon_table["size"].(json.Float)
+	icon_margin, _ := icon_table["margin"].(json.Float)
+	icon_tile, _ := icon_table["tile"].(json.Float)
+	icon_columns, _ := icon_table["columns"].(json.Float)
+	testing.expect_value(t, int(icon_size), 32)
+	testing.expect_value(t, int(icon_margin), 4)
+	testing.expect_value(t, int(icon_tile), 24)
+	testing.expect_value(t, int(icon_columns), MARK_TILE_MAP_COLUMNS)
+	// Where the drawn forms are in a tile map of the home, in pixels: under
+	// the three rows of the sprites, twelve boxes of 256 by 208 in a row,
+	// the natural heron 48 from the left of its box and 32 from its top.
 	forms_table, _ := root["forms"].(json.Object)
-	layout := site_mark_sheet_layout(home, len(sprites.cells), len(forms.drawn))
+	layout := tile_maps.dark.layout
 	form_numbers := [?]struct {
 		name:  string,
 		value: int,
@@ -293,7 +314,7 @@ site_mark_animation_table_parses :: proc(t: ^testing.T) {
 	limits, _ := root["limits"].(json.Object)
 	frame_least, _ := limits["frameLeast"].(json.Float)
 	testing.expect_value(t, int(frame_least), mark.DASH_FRAME_DURATION_LEAST)
-	script := site_mark_animation_script(&sprites, &forms, home, TEST_SHEET_ADDRESSES)
+	script := site_mark_animation_script(&tile_maps, TEST_SHEET_ADDRESSES)
 	testing.expect(t, !strings.contains(script, "/*TABLE*/"))
 	testing.expect(t, strings.contains(script, "mark animation self test: "))
 	// The script and the style sheet name the same classes, and the script
@@ -308,25 +329,114 @@ site_mark_animation_table_parses :: proc(t: ^testing.T) {
 	testing.expect_value(t, mark.GENERATOR_INCREMENT, 1013904223)
 }
 
-// The rules of the style sheet for the heron that plays: the stage has the
-// box of the still picture, what moves takes no pointer, the page is cut at
-// the sides of the window while the heron crosses it, and a reader who asks
+// The rules of the style sheet for the heron of the home. The pictures of
+// the home are the smooth variant, 8 pixels for a cell, and the page shows
+// them at their own size: the stage, the canvas of the heron (the box of a
+// form, 32 by 26 cells) and the canvas of the water (24 by 2 cells) each
+// have a size in pixels that is their count of cells times the pixels of
+// a cell of the still picture of the home, which the table of the uses of
+// the mark gives. What moves takes no pointer, the page is cut at the
+// sides of the window while the heron crosses it, and a reader who asks
 // for reduced motion sees the still picture.
 @(test)
 site_mark_animation_rules_keep_the_page :: proc(t: ^testing.T) {
 	sheet := site_style_sheet("")
-	home, _, _, _ := site_mark_animation_pictures()
-	width, height := site_mark_size(home)
-	testing.expect_value(t, width, 192)
-	testing.expect_value(t, height, 192)
+	home, home_found := mark_use_picture(SITE_MARK_HOME)
+	testing.expect(t, home_found)
+	factor := home.heron_cell
+	testing.expect_value(t, factor, 8)
+	testing.expect_value(t, home.variant, mark.Variant.Smooth)
 	testing.expect(t, strings.contains(sheet, ".mark-stage { display: block; position: relative; width: 192px; height: 192px; }"))
-	testing.expect(t, strings.contains(sheet, ".mark-stage canvas { display: block; position: absolute; left: 0; image-rendering: pixelated; pointer-events: none; }"))
+	testing.expect(t, strings.contains(sheet, ".mark-stage canvas { display: block; position: absolute; left: 0; image-rendering: crisp-edges; image-rendering: pixelated; pointer-events: none; }"))
 	// The canvas of the heron is the box of a form: 6 cells past the stage
 	// at its left, its bottom on the line of the water.
-	testing.expect(t, strings.contains(sheet, ".mark-stage .mark-heron { left: -48px; bottom: 16px; }"))
-	testing.expect(t, strings.contains(sheet, ".mark-stage .mark-water { bottom: 0; }"))
+	testing.expect(t, strings.contains(sheet, ".mark-stage .mark-heron { left: -48px; bottom: 16px; width: 256px; height: 208px; }"))
+	testing.expect(t, strings.contains(sheet, ".mark-stage .mark-water { bottom: 0; width: 192px; height: 16px; }"))
 	testing.expect(t, strings.contains(sheet, "html.mark-travel { overflow-x: clip; }"))
 	testing.expect(t, strings.contains(sheet, "@media (prefers-reduced-motion: reduce) {\n  .mark-stage { display: none; }\n  .home-head picture.mark-replaced { display: block; }\n}"))
+	// Each size of the rules of the mark is a count of pixels that the
+	// factor divides: a cell is a whole count of pixels of the page. No
+	// size is a part of the page or of the window.
+	rules := site_mark_animation_rules()
+	sizes := 0
+	rest := rules
+	for {
+		end := strings.index(rest, "px;")
+		if end < 0 {
+			break
+		}
+		start := end
+		for start > 0 && rest[start - 1] >= '0' && rest[start - 1] <= '9' {
+			start -= 1
+		}
+		value := 0
+		for digit in rest[start:end] {
+			value = value * 10 + int(digit - '0')
+		}
+		testing.expectf(t, start < end && value % factor == 0, "the size %s px of the rules of the mark is not a whole count of cells", rest[start:end])
+		sizes += 1
+		rest = rest[end + len("px;"):]
+	}
+	// The stage 2, the heron 4, the water 2.
+	testing.expect_value(t, sizes, 8)
+	for unit in ([]string{"%", "vw", "vh", "em;", "calc("}) {
+		testing.expectf(t, !strings.contains(rules, unit), "the rules of the mark hold a size in %s", unit)
+	}
+	// The same factor at every width of the window: the rules of the mark
+	// hold one rule for a kind of window, the one of the reduced motion,
+	// and it holds no size.
+	testing.expect_value(t, strings.count(rules, "@media"), 1)
+	// No smoothing, in the two words that browsers know, for the canvases;
+	// the standard word is the last.
+	testing.expect_value(t, strings.count(rules, SITE_MARK_NO_SMOOTHING), 1)
+	testing.expect_value(t, SITE_MARK_NO_SMOOTHING, "image-rendering: crisp-edges; image-rendering: pixelated; ")
+	// The home shows its still picture, the smooth variant, at its size.
+	site := test_site()
+	site.readme.mark_description = "The mark"
+	head := strings.builder_make(context.temp_allocator)
+	site_home_head(&site, &head)
+	testing.expect(t, strings.contains(strings.to_string(head), "<img class=\"mark\" src=\"pictures/mark_home.png\" width=\"192\" height=\"192\" alt=\"The mark\">"))
+	testing.expect(t, strings.contains(strings.to_string(head), "<source media=\"(prefers-color-scheme: light)\" srcset=\"pictures/mark_home_light.png\">"))
+}
+
+// The icon of the tab that the script draws during an animation is a tile
+// of the tile map of the icon: the icon of 32 pixels of favicon.ico is the
+// still heron of that tile map, the cells variant, one pixel for a cell, in
+// the light scheme, 4 empty pixels from each edge.
+@(test)
+site_mark_tab_icon_is_a_tile_of_its_tile_map :: proc(t: ^testing.T) {
+	icon, icon_ok := site_mark_tab_icon_picture()
+	heron_light, pictures_ok := mark_use_picture(SITE_MARK_ANIMATION_ICON)
+	testing.expect(t, icon_ok && pictures_ok)
+	if !icon_ok || !pictures_ok {
+		return
+	}
+	testing.expect_value(t, SITE_MARK_ANIMATION_ICON_MARGIN, 4)
+	icon_width, icon_height := mark_picture_size(icon)
+	testing.expect_value(t, icon_width, SITE_MARK_ANIMATION_ICON_SIZE)
+	testing.expect_value(t, icon_height, SITE_MARK_ANIMATION_ICON_SIZE)
+	testing.expect_value(t, mark_picture_channels(icon), 4)
+	testing.expect(t, heron_light.on_light)
+	testing.expect_value(t, heron_light.variant, icon.variant)
+	testing.expect_value(t, heron_light.heron_cell, icon.heron_cell)
+	still := mark.still_cells()
+	icon_pixels := mark_picture_pixels(icon, &still)
+	heron_pixels := mark_picture_pixels(heron_light, &still)
+	for row in 0 ..< SITE_MARK_ANIMATION_ICON_SIZE {
+		for column in 0 ..< SITE_MARK_ANIMATION_ICON_SIZE {
+			from_icon := icon_pixels[(row * SITE_MARK_ANIMATION_ICON_SIZE + column) * 4:][:4]
+			expected := [4]u8{}
+			in_row := row - SITE_MARK_ANIMATION_ICON_MARGIN
+			in_column := column - SITE_MARK_ANIMATION_ICON_MARGIN
+			if in_row >= 0 && in_row < mark.HERON_GRID_SIZE && in_column >= 0 && in_column < mark.HERON_GRID_SIZE {
+				copy(expected[:], heron_pixels[(in_row * mark.HERON_GRID_SIZE + in_column) * 4:][:4])
+			}
+			if from_icon[0] != expected[0] || from_icon[1] != expected[1] || from_icon[2] != expected[2] || from_icon[3] != expected[3] {
+				testing.expectf(t, false, "the pixel %d, %d of the icon is not the heron of its tile map", column, row)
+				return
+			}
+		}
+	}
 }
 
 // A cell of the heron never changes its form on the site: the script and
@@ -335,11 +445,9 @@ site_mark_animation_rules_keep_the_page :: proc(t: ^testing.T) {
 // cells, in steps.
 @(test)
 site_mark_script_and_style_scale_nothing :: proc(t: ^testing.T) {
-	sprites, ok := site_mark_sprites()
-	home, _, _, pictures_ok := site_mark_animation_pictures()
-	forms, forms_ok := site_mark_forms(&sprites)
-	testing.expect(t, ok && pictures_ok && forms_ok)
-	script := site_mark_animation_script(&sprites, &forms, home, TEST_SHEET_ADDRESSES)
+	tile_maps, tile_maps_ok := site_mark_tile_maps()
+	testing.expect(t, tile_maps_ok)
+	script := site_mark_animation_script(&tile_maps, TEST_SHEET_ADDRESSES)
 	rules := site_mark_animation_rules()
 	for word in ([]string{"scale(", "scaleX", "scaleY", "scale3d", "matrix(", "rotate(", "skew", "zoom", "transform-origin"}) {
 		testing.expectf(t, !strings.contains(script, word), "the script of the mark holds %s", word)
@@ -357,6 +465,17 @@ site_mark_script_and_style_scale_nothing :: proc(t: ^testing.T) {
 	// has the same width and height at its source and at its place.
 	testing.expect(t, strings.contains(script, "heronContext.drawImage(sheet, left, top, width, above, forms.left, forms.up, width, above);"))
 	testing.expect(t, strings.contains(script, "forms.width, forms.height, 0, 0, forms.width, forms.height);"))
+	testing.expect(t, strings.contains(script, "waterContext.drawImage(sheet, left, top + above, width, TABLE.tile.water, 0, 0, width, TABLE.tile.water);"))
+	testing.expect(t, strings.contains(script, "tile, tile, margin, margin, tile, tile);"))
+	// Four copies in all, and the script asks for no smoothing of a copy:
+	// a copy at its own size has none.
+	testing.expect_value(t, strings.count(script, "drawImage("), 4)
+	testing.expect(t, !strings.contains(script, "imageSmoothing"))
+	// A canvas has the pixels of its tiles: its size is a count of the table,
+	// in pixels of the sheet, and the script sets no size of the page.
+	testing.expect(t, strings.contains(script, "heron.width = TABLE.forms.width;") && strings.contains(script, "heron.height = TABLE.forms.height;"))
+	testing.expect(t, strings.contains(script, "water.width = width;") && strings.contains(script, "water.height = TABLE.tile.water;"))
+	testing.expect(t, !strings.contains(script, ".style"))
 	testing.expect(t, strings.contains(sheet_rule_of_pixels(), "image-rendering: pixelated"))
 }
 

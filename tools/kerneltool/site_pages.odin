@@ -830,13 +830,10 @@ site_who_class :: proc(who: string) -> string {
 // (one line: the first sentence of the lead of README.md) and the links to
 // the sections. The rest of the lead is not in the head.
 site_home_head :: proc(site: ^Site, b: ^strings.Builder) {
-	home_picture: Site_Mark_Picture
-	for picture in site_mark_pictures {
-		if picture.file_name == SITE_MARK_HOME {
-			home_picture = picture
-		}
-	}
-	width, height := site_mark_size(home_picture)
+	// The still picture of the home, as the table of the uses of the mark
+	// gives it: the smooth variant, at its own size.
+	home_picture, _ := mark_use_picture(SITE_MARK_HOME)
+	width, height := mark_picture_size(home_picture)
 	strings.write_string(b, "<header class=\"home-head\">\n<picture>")
 	fmt.sbprintf(b, "<source media=\"(prefers-color-scheme: light)\" srcset=\"%s/%s\">", SITE_PICTURE_FOLDER, SITE_MARK_HOME_LIGHT)
 	fmt.sbprintf(b, "<img class=\"mark\" src=\"%s/%s\" width=\"%d\" height=\"%d\" alt=\"", SITE_PICTURE_FOLDER, SITE_MARK_HOME, width, height)

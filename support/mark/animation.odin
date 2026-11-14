@@ -832,21 +832,21 @@ cells_differ_count :: proc "contextless" (first, second: ^Heron_Cells) -> int {
 
 // cells_pixel gives the color of the pixel (x, y) of a frame of the heron,
 // as mark_pixel does for the still heron: the same cell sizes, the same
-// colors and gradients.
-cells_pixel :: proc "contextless" (cells: ^Heron_Cells, cell_size, x, y: int, on_light: bool) -> (color: u32, covered: bool) {
-	if !cell_size_is_accepted(cell_size) || x < 0 || y < 0 || x >= heron_size(cell_size) || y >= heron_size(cell_size) {
+// variants, the same colors and gradients.
+cells_pixel :: proc "contextless" (cells: ^Heron_Cells, cell_size, x, y: int, variant: Variant, on_light: bool) -> (color: u32, covered: bool) {
+	if !variant_is_drawn(variant, cell_size) || x < 0 || y < 0 || x >= heron_size(cell_size) || y >= heron_size(cell_size) {
 		return 0, false
 	}
 	index, found := part_of_letter(cells[y / cell_size][x / cell_size])
 	if !found {
 		return 0, false
 	}
-	return part_pixel(index, cell_size, x, y, on_light), true
+	return part_pixel(index, cell_size, x, y, variant, on_light), true
 }
 
 // cells_draw draws a frame of the heron into a canvas, as mark_draw draws
 // the still heron: the covered pixels only, nothing outside the canvas.
-cells_draw :: proc "contextless" (canvas: graphics.Canvas, cells: ^Heron_Cells, x, y, cell_size: int, on_light: bool, order := Channel_Order.Red_In_High_Byte) {
+cells_draw :: proc "contextless" (canvas: graphics.Canvas, cells: ^Heron_Cells, x, y, cell_size: int, variant: Variant, on_light: bool, order := Channel_Order.Red_In_High_Byte) {
 	size := heron_size(cell_size)
 	first_x, first_y, last_x, last_y, inside := place_in_canvas(canvas, x, y, size, size)
 	if !inside {
@@ -854,7 +854,7 @@ cells_draw :: proc "contextless" (canvas: graphics.Canvas, cells: ^Heron_Cells, 
 	}
 	for canvas_y in first_y ..< last_y {
 		for canvas_x in first_x ..< last_x {
-			if color, covered := cells_pixel(cells, cell_size, canvas_x - x, canvas_y - y, on_light); covered {
+			if color, covered := cells_pixel(cells, cell_size, canvas_x - x, canvas_y - y, variant, on_light); covered {
 				canvas.pixels[canvas_y * canvas.stride + canvas_x] = color_in_order(color, order)
 			}
 		}
