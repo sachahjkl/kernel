@@ -8,7 +8,7 @@ package kerneltool
 // the left, the window of heron in front of it, wholly on the screen, and
 // the pointer in a corner. Then the worker films:
 //
-//  1. the heron stands, and plays animations in its own order;
+//  1. the heron stands, and plays an animation in its own order;
 //  2. the key 8: the dash at full speed, two times;
 //  3. the key s, then 8: the dash four times slower;
 //  4. the key l: the lines of the cells; then the hop, the stretch and the
@@ -22,23 +22,20 @@ package kerneltool
 //
 // The keys and the lines of the dash, of the held third frame and of its
 // two ways are those of the main scenario of the machine test
-// (machine.odin): the film shows what the test checks. A scene waits for
-// its line before its hold, so the film never shows a state that the
-// machine did not reach.
+// (machine.odin): the film shows what the test checks.
 //
-// The program writes no line for some of its keys. The scenario then
-// sends the key, holds for the viewer, and waits for the next line that
-// the program writes, which names the state after these keys:
-//   - a dot writes no line: the line of the key g, or of the key l, after
-//     the dots names the frame that they reached;
-//   - Space and an animation key during a pause write no line: the same
-//     line says "held" and names the animation;
-//   - the key s writes no line: the line of the slow dash is the line of
-//     a dash;
-//   - the key z writes no line, and no line names the cell size;
-//   - an animation of the own order of the heron writes no line: the
-//     first scene is a hold that is longer than the longest still time
-//     (1287 ms), so one animation starts in it.
+// Each key of the program writes one line after the program presented the
+// state of that key, and each scene waits for its line: the film never
+// shows a state that the machine did not reach, and no hold stands for a
+// wait. A hold comes after its wait, where a viewer needs the time to see
+// or to read the state.
+//
+// The first scene waits for the end of an animation of the own order of
+// the heron. A wait finds a line after the line of the wait before it, so
+// the scenario first makes a line that is later than each animation that
+// played while the desktop was made: it pauses the play before the film
+// starts and lets it go on as the film starts. The line of the animation
+// that the scene waits for is then of an animation that the film shows.
 @(rodata)
 scenario_heron_film := [?]Step {
 	// The boot. The programs write in an order that the system does not fix.
@@ -58,10 +55,17 @@ scenario_heron_film := [?]Step {
 	// corner of the screen, which no window covers. A press on the
 	// background brings no window to the front: heron keeps the keys.
 	{kind = .Click, x = 1018, y = 762},
+	// The play stops until the film starts.
+	{kind = .Key, text = "spc"},
+	{kind = .Wait, text = "heron: paused"},
 
-	// Scene 1: the heron stands, then plays in its own order.
+	// Scene 1: the heron plays in its own order, until one animation that
+	// the film shows ended.
 	{kind = .Film_Start, text = "heron"},
-	{kind = .Film_Hold, milliseconds = 2 * FILM_HOLD_READ},
+	{kind = .Key, text = "spc"},
+	{kind = .Wait, text = "heron: plays again"},
+	{kind = .Wait, text = " played in its own order: "},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 
 	// Scene 2: the dash at full speed. The heron leaves the window by the
 	// right and comes back by the left. Then once more.
@@ -76,10 +80,12 @@ scenario_heron_film := [?]Step {
 	// of the run and of the brake read. The band shows "slow" in the color
 	// of a state that is on.
 	{kind = .Keys, text = "s"},
+	{kind = .Wait, text = "heron: slow"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 	{kind = .Keys, text = "8"},
 	{kind = .Wait, text = "heron: dash played: 17 frames, the heron left the window and came back, on the grid"},
 	{kind = .Keys, text = "s"},
+	{kind = .Wait, text = "heron: full speed"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 
 	// Scene 4: the lines of the cells, then three more moves on the grid.
@@ -100,19 +106,23 @@ scenario_heron_film := [?]Step {
 
 	// Scene 5: the dash frame by frame. Space pauses, the key 8 shows the
 	// first frame, and each dot the next one: the third frame has the form
-	// of the run, with the cells that it changed outlined in white.
+	// of the run, with the cells that it changed outlined in white. Each
+	// key writes the line of the frame that the window holds.
 	{kind = .Key, text = "spc"},
+	{kind = .Wait, text = "heron: paused"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 	{kind = .Keys, text = "8"},
+	{kind = .Wait, text = "heron: shows dash at frame 1 of 17, held, on the grid: "},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
 	{kind = .Keys, text = "."},
+	{kind = .Wait, text = "heron: shows dash at frame 2 of 17, held, on the grid: "},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
 	{kind = .Keys, text = "."},
+	{kind = .Wait, text = "heron: shows dash at frame 3 of 17, held, on the grid: the form run, "},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
 
 	// Scene 6: the same held frame in the free way: the frame is stretched
-	// and its cells are rectangles. Then on the grid again. Each line
-	// names the third frame, held: the two dots took effect.
+	// and its cells are rectangles. Then on the grid again.
 	{kind = .Keys, text = "g"},
 	{kind = .Wait, text = "heron: shows dash at frame 3 of 17, held, free: the frame stretched to "},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ},
@@ -120,10 +130,12 @@ scenario_heron_film := [?]Step {
 	{kind = .Wait, text = "heron: shows dash at frame 3 of 17, held, on the grid: the form run, "},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_LOOK},
 	// Two more frames: the heron goes to the right edge of the window.
-	// The key l hides the lines, and its line names the fifth frame.
+	// Then the key l hides the lines.
 	{kind = .Keys, text = "."},
+	{kind = .Wait, text = "heron: shows dash at frame 4 of 17, held, on the grid: "},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
 	{kind = .Keys, text = "."},
+	{kind = .Wait, text = "heron: shows dash at frame 5 of 17, held, on the grid: "},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
 	{kind = .Keys, text = "l"},
 	{kind = .Wait, text = "heron: shows dash at frame 5 of 17, held, on the grid: "},
@@ -135,12 +147,16 @@ scenario_heron_film := [?]Step {
 	// a last dash at full speed, whose line says that the cells are those
 	// of the grid and that the heron is back in its place.
 	{kind = .Keys, text = "z"},
+	{kind = .Wait, text = "heron: cells of 8 pixels"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_LOOK},
 	{kind = .Keys, text = "z"},
+	{kind = .Wait, text = "heron: cells of 4 pixels"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_LOOK},
 	{kind = .Keys, text = "z"},
+	{kind = .Wait, text = "heron: cells of 12 pixels"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
 	{kind = .Key, text = "spc"},
+	{kind = .Wait, text = "heron: plays again"},
 	{kind = .Wait, text = "heron: dash played: "},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 	{kind = .Keys, text = "8"},
