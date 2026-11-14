@@ -778,7 +778,7 @@ SITE_SCROLL_RULES :: `
   ::-webkit-scrollbar-corner { background: var(--scroll-button); }
 }
 @supports not selector(::-webkit-scrollbar) {
-  html, .tree, .outline, .table, pre, .bar-menu-content, .search-panel, .type-card, .declaration-card { scrollbar-color: var(--scroll-thumb-edge) var(--scroll-track); scrollbar-width: auto; }
+  html, .tree, .outline, .table, pre, .bar-menu-content, .search-panel, .type-card, .declaration-card, .carousel-track { scrollbar-color: var(--scroll-thumb-edge) var(--scroll-track); scrollbar-width: auto; }
 }
 `
 
@@ -971,6 +971,10 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	// The colors of the kinds of the module graph, then its rules.
 	site_module_graph_variables(&builder, false)
 	strings.write_string(&builder, SITE_MODULE_GRAPH_RULES)
+	// The columns and the cards of the page of the roadmap.
+	strings.write_string(&builder, SITE_ROADMAP_RULES)
+	// The menu of the bar that holds the sections that are not buttons.
+	strings.write_string(&builder, site_project_menu_rules())
 	// The colors and the widths of the tiles of the boot image: they come
 	// from the image of the build, so they are not fixed rules.
 	strings.write_string(&builder, tile_rules)
@@ -993,5 +997,10 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	// Print is plain black text, also in the light form, whose colors of code
 	// come after the polish.
 	strings.write_string(&builder, "@media print {\n  pre, code, .value, pre .type-reference, button.type-reference.value, [class^=\"c-\"] { color: #000; }\n}\n")
+	// The gallery and the carousel of the home: rules with no color of
+	// their own, so they are the same in both forms. They come last: the
+	// room above a picture of the carousel that a link shows is larger than
+	// the room of another target of a link.
+	strings.write_string(&builder, site_gallery_rules())
 	return strings.to_string(builder)
 }

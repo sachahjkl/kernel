@@ -266,14 +266,19 @@ site_menu_of_the_bar :: proc(t: ^testing.T) {
 	site := metadata_test_site("")
 	html := site_page_html(&site, site.pages[2]) // The guide A.
 	testing.expect_value(t, site.pages[2].path, TEST_GUIDE_A)
-	testing.expect_value(t, strings.count(html, "<details"), 1)
-	testing.expect_value(t, strings.count(html, "<summary"), 1)
+	// Two details elements: the site menu, and inside it the menu of the
+	// sections that are not buttons (the small site has the releases).
+	testing.expect_value(t, strings.count(html, "<details"), 2)
+	testing.expect_value(t, strings.count(html, "<summary"), 2)
+	testing.expect_value(t, strings.count(html, SITE_PROJECT_MENU_OPEN), 1)
 	testing.expect_value(t, strings.count(html, "aria-label=\"Sections\""), 1)
 	testing.expect(t, strings.contains(html, "<span class=\"bar-menu-name\">Menu</span></summary>"))
 	details := strings.index(html, "<details class=\"bar-menu\">")
 	sections := strings.index(html, "<nav class=\"bar-sections\" aria-label=\"Sections\">")
 	search := strings.index(html, "id=\"site-search-box\"")
-	details_end := strings.index(html, "</details>")
+	// The end of the site menu is the end of the bar: the menu of the
+	// sections ends inside the navigation.
+	details_end := strings.index(html, "</details>\n</div>\n</header>")
 	testing.expect(t, details >= 0 && details < sections && sections < search && search < details_end)
 	if sections < 0 || details_end < 0 || sections > details_end {
 		return
@@ -463,7 +468,7 @@ site_icons_of_the_site :: proc(t: ^testing.T) {
 	for icon in site_icons {
 		drawing := 24 * icon.heron_cell
 		testing.expectf(t, drawing <= icon.size && (icon.size - drawing) % 2 == 0, "the icon of %d has a drawing of %d", icon.size, drawing)
-		data, encoded := site_mark_encode(site_icon_picture(icon))
+		data, encoded := mark_picture_png(site_icon_picture(icon))
 		testing.expect(t, encoded)
 		width, height, _ := site_png_size(data)
 		testing.expect_value(t, width, icon.size)
@@ -644,11 +649,11 @@ site_pictures_opaque_and_compressed :: proc(t: ^testing.T) {
 	testing.expect(t, !damaged_ok)
 
 	// The picture for other sites that the tool draws.
-	for picture in site_mark_pictures {
+	for picture in mark_uses_pictures(.Site, .Picture) {
 		if picture.file_name != SITE_MARK_CARD {
 			continue
 		}
-		data, encoded := site_mark_encode(picture)
+		data, encoded := mark_picture_png(picture)
 		testing.expect(t, encoded)
 		card_width, card_height, _ := site_png_size(data)
 		testing.expect_value(t, card_width, SITE_CARD_WIDTH)

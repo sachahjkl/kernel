@@ -23,7 +23,7 @@ Each claim names the program that shows it, and its picture below.
 
 The Nix flake supplies every tool. `nix develop`, then `kerneltool run`, builds the system and starts it in a virtual machine. In the machine, type `help()` in the console, or open the menu of the programs with the button "programs" of the bar. The section "Use" lists the other commands.
 
-[`CHANGELOG.md`](CHANGELOG.md) lists what each release brings. `kerneltool release_number` prints the newest release.
+[`CHANGELOG.md`](CHANGELOG.md) lists what each release brings. `kerneltool release_number` prints the newest release. [`ROADMAP.md`](ROADMAP.md) lists the planned work: what is in work now, what comes next, and what comes later.
 
 ## Pictures
 
@@ -153,6 +153,8 @@ The repository holds no picture of the same window with the pointer theme Posy's
 
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
 
+![The program heron: the heron of the mark held at a frame of its dash, in the form of the run, in whole square cells, with the lines of the cells and the cells that the frame changed](docs/screenshots/heron.png)
+
 `kerneltool screenshots` makes these pictures from the running machine.
 
 ## What works
@@ -218,9 +220,11 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `docs/SCHEDULING.md` | The scheduling strategies: what the system takes from CFS, EEVDF and `sched_ext`, and how it changes strategy while it runs |
 | `docs/SIMD.md` | Which procedures compute with vectors, in which form, and how to measure each one |
 | `CHANGELOG.md` | What each release brings, newest first. `changelog.d/` holds the changes that are not in a release yet |
+| `ROADMAP.md` | The planned work, in the sections Now, Next and Later: what each work gives the user |
 | `docs/DECISIONS.md` | The record of the decisions of the project, the open questions and the rules of work |
 | `docs/REVIEWS.md` | The reviews: each concession found, and what removes it |
 | `docs/research/` | Research notes with sources, and video transcripts |
+| `src/md/README.md` | The intent of each part of the system, by the standard of [srcmd.org](https://srcmd.org): why a part has its form, the forms that were refused, the subtle points. An overview of the system and a file index. Read it before a change of the code |
 
 ## Code
 
@@ -231,7 +235,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `runtime/` | `memory.asm`: the copy and the fill of every module, of the kernel and of the boot program (`copy_bytes_without_overlap`, `copy_bytes_with_overlap`, `fill_bytes_with_value`), with its host tests |
 | `contract/` | The source library `contract:`: what two parties agree on. `operation` (the kernel operations), `boot_info` (the record from the boot program to the kernel), `module` (the module format and the loader code), `store` (the format of the data disk), `palette_table` (the entry table and the ring between the palette provider and the palette), `pointer_pictures` (the pointer theme file and its validation), `blake3` (the hash), `ring` (two queues in shared memory, and the shared queue), `isolated` (the isolated call), `glyph_cache` (the drawn glyphs of the vector font), `settings` (the settings page of the principal), `date` (the date page: the date of the time 0 of the system), `system_description` (the signed list of the hashes of the system, and its checks), `start_grant` (the list of what the root service gives a program by its name, and the name of each one) |
 | `support/` | The source library `support:`: what a program compiles in. `system` (kernel operations, text, loader, grants, services), `graphics` (drawing, and the table of the design rules), `interface` (the elements of the windows as draw tables, the damage by difference), `vector_font` (the vector font: a reader of TrueType outlines, a rasterizer in fixed point with subpixel bands, the builder of the glyph cache), `display` (the protocol of the compositor), `terminal` (the terminal ring), `bootscreen`, `bar` (the names of the programs and the places of the bar and of its menus), `palette` (the panel of the palette: its state, its entries, their ranking, its keys, its results and its draw records), `relay` (the records of the `rings` demonstration), `twins` (the modes of the program `twin`) |
-| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `limits`, `processors`, `locks`, `locker`, `scheduler`, `address_space`, `shortage`, `boot`, `pages`, `frames`, `twin`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, `pointers`, `debugger`, `debug_target` |
+| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `heron`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `limits`, `processors`, `locks`, `locker`, `scheduler`, `address_space`, `shortage`, `boot`, `pages`, `frames`, `twin`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, `pointers`, `debugger`, `debug_target` |
 | `resources/` | The sources of the resources of the boot image: the pointer manifests (`resources/pointers/`), the ASCII subsets of the seven candidate vector fonts with their licenses (`resources/fonts/`, `docs/FONTS.md`), and the test signing key, whose private key is published (`resources/keys/`) |
 | `modules/` | Modules of commands (`math`, `probe`), the library modules that programs import (`drawing`: the damage and the draw of a window; `cryptography`), and the test modules of the host load test |
 | `tools/kerneltool/` | The kernel tool: all the automation of the project |
@@ -253,11 +257,12 @@ kerneltool run
 | `run` | Build, then start the machine under QEMU, with the log of the kernel on the terminal of the host |
 | `test` | Build, start the machine, act as the input (keys, pointer), check the log, save pictures |
 | `screenshots` | `test`, then copy the pictures to `docs/screenshots/`. The pictures are compressed PNG files; `screenshots compress` compresses, with no machine, each PNG file of `docs/screenshots/` and `resources/` that is not compressed yet |
-| `film [terminal \| palette]` | Build, start the machine, film a scenario while it types, write `build/films/<name>.mp4` and `build/films/<name>.webm`, and `docs/films/<name>.webm` when a news entry names the film (not a test; no argument: the terminal) |
+| `film [terminal \| palette \| heron]` | Build, start the machine, film a scenario while it types, write `build/films/<name>.mp4` and `build/films/<name>.webm`, and `docs/films/<name>.webm` when a news entry names the film (not a test; no argument: the terminal) |
 | `font` | Convert the BDF file of the font to `support/graphics/font.odin` |
 | `pointers` | Convert the pointer manifests of `resources/pointers/` to pointer theme files in `build/pointers/`, and print a table of each theme (`build` does it too) |
 | `vector_fonts` | Subset the candidate vector fonts to `resources/fonts/`, and draw the picture of the choice `build/fonts/candidates.png` |
 | `portrait` | Convert `programs/temple/portrait.jpg` to `programs/temple/portrait.pixels` |
+| `mark` | `mark still`, `frame`, `tile_map` or `table`, with `--variant smooth\|cells`, `--cell <pixels>`, `--scheme dark\|light`: draw one picture of the mark; `mark uses` prints each file of the mark and its variant |
 | `repeat` | `repeat <module> <count>`: build one module again and again, and count the distinct modules, LLVM IR files and objects; `repeat all <count>`: every module and the boot program, one row each. Each distinct result is kept in `build/different_builds/` |
 | `check` | `odin check -vet` and `odin test` of the host code, then `test` |
 | `site` | Write the site of the system in `build/site/`: one page from the documents, the pictures and the logs of the last machine tests (`docs/SITE.md`) |

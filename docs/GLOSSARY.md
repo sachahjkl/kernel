@@ -5397,11 +5397,23 @@ Do not use: issue, bug (for this), todo, known limitation.
 
 A working record is a document of `docs/` that records the work, not the system: `HANDOFF.md`, `REVIEWS.md`, `SITE.md` and `FIRST_MILESTONE.md`.
 
-A guide explains how a part of the system is designed and why; a working record holds steps, choices, gaps, reviews and the state of the work. So the site publishes the guides and not the working records (`SITE_WORKING_RECORDS`): a link of a page to a working record names the file in the repository, and says so. `docs/DECISIONS.md` is the record of the decisions.
+A guide explains how a part of the system is designed and why; a working record holds steps, choices, gaps, reviews and the state of the work. So the site publishes the guides and not the working records (`SITE_WORKING_RECORDS`): a link of a page to a working record names the file in the repository, and says so. `docs/DECISIONS.md` is the record of the decisions. An intent file is a working record for the site too, by its path under `src/md`.
 
 The design: `docs/SITE.md`, "The pages".
 
 Do not use: internal document, notes.
+
+### Intent file
+
+An intent file is a Markdown file of the folder `src/md` that records why a part of the system has its form.
+
+It holds the purpose of the part, its constraints, the chosen form with its reasons, each form that was refused with its reason, the subtle points, and what is built and what is left. A design is written there before its code, and a change of a design changes its intent file in the same commit as the code. `src/md/README.md` is the entry point of the folder: an overview of the system, and a file index that lists each other file once; `kerneltool check` refuses an index and a folder that are not the same set. The folder follows the standard of [srcmd.org](https://srcmd.org).
+
+An intent file is not a guide: a guide says what the system does and how to use it, and the site publishes it. It is not the record of a decision (`docs/DECISIONS.md`), a review, a log or a plan. It is a working record for the site: a pointer to one links to the file in the repository. Example: `src/md/features/palette.md` says why the palette is a panel of the compositor with the console as its provider, and which forms were refused.
+
+The design: `src/md/README.md`, "The rules of this folder"; `docs/TOOLS.md`, "The intent folder".
+
+Do not use: design document, specification, RFC, architecture decision record.
 
 ### Changelog
 
@@ -5455,6 +5467,40 @@ The design: `changelog.d/README.md`.
 
 Do not use: changeset, news file, entry (for the file).
 
+### Roadmap
+
+The roadmap is the file `ROADMAP.md`: the planned work of the system, in three sections, Now, Next and Later.
+
+It is the one place of the plans, and the other half of the changelog: the changelog lists the work that is done, the roadmap the work that is planned. **Now** holds the work that is in progress, **Next** the work that is decided and comes after, **Later** the work that is wanted and has no order. The file is plain Markdown that a reader understands with no tool: a title, the three sections, and in each a list of roadmap entries. It gives no date, and it names no decision and no person.
+
+The file is written by hand. A work that is planned gets an entry; a work that is done loses its entry in the commit of its changelog fragment. `kerneltool roadmap check` checks the form of the file, and `kerneltool check` runs it. The site shows the file at `roadmap/`, as three columns of cards.
+
+It is not the status page, which gives the state of each property and the gaps of what is built. It is not a list of gaps: a gap is a difference between the code and the documents, and a gap becomes planned work only when an entry names it. It is not a promise of an order: only the sections order the entries.
+
+The design: `docs/TOOLS.md`, "The roadmap", and `docs/SITE.md`, "The roadmap".
+
+Do not use: plan, backlog, to-do list, next steps, milestones.
+
+### Roadmap entry
+
+A roadmap entry is one item of a section of the roadmap: a short bold summary, then one or two sentences on what the work gives the user.
+
+An entry names one planned work in the words of its user: a user of the system, or a developer who builds on it. It says what that reader gets, not how the code changes. Its form is one item of a list:
+
+```
+- **A window for the debugger.** The debugger gets a window over the exports that the console uses today. A step over a call stops after the call returns.
+```
+
+The summary is plain text of at most 80 bytes, with its period inside the bold. When an intent file of `src/md` holds the design of the work, the entry ends with a design link, `[Design](src/md/<file>.md)`, and the file must exist. No two entries have the same summary: the summary is the name of the entry in the search of the site and its address on the page, `roadmap-<summary>`.
+
+An entry has no date, no state of its own and no number: its section is its state, and it moves from one section to another by hand. When its work is done, the entry is removed in the commit that adds the changelog fragment of the work. A fragment that takes the summary of the entry as its bold summary makes `kerneltool roadmap check` fail until the entry is gone, so the removal is not forgotten.
+
+On the site an entry is a card in the column of its section, with the accent of the section: the color of a program for Now, the color of the kernel for Next, the dim color for Later.
+
+The design: `docs/TOOLS.md`, "The roadmap".
+
+Do not use: ticket, issue, task, story, item (for an entry), feature request.
+
 ### News entry
 
 A news entry is a dated report in prose, for a reader who is not a developer of the system, of one thing that the reader can see or use, with its picture.
@@ -5478,7 +5524,7 @@ Do not use: news item, post, announcement, blog post, changelog entry.
 
 A film is the pictures of the screen of a test machine, taken 30 times in one second while a scenario of the tool sends its keys, as one file that a player shows at the speed of the machine.
 
-`kerneltool film <name>` makes a film: `terminal` or `palette`. It writes an MP4 file with H.264 and a WebM file with AV1 from the same pictures, in the build folder. A film is not a test: only its scenario has steps with a fixed time, the period between two typed keys and the hold of a state for its viewer.
+`kerneltool film <name>` makes a film: `terminal`, `palette` or `heron`. It writes an MP4 file with H.264 and a WebM file with AV1 from the same pictures, in the build folder. A film is not a test: only its scenario has steps with a fixed time, the period between two typed keys and the hold of a state for its viewer.
 
 A news entry can name a film, `film: docs/films/<name>.webm`. The command then writes the WebM file in the repository too, which holds it as it holds a screen picture: at most 4 MiB. The site shows it on the page of the news in a `video` element that plays only when the reader starts it, with the picture of the entry in its place before that. A card of the home, the feed and a browser that does not play AV1 show the picture.
 
@@ -5522,7 +5568,7 @@ Do not use: search box, search bar, omnibox.
 
 The mark is the picture that stands for the system: a heron on a grid of 24 by 24 square cells, each part filled with one gradient.
 
-`support/mark` holds it as data: the rows of the still heron, the colors of each part and the animations of the mark. Every picture of the mark comes from that one table: `kerneltool logo` writes the files of `resources/logo`, the site draws its own pictures and its icons, and the system draws it on the boot display. The squares follow the design of the system: rectangular forms, no rounded blob.
+`support/mark` holds it as data: the rows of the still heron, the colors of each part and the animations of the mark. Every picture of the mark comes from that one table. One generator of the tool draws each picture file, in the variant of the mark that its use names: `kerneltool logo` asks it for the files of `resources/logo`, `kerneltool site` for the pictures and the icons of the site, and `kerneltool mark` for one picture. The system draws the mark on the boot display and in the bar. The squares follow the design of the system: rectangular forms, no rounded blob.
 
 The design: `docs/DESIGN.md`, "11. The mark".
 
@@ -5562,7 +5608,7 @@ Do not use: rest pose, idle frame, base frame (a base frame is another thing: se
 
 An animation of the mark is a short list of frames in which a few cells of the still heron change.
 
-In a frame a cell takes the letter of another part, or becomes empty. Each frame has a duration in milliseconds, and starts from the still heron or from an earlier frame of the same animation, its base frame. After its last frame the heron is still again. The animations are data in `support/mark/animation.odin`: 15 of them, from the blink of one cell to the dash. The data does not say when one plays: the order of play of the place that shows them chooses which one comes next. On the site, `mark_animation.js` plays them from the sprite sheet, and a move of the heron goes with four of them.
+In a frame a cell takes the letter of another part, or becomes empty. Each frame has a duration in milliseconds, and starts from the still heron or from an earlier frame of the same animation, its base frame. After its last frame the heron is still again. The animations are data in `support/mark/animation.odin`: 15 of them, from the blink of one cell to the dash. The data does not say when one plays: the order of play of the place that shows them chooses which one comes next. On the site, `mark_animation.js` plays them from a tile map, and a move of the heron goes with four of them.
 
 The design: `docs/DESIGN.md`, "11. The mark".
 
@@ -5570,19 +5616,19 @@ Do not use: idle animation, clip, tween.
 
 ### Order of play
 
-The order of play is the rule that chooses the next animation of the mark on the home of the site: each animation plays once in a round, in an order of chance.
+The order of play is the rule that chooses the next animation of the mark, on the home of the site and in the program `heron`: each animation plays once in a round, in an order of chance.
 
-The script keeps a memory of the animations that were played. It chooses the next one among those that the memory does not hold, each with the same chance. When the memory holds every animation, the script empties it and a new round starts; the animation played last is left out of the first choice of the round, so no animation follows itself. The memory is kept in the storage of the tab for the visit: a reader who comes back to the home does not see the same first animation. Example: with 15 animations, the blink plays once in each 15 animations, at a place of the round that changes.
+The place that plays keeps a memory of the animations that were played. It chooses the next one among those that the memory does not hold, each with the same chance. When the memory holds every animation, it is emptied and a new round starts; the animation played last is left out of the first choice of the round, so no animation follows itself. The rule is one procedure, `mark.next_animation` (`support/mark/play.odin`): the program `heron` calls it, and the kernel tool runs it to check the script of the site. On the site the memory is kept in the storage of the tab for the visit: a reader who comes back to the home does not see the same first animation. Example: with 15 animations, the blink plays once in each 15 animations, at a place of the round that changes.
 
-The design: `docs/SITE.md`, "The rhythm of the animations".
+The design: `docs/SITE.md`, "The rhythm of the animations"; `docs/DESIGN.md`, "The animations".
 
 Do not use: playlist, shuffle, random choice.
 
 ### Still share
 
-The still share is the part of the time, over a long play, that the heron of the home does not move: 40 %.
+The still share is the part of the time, over a long play, that the heron does not move where its animations play: 40 %.
 
-The still time between two animations is chosen by chance around a mean, and the mean follows from the still share and from the times of the animations: the mean time of an animation, times the still share, over the moving share. With 15 animations of 1.29 s on average, the mean still time is 858 ms, and a still time is 429 to 1287 ms. A change of an animation changes the still times, not the share.
+It holds on the home of the site and in the program `heron` (`mark.STILL_SHARE_PERCENT`). The still time between two animations is chosen by chance around a mean, and the mean follows from the still share and from the times of the animations: the mean time of an animation, times the still share, over the moving share. With 15 animations of 1.29 s on average, the mean still time is 858 ms, and a still time is 429 to 1287 ms. A change of an animation changes the still times, not the share.
 
 The design: `docs/SITE.md`, "The rhythm of the animations".
 
@@ -5590,23 +5636,53 @@ Do not use: idle ratio, duty cycle, pause.
 
 ### Move of the heron
 
-A move of the heron is a change of the place and of the size of the picture of the heron on the home of the site during an animation of the mark.
+A move of the heron is the list of the forms and of the places that the heron takes during an animation of the mark, each in whole cells.
 
-An animation of the mark changes cells; a move takes the whole picture above the line of the water: across the window in the dash, up in the hop and the flap, wider and lower in a squash. The two rows of the water stay in their place. A move is a list of keys in the tool (`site_mark_motion_keys`): a time, a place in cells or past an edge of the window, a width and a height in percent. It is not data of `support/mark`: a picture that cannot move, as the icon of a tab, shows the frames alone.
+An animation of the mark changes cells; a move takes the whole heron above the line of the water: across the window in the dash, up in the hop and the flap, wider and lower in a crouch. The two rows of the water stay in their place. A move is a list of keys in `support/mark` (`move_keys`): a time, the form of the heron from that time to the next key, and a place in whole cells or past an edge of the window. The place goes from a key to the next one cell by cell: the heron is never between two cells, and no picture of it changes its size. The home of the site and the program `heron` play the same keys. A picture that cannot move, as the icon of a tab, shows the frames alone.
+
+The design: `docs/DESIGN.md`, "The moves".
+
+Do not use: tween, sprite motion, scale.
+
+### Form of the heron
+
+A form of the heron is one drawing, in whole cells, of the part of the heron above the water: the natural heron, or the heron squashed or stretched.
+
+A cell of the heron is a square of one size, so a squashed heron is not a picture made wider: it is the heron drawn with more columns and fewer rows of the same cells. A form names the columns and the rows of a frame that it draws two times and those that it leaves out, chosen by hand, and then cells that are corrected by hand (`form_lines` and `form_corrections` in `support/mark`). The head, the eye, the beak and the crest are the same in every form, and the column of the standing leg keeps its place. Example: the crouch is 28 by 19 cells; it repeats four columns of the body and leaves out two rows of the neck and one of the legs.
+
+The design: `docs/DESIGN.md`, "The moves".
+
+Do not use: scaled frame, deformation, sampled frame.
+
+### Move on the grid
+
+A move on the grid is a move of the heron in which each cell stays a square of one size at a place of the grid.
+
+It is the way of the system to draw a squash, a stretch and a travel, and the name of that way in the program `heron`, where a key changes between it and the free way. On the grid the heron takes a form of the heron, a drawing in whole cells, and a travel is a count of whole cells: a fast run is many cells from one picture to the next. It is not a filter over a scaled picture: the forms and the places are cells from the start. The other way, the free move, is in the program `heron` only, to compare: the frame of the heron is stretched to the box of the form, so its cells are rectangles, and it is at any pixel. Example: the heron is 24 columns by 22 rows above its water; in the run of the dash it is 32 by 20, 4 cells to the right at its second step.
+
+The design: `docs/DESIGN.md`, "The moves" and "The animations".
+
+Do not use: snap, pixel-perfect scaling, quantized motion.
+
+### Variant of the mark
+
+A variant of the mark is one of the two ways to color the pixels of the heron: smooth, where each pixel takes the gradient at its own place, or cells, where each cell is one color.
+
+A request for a picture of the mark names its variant: a procedure of `support/mark` that draws the heron takes it as an argument, and nothing chooses it from the cell size. A picture is the smooth variant: the head of the home of the site, the files of `resources/logo`, the boot display. A small icon, one pixel for a cell, is the cells variant: the bar of the site, the bar of the desktop, the icon of a tab. The smooth variant needs at least 2 pixels for a cell; at one pixel the picture is the cells variant, and a request for the smooth one is refused. Example: at 8 pixels for a cell, a cell of the body holds up to 64 colors in the smooth variant and one in the cells variant.
+
+The design: `docs/DESIGN.md`, "The variants of the mark".
+
+Do not use: style, mode, rendering, pixel art mode.
+
+### Tile map
+
+A tile map is one PNG file that holds each distinct frame of the animations of the mark as a tile, in rows from the top left with the still heron first, and under them, for a place that shows the moves, a tile for each drawn form.
+
+A script that plays the animations shows one tile at a time by its place in the file, so a page loads one picture for all the animations. A frame that two animations share is in the file once. The generator of the pictures of the mark draws a tile map in a variant of the mark, at a cell size, in a color scheme, and writes its table: the place and the size of each tile, the times, the moves in cells. The site has three: one for each color scheme of the home, in the smooth variant at 8 pixels for a cell, with the drawn forms; and one for the icon of the tab, in the cells variant at one pixel for a cell, with the frames only. `kerneltool mark tile_map` writes one.
 
 The design: `docs/SITE.md`, "The moves of the heron".
 
-Do not use: tween, sprite motion.
-
-### Sprite sheet
-
-The sprite sheet is one PNG file of the site that holds each distinct frame of the animations of the mark, in rows of 16 from the top left, with the still heron first.
-
-The script of the mark shows one sprite at a time by its place in the file, so the page loads one picture for all the animations. A frame that two animations share is in the file once.
-
-The design: `docs/SITE.md`, "The mark on the site".
-
-Do not use: atlas, film strip.
+Do not use: sprite sheet, atlas, film strip.
 
 ### Site
 
@@ -5640,6 +5716,52 @@ The design: `docs/SITE.md`, "The docs home".
 
 Do not use: docs landing page, portal, hub.
 
+### Gallery
+
+The gallery is the page of the site, at `/gallery/`, that shows every picture of the screen of the gallery table, in groups, each with its caption and the link to its guide.
+
+A reader who wants to see the system finds each picture there: the desktop and the palette, the console, the programs that show rights and faults, the developer tools, the fonts, the network, the storage and the boot. A picture on the page is a thumbnail, and its link opens the picture at its full size, one pixel of the picture for one pixel of the screen of the system. It is a button of the bar, one click from each page; the home has a door to it, and the link under its carousel. It has the presentation layout.
+
+It is not a list that a developer keeps by hand beside the pictures: the page is generated from the gallery table, which is checked against the folder of the pictures.
+
+The design: `docs/SITE.md`, "The page of the gallery".
+
+Do not use: screenshots page, album, lightbox.
+
+### Gallery table
+
+The gallery table is the one table of the tool that names each picture of the screen that the site shows: its file, its group, a caption of one sentence, its guide, and whether the home shows it.
+
+It is `site_gallery_rows` in `tools/kerneltool/site_gallery.odin`. The gallery and the carousel of the home take their pictures and their captions from it, so a caption is written once. Each PNG file of `docs/screenshots` is in one row of it, or in the short list of the excluded files with its reason: `kerneltool site` stops, and a host test fails, on a picture that neither names. So a step that adds a picture to a machine test writes its row, and the picture is on the site.
+
+Example: the row of `heron.png` has the group of the mark, the caption "The program heron: the heron of the mark held at a frame of its dash, in whole square cells, with the lines of the cells.", the guide of the design rules, and the mark of the home.
+
+The design: `docs/SITE.md`, "The gallery table".
+
+Do not use: picture list, screenshot manifest.
+
+### Carousel
+
+The carousel is the part of the home of the site that shows a few pictures of the gallery table in one row, one picture in view, with a numbered link to each picture.
+
+The home shows at most 8 pictures, so that it stays short; the gallery shows them all. The row scrolls sideways and stops at each picture, and every picture is in the page: a reader with no script reaches each one by its numbered link, by the scroll bar of the row or by a swipe. A small script adds the keys Left and Right and the mark of the picture in view. The carousel never changes its picture by itself. Each picture has its width and its height, so nothing on the page moves when a picture comes.
+
+It is not a film and not an animation: a picture changes only when the reader asks, at once.
+
+The design: `docs/SITE.md`, "The carousel of the home".
+
+Do not use: slideshow, banner, rotator.
+
+### Thumbnail
+
+A thumbnail is the picture that the gallery shows in the place of a picture of the screen: the same picture at one half of its width and of its height, which the tool writes when it writes the site.
+
+It exists for the bytes of the page: the gallery has more than 100 pictures, and a thumbnail is about 60 000 bytes where the picture is about 157 000. Each pixel of a thumbnail is the mean of a square of 2 by 2 pixels of the picture, so a line of 1 pixel stays a line and a letter keeps its form. The text of a thumbnail is not meant to be read: the link of the thumbnail opens the picture at its full size. The repository holds no thumbnail.
+
+The design: `docs/SITE.md`, "The thumbnails".
+
+Do not use: miniature, low-resolution copy.
+
 ### Guide
 
 A guide is a page of the site made from a document of `docs/`: how a part of the system is designed, and why.
@@ -5672,13 +5794,13 @@ Do not use: API page, package page.
 
 ### Status page
 
-The status page is the page of the site that gives the state of each property, with its evidence items and its gaps, then all the gaps and the next steps.
+The status page is the page of the site that gives the state of each property, with its evidence items and its gaps, then all the gaps.
 
-It writes no sentence of its own: each cell is a part of `docs/PROPERTIES.md` or of `docs/FIRST_MILESTONE.md`. An evidence item or a gap belongs to a property when its text names it. What is not done is on it as plainly as what is done. It is a section of the bar of its own, outside the docs.
+It writes no sentence of its own: each cell is a part of `docs/PROPERTIES.md` or of `docs/FIRST_MILESTONE.md`. An evidence item or a gap belongs to a property when its text names it. What is not done is on it as plainly as what is done. It is a section of its own, outside the docs, and a line of the project menu of the bar. It is not the roadmap: the status page says what is built and what is missing, the roadmap says what work is planned, and one line of the status page leads to it.
 
 The design: `docs/SITE.md`, "The status page".
 
-Do not use: roadmap, progress page, "what runs today".
+Do not use: progress page, "what runs today".
 
 ### Site address
 
@@ -5739,6 +5861,18 @@ One list of links serves every width, so a screen reader reads each section once
 The design: `docs/SITE.md`, "The site menu".
 
 Do not use: burger menu, hamburger, drawer.
+
+### Project menu
+
+The project menu is the menu of the bar of the site that holds the sections that are not buttons: Status, Releases and Roadmap.
+
+The bar is one line, and six buttons with the search field do not fit it on a window of 720 pixels. So three sections are buttons, the ones that a first reader looks for: Docs, Gallery and News. The three pages that report how the project goes are the lines of one menu, under a button with the word "Project". The menu is a `details` element: its button opens and closes its panel with no script, and the panel lies over the page under the bar. On a page of one of its sections, its button has the mark of the current section.
+
+Under 720 pixels it is not a menu: its three sections are lines of the site menu, under the word "Project". It is not the site menu, which holds every section and the search field on a narrow screen.
+
+The design: `docs/SITE.md`, "The buttons and the menu of the bar".
+
+Do not use: dropdown, more menu, submenu, overflow menu.
 
 ### Documentation layout
 

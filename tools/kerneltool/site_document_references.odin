@@ -87,6 +87,9 @@ Site_Comment_Form :: enum {
 // index of a text, and gives the byte after it. A part of a longer path
 // ("tools/docs/X.md") or of a word is not a pointer.
 site_document_path_end :: proc(text: string, start: int) -> (end: int, found: bool) {
+	if start >= 0 && start < len(text) && strings.has_prefix(text[start:], INTENT_PREFIX) {
+		return site_intent_path_end(text, start)
+	}
 	if start < 0 || start >= len(text) || !strings.has_prefix(text[start:], "docs/") {
 		return 0, false
 	}
@@ -109,6 +112,54 @@ site_document_path_end :: proc(text: string, start: int) -> (end: int, found: bo
 		return 0, false
 	}
 	return end, true
+}
+
+// site_intent_path_end tells whether the path of an intent file
+// ("src/md/features/palette.md", "src/md/README.md") starts at an index of
+// a text, and gives the byte after it. The folders and the file have
+// letters, digits and "_" in their names. A part of a longer path or of a
+// word is not a pointer.
+site_intent_path_end :: proc(text: string, start: int) -> (end: int, found: bool) {
+	if start > 0 {
+		before := text[start - 1]
+		if site_is_word_byte(before) || before == '/' || before == '.' || before == '-' {
+			return 0, false
+		}
+	}
+	end = start + len(INTENT_PREFIX)
+	name_start := end
+	for end < len(text) {
+		character := text[end]
+		is_name_byte := (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '_'
+		// A "/" goes on to the next folder only when a name follows it.
+		if !is_name_byte && !(character == '/' && end > name_start && text[end - 1] != '/') {
+			break
+		}
+		end += 1
+	}
+	if end == name_start || text[end - 1] == '/' || !strings.has_prefix(text[end:], ".md") {
+		return 0, false
+	}
+	end += len(".md")
+	if end < len(text) && (site_is_word_byte(text[end]) || text[end] == '/') {
+		return 0, false
+	}
+	return end, true
+}
+
+// site_document_path_start gives the first place at or after an index
+// where the path of a document can start: "docs/", or the folder of the
+// intent files. It gives the length of the prefix found, and -1 when the
+// text has none.
+site_document_path_start :: proc(text: string, position: int) -> (start: int, prefix_length: int) {
+	start = -1
+	if found := strings.index(text[position:], "docs/"); found >= 0 {
+		start, prefix_length = position + found, len("docs/")
+	}
+	if found := strings.index(text[position:], INTENT_PREFIX); found >= 0 && (start < 0 || position + found < start) {
+		start, prefix_length = position + found, len(INTENT_PREFIX)
+	}
+	return start, prefix_length
 }
 
 // site_enclosing_parenthesis gives the parenthesis around an index of a
@@ -387,11 +438,10 @@ site_document_pointers :: proc(text: string) -> []Site_Document_Pointer {
 	pointers := make([dynamic]Site_Document_Pointer, context.temp_allocator)
 	position := 0
 	for position < len(text) {
-		found := strings.index(text[position:], "docs/")
-		if found < 0 {
+		path_start, prefix_length := site_document_path_start(text, position)
+		if path_start < 0 {
 			break
 		}
-		path_start := position + found
 		path_end, is_path := site_document_path_end(text, path_start)
 		// The target of a link "[text](docs/X.md#id)" is not a pointer: the
 		// link names its place (site_comment_link_target).
@@ -399,7 +449,7 @@ site_document_pointers :: proc(text: string) -> []Site_Document_Pointer {
 			is_path = false
 		}
 		if !is_path {
-			position = path_start + len("docs/")
+			position = path_start + prefix_length
 			continue
 		}
 		pointer := site_document_pointer_at(text, path_start, path_end)
@@ -409,9 +459,13 @@ site_document_pointers :: proc(text: string) -> []Site_Document_Pointer {
 	return pointers[:]
 }
 
-// site_is_working_record tells whether a document of docs/ is a working
-// record, which the site does not publish.
+// site_is_working_record tells whether a document is a working record,
+// which the site does not publish: one of the listed documents of docs/,
+// or a file of the intent folder, by its path from the root.
 site_is_working_record :: proc(path: string) -> bool {
+	if strings.has_prefix(path, INTENT_PREFIX) && strings.has_suffix(path, ".md") {
+		return true
+	}
 	records := SITE_WORKING_RECORDS
 	name := site_file_name(path)
 	for record in records {
@@ -1148,6 +1202,13 @@ site_document_of_code_span :: proc(site: ^Site, code: string) -> (path: string, 
 	if site == nil || !strings.has_suffix(base, ".md") {
 		return "", false
 	}
+	// An intent file is named by its whole path: its file name alone
+	// ("README.md") is the name of other files too.
+	if strings.has_prefix(code, INTENT_PREFIX) {
+		if end, is_intent_file := site_intent_path_end(code, 0); is_intent_file && end == len(code) {
+			return code, true
+		}
+	}
 	if _, is_page := site.documents[base]; is_page || site_is_working_record(base) {
 		return strings.concatenate({"docs/", base}, context.temp_allocator), true
 	}
@@ -1184,6 +1245,11 @@ site_pointer_problem :: proc(site: ^Site, file: string, line: int, path: string,
 		if !target.resolved {
 			return fmt.tprintf("%s, line %d: the pointer to %s, %s, names no heading of it", file, line, path, strings.join(labels, ", ", context.temp_allocator))
 		}
+	}
+	// The intent folder has files that come and go with the designs: a
+	// pointer to one that is gone must not stay as plain text.
+	if site != nil && len(targets) == 0 && strings.has_prefix(path, INTENT_PREFIX) {
+		return fmt.tprintf("%s, line %d: the pointer names %s, and the intent folder has no such file", file, line, path)
 	}
 	return ""
 }
@@ -1287,11 +1353,19 @@ site_document_pointer_problems :: proc(site: ^Site) -> []string {
 		}
 		append(&problems, ..site_guide_pointer_problems(site, document, content))
 	}
+	// The intent files: a code span that names a document, and a link to a
+	// guide with the heading of a place after it.
+	if intent_files, intent_ok := intent_files_read(); intent_ok {
+		for intent_file in intent_files {
+			append(&problems, ..site_guide_pointer_problems(site, strings.concatenate({INTENT_PREFIX, intent_file.path}, context.temp_allocator), intent_file.content))
+			append(&problems, ..intent_pointer_problems(site, intent_file))
+		}
+	}
 	return problems[:]
 }
 
 // The documents at the root of the repository that a text can name.
-SITE_ROOT_DOCUMENTS :: [?]string{"README.md", "CHANGELOG.md", "AGENTS.md"}
+SITE_ROOT_DOCUMENTS :: [?]string{"README.md", "CHANGELOG.md", "ROADMAP.md", "AGENTS.md"}
 
 // site_document_names gives the name of each document of the repository: each
 // guide, each working record, and the documents of the root.
