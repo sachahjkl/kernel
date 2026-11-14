@@ -129,15 +129,26 @@ Site_Measure_Record :: struct {
 Site_Accent :: struct {
 	class_name: string,
 	color:      graphics.Color,
+	// The shade of the accent, in percent, that fills a form on the light
+	// page: a segment of the line of time of the start, a bar of a chart.
+	// The accent itself is too near white there for a form that carries a
+	// fact. On the dark page the form takes the accent.
+	light_graphic_percent: u32,
 }
 
 site_accents := [?]Site_Accent {
-	{"accent-kernel", graphics.COLOR_KERNEL},
-	{"accent-program", graphics.COLOR_PROGRAM},
-	{"accent-memory", graphics.COLOR_MEMORY},
-	{"accent-machine", graphics.COLOR_MACHINE},
-	{"accent-boot", graphics.COLOR_BOOT_PROGRAM},
-	{"accent-firmware", graphics.COLOR_FIRMWARE},
+	{"accent-kernel", graphics.COLOR_KERNEL, 73},
+	{"accent-program", graphics.COLOR_PROGRAM, 58},
+	{"accent-memory", graphics.COLOR_MEMORY, 65},
+	{"accent-machine", graphics.COLOR_MACHINE, 78},
+	{"accent-boot", graphics.COLOR_BOOT_PROGRAM, 65},
+	{"accent-firmware", graphics.COLOR_FIRMWARE, 83},
+}
+
+// site_accent_graphic_color gives the color of a form in an accent, in one
+// form of the page.
+site_accent_graphic_color :: proc(accent: Site_Accent, light: bool) -> graphics.Color {
+	return light ? graphics.shade(accent.color, accent.light_graphic_percent) : accent.color
 }
 
 // site_read reads one text file of the repository.

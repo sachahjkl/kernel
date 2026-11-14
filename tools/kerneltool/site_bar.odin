@@ -41,21 +41,24 @@ SITE_PROJECT_MENU_OPEN_CURRENT :: "<details class=\"project-menu project-menu-cu
 // site menu; the panel is in that list, under the word of its group, and
 // it is shown with no click: by the content of the details element where
 // a browser has ::details-content, else by search.js, which opens it.
+// The button of an open menu has the colors of a pressed control, as the
+// button of an open menu of the bar of the desktop; the states of the
+// button and of the lines of the panel under the pointer are in
+// site_controls.odin, with the states of every other control.
 SITE_PROJECT_MENU_RULES :: `
 .project-menu { position: relative; }
 .project-menu-button { list-style: none; display: block; padding: 0 8px; line-height: 24px; white-space: nowrap; background: var(--track); border-bottom: 2px solid transparent; cursor: pointer; }
 .project-menu-button::-webkit-details-marker { display: none; }
 .project-menu-button::after { content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 6px; vertical-align: 1px; background: var(--dim); }
-.project-menu[open] > .project-menu-button { background: var(--card-top); }
-.project-menu[open] > .project-menu-button::after { background: var(--line); }
+.project-menu[open] > .project-menu-button { background: var(--control-active); color: var(--control-active-text); }
+.project-menu[open] > .project-menu-button::after { background: var(--control-active-text); }
 .project-menu-current > .project-menu-button { border-bottom-color: var(--line); }
 .project-menu-panel { position: absolute; left: 0; top: calc(100% + 8px); z-index: 20; width: %dpx; padding: 4px; background: var(--card-bottom); border: 1px solid var(--line); }
 .bar-sections .project-menu-panel a { display: block; padding: 0 8px; line-height: 32px; white-space: nowrap; background: none; border-bottom: 0; border-left: 2px solid transparent; }
-.bar-sections .project-menu-panel a:hover { background: var(--track); }
 .bar-sections .project-menu-panel a[aria-current="page"] { border-left-color: var(--line); }
 @media (max-width: 719px) {
   .project-menu-button { display: block; padding: 4px 8px 0; background: none; border-bottom: 0; color: var(--dim); font-size: 14px; cursor: default; }
-  .project-menu[open] > .project-menu-button { background: none; }
+  .project-menu[open] > .project-menu-button { background: none; color: var(--dim); }
   .project-menu-button::after { display: none; }
   .project-menu-panel { position: static; width: auto; padding: 0; background: none; border: 0; }
   .bar-sections .project-menu-panel a { padding: 4px 8px 4px 16px; line-height: 24px; }

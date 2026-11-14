@@ -91,6 +91,7 @@ The intent of the parts that were built before this folder is in other documents
 - [features/scheduling_policy.md](features/scheduling_policy.md): the placement of a thread in the kernel, the share for each program outside it, and the hazards that decided both
 - [features/site_bar.md](features/site_bar.md): why the bar of the site has three buttons and one menu on one line, and the forms that were refused
 - [features/site_gallery.md](features/site_gallery.md): the gallery and the carousel of the site from one table that is checked against the folder of the pictures, and why the carousel needs no script
+- [features/site_home.md](features/site_home.md): the home of the site: a line of time of the start on two stated scales, the rule "a chart or nothing" for a measure, a card that starts at its top, and a press on the heron
 - [infrastructure/debug_information_and_code.md](infrastructure/debug_information_and_code.md): why a module is the same bytes with and without debug information, where the compiler and LLVM break it, and the choices that remain
 - [infrastructure/network_data_path.md](infrastructure/network_data_path.md): what the network service does to the bytes of a packet, the constraint of one pair of queues, and the layers that take the service off the data path
 - [infrastructure/repository_layout.md](infrastructure/repository_layout.md): one `src` folder for what becomes the system, one source library `modus` for a program of a third party, and the order of the move

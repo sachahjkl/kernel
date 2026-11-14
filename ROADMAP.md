@@ -41,6 +41,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The history of a store.** A version is a state of a whole store, and the versions of each object are found in it. A principal then steps a store back as one thing, not object by object.
 - **The same object is kept one time.** The storage service finds an object by its hash, so an object that two entries name takes its blocks once.
 - **A faster switch between threads.** A processor that takes again the thread whose extended state its registers hold skips the restore of that state. A measure gives the gain.
+- **The history of each measure, release by release.** The measure record keeps the numbers of each release, and the site draws a chart of each measure over the releases. A reader then sees whether a change made the system faster or slower.
 - **Measures on a quiet host.** The numbers of the windows, of the calls, of the vector forms and of QUIC are measured on a host with no other load. A reader then compares them from one release to the next.
 - **LLVM 22.** The build uses LLVM 22, with a measure of the speed of the code before and after.
 - **Checks for three rules that hold by reading.** The tool compares the count of kernel operations with the number that the properties state, checks that no shared package calls an allocator, and runs a block device that drops a write. Each check turns a rule that a reader must trust into a test.

@@ -250,7 +250,10 @@ site_news_home :: proc(site: ^Site, b: ^strings.Builder) {
 	strings.write_string(b, "<section aria-labelledby=\"news\">\n<h2 id=\"news\">News</h2>\n<div class=\"news-cards\">\n")
 	for item in site.news[:min(len(site.news), SITE_NEWS_HOME_COUNT)] {
 		entry := item.entry
-		fmt.sbprintf(b, "<article class=\"card news-card %s\">\n<h3><a href=\"%s#%s\">", site_news_kind_classes[entry.kind], news_link, item.anchor)
+		// A card with no picture says so: its text then starts right
+		// under its line of the kind, in the row of the pictures.
+		without_picture: string = item.picture == "" ? " news-card-without-picture" : ""
+		fmt.sbprintf(b, "<article class=\"card news-card %s%s\">\n<h3><a href=\"%s#%s\">", site_news_kind_classes[entry.kind], without_picture, news_link, item.anchor)
 		site_escape(b, entry.title)
 		strings.write_string(b, "</a></h3>\n")
 		site_news_meta(site, b, home, entry, false)
