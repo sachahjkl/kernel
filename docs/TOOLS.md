@@ -577,7 +577,7 @@ A source names an export of an import in a `foreign` block: a name, the paramete
 | The files of `#load` | The same list |
 | Every other file of the folder of each of these packages | The tool lists each folder. A file that the compiler did not read becomes a source with no change of a listed file in one way only: it is in such a folder (a new file, or a file whose build tag now admits the target) |
 | The assembly files that the module links: `runtime/memory.asm`, the `.asm` files of its folder, and those of `support/system` for a program | The tool lists them as the build does |
-| The command of the compiler and the command of `llc`, with each flag: the checks of the kernel, `-debug`, the settings of the module, the features of the target | The text of the two commands (`module_compile_command`, `module_object_command`) |
+| The command of the compiler and the command of `llc`, with each flag: the checks of the kernel, the kind of debug information (`-debug-info:same-code`), the direction of the instruction scheduler of `llc` (`-misched-topdown`), the settings of the module, the features of the target | The text of the two commands (`module_compile_command`, `module_object_command`) |
 | The programs `odin`, `llc`, `nasm` and `ld.lld` | The path of each file after each link, its size and its time. In the store of Nix the path holds the hash of the package |
 | The tool | One hash over every file of `tools/kerneltool` and of each package of the repository that it imports, to any depth. The code that builds a module is in the tool. The executable of the tool is not the identity: two builds of the tool do not give the same file |
 

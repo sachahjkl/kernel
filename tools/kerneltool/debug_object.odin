@@ -12,7 +12,7 @@ import "core:strings"
 // The debug object of each module (docs/MODULE_CONTRACT.md, "Debug
 // information"). The tool reads the linked ELF file of the module: the
 // procedure table comes from its symbol table, the line table from the line
-// program of DWARF that the compiler wrote with -debug, the types and the
+// program of DWARF that the compiler wrote with its debug information, the types and the
 // variables from the entries of .debug_info (debug_information.odin). The
 // tool writes the tables of contract:debug_object, which a program reads
 // with no parser of DWARF. The DWARF stays in the linked file, for a

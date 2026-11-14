@@ -331,8 +331,12 @@ module_compile_command :: proc(build: Module_Build) -> []string {
 	// The module itself has no byte of it: the converter copies the
 	// segments only, and `check` proves that each module is the same bytes
 	// without it.
+	// The kind of debug information that never changes the code: the build
+	// gives the compiler the same program as a build with none. A plain
+	// `-debug` adds aids for a debugger that are instructions, and it sets
+	// a constant that a source can read.
 	if debug_information {
-		append(&compile, "-debug")
+		append(&compile, "-debug-info:same-code")
 	}
 	for define in build.defines {
 		append(&compile, strings.concatenate({"-define:", define}, context.temp_allocator))

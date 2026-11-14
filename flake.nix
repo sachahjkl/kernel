@@ -20,14 +20,15 @@
     odin = pkgs.odin.overrideAttrs (_: {
       version = odinRelease;
       src = pkgs.fetchFromGitHub {
-        # The fork of this system: the release above and four commits that
-        # make the code the same with and without debug information
-        # (docs/REPRODUCIBLE_BUILD.md, section 8). The branch is
-        # `odin-modus`; the commit is pinned.
+        # The fork of this system: the release above and the option
+        # `-debug-info:same-code`, a kind of debug information that never
+        # changes the code (docs/REPRODUCIBLE_BUILD.md, section 8). With
+        # no such option the fork is the release. The branch is
+        # `odin-modus-same-code`; the commit is pinned.
         owner = "sachahjkl";
         repo = "Odin";
-        rev = "83b6c485f896a67a30bf45d8e90b6878133b3cba";
-        hash = "sha256-Z+NZesxsVXnwCWu3R3QdwNMFF+3IND0p0s+/IQZ4qrw=";
+        rev = "81382db6047ac43a2d397046fa45f253aa628f7c";
+        hash = "sha256-zIwSlShXOefc55xmDXY8aYBCRegVdrRIOuMzXQCClKw=";
       };
       # No patch file: the changes are commits of the fork. The patches of
       # Nixpkgs are for raylib and for Darwin, which this system does not use.

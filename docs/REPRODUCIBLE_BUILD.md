@@ -6,9 +6,10 @@ A module of this system is named by the hash of its bytes, so one source must gi
 
 **The state of today, in short.**
 
-- The flake pins the release `dev-2026-11a` of Odin, with no patch (`flake.nix`, `odinRelease`).
+- The flake pins one commit of a fork of Odin: the release `dev-2026-11a` and the option `-debug-info:<none|full|same-code>` (`flake.nix`, `odinRelease`). The fork applies no patch file. With no such option on the command line, the fork gives the output of the release (section 8).
+- The build of a module asks for the kind of debug information `same-code`, which adds no instruction, and `llc` schedules the machine instructions top-down (section 8).
 - The compiler runs on all its threads: no build passes `-thread-count` (section 7).
-- Each full check builds everything two times and compares every output, then builds every module a third time with no debug information (sections 6 and 8).
+- Each full check builds everything two times and compares every output, then builds every module a third time with no debug information and compares each module (sections 6 and 8).
 - A usual build keeps a module whose inputs are the same as at its last build ("The incremental build and the same bytes"). Each build of a check is a whole build.
 - Sections 1 to 5 are the record of a fault of the older release `dev-2026-05`, its correction by a patch, and the measures. That patch is no longer applied, and its file is no longer in the repository.
 
@@ -24,7 +25,7 @@ A module of this system is named by the hash of its bytes, so one source must gi
 
 **For whom.** A reader who changes the compiler, its flags or the tool that builds the modules.
 
-**The map of this document.** "The outputs that the tool compares" and "What the build does to give the same bytes": the mechanism of today. "The incremental build and the same bytes": why a build can keep an output. "1. The cause" to "5. The parallelism of the tool": the fault of the old release and its patch. "6. What is proved, and what is not". "6a. The release dev-2026-11a of the compiler" and "7. The compiler with no patch, on all its threads": the compiler of today. "8. The debug information": why `-debug` does not change the identity of a module.
+**The map of this document.** "The outputs that the tool compares" and "What the build does to give the same bytes": the mechanism of today. "The incremental build and the same bytes": why a build can keep an output. "1. The cause" to "5. The parallelism of the tool": the fault of the old release and its patch. "6. What is proved, and what is not". "6a. The release dev-2026-11a of the compiler" and "7. The compiler on all its threads": the release that the compiler of today starts from. "8. The debug information": the option that the fork adds, and why debug information does not change the identity of a module.
 
 ## The outputs that the tool compares
 
@@ -57,10 +58,12 @@ A deterministic compiler is necessary and not sufficient: the build itself must 
 - **No build identifier.** The linker gets `--build-id=none`.
 - **An empty folder for each build.** The tool resets the folder of the objects and the folder of the LLVM IR before it compiles, so no file of an earlier build enters the link.
 - **A fixed order.** The boot image holds the modules in the order of the module table (`module_builds`), not in the order in which the processes end.
-- **A pinned compiler.** The flake pins the release of Odin by its tag and its hash, and `llc` comes from the LLVM of that compiler (18). `flake.lock` pins the other tools.
+- **A pinned compiler.** The flake pins the compiler by one commit of a fork of Odin and the hash of its sources: the release `dev-2026-11a`, then 9 commits that add the option `-debug-info`. The flake applies no patch file: the changes are commits of the fork. `llc` comes from the LLVM of that compiler (18). `flake.lock` pins the other tools.
+- **A kind of debug information that adds no instruction.** The compile of a module passes `-debug-info:same-code`, not `-debug` (`module_compile_command`). Reason: `-debug` makes the compiler add instructions that only help a debugger, and it sets the constant `ODIN_DEBUG`, which a source can read. Both make another program. With `same-code` the compiler gives LLVM the code of a build with no debug information (section 8).
+- **One direction of the instruction scheduler.** `llc` gets `-misched-topdown` (`module_object_command`). Reason: in its bottom-up direction, the scheduler of machine instructions of LLVM 18 orders some register copies in another way when debug instructions stand in the block. The two builds of the kernel then differ with and without debug information. In the top-down direction they are the same bytes (section 8).
 - **No path of the host in a debug object.** A source path in a debug object is from the root of the repository or of the Odin installation. The tool refuses to write a debug object that holds an absolute path or the folder of the build (section 8).
 - **No unwind table.** After `llc` the tool removes the section `.eh_frame` from the object of a module (`llvm-objcopy`). No part of the system reads it: the converter leaves it out of the module, and a stack trace walks the frame pointers. With debug information `llc` writes an entry for more functions, so the section has another size and the code after it has other addresses: a module was not the same bytes with and without debug information.
-- **No time of the compile.** With `-debug` the compiler writes the time of the compile in the debug information of each package, as the value of the constant `ODIN_COMPILE_TIMESTAMP`. No source of the system reads it. The tool writes 0 for that value in the LLVM IR before `llc` makes the object (`llvm_ir_without_compile_time`, `tools/kerneltool/compile_time.odin`), so the LLVM IR, the object and the debug object of two builds are the same bytes.
+- **No time of the compile.** With debug information the compiler writes the time of the compile in the debug information of each package, as the value of the constant `ODIN_COMPILE_TIMESTAMP`. No source of the system reads it. The tool writes 0 for that value in the LLVM IR before `llc` makes the object (`llvm_ir_without_compile_time`, `tools/kerneltool/compile_time.odin`), so the LLVM IR, the object and the debug object of two builds are the same bytes.
 
 ## The incremental build and the same bytes
 
@@ -142,9 +145,12 @@ Measured with one compiler thread for each process, the whole `kerneltool build`
 
 Proved:
 - `kerneltool repeat all 100` with the patched compiler, under a host load of 9.5 to 62: one module, one LLVM IR file and one object for each of 61 modules, and one boot program and one object.
-- Each full check builds everything two times and compares the module, the LLVM IR, the object and the debug object of each module, the pointer theme files, and the boot program and its object (`outputs_same_after_second_build` in `tools/kerneltool/repeat.odin`). The module table has 84 modules today; the counts 61 and 64 in this document are those of the day of each measure.
+- Each full check builds everything two times and compares the module, the LLVM IR, the object and the debug object of each module, the pointer theme files, and the boot program and its object (`outputs_same_after_second_build` in `tools/kerneltool/repeat.odin`). The module table has 89 modules today; the counts 61, 64 and 88 in this document are those of the day of each measure.
+- Each full check then builds every module a third time with no debug information and compares each module with the module of the build (`modules_same_without_debug_information`). With the compiler and the flags of today: "89 modules are the same bytes with and without debug information" (section 8).
+- With no option `-debug-info`, the fork gives the output of the release: the LLVM IR of 88 modules is the same bytes without `-debug`, and the same except the time of the compile with `-debug` (section 8).
 
 Not proved:
+- That debug information never changes the machine code. For the code that the compiler gives to LLVM it is the rule of the option. For the machine code that LLVM makes from it, it is a measure on the modules of this system: the third build of each full check is the proof (section 8).
 - Another version of the Odin compiler or of LLVM. A new version needs `repeat all` again.
 - Another host, or another count of processors.
 - The wait for an `#soa` type with no worker. No small program of the tests reached that case, and two of them crash the stock compiler too.
@@ -152,7 +158,7 @@ Not proved:
 
 ## 6a. The release dev-2026-11a of the compiler
 
-`flake.nix` pins the release `dev-2026-11a` itself, by its tag and its hash; on 2026-11-11 Nixpkgs was six releases behind.
+`flake.nix` pins the release `dev-2026-11a` itself, and not the release of Nixpkgs; on 2026-11-11 Nixpkgs was six releases behind. At the time of this section the flake fetched the release by its tag and its hash. It now fetches one commit of a fork that starts from that release (section 8).
 
 What changed in the compiler for this subject, read in its release notes and in its source:
 
@@ -160,14 +166,14 @@ What changed in the compiler for this subject, read in its release notes and in 
 - `wait_signal_until_available` has no caller left in the compiler, so the second part of the patch for `dev-2026-05` (a thread that waits runs the tasks of its own queue) is not needed.
 - The release notes of `dev-2026-10` say: the whole semantic checker runs on several threads, the check of the globals gives an order of the code that does not depend on the threads, and the polymorphic procedures were rewritten with corrections of races. The queues of the checker are one queue for each thread. So the question of section 4 (a deterministic order with several threads) has a better start: it must be measured with `kerneltool repeat all` and more than one thread before any wide patch is written.
 
-## 7. The compiler with no patch, on all its threads
+## 7. The compiler on all its threads
 
-Two measures, on 2026-11-11, with the release `dev-2026-11a`:
+Two measures, on 2026-11-11, with the release `dev-2026-11a`. At that time the flake built the release as it is, with no patch and no fork:
 
 - 30 builds each of `console`, `host`, `root` and `compositor` with `-thread-count` 1, 4 and 16, the patch of one line applied: one LLVM IR for each module, and the same one for the three counts (90 builds, 1 hash, four times).
 - `kerneltool repeat all 20` with the compiler as its release gives it (no patch), with no `-thread-count` (the compiler takes one thread for each processor, 16 here), one module process for each processor, a host load of 24 to 42: 64 modules with 1 distinct module, 1 distinct LLVM IR and 1 distinct object each, and the boot program with 1 distinct file and 1 distinct object.
 
-So the flake applies no patch, and no build passes `-thread-count`. Sections 1 to 5 describe the fault of the release `dev-2026-05`. The check of each full check stays: it builds two times and compares each output, so a compiler that loses this property is caught at the next check.
+So the flake applied no patch for the threads, and no build passes `-thread-count`: both are still true. Since these measures the flake pins a fork of that release, which adds one option for the debug information and is the release without it (section 8). Sections 1 to 5 describe the fault of the release `dev-2026-05`. The check of each full check stays: it builds two times and compares each output, so a compiler that loses this property is caught at the next check.
 
 **After a change of the release of the compiler**, run `kerneltool repeat all <count>` before the change is merged: two builds of a full check find a fault that shows in half of the builds, and can miss one that shows in one build of sixty (section 1 has such a case: 49, 10 and 1).
 
@@ -175,9 +181,77 @@ Limits: one host, one release, 20 builds of each module. `kerneltool repeat all 
 
 ## 8. The debug information
 
-The tool compiles each module with `-debug`, for the line table of its debug object (`MODULE_CONTRACT.md`, "Debug information"). A debug object says which line of the source an address of the module belongs to; it is a separate file, named by the hash of its module. The identity of a module must not depend on it: a module built with `-debug` and the same module built without it must be the same bytes.
+The tool compiles each module with debug information, for the tables of its debug object (`MODULE_CONTRACT.md`, "Debug information"). A debug object says which line of the source an address of the module belongs to; it is a separate file, named by the hash of its module. The identity of a module must not depend on it: a module built with debug information and the same module built without it must be the same bytes.
 
-- The converter copies the segments of the linked file only: the sections `.debug_*` are not in the module.
-- The base library and the support library of the modules do not read `ODIN_DEBUG`, the constant that `-debug` sets (no `when ODIN_DEBUG` in `base`, `contract`, `support`, `modules` or `programs`). LLVM does not let a debug location change the code that it emits.
-- The proof is a build: after the second build, `kerneltool check` builds every module a third time with no `-debug`, in `build/modules_without_debug_information`, and compares each module byte for byte with the module of the build. A difference fails the check and names the part of the module where it is.
+**Why.** A module can be built with no debug information, also by a third party. Its debug object can then be made later from the same sources: the build with debug information gives the same module, with the same hash, and the debug object names that hash. The design, with the forms that were refused, is in `src/md/infrastructure/debug_information_and_code.md`.
+
+### The option of the compiler
+
+The option `-debug` of the Odin compiler does three things: it writes debug information, it defines the constant `ODIN_DEBUG`, and it makes `-o:none` the default. With it the compiler also adds instructions that only help a debugger. So a build with `-debug` is not the program of a build without it. The fork of the compiler that the flake pins makes the first of the three things an option of its own:
+
+| Value | What the compiler writes |
+|---|---|
+| `-debug-info:none` | No debug information |
+| `-debug-info:full` | Debug information, with aids for a debugger that add instructions to the code |
+| `-debug-info:same-code` | Debug information that adds no instruction |
+
+- **The rule of `same-code`.** For any other flags F, the code that the compiler gives to LLVM for `F -debug-info:same-code` is the code for `F -debug-info:none`. The rule has no exception for an optimization mode.
+- **The constant.** The option does not define `ODIN_DEBUG` and does not change the default of `-o`. With `-debug-info:same-code` and no `-debug`, `ODIN_DEBUG` is false. No constant of the language says which kind of debug information is written: a source that can read it can change with it.
+- **The default.** The default is `full` with `-debug` and `none` without it. A command line that does not name the option builds what the release builds. Measured on 88 modules of this system: the LLVM IR is the same bytes as the IR of the release without `-debug`, and the same except the time of the compile with `-debug`. The tests of the Odin project give the same results with the fork and with the release.
+- **Where the compiler obeys the rule.** Eight places of the compiler make code only when debug information is written. Five help a debugger: a stack slot that holds the address of a variable, a block for a label, a copy of the range value of a `#soa` loop, the attribute that forbids the inlining of the procedures of a map type, and separate modules for the debug types. Three come from the way in which LLVM treats a debug declaration or a debug value. With `same-code` none of the eight makes code.
+
+### How the build asks for it
+
+- **The compile.** `module_compile_command` (`tools/kerneltool/modules.odin`) passes `-debug-info:same-code`, and no `-debug`. The build with no debug information passes neither.
+- **The object.** `module_object_command` passes `-misched-topdown` to `llc`, in both builds. Reason: the rule of the option ends at the code that LLVM receives. In its bottom-up direction, the scheduler of machine instructions of LLVM 18 orders some register copies in another way when debug instructions stand in the block.
+- **The module.** The converter copies the segments of the linked file only: the sections `.debug_*` are not in the module.
+- **The unwind table and the time of the compile** are removed for the same purpose ("What the build does to give the same bytes").
+
+### The proof
+
+- The proof is a build: after the second build, `kerneltool check` builds every module a third time with no debug information, in `build/modules_without_debug_information`, and compares each module byte for byte with the module of the build. A difference fails the check and names the part of the module where it is: `kerneltool: test failed: the module <name> is not the same bytes without debug information`.
+- When no module differs, the check prints "N modules are the same bytes with and without debug information: the debug objects change no module". With the compiler and the flags of today, N is 89.
+- The third build is a condition of the full check, not a measure that the check prints. A rule that no check enforces holds by habit only.
+
+### What was measured
+
+The same 88 modules, with the flags of the build except the optimization mode, `llc -O3` of LLVM 18.1.8. The count is the modules whose code and data are the same bytes with `-debug-info:same-code` and with no debug information.
+
+| Optimization mode | The same bytes | The modules that differ |
+|---|---|---|
+| `-o:none` | 88 of 88 | none |
+| `-o:minimal` | 88 of 88 | none |
+| `-o:size` | 85 of 88 | `kernel`, `kernel_without_return_check`, `manual` |
+| `-o:speed`, the mode of the build | 86 of 88 | `kernel`, `kernel_without_return_check` |
+| `-o:speed` with `llc -misched-topdown`, the build of today | 88 of 88 | none |
+
+- With `-debug`, before the option, 3 of the 88 modules differed: the two builds of the kernel and `inspect`.
+- The modules that differ at `-o:speed` and `-o:size` get the same LLVM IR from the compiler, and the same IR after the optimization passes. The difference is made inside the code generator of LLVM.
+- So this sentence is false as a general claim: "LLVM does not let a debug location change the code that it emits". LLVM states it as a goal. LLVM 18 breaks it in its scheduler of machine instructions, in its inliner and in its fast instruction selector, and LLVM 19 and 22 still break it in a few procedures of the tests of the Odin project.
+
+### What a debugger loses
+
+The kind `same-code` gives a debugger less than `full`. For this system, which builds with `-o:speed` (`llvm-dwarfdump --statistics`, `same-code` against `-debug`):
+
+- `kernel`: the same count of variables, the same count with a location, and the same bytes covered by a location.
+- `inspect`: the same count of variables and the same count with a location. The locations of the local variables cover 0.3 % fewer bytes (631808 against 633745).
+- The line tables have the same count of rows.
+
+In general, for a program that uses the compiler with this kind:
+
+- A variable that is not in a stack slot of its own can read as "optimized out" where its value is not live: a pointer parameter, a parameter passed by pointer, the context, a named result.
+- A label has no block of its own.
+- The range value of a loop over a `#soa` value has no variable.
+- The procedures that the compiler generates for a map type can be inlined.
+- With `-o:minimal`, no local variable and no parameter is described: the line table, the procedures, the types and the globals only.
+
+### The limits
+
+- **A measure, not a guarantee of LLVM.** The rule is exact for the code that the compiler gives to LLVM. For the machine code it is a measure on these modules, with this version of LLVM. A change of a source, of a flag or of LLVM can show a new difference. The third build of each full check is the proof.
+- **`-misched-topdown` changes the code.** Against a build with the default direction, the code of 79 of the 88 modules differs. The effect on the speed of the code is not measured.
+- **The fork.** The option is not in the Odin project: no pull request is sent. The flake pins the commit of the fork.
+- **Not run.** The debugger of this system was not run against the two kinds. The comparison of what a debugger loses is on counts of the debug information.
+
+### The debug object
+
 - The debug object is an output of the build like the others: the second build compares it too, and `kerneltool repeat` counts its distinct contents in a column of its own. A source path in it is from the root of the repository or of the Odin installation, never absolute: the tool refuses to write a debug object with an absolute path of a file or with the folder of the build in its bytes, so it does not depend on the folder or the host of the build.

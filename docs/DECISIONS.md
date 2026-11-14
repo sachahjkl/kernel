@@ -1404,14 +1404,14 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-11. Decided by: the owner.
 - Decision: the stock compiler runs with all its threads, with no patch and no `-thread-count:1`. A repeat of every build proves one result for each module.
 - Words: "Letsgo !!".
-- State: done (step 64).
+- State: done (step 64). Changed by D-246: the flake pins a fork that adds one option; with no such option the fork is the release.
 - Where: `REPRODUCIBLE_BUILD.md`; `FIRST_MILESTONE.md`, choice 416.
 
 ### D-161 The newest Odin compiler, pinned
 - 2026-11-11. Decided by: the owner.
 - Decision: the flake pins the newest Odin release (`dev-2026-11a`) by its tag and its hash. No fork. Its assembly and SIMD features are used: the small instructions of the kernel are `asm` templates.
 - Words: "il faut qu'on s'en serve donc peut-être soit on fait notre force de Odin qu'on maintiendra à jour soit tu te débrouilles pour utiliser la dernière version mais ça ne va pas qu'on utilise celle de mai"; "j'ai vu que pour faire du langage assemblage [...] est devenu extrêmement puissant et pour faire du simd aussi" ["force" reads "fork"].
-- State: done (step 63; the templates in choice 593).
+- State: done (step 63; the templates in choice 593). Changed by D-246: the pinned compiler is a fork of that release, until the Odin project has the option.
 - Where: `REPRODUCIBLE_BUILD.md`; `ARCHITECTURE.md`, "The instructions of the kernel"; `FIRST_MILESTONE.md`, choices 415 and 593.
 
 ### D-162 LLVM 22 is its own step
@@ -1439,8 +1439,15 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-14. Decided by: the owner.
 - Decision: a module must be the same bytes with and without debug information, so that the debug object of a module that was built without it can be made later from the same sources. The full check found that 3 of 88 modules (`kernel`, `kernel_without_return_check`, `inspect`) differ. The cause is in the Odin compiler: its code generation takes other paths when debug information is asked (measured: the copy of a small record is written field by field with `-debug`, and by blocks without, before any optimization). It is a fault of the compiler, not of the reproducible build: the same sources with the same options give the same bytes, for the 88 modules. The fault is corrected in a fork of Odin for this system, `odin-modus`, which the flake pins; the correction goes to the Odin project as a pull request when it is proved on the 88 modules. The third build of the full check stays a condition: it does not become a measure, so the full check fails until the fork corrects the fault.
 - Words: "à corriger donc, dans notre fork de odin (puis PR upstream quand prouvé) odin-modus"; "donc non 85 sur 88".
-- State: in work. The full check fails on this point only.
+- State: replaced in its form by D-246 on the same day: the changes are a mode that a build asks for, not a change of `-debug`.
 - Where: `REPRODUCIBLE_BUILD.md`, section 8; `MODULE_CONTRACT.md`, "Debug information".
+
+### D-246 A kind of debug information that never changes the code, as an option of a fork of the compiler
+- 2026-11-14. Decided by: the owner.
+- Decision: the changes of the compiler are an option, `-debug-info:<none|full|same-code>`, in a fork of Odin that the flake pins. The default of the compiler is untouched: with no such option the fork gives the output of the release. The build of the system asks for `-debug-info:same-code`, the kind of debug information that adds no instruction, and `llc` gets the top-down direction of its instruction scheduler (`-misched-topdown`). The third build of the full check stays a condition. The correction goes to the Odin project as one pull request when the owner says so.
+- Words: "il y a pas que nous qui allons produire des modules in fine [...] est-ce que nos changements on devrait pas les garder mais en gros les rendre activables via une option, ou [...] moduler le niveau de [debug] ou le type de debug plutôt que juste dire [debug], comme ça on a un mode spécifique pour Modus"
+- State: done. The full check passes: 89 modules are the same bytes with and without debug information. Not done: the pull request to the Odin project.
+- Where: `REPRODUCIBLE_BUILD.md`, section 8; `MODULE_CONTRACT.md`, "Debug information"; `src/md/infrastructure/debug_information_and_code.md`.
 
 ## 12. The site and the publication
 

@@ -25,7 +25,7 @@ What it means here:
 
 ## 2. The origin, and its license
 
-- **Origin**: Odin's `core:crypto`, from the compiler that the flake pins: the release `dev-2026-11a` of Odin, which `flake.nix` fetches by its tag and its hash. When the compiler changes, `kerneltool cryptography-take` takes the files again.
+- **Origin**: Odin's `core:crypto`, from the compiler that the flake pins: the release `dev-2026-11a` of Odin, in the fork that `flake.nix` fetches by its commit and its hash. The fork changes the compiler only, not `core:crypto`. When the compiler changes, `kerneltool cryptography-take` takes the files again.
 - **License of Odin, and of `core:crypto`** (its README: "This library is made available under the zlib license"): the zlib license, in `support/cryptography/LICENSE.odin.txt`. Its second clause, "Altered source versions must be plainly marked as such", is met by the first line of each file that is taken.
 - **fiat-crypto**: the field arithmetic of `core:crypto/_fiat` is a port of fiat-crypto, which gives three licenses. Odin chose BSD-1-Clause; its text is in `support/cryptography/LICENSE.fiat-crypto.txt`, with the first part that is taken.
 - **Review**: the README of `core:crypto` says that the packages "have not received independent third party review". The system relies on the RFC test vectors (section 5) and on the timing rules of the origin. It does not claim more.
