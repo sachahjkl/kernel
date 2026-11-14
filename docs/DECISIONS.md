@@ -1620,6 +1620,20 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done. Left: the icon file and the vector icon of the site in the generator.
 - Where: `DESIGN.md`, "The variants of the mark"; `TOOLS.md`, "The pictures of the mark"; `src/md/features/mark_pictures.md`; `FIRST_MILESTONE.md`, choice 736.
 
+### D-247 The home of the site: a line of time, charts or nothing, a release band, a press on the heron, the states of a control
+- 2026-11-14. Decided by: the owner (the six requests); the coordinator and an agent (the form).
+- Decision: the content of a card starts at its top. The start of the machine is a line of time with two bars on stated scales, a row for each stage, and a card for each stage with no script. The home shows a measure only as a chart of one unit from zero; each other measure stays on the page of the measured numbers; no history is drawn until the measure record keeps one. The newest release is a band with one large value and its first changes as links. A press on the heron plays the dash, then the next animation of the rule; nothing plays under reduced motion. Every control has hover, focus and pressed states from one table, in the colours of the desktop, with no change of size and no transition.
+- Words: "Le texte s'aligne en bas au lieu de s'aligner en haut. [...] c'est juste une petite erreur de présentation."; "Le sous-texte [...] est mal distancé des blocs qui lui sont au-dessus, et je vois pas l'intérêt aussi qu'il existe."; "la section The Start of the Machine ? Elle est nulle. Soit on affiche une timeline avec des trucs sur les différentes sections ou [au survol] avec des informations riches, mais là l'espèce de boîte c'est nul. Faut revoir."; "Je comprends pas non plus l'intérêt de la section : Measured. Soit on fait des rapports de statistiques qu'on affiche sur un graphe ou des histogrammes ou des choses comme ça, soit on n'affiche rien, mais cette section elle n'a aucun intérêt."; "le texte tout plat comme ça, c'est pas très aguicheur. En plus [...] il y a un manque d'emphase sur les mots. [...] ça fait trop plat. Soit on l'enlève, soit on l'améliore, mais comme ça, c'est nul."; "j'aimerais bien qu'il se passe une animation quand je clique sur le logo du héron."; "les boutons [...] manquent d'un état visuel au survolage et actif."
+- State: done.
+- Where: `SITE.md`, "The home"; `SITE.md`, "The states of a control"; `src/md/features/site_home.md`; `src/md/features/site_bar.md`; `FIRST_MILESTONE.md`, choice 745.
+
+### D-248 The scroll bar of the system is the standard of the desktop of the owner, from one table with the site
+- 2026-11-14. Decided by: the owner.
+- Decision: each scroll bar of the system has arrow buttons, a track, and a thumb with a border, a gradient, an inner line and a grip, and blue tones under the pointer, as the scroll bar of `shojiwm-desktop`: its sizes, its colours and its states, with square corners. The scroll bars of the site come from the same table, with a light form. It is a decoration (D-193) and replaces the colours of D-222.
+- Words: "je t'avais dit de rendre les scroll bars comme on a fait pour le site, les scroll bars [...] de l'OS, de les rendre détaillées avec un cran coloré [...]. Parce que là elles ne le sont pas du tout, elles sont ultra-plates. [...] regarde [...] mon desktop [...] ShojiWM desktop [...]. Tu peux voler le style et faire une variante light si il y a besoin pour le site, mais c'est ça le standard étalon."
+- State: done. Left: the pointer on the scroll bars of the palette and of a completion list; the wheel.
+- Where: `DESIGN.md`, "The scroll bar"; `INTERFACE.md`, "4.1 The scroll bar"; `SITE.md`, "The scroll bars"; `src/md/features/scroll_bar.md`; `FIRST_MILESTONE.md`, choice 743.
+
 ### D-182 A documentation in the form of the Odin site
 - 2026-11-12. Decided by: the owner.
 - Decision: the documentation has a sidebar of the pages, the technical text in the center, and the symbols of the page at the right, in the manner of the Odin documentation.

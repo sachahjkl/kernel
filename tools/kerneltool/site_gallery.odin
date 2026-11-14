@@ -177,6 +177,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 
 	// The interface and the fonts.
 	{file = "interface_elements.png", group = .Interface, guide = "docs/INTERFACE.md", caption = "The interface package: each element live, the draw table of the last frame, the damage by difference."},
+	{file = "scroll_bar.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The scroll bar of the console with the pointer over its arrow button: the bar is lit, and the button is blue."},
 	{file = "interface_damage.png", group = .Interface, guide = "docs/INTERFACE.md", caption = "The damage of a frame of the interface package: an outline shows the rectangle that the frame draws again."},
 	{file = "interface_font.png", group = .Interface, guide = "docs/FONTS.md", caption = "The interface font, B612 Regular and Bold: proportional, with its pairs, at three positions in a pixel, and digits of one advance."},
 	{file = "font_vector.png", group = .Interface, guide = "docs/FONTS.md", caption = "The text of the system is a vector font with subpixel bands: Paper Mono by default, changed to Spleen 8x16 and back while every window runs."},

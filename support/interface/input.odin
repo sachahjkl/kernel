@@ -56,6 +56,10 @@ Input :: struct {
 	pointer_known:        bool, // The pointer is over the surface, or a button is held.
 	pressed, released:    bool, // The left button went down, or up, in this frame.
 	button_held:          bool, // The left button is down: the display gives the state, the input needs the change.
+	// Where the left button went down last. A frame can hold a press and
+	// moves after it: the pointer is then at the end of the moves, and a
+	// drag needs the place where it began.
+	press_x, press_y:     int,
 	keys:                 [KEY_CAPACITY]Key_Press, // The keys of the frame, in order.
 	key_count:            int, // The keys in use.
 }
@@ -68,6 +72,9 @@ input_add :: proc "contextless" (input: ^Input, event: display.Event) -> bool {
 		input.pointer_x, input.pointer_y = event.x, event.y
 		input.pointer_known = true
 		held := event.buttons & display.BUTTON_LEFT != 0
+		if held && !input.button_held {
+			input.press_x, input.press_y = event.x, event.y
+		}
 		input.pressed ||= held && !input.button_held
 		input.released ||= !held && input.button_held
 		input.button_held = held
@@ -106,6 +113,13 @@ Interface_State :: struct {
 	// Tab and Shift+Tab follow it.
 	focus_order:   [FOCUS_ORDER_CAPACITY]Element_Identity,
 	focus_count:   int, // The entries of `focus_order` in use.
+	// The scroll bar that holds the press (`pressed` is its identity): one
+	// button is down at a time, so one scroll bar at most is held, and no
+	// program keeps a state for its scroll bars.
+	scroll_bar_part:      Scroll_Bar_Part, // The part where the button went down. None: `pressed` is not a scroll bar.
+	scroll_bar_grab:      int, // A held thumb: the pixels from the start of the thumb to the pointer, along the bar.
+	scroll_bar_repeat_at: u64, // A held arrow button: the time of its next step, in milliseconds of the clock of the system. 0: no step is due.
+	scroll_bar_lit:       Element_Identity, // The scroll bar that the last frame drew lit, or 0.
 }
 
 // One frame: the table that it fills, the state, the input of the frame.
@@ -113,6 +127,9 @@ Frame :: struct {
 	table:         ^Draw_Table, // The table of this frame.
 	state:         ^Interface_State, // The state from the frame before; the frame writes the state for the next one.
 	input:         ^Input, // The input of this frame.
+	time:          u64, // The clock of the system at the start of the frame, in milliseconds. 0: the frame has no clock, and a held arrow button of a scroll bar does not repeat.
+	scroll_bar_lit: Element_Identity, // The scroll bar that this frame drew lit, so far.
+	scroll_bar_held_drawn: bool, // The scroll bar that holds the press is in this frame.
 	under_pointer: Element_Identity, // The element under the pointer in this frame, so far.
 	focus_order:   [FOCUS_ORDER_CAPACITY]Element_Identity, // The elements that can take the focus in this frame, so far.
 	focus_count:   int, // The entries of `focus_order` in use.
@@ -125,8 +142,9 @@ Frame :: struct {
 }
 
 // frame_begin clears the table and starts a frame. Tab and Shift+Tab move
-// the focus here, in the order of the last frame.
-frame_begin :: proc "contextless" (table: ^Draw_Table, state: ^Interface_State, input: ^Input) -> Frame {
+// the focus here, in the order of the last frame. time is the clock of the
+// system in milliseconds: a held arrow button of a scroll bar repeats by it.
+frame_begin :: proc "contextless" (table: ^Draw_Table, state: ^Interface_State, input: ^Input, time: u64 = 0) -> Frame {
 	draw_table_clear(table)
 	for &key in input.keys[:input.key_count] {
 		if key.code != KEY_TAB || state.focus_count == 0 {
@@ -146,7 +164,7 @@ frame_begin :: proc "contextless" (table: ^Draw_Table, state: ^Interface_State, 
 		step := backward ? state.focus_count - 1 : 1
 		state.focus = state.focus_order[(position + step) % state.focus_count]
 	}
-	return {table = table, state = state, input = input}
+	return {table = table, state = state, input = input, time = time}
 }
 
 // frame_end keeps what the next frame needs.
@@ -155,8 +173,16 @@ frame_end :: proc "contextless" (frame: ^Frame) {
 	state.under_pointer = frame.under_pointer
 	state.focus_order = frame.focus_order
 	state.focus_count = frame.focus_count
+	state.scroll_bar_lit = frame.scroll_bar_lit
+	// A held scroll bar that the frame does not have takes no step: with a
+	// step still due, a program that wakes for it would never sleep.
+	if !frame.scroll_bar_held_drawn {
+		state.scroll_bar_repeat_at = 0
+	}
 	if frame.input.released {
 		state.pressed = 0
+		state.scroll_bar_part = .None
+		state.scroll_bar_repeat_at = 0
 	}
 }
 

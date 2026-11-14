@@ -111,6 +111,8 @@ site_colors_write :: proc(builder: ^strings.Builder, colors: Site_Colors) {
 		// On the light background an accent as text has too little
 		// contrast: the titles take the text color there.
 		site_variable(builder, "accent-text", colors.on_light ? colors.text : accent.color)
+		// A form that carries a fact in the accent: a segment, a bar.
+		site_variable(builder, "accent-graphic", site_accent_graphic_color(accent, colors.on_light))
 		site_variable(builder, "border-top", graphics.mix(colors.card_top, accent.color, site_percent(28)))
 		site_variable(builder, "border-bottom", graphics.mix(colors.card_bottom, accent.color, site_percent(14)))
 		strings.write_string(builder, "}\n")
@@ -141,7 +143,7 @@ html {
 }
 body { margin: 0; }
 .page { max-width: 1152px; margin: 0 auto; padding: 0 16px; }
-code, pre, kbd, .code, .time, .line, .label, .who { font-family: var(--mono); font-size: 14px; }
+code, pre, kbd, .code, .label { font-family: var(--mono); font-size: 14px; }
 code { color: var(--text); background: var(--track); padding: 0 4px; overflow-wrap: anywhere; }
 pre { background: var(--track); padding: 8px 16px; overflow-x: auto; line-height: 20px; }
 pre code { padding: 0; background: none; overflow-wrap: normal; }
@@ -209,7 +211,7 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
 .bar-menu-button { list-style: none; display: block; position: relative; width: 32px; height: 32px; margin-left: auto; cursor: pointer; background: var(--track); border: 1px solid var(--track); }
 .bar-menu-button::-webkit-details-marker { display: none; }
 .bar-menu-name { position: absolute; left: -9999px; }
-.bar-menu-lines, .bar-menu-lines::before, .bar-menu-lines::after { position: absolute; left: 7px; width: 16px; height: 2px; background: var(--text); }
+.bar-menu-lines, .bar-menu-lines::before, .bar-menu-lines::after { position: absolute; left: 7px; width: 16px; height: 2px; background: currentColor; }
 .bar-menu-lines { top: 14px; }
 .bar-menu-lines::before, .bar-menu-lines::after { content: ""; left: 0; }
 .bar-menu-lines::before { top: -6px; }
@@ -549,10 +551,8 @@ a.declaration-link { color: inherit; text-decoration-thickness: 1px; text-underl
 .card { min-width: 0; padding: 16px; margin-bottom: 8px; background: linear-gradient(var(--card-top), var(--card-bottom)); border: 1px solid var(--border-top); border-image: linear-gradient(var(--border-top), var(--border-bottom)) 1; }
 .card h2, .card h3 { margin: 0 0 16px; font-size: 16px; line-height: 24px; text-transform: uppercase; font-family: var(--mono); }
 .card h2::before, .card h3::before { content: ""; display: inline-block; width: 4px; height: 16px; margin-right: 8px; vertical-align: -2px; background: var(--accent); }
-.card.measure h3 { text-transform: none; font-family: var(--reading); }
 .card p:last-child { margin-bottom: 0; }
-.measures, .pictures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 16px; }
-.line code { display: block; padding: 8px; white-space: pre-wrap; }
+.pictures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 16px; }
 
 /* The home. */
 /* The head takes the height of its picture, the heron alone: the name is
@@ -569,10 +569,6 @@ a.declaration-link { color: inherit; text-decoration-thickness: 1px; text-underl
 .lead { font-size: 18px; line-height: 28px; max-width: 60ch; }
 .doors { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .doors a { display: inline-block; padding: 4px 16px; background: var(--track); text-decoration: none; border-bottom: 2px solid var(--line); }
-.stages { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 8px; }
-.stages li { margin: 0; padding: 4px 8px; background: var(--track); border-top: 2px solid var(--accent); }
-.stages .who { display: block; color: var(--dim); }
-.stages .time { display: block; }
 figure { min-width: 0; margin: 0; padding: 8px; background: var(--card-bottom); border: 1px solid var(--track); }
 figure.wide { grid-column: 1 / -1; }
 figure a { display: block; }
@@ -605,17 +601,21 @@ figcaption { padding-top: 8px; font-size: 14px; }
 .film-link { position: relative; text-decoration: none; }
 .film-mark { position: absolute; left: 0; bottom: 0; padding: 0 8px; font-family: var(--mono); font-size: 12px; line-height: 24px; text-transform: uppercase; color: var(--text); background: var(--card-bottom); border-top: 1px solid var(--line); border-right: 1px solid var(--line); }
 /* The cards of the news on the home: in a row of cards, the title, the
-   line of the kind and the date, the picture and the text of each card
-   start at the same height, whatever the length of a title. Each card
-   takes four rows of the grid of the cards and shares them (subgrid); each
-   part has its row, so a card with no picture keeps its text in line. The
-   picture boxes of a row have one ratio, that of the screen pictures; a
-   picture of another ratio is shown whole inside the box, not cut. */
+   line of the kind and the date, and the picture of each card start at the
+   same height, whatever the length of a title. Each card takes four rows
+   of the grid of the cards and shares them (subgrid): the title, the line
+   of the kind, the picture, the text. The content of a card starts at its
+   top and leaves no empty room between two of its parts: a card with no
+   picture has its text in the row of the pictures, right under its line of
+   the kind, and that text takes the two last rows. The picture boxes of a
+   row have one ratio, that of the screen pictures; a picture of another
+   ratio is shown whole inside the box, not cut. */
 .news-card { display: grid; grid-row: span 4; grid-template-rows: subgrid; row-gap: 0; }
 .news-card > h3 { grid-row: 1; }
 .news-card > .news-meta { grid-row: 2; }
 .news-card > figure { grid-row: 3; align-self: start; }
-.news-card > p:last-child { grid-row: 4; }
+.news-card > p:last-child { grid-row: 4; align-self: start; }
+.news-card-without-picture > p:last-child { grid-row: 3 / span 2; }
 @media (min-width: 720px) {
   .news-card figure img { aspect-ratio: 4 / 3; object-fit: contain; }
 }
@@ -667,7 +667,7 @@ figcaption { padding-top: 8px; font-size: 14px; }
   .news-body.with-picture, .news-cards { grid-template-columns: minmax(0, 1fr); }
 
   .home-head { grid-template-columns: minmax(0, 1fr); }
-  .measures, .pictures { grid-template-columns: minmax(0, 1fr); }
+  .pictures { grid-template-columns: minmax(0, 1fr); }
   figure.wide { grid-column: auto; }
   h1 { font-size: 28px; line-height: 32px; }
 }
@@ -742,95 +742,92 @@ h2:target, h3:target, li:target, p:target { box-sizing: border-box; border-left:
 }
 `
 
-// The scroll bars (docs/SITE.md, "The scroll bars"), as the scroll bars of
-// the programs of the system: a button with a triangle at each end, a
-// track with a lighter line at its edge, a square thumb with a lighter
-// border and a grip of three lines; with the pointer over it the thumb
-// takes the blue of the line and the grip is near white. Everything is
-// rectangular. The parts ::-webkit-scrollbar are for Chromium and WebKit;
-// Chromium ignores them on an element that has scrollbar-color or
-// scrollbar-width, so those two are written only for an engine with no
-// such parts (Firefox), with the color of the border of the thumb, which
-// keeps the contrast of a graphic on the track. A data address cannot read
-// a variable of the style sheet: the tool writes each triangle and each
-// grip in the colors of each form (site_scroll_variables).
+// The scroll bars (docs/SITE.md, "The scroll bars"): the scroll bar of the
+// system, from the same table (support/graphics/scroll_bar.odin). An arrow
+// button with a triangle at each end; a track with a gradient across it
+// and a border; a thumb with a border, a gradient across it, an inner line
+// and a grip of four lines. With the pointer over it, the thumb and an
+// arrow button take the blue tones of the table; held, the pressed ones.
+// Everything is rectangular. These rules hold no size and no color: each
+// one is a variable that site_scroll_variables writes from the table, for
+// each form.
+//
+// The parts ::-webkit-scrollbar are for Chromium and WebKit; Chromium
+// ignores them on an element that has scrollbar-color or scrollbar-width,
+// so those two are written only for an engine with no such parts
+// (Firefox), which shows two flat colors: the border of the thumb on the
+// middle of the track. A data address cannot read a variable of the style
+// sheet: the tool writes each triangle and each grip in the colors of each
+// form.
 SITE_SCROLL_RULES :: `
 @supports selector(::-webkit-scrollbar) {
-  ::-webkit-scrollbar { width: 16px; height: 16px; background: var(--scroll-track); }
-  ::-webkit-scrollbar-track { background: var(--scroll-track); }
-  ::-webkit-scrollbar-track:vertical { border-left: 1px solid var(--scroll-edge); }
-  ::-webkit-scrollbar-track:horizontal { border-top: 1px solid var(--scroll-edge); }
-  ::-webkit-scrollbar-thumb { background: var(--scroll-thumb) var(--scroll-grip-vertical) no-repeat center; border: 1px solid var(--scroll-thumb-edge); border-radius: 0; }
-  ::-webkit-scrollbar-thumb:vertical { min-height: 24px; }
-  ::-webkit-scrollbar-thumb:horizontal { min-width: 24px; background-image: var(--scroll-grip-horizontal); }
-  ::-webkit-scrollbar-thumb:hover, ::-webkit-scrollbar-thumb:active { background-color: var(--scroll-thumb-hover); background-image: var(--scroll-grip-vertical-hover); border-color: var(--scroll-thumb-hover-edge); }
-  ::-webkit-scrollbar-thumb:horizontal:hover, ::-webkit-scrollbar-thumb:horizontal:active { background-image: var(--scroll-grip-horizontal-hover); }
-  ::-webkit-scrollbar-button:single-button { display: block; width: 16px; height: 16px; background: var(--scroll-button) no-repeat center; border: 1px solid var(--scroll-edge); border-radius: 0; }
-  ::-webkit-scrollbar-button:single-button:vertical:decrement { background-image: var(--scroll-arrow-up); }
-  ::-webkit-scrollbar-button:single-button:vertical:increment { background-image: var(--scroll-arrow-down); }
-  ::-webkit-scrollbar-button:single-button:horizontal:decrement { background-image: var(--scroll-arrow-left); }
-  ::-webkit-scrollbar-button:single-button:horizontal:increment { background-image: var(--scroll-arrow-right); }
-  ::-webkit-scrollbar-button:single-button:vertical:decrement:hover { background-image: var(--scroll-arrow-up-hover); }
-  ::-webkit-scrollbar-button:single-button:vertical:increment:hover { background-image: var(--scroll-arrow-down-hover); }
-  ::-webkit-scrollbar-button:single-button:horizontal:decrement:hover { background-image: var(--scroll-arrow-left-hover); }
-  ::-webkit-scrollbar-button:single-button:horizontal:increment:hover { background-image: var(--scroll-arrow-right-hover); }
-  ::-webkit-scrollbar-button:single-button:active { background-color: var(--scroll-thumb); }
-  ::-webkit-scrollbar-corner { background: var(--scroll-button); }
+  ::-webkit-scrollbar { width: var(--scroll-thickness); height: var(--scroll-thickness); background: var(--scroll-track-middle); }
+  ::-webkit-scrollbar-track { border: var(--scroll-border) solid var(--scroll-track-border); }
+  ::-webkit-scrollbar-track:vertical { background: var(--scroll-track-vertical); border-top: 0; border-bottom: 0; }
+  ::-webkit-scrollbar-track:horizontal { background: var(--scroll-track-horizontal); border-left: 0; border-right: 0; }
+  ::-webkit-scrollbar-thumb { border: var(--scroll-border) solid var(--scroll-thumb-border); border-radius: 0; background-clip: padding-box; background-repeat: no-repeat; background-position: center; box-shadow: inset 0 0 0 var(--scroll-border) var(--scroll-thumb-line); }
+  ::-webkit-scrollbar-thumb:vertical { min-height: var(--scroll-thumb-least); background-image: var(--scroll-grip-vertical), var(--scroll-thumb-vertical); }
+  ::-webkit-scrollbar-thumb:horizontal { min-width: var(--scroll-thumb-least); background-image: var(--scroll-grip-horizontal), var(--scroll-thumb-horizontal); }
+  ::-webkit-scrollbar-thumb:hover { border-color: var(--scroll-hot-border); }
+  ::-webkit-scrollbar-thumb:vertical:hover { background-image: var(--scroll-grip-vertical-lit), var(--scroll-thumb-hot-vertical); }
+  ::-webkit-scrollbar-thumb:horizontal:hover { background-image: var(--scroll-grip-horizontal-lit), var(--scroll-thumb-hot-horizontal); }
+  ::-webkit-scrollbar-thumb:vertical:active { background-image: var(--scroll-grip-vertical-lit), var(--scroll-thumb-pressed-vertical); }
+  ::-webkit-scrollbar-thumb:horizontal:active { background-image: var(--scroll-grip-horizontal-lit), var(--scroll-thumb-pressed-horizontal); }
+  ::-webkit-scrollbar-button:single-button { display: block; width: var(--scroll-thickness); height: var(--scroll-thickness); border: var(--scroll-border) solid var(--scroll-track-border); border-radius: 0; background-repeat: no-repeat; background-position: center; }
+  ::-webkit-scrollbar-button:single-button:vertical:decrement { background-image: var(--scroll-arrow-up), var(--scroll-track-vertical); }
+  ::-webkit-scrollbar-button:single-button:vertical:increment { background-image: var(--scroll-arrow-down), var(--scroll-track-vertical); }
+  ::-webkit-scrollbar-button:single-button:horizontal:decrement { background-image: var(--scroll-arrow-left), var(--scroll-track-horizontal); }
+  ::-webkit-scrollbar-button:single-button:horizontal:increment { background-image: var(--scroll-arrow-right), var(--scroll-track-horizontal); }
+  ::-webkit-scrollbar-button:single-button:hover { border-color: var(--scroll-hot-border); }
+  ::-webkit-scrollbar-button:single-button:vertical:decrement:hover { background-image: var(--scroll-arrow-up-hot), var(--scroll-arrow-hot-vertical); }
+  ::-webkit-scrollbar-button:single-button:vertical:increment:hover { background-image: var(--scroll-arrow-down-hot), var(--scroll-arrow-hot-vertical); }
+  ::-webkit-scrollbar-button:single-button:horizontal:decrement:hover { background-image: var(--scroll-arrow-left-hot), var(--scroll-arrow-hot-horizontal); }
+  ::-webkit-scrollbar-button:single-button:horizontal:increment:hover { background-image: var(--scroll-arrow-right-hot), var(--scroll-arrow-hot-horizontal); }
+  ::-webkit-scrollbar-button:single-button:vertical:decrement:active { background-image: var(--scroll-arrow-up-hot), var(--scroll-arrow-pressed-vertical); }
+  ::-webkit-scrollbar-button:single-button:vertical:increment:active { background-image: var(--scroll-arrow-down-hot), var(--scroll-arrow-pressed-vertical); }
+  ::-webkit-scrollbar-button:single-button:horizontal:decrement:active { background-image: var(--scroll-arrow-left-hot), var(--scroll-arrow-pressed-horizontal); }
+  ::-webkit-scrollbar-button:single-button:horizontal:increment:active { background-image: var(--scroll-arrow-right-hot), var(--scroll-arrow-pressed-horizontal); }
+  ::-webkit-scrollbar-corner { background: var(--scroll-track-middle); }
 }
 @supports not selector(::-webkit-scrollbar) {
-  html, .tree, .outline, .table, pre, .bar-menu-content, .search-panel, .type-card, .declaration-card, .carousel-track { scrollbar-color: var(--scroll-thumb-edge) var(--scroll-track); scrollbar-width: auto; }
+  html, .tree, .outline, .table, pre, .bar-menu-content, .search-panel, .type-card, .declaration-card, .carousel-track { scrollbar-color: var(--scroll-thumb-border) var(--scroll-track-middle); scrollbar-width: auto; }
 }
 `
 
-// The colors of the scroll bars in one form. The border of the thumb (at
-// rest and with the pointer over it) carries its contrast of a graphic on
-// the track: the fill is the quieter tone of the programs of the system.
-Site_Scroll_Colors :: struct {
-	track:            graphics.Color,
-	edge:             graphics.Color, // The line at the edge of the track and around a button.
-	button:           graphics.Color,
-	arrow:            graphics.Color,
-	arrow_hover:      graphics.Color,
-	thumb:            graphics.Color,
-	thumb_edge:       graphics.Color,
-	thumb_hover:      graphics.Color,
-	thumb_hover_edge: graphics.Color,
-	grip:             graphics.Color,
-	grip_hover:       graphics.Color,
+// site_scroll_colors gives the colors of the scroll bars of one form: the
+// table of the scroll bar of the system (support/graphics/scroll_bar.odin).
+site_scroll_colors :: proc(light: bool) -> graphics.Scroll_Bar_Colors {
+	return light ? graphics.scroll_bar_colors_light : graphics.scroll_bar_colors_dark
 }
 
-// site_scroll_colors gives the colors of the scroll bars of one form, from
-// the colors of the form and the blue of the line.
-site_scroll_colors :: proc(light: bool) -> Site_Scroll_Colors {
-	colors := light ? site_light_colors() : site_dark_colors()
-	if light {
-		return Site_Scroll_Colors {
-			track = colors.track,
-			edge = graphics.mix(colors.track, colors.dim, site_percent(25)),
-			button = colors.card_bottom,
-			arrow = colors.dim,
-			arrow_hover = colors.text,
-			thumb = graphics.mix(colors.track, colors.dim, site_percent(30)),
-			thumb_edge = colors.dim,
-			thumb_hover = colors.line,
-			thumb_hover_edge = graphics.shade(colors.line, 73),
-			grip = colors.dim,
-			grip_hover = graphics.COLOR_WHITE,
-		}
+// The least length of a thumb of the site: a style sheet cannot remove the
+// grip of a short thumb, so each thumb is long enough for its grip.
+SITE_SCROLL_THUMB_LEAST :: graphics.SCROLL_BAR_GRIP_THUMB_LEAST + 1
+
+// site_scroll_gradient writes one variable whose value is a gradient
+// across a scroll bar, with a stop at each percent: "to right" for a
+// vertical bar, "to bottom" for a horizontal one.
+site_scroll_gradient :: proc(builder: ^strings.Builder, name: string, vertical: bool, colors: []graphics.Color, percents: []int) {
+	strings.write_string(builder, "  --")
+	strings.write_string(builder, name)
+	strings.write_string(builder, vertical ? "-vertical: linear-gradient(to right" : "-horizontal: linear-gradient(to bottom")
+	for color, index in colors {
+		strings.write_string(builder, ", ")
+		strings.write_string(builder, site_color(color))
+		strings.write_string(builder, " ")
+		strings.write_int(builder, percents[index])
+		strings.write_string(builder, "%")
 	}
-	return Site_Scroll_Colors {
-		track = colors.track,
-		edge = graphics.mix(colors.track, colors.dim, site_percent(25)),
-		button = colors.card_bottom,
-		arrow = colors.dim,
-		arrow_hover = colors.text,
-		thumb = graphics.mix(colors.track, colors.dim, site_percent(35)),
-		thumb_edge = colors.dim,
-		thumb_hover = graphics.shade(colors.line, 73),
-		thumb_hover_edge = graphics.shade(colors.line, 112),
-		grip = colors.dim,
-		grip_hover = colors.text,
-	}
+	strings.write_string(builder, ");\n")
+}
+
+// site_scroll_size writes one variable whose value is a count of pixels.
+site_scroll_size :: proc(builder: ^strings.Builder, name: string, size_in_pixels: int) {
+	strings.write_string(builder, "  --")
+	strings.write_string(builder, name)
+	strings.write_string(builder, ": ")
+	strings.write_int(builder, size_in_pixels)
+	strings.write_string(builder, "px;\n")
 }
 
 // The four directions of the triangle of a button of a scroll bar.
@@ -848,42 +845,47 @@ site_scroll_direction_names := [Site_Scroll_Direction]string {
 	.Right = "right",
 }
 
-// site_scroll_arrow_svg gives the triangle of a button: a square of 16
-// pixels, and in its middle a solid triangle of four rows of pixels, as the
-// icons of the values are drawn: one rect for each row.
+// site_scroll_arrow_svg gives the triangle of an arrow button, as the
+// system draws it: a square of the thickness of the bar, and in its middle
+// a solid triangle of four rows of 1, 3, 5 and 7 pixels, its point on the
+// middle line. One rect for each row, as the icons of the values are drawn.
 site_scroll_arrow_svg :: proc(direction: Site_Scroll_Direction, color: graphics.Color) -> string {
+	SIDE :: graphics.SCROLL_BAR_THICKNESS
+	ROWS :: graphics.SCROLL_BAR_TRIANGLE_ROWS
+	first := (SIDE - ROWS) / 2
+	middle := SIDE / 2
 	b := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(&b, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" shape-rendering=\"crispEdges\" fill=\"%s\">", site_color(color))
-	for row in 0 ..< 4 {
-		half := row + 1
+	fmt.sbprintf(&b, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%d\" height=\"%d\" viewBox=\"0 0 %d %d\" shape-rendering=\"crispEdges\" fill=\"%s\">", SIDE, SIDE, SIDE, SIDE, site_color(color))
+	for row in 0 ..< ROWS {
+		// The point is toward the end that the button scrolls to.
+		half := direction == .Up || direction == .Left ? row : ROWS - 1 - row
 		switch direction {
-		case .Up:
-			fmt.sbprintf(&b, "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"1\"/>", 8 - half, 6 + row, 2 * half)
-		case .Down:
-			fmt.sbprintf(&b, "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"1\"/>", 8 - half, 9 - row, 2 * half)
-		case .Left:
-			fmt.sbprintf(&b, "<rect x=\"%d\" y=\"%d\" width=\"1\" height=\"%d\"/>", 6 + row, 8 - half, 2 * half)
-		case .Right:
-			fmt.sbprintf(&b, "<rect x=\"%d\" y=\"%d\" width=\"1\" height=\"%d\"/>", 9 - row, 8 - half, 2 * half)
+		case .Up, .Down:
+			fmt.sbprintf(&b, "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"1\"/>", middle - half, first + row, 2 * half + 1)
+		case .Left, .Right:
+			fmt.sbprintf(&b, "<rect x=\"%d\" y=\"%d\" width=\"1\" height=\"%d\"/>", first + row, middle - half, 2 * half + 1)
 		}
 	}
 	strings.write_string(&b, "</svg>")
 	return strings.to_string(b)
 }
 
-// site_scroll_grip_svg gives the grip of a thumb: three lines of 8 pixels,
-// 3 pixels apart, across the thumb (horizontal lines on a vertical thumb).
+// site_scroll_grip_svg gives the grip of a thumb, as the system draws it:
+// four lines of 7 pixels, each 1 pixel thick with 1 pixel between two,
+// across the thumb (horizontal lines on a vertical thumb).
 site_scroll_grip_svg :: proc(vertical: bool, color: graphics.Color) -> string {
+	ACROSS :: graphics.SCROLL_BAR_GRIP_LINE_LENGTH
+	ALONG :: graphics.SCROLL_BAR_GRIP_LENGTH
 	b := strings.builder_make(context.temp_allocator)
 	if vertical {
-		fmt.sbprintf(&b, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"7\" viewBox=\"0 0 8 7\" shape-rendering=\"crispEdges\" fill=\"%s\">", site_color(color))
-		for line in 0 ..< 3 {
-			fmt.sbprintf(&b, "<rect x=\"0\" y=\"%d\" width=\"8\" height=\"1\"/>", 3 * line)
+		fmt.sbprintf(&b, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%d\" height=\"%d\" viewBox=\"0 0 %d %d\" shape-rendering=\"crispEdges\" fill=\"%s\">", ACROSS, ALONG, ACROSS, ALONG, site_color(color))
+		for line in 0 ..< graphics.SCROLL_BAR_GRIP_LINES {
+			fmt.sbprintf(&b, "<rect x=\"0\" y=\"%d\" width=\"%d\" height=\"1\"/>", line * graphics.SCROLL_BAR_GRIP_LINE_STEP, ACROSS)
 		}
 	} else {
-		fmt.sbprintf(&b, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"7\" height=\"8\" viewBox=\"0 0 7 8\" shape-rendering=\"crispEdges\" fill=\"%s\">", site_color(color))
-		for line in 0 ..< 3 {
-			fmt.sbprintf(&b, "<rect x=\"%d\" y=\"0\" width=\"1\" height=\"8\"/>", 3 * line)
+		fmt.sbprintf(&b, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%d\" height=\"%d\" viewBox=\"0 0 %d %d\" shape-rendering=\"crispEdges\" fill=\"%s\">", ALONG, ACROSS, ALONG, ACROSS, site_color(color))
+		for line in 0 ..< graphics.SCROLL_BAR_GRIP_LINES {
+			fmt.sbprintf(&b, "<rect x=\"%d\" y=\"0\" width=\"1\" height=\"%d\"/>", line * graphics.SCROLL_BAR_GRIP_LINE_STEP, ACROSS)
 		}
 	}
 	strings.write_string(&b, "</svg>")
@@ -891,30 +893,48 @@ site_scroll_grip_svg :: proc(vertical: bool, color: graphics.Color) -> string {
 }
 
 // site_scroll_variables writes the variables of the scroll bars of one
-// form: the colors, then each triangle and each grip as a data address in
-// those colors, at rest and with the pointer over it.
+// form, each from the table of the scroll bar of the system: the sizes,
+// the flat colors, the inner line of the thumb, each gradient in both
+// directions, then each triangle and each grip as a data address, at rest
+// and with the pointer over it.
 site_scroll_variables :: proc(builder: ^strings.Builder, light: bool) {
 	colors := site_scroll_colors(light)
 	strings.write_string(builder, ":root {\n")
-	site_variable(builder, "scroll-track", colors.track)
-	site_variable(builder, "scroll-edge", colors.edge)
-	site_variable(builder, "scroll-button", colors.button)
-	site_variable(builder, "scroll-thumb", colors.thumb)
-	site_variable(builder, "scroll-thumb-edge", colors.thumb_edge)
-	site_variable(builder, "scroll-thumb-hover", colors.thumb_hover)
-	site_variable(builder, "scroll-thumb-hover-edge", colors.thumb_hover_edge)
+	site_scroll_size(builder, "scroll-thickness", graphics.SCROLL_BAR_THICKNESS)
+	site_scroll_size(builder, "scroll-border", graphics.SCROLL_BAR_BORDER)
+	site_scroll_size(builder, "scroll-thumb-least", SITE_SCROLL_THUMB_LEAST)
+	site_variable(builder, "scroll-track-middle", colors.track[1])
+	site_variable(builder, "scroll-track-border", colors.track_border)
+	site_variable(builder, "scroll-thumb-border", colors.thumb_border)
+	site_variable(builder, "scroll-hot-border", colors.hot_border)
+	// The inner line of the thumb: white over the fill, at the level of
+	// the table. A browser blends it; the system draws the blended color.
+	strings.write_string(builder, "  --scroll-thumb-line: rgb(255 255 255 / ")
+	strings.write_int(builder, int(colors.thumb_line_level * 100 / 255))
+	strings.write_string(builder, "%);\n")
+	track_percents := graphics.SCROLL_BAR_TRACK_STOP_PERCENTS
+	thumb_percents := graphics.SCROLL_BAR_THUMB_STOP_PERCENTS
+	arrow_percents := [2]int{0, 100}
+	for vertical in ([2]bool{true, false}) {
+		site_scroll_gradient(builder, "scroll-track", vertical, colors.track[:], track_percents[:])
+		site_scroll_gradient(builder, "scroll-thumb", vertical, colors.thumb_rest[:], thumb_percents[:])
+		site_scroll_gradient(builder, "scroll-thumb-hot", vertical, colors.thumb_hot[:], thumb_percents[:])
+		site_scroll_gradient(builder, "scroll-thumb-pressed", vertical, colors.thumb_pressed[:], thumb_percents[:])
+		site_scroll_gradient(builder, "scroll-arrow-hot", vertical, colors.arrow_hot[:], arrow_percents[:])
+		site_scroll_gradient(builder, "scroll-arrow-pressed", vertical, colors.arrow_pressed[:], arrow_percents[:])
+	}
 	address :: proc(target: ^strings.Builder, variable_name, svg: string) {
 		fmt.sbprintf(target, "  --%s: url(\"%s\");\n", variable_name, site_svg_data_address(svg))
 	}
 	for direction in Site_Scroll_Direction {
 		name := site_scroll_direction_names[direction]
-		address(builder, strings.concatenate({"scroll-arrow-", name}, context.temp_allocator), site_scroll_arrow_svg(direction, colors.arrow))
-		address(builder, strings.concatenate({"scroll-arrow-", name, "-hover"}, context.temp_allocator), site_scroll_arrow_svg(direction, colors.arrow_hover))
+		address(builder, strings.concatenate({"scroll-arrow-", name}, context.temp_allocator), site_scroll_arrow_svg(direction, colors.triangle))
+		address(builder, strings.concatenate({"scroll-arrow-", name, "-hot"}, context.temp_allocator), site_scroll_arrow_svg(direction, colors.triangle_hot))
 	}
 	address(builder, "scroll-grip-vertical", site_scroll_grip_svg(true, colors.grip))
-	address(builder, "scroll-grip-vertical-hover", site_scroll_grip_svg(true, colors.grip_hover))
+	address(builder, "scroll-grip-vertical-lit", site_scroll_grip_svg(true, colors.grip_lit))
 	address(builder, "scroll-grip-horizontal", site_scroll_grip_svg(false, colors.grip))
-	address(builder, "scroll-grip-horizontal-hover", site_scroll_grip_svg(false, colors.grip_hover))
+	address(builder, "scroll-grip-horizontal-lit", site_scroll_grip_svg(false, colors.grip_lit))
 	strings.write_string(builder, "}\n")
 }
 
@@ -975,6 +995,11 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	strings.write_string(&builder, SITE_ROADMAP_RULES)
 	// The menu of the bar that holds the sections that are not buttons.
 	strings.write_string(&builder, site_project_menu_rules())
+	// The sections of the home: the line of time of the start, the charts
+	// of the measures, the band of the newest release.
+	strings.write_string(&builder, site_home_rules())
+	// The colors of the states of a control, in the dark form.
+	site_control_variables(&builder, false)
 	// The colors and the widths of the tiles of the boot image: they come
 	// from the image of the build, so they are not fixed rules.
 	strings.write_string(&builder, tile_rules)
@@ -992,6 +1017,7 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	site_polish_variables(&builder, true)
 	site_scroll_variables(&builder, true)
 	site_module_graph_variables(&builder, true)
+	site_control_variables(&builder, true)
 	// The grid of points is a decoration of the dark background only.
 	strings.write_string(&builder, ".section-home { background-image: none; }\n}\n")
 	// Print is plain black text, also in the light form, whose colors of code
@@ -1002,5 +1028,9 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	// room above a picture of the carousel that a link shows is larger than
 	// the room of another target of a link.
 	strings.write_string(&builder, site_gallery_rules())
+	// The states of a control (the pointer over it, the focus, a press):
+	// after the rules of every control, so that a state wins over the look
+	// at rest and over the current mark of a control of the same weight.
+	strings.write_string(&builder, site_control_rules())
 	return strings.to_string(builder)
 }

@@ -11,6 +11,11 @@
 // Keys: Page Up and Page Down move the view. Each other key goes to the
 // program, and the view returns to the last lines.
 //
+// The pointer: the scroll bar at the right of the lines moves the view. A
+// press on an arrow button moves it by one line, and again while the
+// button is held; a press on the track by one page; the thumb follows the
+// pointer while it is held (support/interface/scroll_bar.odin).
+//
 // Two threads:
 //   the reader   It reads the records of the terminal ring and keeps the
 //                lines. It owns the lines: no lock exists.
@@ -45,6 +50,9 @@
 //
 // - "terminal: ok, console writes in a ring of N records";
 // - "terminal: the first key goes to console";
+// - "terminal: a press on the arrow up of the scroll bar of console: the
+//   view starts at line L of N", or "... the view follows the last lines";
+// - "terminal: a drag of the thumb of the scroll bar of console: ...";
 // - "terminal: console stopped with code C after L lines and R records".
 //
 // The terminal of flood measures: it shows the rates of the program, and
@@ -73,7 +81,13 @@ CELL_HEIGHT :: graphics.CELL_HEIGHT
 MARGIN :: 8
 HEAD_HEIGHT :: 72
 TEXT_X :: MARGIN
-SCROLL_WIDTH :: 8
+SCROLL_WIDTH :: interface.SCROLL_BAR_THICKNESS
+SCROLL_GAP :: 7 // From the text to the scroll bar: with the bar, three units of the grid.
+// The scroll bar of the completion list takes its last two cells and the
+// column of its border.
+LIST_SCROLL_CELLS :: 2
+#assert(LIST_SCROLL_CELLS * CELL_WIDTH + 1 == SCROLL_WIDTH)
+#assert((SCROLL_GAP + SCROLL_WIDTH) % 8 == 0)
 
 // What the root service chose for this terminal, and the places that
 // follow from it.
@@ -81,18 +95,22 @@ program_name: string
 name_bytes: system.Name
 columns, rows: int
 measure: bool // The window shows the rates of the program, and the status on its own line.
-text_y, text_width, text_height, scroll_x, status_y, hint_y, width, height, graph_x: int
+text_y, text_width, text_height, status_y, hint_y, width, height, graph_x: int
+scroll_area: interface.Area // The scroll bar of the lines: at the right edge of the window, from the head to the line over the status.
+scroll_identity: interface.Element_Identity
 
 layout :: proc "contextless" () {
 	text_y = measure ? HEAD_HEIGHT : MARGIN
 	text_width = columns * CELL_WIDTH
 	text_height = rows * CELL_HEIGHT
-	scroll_x = TEXT_X + text_width + 6
 	status_y = text_y + text_height + 8
 	hint_y = measure ? status_y + 24 : status_y
-	width = scroll_x + SCROLL_WIDTH + MARGIN
+	width = TEXT_X + text_width + SCROLL_GAP + SCROLL_WIDTH
 	height = hint_y + CELL_HEIGHT + 6
-	graph_x = width - MARGIN - SCROLL_WIDTH - 6 - HISTORY * GRAPH_BAR
+	graph_x = TEXT_X + text_width - HISTORY * GRAPH_BAR
+	scroll_top := measure ? HEAD_HEIGHT - 6 : 0
+	scroll_area = {width - SCROLL_WIDTH, scroll_top, SCROLL_WIDTH, status_y - 4 - scroll_top}
+	scroll_identity = interface.identity("the scroll bar of the lines")
 }
 
 FRAME_TIME :: 16 // Milliseconds.
@@ -103,7 +121,6 @@ GRAPH_HEIGHT :: 48
 
 COLOR_GRAPH :: 0x58D878
 COLOR_GRAPH_DIM :: 0x1C3A28
-COLOR_THUMB :: 0x5A6878
 COLOR_STOPPED :: 0xF07060
 COLOR_HELD :: 0xF0C050
 COLOR_CURSOR :: 0x7FC8FF
@@ -223,6 +240,11 @@ View :: struct {
 	// The cells of the completion list, for its border: list_columns 0 is
 	// no list.
 	list_left, list_top, list_columns, list_rows: int,
+	// The scroll bar of the completion list: the names of the whole list,
+	// and the first one that the rows show. list_scroll false: each name
+	// is shown, and the list has no scroll bar.
+	list_scroll: bool,
+	list_total, list_first: int,
 	// The rows of the view that show lines of the text: the edit line and
 	// the row under it are not lines of the text. After a clear, the view
 	// can show none.
@@ -409,7 +431,7 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 	}
 	// The rows shown keep the chosen row in view.
 	offset := list_keeping.shown.chosen >= shown_rows ? list_keeping.shown.chosen - shown_rows + 1 : 0
-	scroll := list_keeping.shown.total > list_keeping.shown.row_count || shown_rows < list_keeping.shown.row_count ? 1 : 0
+	scroll := list_keeping.shown.total > list_keeping.shown.row_count || shown_rows < list_keeping.shown.row_count ? LIST_SCROLL_CELLS : 0
 	longest := 0
 	for &row in list_keeping.shown.rows[offset:][:shown_rows] {
 		about := row.length - row.name_length
@@ -419,11 +441,13 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 	anchor := min(list_keeping.shown.anchor, edit_line.length)
 	left := min(anchor % columns, columns - list_width)
 	inner := list_width - 2 - scroll
-	// The scroll mark: a track, and a thumb at the place of the rows shown
-	// in all the names.
-	shown_first := list_keeping.shown.first + offset
-	thumb_rows := max(shown_rows * shown_rows / max(list_keeping.shown.total, 1), 1)
-	thumb_top := min(shown_first * shown_rows / max(list_keeping.shown.total, 1), shown_rows - thumb_rows)
+	// The scroll bar: the drawer draws it over the last cells of the rows,
+	// at the place of the rows shown in all the names. The count of the
+	// names comes from the program: it is at least the rows shown.
+	shown_first := max(list_keeping.shown.first, 0) + offset
+	view.list_scroll = scroll != 0
+	view.list_first = shown_first
+	view.list_total = max(list_keeping.shown.total, shown_first + shown_rows)
 	for index in 0 ..< shown_rows {
 		row := &list_keeping.shown.rows[offset + index]
 		chosen := offset + index == list_keeping.shown.chosen
@@ -467,10 +491,6 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 			kind := terminal.code_runs_kind_at(&row.code, row.name_length + place, &code_cursor)
 			color := chosen ? about_color : terminal.code_kind_color(kind, about_color)
 			cells[about_left + place] = {character = shown_character(row.text[row.name_length + place]), filled = true, color = color, background = background}
-		}
-		if scroll == 1 {
-			thumb := index >= thumb_top && index < thumb_top + thumb_rows
-			cells[list_width - 1] = {character = ' ', filled = true, background = thumb ? COLOR_THUMB : graphics.COLOR_TRACK}
 		}
 	}
 	view.list_left, view.list_top, view.list_columns, view.list_rows = left, top, list_width, shown_rows
@@ -696,8 +716,10 @@ number :: proc "contextless" (buffer: ^[27]u8, value: u64) -> string {
 // view are a text grid, so a frame damages only the cells that changed.
 // Each picture of the surface has its own table before, with its own copy
 // of the cells.
-records_now, records_before, records_second: [256]interface.Draw_Record
+records_now, records_before, records_second: [384]interface.Draw_Record
 text_now, text_before, text_second: [1024]u8
+// What the pointer did to the scroll bar of the lines in the last frame.
+scroll_result: interface.Scroll_Bar_Result
 cells_before, cells_second: [ROWS_LIMIT * COLUMNS_LIMIT]Cell
 grids_now, grids_before, grids_second: [1]interface.Text_Grid
 drawing: interface.Window_Drawing
@@ -743,15 +765,6 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 
 	// The text: only the rows of the window, as one text grid.
 	interface.draw_text_grid(table, TEXT_X, text_y, 0)
-
-	// Where the view is in the lines that the terminal has.
-	interface.draw_rectangle(table, scroll_x, text_y, SCROLL_WIDTH, text_height, graphics.COLOR_TRACK)
-	kept := view.count - view.oldest
-	if kept > 0 && !view.gone {
-		thumb := max(int(min(u64(rows), kept) * u64(text_height) / kept), 12)
-		place := kept > u64(rows) ? int(min(view.top - view.oldest, kept - u64(rows)) * u64(text_height - thumb) / (kept - u64(rows))) : 0
-		interface.draw_rectangle(table, scroll_x, text_y + place, SCROLL_WIDTH, thumb, follow ? COLOR_THUMB : COLOR_HELD)
-	}
 
 	// The status of the program: a text, and a value of a total. With the
 	// rates it has its own line. If not, it takes the place of the line count.
@@ -822,7 +835,26 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 		interface.draw_rectangle(table, x, y + list_height - 1, list_width, 1, COLOR_LIST_BORDER)
 		interface.draw_rectangle(table, x, y, 1, list_height, COLOR_LIST_BORDER)
 		interface.draw_rectangle(table, x + list_width - 1, y, 1, list_height, COLOR_LIST_BORDER)
+		// The scroll bar of the list, over its last cells and the right
+		// column of its border. The program that writes owns the list and
+		// its choice: this bar shows the place of the rows, and takes no
+		// pointer.
+		if view.list_scroll {
+			bar_length := view.list_rows * CELL_HEIGHT
+			bar_x := TEXT_X + (view.list_left + view.list_columns - LIST_SCROLL_CELLS) * CELL_WIDTH
+			interface.scroll_bar_draw(table, {bar_x, text_y + view.list_top * CELL_HEIGHT, SCROLL_WIDTH, bar_length}, .Vertical, interface.scroll_bar_geometry(bar_length, SCROLL_WIDTH, {total = view.list_total, visible = view.list_rows, first = view.list_first}))
+		}
 	}
+	// The scroll bar of the lines: where the view is in the lines that the
+	// terminal has. It is the last element: the pointer changes the count
+	// of its records, and the records before it keep their places.
+	kept := view.count - view.oldest
+	shown_lines := min(u64(rows), kept)
+	first_line: u64
+	if !view.gone && view.top >= view.oldest {
+		first_line = min(view.top - view.oldest, kept - shown_lines)
+	}
+	scroll_result = interface.scroll_bar(&frame, scroll_area, scroll_identity, .Vertical, {total = int(max(kept, 1)), visible = int(max(shown_lines, 1)), first = int(first_line)}, {page = rows - 1})
 	interface.window_frame_end(&drawing, &frame, window)
 	if table.full {
 		system.log("terminal: the draw table is full: records are missing")
@@ -944,9 +976,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			wait: system.Wait
 			display.wait_events(&wait, &window)
 			system.wait_word(&wait, &activity, drawn, &drawer_idle)
-			system.wait_end(&wait, program != 0 ? system.time() + STATE_TIME : system.WAIT_FOREVER)
+			// A held arrow button of the scroll bar takes its next step at
+			// a time of the clock: the wait ends there at the latest.
+			deadline := program != 0 ? system.time() + STATE_TIME : system.WAIT_FOREVER
+			step_time, step_due := interface.window_scroll_bar_wake(&drawing)
+			if step_due {
+				deadline = min(deadline, step_time)
+			}
+			system.wait_end(&wait, deadline)
 			now = system.time()
 			next_frame = now
+			if step_due && now >= step_time {
+				dirty = true
+			}
 		} else {
 			now = display.wait(&window, next_frame)
 		}
@@ -956,6 +998,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if event.kind == .Settings_Changed {
 				interface.draw_whole_window_next(&drawing)
 				dirty = true
+				continue
+			}
+			// The pointer goes to the scroll bar of the lines, and to no
+			// other part of the window: a frame is built only when the
+			// pointer is on the bar, holds it, or leaves it lit.
+			if event.kind == .Pointer {
+				interface.input_add(&drawing.input, event)
+				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area, scroll_identity) {
+					dirty = true
+				}
 				continue
 			}
 			if event.kind != .Key || !event.pressed {
@@ -1070,5 +1122,50 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		draw(&window, request.follow)
+		// The scroll bar moved the view: the next picture shows the lines
+		// from its first unit. The log has one line for a press that moved
+		// the view and one for a drag, not one for each step.
+		if scroll_result.changed {
+			request.top = view.oldest + u64(scroll_result.first)
+			request.follow = request.top + u64(rows) >= view.count
+			dirty = true
+			scroll_drag_moved ||= scroll_result.held == .Thumb
+			if scroll_result.pressed_now != .None && scroll_result.pressed_now != .Thumb {
+				scroll_log("a press on ", scroll_part_words(scroll_result.pressed_now))
+			}
+		}
+		if scroll_result.drag_ended {
+			if scroll_drag_moved {
+				scroll_log("a drag of ", "the thumb")
+			}
+			scroll_drag_moved = false
+		}
+	}
+}
+
+scroll_drag_moved: bool // The drag of the thumb that is held now moved the view.
+
+// scroll_part_words gives the words of the log for a part of the scroll bar.
+scroll_part_words :: proc "contextless" (part: interface.Scroll_Bar_Part) -> string {
+	#partial switch part {
+	case .Arrow_Back:
+		return "the arrow up"
+	case .Arrow_Forward:
+		return "the arrow down"
+	case .Track_Back:
+		return "the track above the thumb"
+	case .Track_Forward:
+		return "the track under the thumb"
+	}
+	return "the thumb"
+}
+
+// scroll_log writes what the pointer did on the scroll bar of the lines,
+// and where the view is after it.
+scroll_log :: proc "contextless" (act, part: string) {
+	if request.follow {
+		system.log("terminal: ", act, part, " of the scroll bar of ", program_name, ": the view follows the last lines")
+	} else {
+		system.log("terminal: ", act, part, " of the scroll bar of ", program_name, ": the view starts at line ", request.top + 1, " of ", view.count)
 	}
 }

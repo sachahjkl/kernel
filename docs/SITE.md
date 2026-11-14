@@ -35,7 +35,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 
 | Page | Generated from |
 |---|---|
-| `index.html`, the home | The mark (`support/mark`), the first sentence of the first paragraph of `README.md` as the tagline of the head, the three newest news entries, the rest of that paragraph in a section "What it is" after the news (the owner, 2026-11-12: "la tagline est trop longue"; after the news, so that the first screen of a phone holds the mark, the name, the tagline and the links only; the description of the home in its head, Open Graph, the manifest and the page graph stays the whole paragraph, cut at 160 bytes, because the tagline alone is too short to describe the system), the stages of the start from the lines `kernel: boot: ...` of `build/test_output.txt` or of the measure record (see "The measure record"), the tiles of the boot image (see "The tiles of the boot image"), the first three measured numbers, the carousel of the pictures of the gallery table that the home shows (see "The carousel of the home"), the newest release of `CHANGELOG.md`, the count of steps of `docs/REVIEWS.md` |
+| `index.html`, the home | The mark (`support/mark`), the first sentence of the first paragraph of `README.md` as the tagline of the head, the three newest news entries, the rest of that paragraph in a section "What it is" after the news (the owner, 2026-11-12: "la tagline est trop longue"; after the news, so that the first screen of a phone holds the mark, the name, the tagline and the links only; the description of the home in its head, Open Graph, the manifest and the page graph stays the whole paragraph, cut at 160 bytes, because the tagline alone is too short to describe the system), the line of time of the start from the lines `kernel: boot: ...` of `build/test_output.txt` or of the measure record (see "The measure record"), the tiles of the boot image (see "The tiles of the boot image"), the charts of the measures, the carousel of the pictures of the gallery table that the home shows (see "The carousel of the home"), the band of the newest release of `CHANGELOG.md`, with the count of steps of `docs/REVIEWS.md`; see "The home" |
 | `gallery/`, the gallery | The gallery table and the pictures of `docs/screenshots`; see "The gallery" |
 | `pictures/thumbnails/<name>.png` | The thumbnail of each picture of the gallery; see "The thumbnails" |
 | `docs/`, the docs home | See "The docs home" |
@@ -47,7 +47,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `docs/reference/commands/` | `COMMANDS` in `tools/kerneltool/main.odin`: the comment above `COMMANDS ::` (what the tool is and how to run a command) at the top; for each command its name, the comment lines just above its entry as its documentation (the first sentence is the cell "What it does"), and its help, the line that `kerneltool help` prints |
 | `docs/reference/numbers/` | The list `site_measures`, the measure record `docs/measures/measures.txt` and the logs of `build/` that are newer than it |
 | `docs/reference/licenses/` | See "The licenses" |
-| `releases/` | All of `CHANGELOG.md`, newest first; each release has the anchor `release-<number>`, and a line with a link to each news entry that names it |
+| `releases/` | All of `CHANGELOG.md`, newest first; each release has the anchor `release-<number>`, each of its changes the anchor `release-<number>-change-<its place in the release, from 1>`, and a line with a link to each news entry that names it |
 | `roadmap/` | All of `ROADMAP.md`: the planned work, in the sections Now, Next and Later; see "The roadmap" |
 | `news/`, `news.xml` | The files of `news/`; see "The news" |
 | `search.json`, `search.js` | The index of the search and its script; see "The search" |
@@ -369,6 +369,94 @@ With the script, the chart follows the field:
 - The markup says what the script needs: each chip `data-kind` (the index of the kind in `search.json`), `data-count` (its count in the index) and `data-plural` (its name); the list of chips has the id `search-chart`; the bar has the id `search-chart-bar`, and each segment `data-kind`. The script writes the `x` and `width` attributes of each segment in the form that the tool writes ("74.6%", `site_search_chart_percent`), with the least share of the rule of the script.
 - The movement: a segment changes its place and its width in 150 ms (`transition: x 150ms ease-out, width 150ms ease-out`, on the segments only), and at once under `prefers-reduced-motion: reduce`. Nothing moves when the page loads: a transition plays only when the script changes an attribute. The `x` and `width` attributes of a `rect` are properties of the style sheet in SVG 2, so the transition applies where a browser maps the attribute to the property; a browser that does not changes the segment at once, which is correct. A style that the script sets is a style attribute in the page: it is not used.
 
+## The home
+
+The owner looked at the home on 2026-11-14 and asked for six changes: the text of a news card with no picture at its top; a line of time in the place of the boxes of the start ("Soit on affiche une timeline [...] avec des informations riches, mais là l'espèce de boîte c'est nul"); a chart or nothing for the measures ("Soit on fait des rapports de statistiques qu'on affiche sur un graphe ou des histogrammes [...], soit on n'affiche rien"); a newest release that is worth a look ("le texte tout plat comme ça, c'est pas très aguicheur [...] il y a un manque d'emphase sur les mots"); an animation at a click on the heron; and the states of the buttons ("The states of a control"). The code is `tools/kerneltool/site_home.odin`; its host tests are `site_home_test.odin`; the intent is `src/md/features/site_home.md`.
+
+The home does the tour: it shows the system. From its top: the head (the heron, the name, the tagline, the doors), the news, "What it is", the line of time of the start, the tiles of the boot image, the charts of the measures, the carousel, the band of the newest release.
+
+### The rule of a card
+
+The content of a card starts at its top, and a card has no empty room between two of its parts. The fault that the rule removes: on the home, each news card gave its text the fourth row of a shared grid, and the third row had the height of the picture of another card; a card with no picture then showed its text at its bottom, under an empty third row. A card with no picture now puts its text in the third row, over the two last rows.
+
+- A grid whose cards do not share their rows gives each card its own height (`align-items: start`): the two cards of the docs home, the columns of the roadmap, the charts of the home.
+- No rule of the style sheet pushes a part of a card to its bottom (`margin-top: auto`, `align-self: end`, `align-content: end` or `space-between`): the host test `site_card_content_starts_at_the_top` refuses them.
+- The figures of the gallery and the cards of the reference have their parts from the top already.
+
+### The line of time of the start
+
+The line of time of the start (`GLOSSARY.md`) shows the stages that the kernel logged, from the start of the machine to the first program. It replaces seven boxes of one size, which said nothing of the times.
+
+**Two bars, each on one scale that the page states.** The firmware takes 1516.6 of 1662.0 ms in the run of the measure record: on one scale the six stages of the system are 8.8 % of the bar, 26 pixels on a phone.
+
+| Bar | What it shows | Scale |
+|---|---|---|
+| The first | Every stage, from the start of the machine | One scale: the width of a stage is its time, in hundredths of a percent of the bar, with no least width. The sentence above it gives the whole time and says "One scale: a width is a time." |
+| The second | The stages after the first one | The same times, wider: the sentence under it gives their time and how many times wider the bar is ("11.4 times wider"). A stage has at least 2 % of the bar (`SITE_BOOT_SYSTEM_LEAST_SHARE`), and the sentence says so |
+
+Two lines at an angle, between the bars, go from the part of the first bar that the second one shows to the two ends of the second bar. A segment has the color of who runs its stage. The bars are `aria-hidden`: the rows under them are the text.
+
+Refused: a logarithmic scale. Its axis has no zero, and the length of a segment on it is not a time: two stages of the same time have two lengths, by their place. A reader compares lengths. Refused too: one bar with a least width for each stage: the firmware then looks shorter than it is, and the page lies about the one stage that takes most of the start.
+
+**The rows.** Under the bars, one row for each stage: a square in its color, who runs it in the dim color, its name, and its time at the right as a Time value. A reader with no pointer reads every name and every time. A name wraps between its words; nothing is cut. The room of a name, counted at 9 pixels a character with a time of 9 characters:
+
+| Width of the window | The column of the rows | The box of a name |
+|---|---|---|
+| 360 pixels | 294 pixels | 169 pixels: the longest name takes 3 lines; the longest word, "program:", 72 pixels |
+| 720 pixels | 654 pixels | 529 pixels: one line |
+| 1200 pixels | 535 pixels: the rows at the left, the cards at the right, from 900 pixels | 410 pixels: one line |
+
+**The cards.** Each stage has a card: its name and its time, what the stage does in two or three sentences, the code that runs it, the line of the log that it is measured from, and a link to the heading of its guide. The texts are one table of the tool, `site_boot_stage_texts`, keyed by the name of the stage; each sentence states a fact of the guide that the entry names or of the source of the boot program and of the kernel. A stage with no entry has a card with its time and its line.
+
+- One card shows at a time, in one place: at the right of the rows from 900 pixels, under them on a narrower window. Every card is in one cell of a grid, so the cell has the height of the tallest card, and nothing moves when the card changes. A card that is not shown is hidden, not removed.
+- Which card shows, with no script: the card of the stage whose row has the focus (a row has `tabindex="0"`; a tap gives it the focus); else the card of the row or of the segment under the pointer; a card under the pointer stays, so the pointer can go from a row to the link of its card. With none of them, the card of the hint shows: how to choose a stage, and where the times come from.
+- The rules are written inside `:where()`, which has no weight: the order of the rules alone decides, so exactly one card shows (`site_boot_card_rules`). The rules name a stage by its place; the style sheet has them for 12 stages (`SITE_BOOT_STAGE_RULE_COUNT`).
+- The segment of the stage of a row has a line around it, and the row of the stage of a segment has the band of the track.
+- A browser with no `:has()` shows every card, one under the other, and no hint.
+- A row names its card for a screen reader (`aria-describedby`).
+
+**The source of the times** is in the card of the hint, not in a sentence under the bars: one line `kernel: boot: ...` for each stage, one run of the main machine test under QEMU, the full check or the work tree that measured it, and a link to the page of the measured numbers, which states the run.
+
+### The charts of the measures
+
+The rule: **a chart or nothing**. The home shows a measure only as a chart whose bars have one unit and one scale from zero. A measure that is not such a chart is not on the home: it is a row of the page of the measured numbers, where a number is a record.
+
+A measure chart (`GLOSSARY.md`) is an entry of `site_measure_charts`: the pattern of its measure in `site_measures`, a title, its one unit, the value kind of its numbers, one or two sentences, and at most 5 bars, each with its label and the words of the line of the log that come just before its number.
+
+| Chart | Bars | Unit |
+|---|---|---|
+| Kernel entries in one second, by the count of programs | 1, 2 and 4 programs | Kernel entries in one second |
+| The time to draw one glyph | From its outline at the scales 1, 2 and 3; from the glyph cache; the bitmap font | Nanoseconds |
+
+- The tool reads each number from the line of the log that the measure quotes (`site_chart_values`). A chart is drawn only when the line holds every number of the chart, each followed by the unit of the chart where the log writes one. So a chart never shows a part of its bars and never a number of another unit.
+- A bar is an SVG rectangle whose width is an attribute, in thousandths of the longest bar of its chart; a number above zero has at least 4 thousandths. The fill is the accent of the measure. The number is text at the right of its bar, as a value of its kind, with a space between each group of three digits.
+- Under the bars: the unit in words and "Each bar starts at zero.", then the sentences, and a link to the row of the measure on the page of the measured numbers.
+- From 900 pixels the charts are two columns; under 720 pixels the bar of a row is under its label and its number.
+- With no chart that can be drawn (no log and no measure record), the home has no section "Measured" and no heading for it.
+
+What left the home: the three cards that each quoted one whole line of a log. What is not a chart today: a number alone (a full frame, 1000 commits, the reads of the time page), a line whose numbers have several units (the scheduler), and two numbers of two measures (the two directions of TCP).
+
+No history: the measure record holds the numbers of one run, the last full check, and each run replaces it. A chart of a measure over the releases needs a record that keeps the numbers of each release. It is an entry of the roadmap, and the home draws no history until the record has one.
+
+### The band of the newest release
+
+One card in the color of a version: the number of the release as its one large value (32 pixels, the value kind Version), then on the same line its date, the count of its changes and the count of the steps, the numbers in the text color and the monospace font, the words in the dim color. Then its first 4 changes (`SITE_RELEASE_BAND_CHANGE_COUNT`), each with its type in the dim color and its bold summary as a link to the change on the page of the releases (`release-<number>-change-<place>`). Then "And N more changes in this release.", a link to all the releases, and the line of the roadmap.
+
+The summary of a change is the bold words at its start (`site_change_summary`); a change with none gives its first sentence.
+
+### A press on the heron
+
+A click, a tap, Enter or Space on the large heron plays one animation at once.
+
+- The page holds the box of the heron, `<div class="mark-box">`. The script of the mark makes it a control: `role="button"`, `tabindex="0"`, the name "Play an animation of the heron", and the class `mark-control`, which gives the pointer of a control. The focus has the outline of the site.
+- The first press of a view of the page plays the dash, the animation that crosses the window: a reader who presses wants to see something happen. Each next press plays the next animation of the rule of the choice ("The rhythm of the animations"), so repeated presses walk the round and never play the animation that was played just before. A first press right after a dash follows the rule too.
+- The animation of the first press is a constant of the tool, `SITE_MARK_FIRST_PRESS_ANIMATION`, which the tool writes into the table of the script: the script holds no number and no name of an animation.
+- A press plays in the place of the still time. A press during an animation does nothing: the animation ends first. A press that waited would play at a moment that the reader no longer expects, and a cut animation would leave the heron in the middle of a move.
+- A press before the tile maps arrived plays when they arrive.
+- For a reader who asks for reduced motion nothing moves, so the box is not a control: it has no role, no place in the order of the keyboard and no pointer of a control. It stays the box of a picture.
+- With no script the box is the box of a picture.
+- The self test of the script (`?selftest=1`) has four cases for the presses: the first press names an animation and plays it; over 45 presses none plays the animation before it; a first press after the dash plays another one. The host test `site_home_heron_press` checks the table and the parts of the script.
+
 ## The gallery
 
 The owner asked for it on 2026-11-14, of the program `heron`: "faudra évidemment le rendre visible dans les captures du site parce que c'est super sympa. D'ailleurs je veux pas mettre trop de captures sur la page d'accueil [...] idéalement avoir [un] carrousel et une page galerie". The code is `tools/kerneltool/site_gallery.odin`; its host tests are `site_gallery_test.odin`.
@@ -403,12 +491,12 @@ The groups (`site_gallery_groups`), each with a title and one sentence:
 | Modules | 9 |
 | Memory, threads and time | 15 |
 | The developer tools | 4 |
-| The interface and the fonts | 9 |
+| The interface and the fonts | 10 |
 | The network, the cryptography and the randomness | 10 |
 | The storage | 7 |
 | The boot and the trusted boot | 7 |
 
-109 rows. The excluded files:
+110 rows. The excluded files:
 
 | File | Reason |
 |---|---|
@@ -434,7 +522,7 @@ The gallery is not an index page: by the rule of the redirect pages it has the r
 
 ### The thumbnails
 
-The page of the gallery shows 108 pictures (the row with a film shows its film). A browser loads a picture when the reader comes near it, so the bytes of the page are the bytes of what the reader scrolls past. Two forms were measured on 12 pictures of the table, with the encoder of ImageMagick at its level 5 (the tool prints the bytes of its own encoder at each build):
+The page of the gallery shows 109 pictures (the row with a film shows its film); the measure below was made with 108. A browser loads a picture when the reader comes near it, so the bytes of the page are the bytes of what the reader scrolls past. Two forms were measured on 12 pictures of the table, with the encoder of ImageMagick at its level 5 (the tool prints the bytes of its own encoder at each build):
 
 | Form | One picture, mean | The 108 pictures |
 |---|---|---|
@@ -672,13 +760,13 @@ The cells that no file records are listed by the command. They are the licenses 
 The site follows `DESIGN.md`, with the colors of `support/graphics/rules.odin` and `support/mark`: the style sheet repeats no color of the rules as its own number. The elements of the system carry information where they appear:
 
 - the bar at the top, as the bar of the desktop: the heron at the left, then the name of the system in the font of the name of the mark, three sections as buttons and the others in one menu under its button, as a menu of the bar of the desktop (see "The buttons and the menu of the bar"), the current one marked by a line in the blue of the title bar; under 720 pixels, the sections and the search are behind one menu button (see "The site menu");
-- the news cards of the home, side by side on a wide screen: the title, the line of the kind and the date, the picture and the text of each card of a row start at the same height, whatever the length of a title. Each card takes four rows of the grid of the cards and shares them (`grid-template-rows: subgrid`); each part has its row, so a card with no picture keeps its text in line. The picture boxes have one ratio, 4 by 3, the ratio of the screen pictures; a picture of another ratio is shown whole in the box (`object-fit: contain`), not cut. A browser with no subgrid shows the cards as blocks, and a title keeps the room of two lines on a wide screen, so that the common case aligns. No title is cut. On a narrow screen (one column) nothing changes. The cards of the page News stand one under the other at every width: no row to align;
+- the news cards of the home, side by side on a wide screen: the title, the line of the kind and the date, and the picture of each card of a row start at the same height, whatever the length of a title. Each card takes four rows of the grid of the cards and shares them (`grid-template-rows: subgrid`): the title, the line of the kind, the picture, the text. The content of a card starts at its top, with no empty room between two of its parts (see "The home", "The rule of a card"): a card with no picture has its text in the row of the pictures, right under its line of the kind (`.news-card-without-picture`). The picture boxes have one ratio, 4 by 3, the ratio of the screen pictures; a picture of another ratio is shown whole in the box (`object-fit: contain`), not cut. A browser with no subgrid shows the cards as blocks, and a title keeps the room of two lines on a wide screen, so that the common case aligns. No title is cut. On a narrow screen (one column) nothing changes. The cards of the page News stand one under the other at every width: no row to align;
 - cards with a border of 1 pixel in their accent and the bar of 4 x 16 pixels before their title, as the cards of the boot display;
-- the colors of the concepts with their meaning in the system: the stages of the start take the color of who runs them (the firmware violet, the boot program orange, the kernel blue);
+- the colors of the concepts with their meaning in the system: the stages of the line of time of the start take the color of who runs them (the firmware violet, the boot program orange, the kernel blue);
 - the tables have the look of the tables of the system: the titles of the columns in the dim color, every second row on a band (`DESIGN.md`, section 10). Each column has the least width of its kind, and a table wider than the page scrolls sideways in its own box (see "The tables");
 - the grid of points of the desktop is on the home only.
 
-Prose is in the reading font of the reader's system, at most 72 characters a line on a presentation page and 80 on a documentation page; code, signatures, numbers and identifiers are in its monospace font. The site holds one font file: the font of the name of the mark, for the name of the system where it stands as the mark (see "The name of the mark"). No animation, no shadow, no round corner; two exceptions. A segment of the bar of the chart of the docs home changes its place and its width in 150 ms when the search changes its count, never at the load of a page, and at once for a reader who asks for reduced motion (see "The chart of what the search finds"). The large heron of the home plays the animations of the mark, and not at all for a reader who asks for reduced motion (see "The rhythm of the animations" and "The moves of the heron"). The light form follows `prefers-color-scheme`. A print form hides the bar and the navigation.
+Prose is in the reading font of the reader's system, at most 72 characters a line on a presentation page and 80 on a documentation page; code, signatures, numbers and identifiers are in its monospace font. The site holds one font file: the font of the name of the mark, for the name of the system where it stands as the mark (see "The name of the mark"). No animation, no shadow, no round corner; two exceptions. A control shows its state at once, with no transition (see "The states of a control"). A segment of the bar of the chart of the docs home changes its place and its width in 150 ms when the search changes its count, never at the load of a page, and at once for a reader who asks for reduced motion (see "The chart of what the search finds"). The large heron of the home plays the animations of the mark, and not at all for a reader who asks for reduced motion (see "The rhythm of the animations" and "The moves of the heron"). The light form follows `prefers-color-scheme`. A print form hides the bar and the navigation.
 
 The contrast of the text (WCAG 2 ratio), from the colors of the rules:
 
@@ -734,7 +822,7 @@ The owner asked for it on 2026-11-12: "il manque un menu burger sur la version m
   - `search.js`, loaded with `defer` on each page, opens the menu on a wide screen and closes it on a narrow one, when the width changes too (`matchMedia("(min-width: 720px)")`). On a narrow screen it also closes the menu at Escape (and puts the focus on the button) and at a click outside, and opens it for `/` and for an address with `?q=` when the menu holds the search field. On the docs home the large field is in the page, also on a narrow screen, and the menu holds the sections only.
   - With no script, a browser with no `::details-content` shows the button on a wide screen too, and the button opens the list: the page stays whole. With the script, such a browser shows the button for the time between the first paint and the run of the deferred script.
 - The menu is closed in the file, not open: an open menu that the script closes on a narrow screen moves the page after its first paint on each load.
-- At 360 pixels, no line is wider than the screen: a table and a block of code scroll in their own box (`.table`, `pre`); a heading, a paragraph, an item, a caption and the breadcrumbs break a long word or address (`overflow-wrap: anywhere`); the stages, the tiles and the pictures fit a column of 328 pixels.
+- At 360 pixels, no line is wider than the screen: a table and a block of code scroll in their own box (`.table`, `pre`); a heading, a paragraph, an item, a caption and the breadcrumbs break a long word or address (`overflow-wrap: anywhere`); the line of time of the start, the charts, the tiles and the pictures fit a column of 328 pixels.
 
 ### The buttons and the menu of the bar
 
@@ -761,7 +849,7 @@ The bar is one line of 41 pixels, and the parts under it are placed by that heig
 | Project: the text (56), 16 of padding, 12 for its mark | 84 |
 | The whole bar | 678 |
 
-A window of 720 pixels with a scroll bar of 16 pixels has 704. The host test `site_bar_fits_one_line_at_720_pixels` computes the bar at 9 pixels a character: 700. With a button for each of the six sections the bar needs 826 pixels at 8 pixels a character: it breaks into two lines up to that width.
+A window of 720 pixels with a scroll bar of 17 pixels has 703. The host test `site_bar_fits_one_line_at_720_pixels` computes the bar at 9 pixels a character: 700. With a button for each of the six sections the bar needs 826 pixels at 8 pixels a character: it breaks into two lines up to that width.
 
 **The menu works with no script.**
 
@@ -777,6 +865,39 @@ What `search.js` adds, on a window of 720 pixels or more: Escape closes the menu
 **Under 720 pixels** the sections are already one under the other in the site menu ("The site menu"). The project menu is then not a menu: the word "Project" is a dim line of the list, and its three sections are the lines under it, 16 pixels to the right. So the site menu names all six sections, and a section of the project menu is one tap away, as each other. The two ways of the site menu make it so, in the other direction: a browser that has `::details-content` shows the content of the closed element, and the word takes no click; in another browser `search.js` sets the element open and refuses the click that would close it. With neither, the word is a button that opens its three lines.
 
 Refused: a second line of the bar; smaller text; icons with no word; one menu button at every width; a menu that opens when the pointer passes. The reasons are in the intent file.
+
+### The states of a control
+
+The owner asked for it on 2026-11-14: "les boutons [...] manquent d'un état visuel au survolage et actif." The code is `tools/kerneltool/site_controls.odin`; the intent is `src/md/features/site_bar.md`.
+
+A site control (`GLOSSARY.md`) is a part of a page that a reader presses. Before this rule a button had no sign of the pointer: a link under the pointer takes the track color, and a button is already a rectangle of the track.
+
+One table, `site_controls`, names every control with its selector and its form. One procedure writes the rules of its states (`site_control_rules`), at the end of the style sheet, so a state wins over the look at rest. No control has rules of states of its own.
+
+| Form | Controls | Pointer over it, or focus | Pressed | Current, open or chosen |
+|---|---|---|---|---|
+| Button | A button of a section of the bar, the button of the project menu, the button of the site menu, a door of the home, a link to a group of the gallery, a numbered link of the carousel, a letter of the index of the glossary, the button of the line of an older build | The blue of the title bar at 60 %, `0x254A75` | The blue of a chosen row, `0x3C76BB`, with a white label | The line of 2 pixels in the line color that the control has at rest in a clear color; the button of the open project menu has the colors of a pressed button |
+| Menu line | A line of the panel of the project menu | A chosen row: `0x3C76BB`, white label | The same | The line at its left |
+| Row | A row of the list of the search, a chip of the chart of the search, a line of the documentation tree and of "On this page", a row of a stage of the line of time of the start | The band of the track | The band, and the line at its left in the line color | The band and the line |
+
+The colors are those of a button and of a line of a menu of the desktop (`DESIGN.md`, section 10, the row "Button"; `DESIGN.md`, "Menus"): the site and the desktop are one design. The focus also keeps the outline of 2 pixels of the site: a state never removes it.
+
+- **No layout shift.** A state changes a background, the color of a text, or the color of a border that the control has at rest. No state adds a border, a padding or a weight of the text.
+- **No transition.** A state shows at once.
+- **A tap.** `:active` holds while a finger is on the control, so a phone shows the press; the tap highlight of the browser stays too.
+- **A link of a text** takes the band of the track under the pointer and while it is pressed.
+- **The mark of the button of the project menu** takes the color of the label in each state: the dim color has too little contrast on the blue.
+
+The contrast of the text in each state (WCAG 2 ratio):
+
+| State | Dark form | Light form |
+|---|---|---|
+| A button at rest: the text on the track | `0xDCE4EC` on `0x1C2633`: 11.90 | `0x0B1018` on `0xD6DBE0`: 13.68 |
+| The pointer over a button, or the focus | `0xDCE4EC` on `0x254A75`: 7.06 | white on `0x254A75`: 9.07 |
+| A pressed or an open button; a line of a menu under the pointer | white on `0x3C76BB`: 4.67 | white on `0x3C76BB`: 4.67 |
+| A row under the pointer or pressed | 11.90 | 13.68 |
+
+The host test `site_controls_have_their_states` checks, for each control of the table: its rule at rest, a rule for the pointer, for the focus and for a press; that the rules of the states hold no size, no transition and no rule that removes an outline; that they are the end of the style sheet; and each contrast above, at 4.5 to 1.
 
 ### The two layouts
 
@@ -1021,6 +1142,7 @@ The still times:
 - Nothing moves for a reader who asks for reduced motion: the script plays nothing, and the style sheet shows the still picture under `prefers-reduced-motion: reduce` also when a script put the stage in the page.
 - Nothing runs in a hidden tab. Nothing plays while the focus is in a field (the search): the still picture is back as soon as the reader enters the field, and the play starts again when the focus leaves it.
 - With no script the page shows the still picture.
+- A press on the heron plays one animation at once (see "A press on the heron").
 
 How the script and the system agree on the rule. The rule is written two times: in Odin in `support/mark/play.odin` (`next_animation`, `still_time`, `play_step`), which the host tests of `support/mark` run and the program `heron` calls, and in the script, which the page runs. One list ties them: the tool runs the rule of `support/mark` with a generator of a fixed seed (`mark.Number_Generator`) and writes its first 33 steps (two rounds and three steps) into the table of the script. The self test of the script (`?selftest=1`) runs the rule of the script with the same generator and compares each step. The generator is the same arithmetic on both sides: `state = state × 1664525 + 1013904223` in 32 bits, and the number is the upper 16 bits modulo the bound. The page itself takes its numbers from `Math.random`.
 
@@ -1053,7 +1175,7 @@ The rule of the site: a cell of the heron is always a square of 8 pixels of the 
 - The dash, 1780 ms. The heron gathers (26 by 21 cells), then crouches (28 by 19) until 380 ms. With the first step of its run it takes the form of the run (32 by 20, with lines of speed of 10 and 9 cells) and leaves to the right: 4 cells in 70 ms, 10 more in the next 70 ms, then at one speed to a place past the right edge of the window, which it reaches 350 ms after its start. It stays outside for 280 ms. Then it is past the left edge at once, comes in at one speed in 350 ms, and goes 3 cells past its place. It brakes there for 100 ms (20 by 23, a long neck), slides back in 120 ms (22 by 21), rebounds on its legs (26 by 20) and stands.
 - "Past an edge" is a place that the script computes from the window, as a whole count of cells: the heron, in its widest form, is outside the window at that side.
 - No scroll bar and no layout shift. The stage keeps the box of the picture, and a place is a translation: nothing beside the heron moves. While an animation with a key past an edge plays, the root element has the class `mark-travel`, and the style sheet cuts the page at the sides of the window (`overflow-x: clip`): a heron outside the window adds no width to the page.
-- What moves takes no pointer (`pointer-events: none`) and no focus. The heron of the dash passes over the tagline and the links of the head for less than 350 ms at each crossing; a click during that time goes to the link under it. The heron passes under the bar: the bar is above it (`z-index`).
+- What moves takes no pointer (`pointer-events: none`) and no focus: a press goes to the box of the heron, which does not move. The heron of the dash passes over the tagline and the links of the head for less than 350 ms at each crossing; a click during that time goes to the link under it. The heron passes under the bar: the bar is above it (`z-index`).
 - The script sets no style. It sets classes, and it gives the places to the animations of the browser. The header `Content-Security-Policy` of the host (`style-src 'self'`) refuses neither. A browser with no `Element.animate` shows the frames and the forms with the heron in its place.
 - The hop: the heron gathers and crouches, is tall in the air (22 by 24), 4 cells up and down again, crouches on the water, rebounds, and stands. The flap: 3 cells up while the wing beats, then a rebound. The stretch: the neck 2 rows longer, then 4 (24 by 26) for 420 ms, then a shake: wide, thin, wide, thin.
 - The icon of the tab shows the frames of each animation, with no form and no move. It has a tile map of its own, `mark_animation_icon.png`: the frames in the cells variant, one pixel for a cell, in the colors of the light scheme, as the icon of 32 pixels of `favicon.ico`. The script copies each frame from it into a canvas of 32 by 32 pixels, 4 empty pixels from each edge.
@@ -1516,27 +1638,33 @@ A host test checks that the style sheet holds each of these rules, has no `outli
 
 ### The scroll bars
 
-The owner asked for it on 2026-11-12, with two pictures of the scroll bar of another program of the same design: "petit détail visuel, mais à mon sens, la scrollbar est trop basique, je la veux plus comme ça (theme justement PROVENANT de TON design à la base)". The rules are `SITE_SCROLL_RULES` and `site_scroll_variables` in `tools/kerneltool/site_style.odin`. They apply to every part that scrolls: the page, the tree, "On this page", the table boxes, the blocks of code, the open menu, the list of the search, the cards of the types and of the declarations, and the row of the carousel of the home.
+The scroll bars of the site are the scroll bar of the system (`DESIGN.md`, "The scroll bar"), written from the same table: `support/graphics/scroll_bar.odin` holds the sizes, the stops of each gradient and the colors of the dark and of the light form. The system draws from it; the kernel tool writes the variables of the style sheet from it. A change of a number of the table changes both. The rules are `SITE_SCROLL_RULES` and `site_scroll_variables` in `tools/kerneltool/site_style.odin`. They apply to every part that scrolls: the page, the tree, "On this page", the table boxes, the blocks of code, the open menu, the list of the search, the cards of the types and of the declarations, and the row of the carousel of the home.
 
-The form, 16 pixels wide (a size of the grid of the design, near the 22 pixels of the pictures), all rectangular:
+The form, 17 pixels wide, all rectangular:
 
-- At each end a square button with a solid triangle of four rows of pixels, in the dim color on the darker panel of the bottom of a card; the text color with the pointer over it; the fill of the thumb while it is pressed.
-- The track: the track color, with a line of 1 pixel at its edge (left for a vertical bar, top for a horizontal one) in the track color moved 25 % toward the dim color.
-- The thumb: a rectangle of the track color moved 35 % toward the dim color (30 % in the light form), with a border of 1 pixel in the dim color, and in its middle a grip of three lines of 8 pixels, 3 pixels apart, across the thumb, in the dim color. With the pointer over it or while it is dragged: the blue of the line at 73 % with a border of the blue at 112 % (the light form: the blue itself, with a border at 73 %), and the grip in the text color (white in the light form). The fill of the pictures is quieter than 3 to 1 on the track; the border carries the contrast of a graphic.
-- The corner where two bars meet: the panel of the buttons.
+- At each end an arrow button of 17 by 17 pixels with a solid triangle of four rows (1, 3, 5 and 7 pixels), on the gradient of the track. With the pointer over it: the blue border, the blue fill and the light triangle. While it is pressed: the stronger blue fill.
+- The track: a gradient across it of three stops (0, 50 and 100 %), with a border of 1 pixel at its two long sides.
+- The thumb: a border of 1 pixel; a gradient across it of four stops (0, 45, 55 and 100 %); an inner line of 1 pixel inside the border, white at 12 % in the dark form and at 40 % in the light form (an inset shadow); in its middle a grip of four lines of 7 by 1 pixels, 1 pixel apart. With the pointer over it: the blue border, the blue fill and the light grip. While it is dragged: the stronger blue fill. A thumb is at least 21 pixels long: a style sheet cannot remove the grip of a short thumb, and the system draws a grip only on a thumb longer than 20 pixels.
+- The corner where two bars meet: the middle color of the track.
 
-The colors come from the table of colors of the site (`site_scroll_colors`, from the colors of each form and the blue of the line), as variables of each form. A data address cannot read a variable of the style sheet: `site_scroll_variables` writes each triangle (4 directions) and each grip (2 directions), at rest and with the pointer, as a data address in the colors of each form, through `site_svg_data_address`: 12 addresses for each form. The rules name only the variables.
+What differs from the scroll bar of the system, because a style sheet cannot say it:
+
+- The system lights the whole bar when the pointer is over any part of it. A style sheet reaches a part only under the pointer: on the site the thumb is blue when the pointer is over the thumb, and a button when the pointer is over that button. An arrow button of the site has no "lit" state between rest and hot.
+- The system draws the inner line as an opaque color. The site gives the browser a translucent white, which the browser blends: the same pixels.
+- The least length of the thumb is 21 pixels on the site; in the system it is 8 % of the track, and 8 pixels at least.
+
+The rules hold no size and no color. `site_scroll_variables` writes, for each form, from the table: the sizes (`--scroll-thickness: 17px`, `--scroll-border: 1px`, `--scroll-thumb-least: 21px`); the flat colors (the borders, the middle of the track); the inner line; each gradient in both directions (`to right` for a vertical bar, `to bottom` for a horizontal one) for the track, the thumb at rest, hot and pressed, and an arrow button hot and pressed. A data address cannot read a variable of the style sheet: the procedure writes each triangle (4 directions) and each grip (2 directions), at rest and with the pointer, as a data address in the colors of each form, through `site_svg_data_address`: 12 addresses for each form. The colors of the scroll bar do not come from the colors of the page: the dark form of the site has the colors of the system, and the light form has the light colors of the table.
 
 What each engine shows:
 
 | Engine | Means | What it shows |
 |---|---|---|
-| Chromium (Chrome, Edge) and WebKit (Safari) | `::-webkit-scrollbar`, `-button:single-button` with `:vertical`/`:horizontal` and `:decrement`/`:increment`, `-track`, `-thumb` with `:hover` and `:active`, `-corner`, inside `@supports selector(::-webkit-scrollbar)` | The whole form: the buttons, the track, the thumb and its grip, the colors with the pointer |
-| Gecko (Firefox) | `scrollbar-color` (the border color of the thumb on the track color) and `scrollbar-width: auto`, inside `@supports not selector(::-webkit-scrollbar)` | The colors only: no button, no border, no grip; the system draws the form and its own color under the pointer |
+| Chromium (Chrome, Edge) and WebKit (Safari) | `::-webkit-scrollbar`, `-button:single-button` with `:vertical`/`:horizontal` and `:decrement`/`:increment`, `-track`, `-thumb` with `:hover` and `:active`, `-corner`, inside `@supports selector(::-webkit-scrollbar)` | The whole form: the arrow buttons, the track, the thumb with its gradient, its inner line and its grip, the colors with the pointer and while a part is pressed |
+| Gecko (Firefox) | `scrollbar-color` (the border color of the thumb at rest on the middle color of the track) and `scrollbar-width: auto`, inside `@supports not selector(::-webkit-scrollbar)` | Two flat colors only. It loses the arrow buttons of the form, each gradient, each border, the inner line, the grip and the blue tones: the operating system of the reader draws the form of the bar and its own color under the pointer |
 
 Chromium, since version 121, draws the standard scroll bar of an element that has `scrollbar-color` or `scrollbar-width`, and ignores the parts `::-webkit-scrollbar` of that element. So the two standard properties are written only for an engine with no such parts: each engine takes its own rules. A Chromium that does not accept a pseudo-element in `@supports selector()` takes the standard colors, which is correct.
 
-The host test `site_style_sheet_scroll_bars` checks: the rules of both engines; the two standard properties written once, inside the test of the engines with no parts of WebKit; no color in the rules themselves; in each form, 12 data addresses, each an SVG picture with no character that ends the address and one color of the scroll bars of its form; a contrast of 3 to 1 of the border of the thumb (at rest and with the pointer) on the track, of a triangle on its button and of the grip on the thumb under the pointer.
+The host test `site_style_sheet_scroll_bars` checks: the rules of both engines; the two standard properties written once, inside the test of the engines with no parts of WebKit; no color, no gradient and no size in pixels in the rules themselves; the variables of both forms with the numbers of the table (the sizes, the gradients of the track, of the thumb and of an arrow button); in each form, 12 data addresses, each an SVG picture with no character that ends the address and one color of the scroll bars of its form; the rectangles of a triangle and of a grip; a contrast of 3 to 1 of each part that the pointer lights: the blue border on the track, a triangle on the track and on the fill of its button, the light grip on the blue thumb. At rest the form is quiet: the border of the thumb has 2.1 to 1 on the track (2.5 in the light form) and the grip 1.7 to 1 on the thumb (2.7). The test prints these two as a measure.
 
 ## The tiles of the boot image
 

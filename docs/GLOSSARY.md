@@ -4063,7 +4063,7 @@ Do not use: id, key, handle (reserved for the kernel).
 
 ### Interface state
 
-The interface state is what the interface package keeps between frames, in the memory of the program: the element with the focus, the element under the pointer, the pressed element, and the order of the focus.
+The interface state is what the interface package keeps between frames, in the memory of the program: the element with the focus, the element under the pointer, the pressed element, the order of the focus, and the held part of a scroll bar.
 
 The interface state is the only state of the package, about 2 KiB, and the program owns it. With it, a press and a release on one element press that element, and Tab and Shift+Tab move the focus in the order of the elements of the last frame. The order holds 64 elements (`FOCUS_ORDER_CAPACITY`); an element after them takes a press but not Tab, and `Frame.focus_overflow` counts them.
 
@@ -4085,11 +4085,71 @@ The design: `docs/INTERFACE.md`, "2.2 Damage by difference".
 
 Do not use: dirty tracking, invalidation.
 
+### Scroll bar
+
+A scroll bar is the element beside a view that shows a part of a longer content: it shows where the view is in the content, and the pointer moves the view with it.
+
+Each scroll bar of the system is one element of the interface package, `scroll_bar`, and the scroll bars of the site have the same form: both come from one table of sizes and colors, `support/graphics/scroll_bar.odin`. Its parts are two arrow buttons, the track, and the thumb with its grip. A program gives the units of its content, the units in view and the first unit in view, and takes the new first unit. A scroll bar is vertical or horizontal.
+
+A scroll bar is not a bar (the element that shows a value against a maximum) and not the bar of the desktop. It takes no key: the keys of a view belong to the element that owns the view.
+
+The design: `docs/DESIGN.md`, "The scroll bar", and `docs/INTERFACE.md`, "4.1 The scroll bar".
+
+Do not use: scrollbar (one word, outside a CSS name), scroll mark, scroller.
+
+### Scroll bar track
+
+The scroll bar track is the part of a scroll bar between its two arrow buttons, on which the thumb moves.
+
+Its length stands for the whole content. A press on it, before or after the thumb, moves the view by one page toward the pointer. It has a border of 1 pixel and a gradient across it. The word is the word of the design rules for the empty part of a bar (`COLOR_TRACK`), and of the parts of a scroll bar in a style sheet.
+
+The scroll bar track is not the whole bar: the arrow buttons are outside it.
+
+The design: `docs/DESIGN.md`, "The scroll bar".
+
+Do not use: trough.
+
+### Thumb
+
+The thumb is the part of a scroll bar that lies on its track and stands for the view: its length is the share of the content that the view shows, and its place is the place of the view.
+
+A press on the thumb holds it, and it follows the pointer until the button goes up. It is at least 8 % of the track and 8 pixels long. A thumb longer than 20 pixels has a grip. Under the pointer it takes blue tones.
+
+The thumb is not a thumbnail, which is a small form of a picture of the site.
+
+The design: `docs/DESIGN.md`, "The scroll bar".
+
+Do not use: handle (reserved for the kernel), scroller.
+
+### Grip
+
+The grip is the four short lines in the middle of the thumb of a scroll bar, across it.
+
+It marks the thumb as the part that the pointer holds. Each line is 7 by 1 pixels, 1 pixel from the next. A thumb of 20 pixels or less has no grip.
+
+The grip carries no fact and takes no input of its own: a press on it is a press on the thumb.
+
+The design: `docs/DESIGN.md`, "The scroll bar".
+
+Do not use: gripper, handle (reserved for the kernel), ridges.
+
+### Arrow button
+
+An arrow button is the square at each end of a scroll bar, with a triangle that points to that end: a press on it moves the view by one line.
+
+While it is held and the pointer stays on it, the view moves again after 400 ms, then each 60 ms, by the clock of the system. At rest it shows its triangle only; with the pointer over the bar it has a border and a fill. A bar shorter than 42 pixels has no arrow button.
+
+An arrow button is not the element `button`: it has no label, takes no focus and no key.
+
+The design: `docs/DESIGN.md`, "The scroll bar".
+
+Do not use: stepper, scroll arrow, spin button.
+
 ### Pointer
 
 The pointer is the mark on the screen that the pointing device moves: a press acts at its place.
 
-The compositor draws the pointer last, with the pointer picture of the pointer shape that it chose for the place, and puts the hot spot of the picture at the place of the pointer. It sends each pointer event to the program of the surface under the pointer, in the coordinates of the surface. In a machine test, `compositor.pointer()` gives the place and the shape of the pointer, so the kernel tool can confirm a place before a press.
+The compositor draws the pointer last, with the pointer picture of the pointer shape that it chose for the place, and puts the hot spot of the picture at the place of the pointer. It sends each pointer event to the program of the surface under the pointer, in the coordinates of the surface, and one event more, with a place outside the surface, when the pointer leaves it: the program then draws at rest what the pointer was over. In a machine test, `compositor.pointer()` gives the place and the shape of the pointer, so the kernel tool can confirm a place before a press.
 
 The pointer is not the caret, which marks a place in a text. The system does not use the word "cursor" for either one.
 
@@ -5751,6 +5811,42 @@ It is not a film and not an animation: a picture changes only when the reader as
 The design: `docs/SITE.md`, "The carousel of the home".
 
 Do not use: slideshow, banner, rotator.
+
+### Line of time of the start
+
+The line of time of the start is the part of the home of the site that shows each stage of the start of the machine as a segment of a bar whose width is the time of the stage.
+
+It has two bars, because the firmware takes most of the start. The first bar is the whole start on one scale. The second bar is the stages after the first one, on a larger scale, and a sentence under it says how much larger. Under the bars, one row for each stage gives its name and its time, so a reader with no pointer reads them. Each stage has a card: what it does, the code that runs it, the line of the log that gives its time, and its guide. The card of the stage that has the focus or the pointer shows, with no script.
+
+It is not the boot display, which a program of the system draws on the screen of the machine: the line of time is a part of a page, drawn by the tool from the lines of a log.
+
+The design: `docs/SITE.md`, "The line of time of the start".
+
+Do not use: boot chart, start diagram.
+
+### Measure chart
+
+A measure chart is a chart of the home of the site whose bars are the numbers of one line of a log that have one unit, on one scale from zero.
+
+It exists by the rule "a chart or nothing": the home shows a measure only as such a chart, and each other measure is a row of the page of the measured numbers. The tool reads each number from the line and draws the chart only when the line holds every number of the chart, in its unit. Example: the kernel entries in one second with 1, 2 and 4 programs are three bars.
+
+It is not the chart of what the search finds, whose segments are counts of entries of the index.
+
+The design: `docs/SITE.md`, "The charts of the measures".
+
+Do not use: benchmark chart, statistics card.
+
+### Site control
+
+A site control is a part of a page of the site that a reader presses: a button of the bar, a door of the home, a numbered link of the carousel, a line of a menu, a row of a list.
+
+Each one has five states: at rest, with the pointer over it, with the focus of the keyboard, pressed, and current. One table of the tool names every site control, and one procedure writes the rules of its states, in the colors of a button and of a chosen row of the desktop. A state changes a color and never a size, and it shows at once.
+
+It is not a link of a text, which takes the band of the track under the pointer. It is not the control of a thread, which is a capability of the kernel.
+
+The design: `docs/SITE.md`, "The states of a control".
+
+Do not use: widget, clickable.
 
 ### Thumbnail
 

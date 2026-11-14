@@ -203,7 +203,7 @@ Drawing must stay cheap and the same on every machine: integers, rectangles, and
 
 ## 8. Decoration
 
-Three things carry no fact: the grid of points on the background, the blue of the head of the boot display, which goes darker toward the right, and the same blue on the title bar of the window in front (section 9). No other decoration exists.
+Four things carry no fact: the grid of points on the background, the blue of the head of the boot display, which goes darker toward the right, the same blue on the title bar of the window in front (section 9), and the look of the scroll bar (section 10, "The scroll bar"): its gradients across the bar, the inner line and the grip of its thumb, and its blue tones under the pointer. No other decoration exists.
 
 ## 9. The desktop
 
@@ -292,7 +292,7 @@ The desktop is the screen of the compositor: the background, the bar, the window
 - **With a typed part: one list, ranked**, with no group: the best match is the first row. The match is the fuzzy match of the console (`support/line_editor`): the characters of the typed part appear in the name in their order, not always side by side, without the case of the letters ("closepla" matches "close plasma"). Among entries of one score, the order is: the entries chosen lately, the newest first; then the kind (a window, a program, a command, an export, the close of a window); then the order of the table. A better match always comes before a recent choice.
 - **With no typed part: groups**, each under a dim line of text: "recent" (at most 5 entries, the newest first), "windows" (each window, the front one first), "programs" (the order of `bar.names`). A group with no entry is absent. To reach a window is the most frequent act, so the windows show before any letter. The entries that destroy and the commands show only for a typed part, or as a recent choice.
 - **The recent choices**: the panel remembers the last 16 chosen entries, by kind and name, in the memory of the compositor. A restart of the machine loses them.
-- **More than 12 rows**: a bar of 2 pixels at the right says which part of the list the panel shows.
+- **More than 12 rows**: a scroll bar at the right (section 10, "The scroll bar") says which part of the list the panel shows. It takes no pointer: the keys and a move of the pointer over a row move the choice.
 - **No match**: one dim line, `nothing has "xyz" in its name`, and Enter runs nothing.
 - **An entry that destroys asks for a second Enter**: the close of a window, and the commands `shutdown`, `lock` and `history_clear`. Enter on it changes the chosen row: its fill is `COLOR_STOP_PROGRAM` and its text says the act in full ("stop plasma: its window closes", "shutdown(): stop the machine"); the footer says "enter: confirm   another key: back". A second Enter runs it. Each other key goes back to the search, with the typed part kept, and does nothing else. The compositor draws this question: a provider cannot skip it.
 - **A command with no parameter runs from the panel.** Enter sends the choice to the console, and the panel waits: the list makes room for the call, in the color of a name, and "runs in the console". The panel still takes its keys: Escape closes it, and the line goes on in the console. The panel sets no bound on a line: the console has none.
@@ -352,8 +352,9 @@ The interface package (`support/interface`, `docs/INTERFACE.md`) draws these ele
 | Table | The titles of the columns in the dim color; lines of 24 pixels; every second line, from the first, on a band of `COLOR_CARD_TOP`; numbers at the right of their column |
 | Bar | The track in `COLOR_TRACK`; the full part from 125 % of its color at the top to 78 % at the bottom; 2 pixels at least for a value above 0 |
 | Button | A rectangle of the track with its label in the text color; blue (`COLOR_TITLE`) at 60 % when it has the focus or the pointer is over it, full blue with a white label when it is open or both |
-| List with a choice | Lines of 24 pixels; the chosen line in `COLOR_CHOSEN` with its name and its hint in white; a line of 2 pixels under a searched part of each name; a bar of 2 pixels at the right when the lines do not fit |
-| List of rows | Rows of 24 pixels: the kind icon of the row, 12 pixels, in a color that says one fact (white on the chosen row), the name (in the font of the cells with a quiet detail after it when it is code), and at the right what the row is, in words, in the dim color; a line of 2 pixels under each matched character of a name; the chosen row filled, with its text in white, and at its right its hint or the same words as the other rows; a dim line of text as the heading of a group; a bar of 2 pixels at the right when the rows do not fit |
+| List with a choice | Lines of 24 pixels; the chosen line in `COLOR_CHOSEN` with its name and its hint in white; a line of 2 pixels under a searched part of each name; a scroll bar at the right when the lines do not fit, which moves the choice |
+| List of rows | Rows of 24 pixels: the kind icon of the row, 12 pixels, in a color that says one fact (white on the chosen row), the name (in the font of the cells with a quiet detail after it when it is code), and at the right what the row is, in words, in the dim color; a line of 2 pixels under each matched character of a name; the chosen row filled, with its text in white, and at its right its hint or the same words as the other rows; a dim line of text as the heading of a group; a scroll bar at the right when the rows do not fit, which shows the place and takes no input |
+| Scroll bar | 17 pixels thick: an arrow button at each end, the track, and the thumb with its border, its gradient across, its inner line and its grip. See "The scroll bar" |
 | Text input | A field of the track with a line of 2 pixels at its bottom (`COLOR_TITLE` with the focus, `COLOR_NOT_USABLE` without); the text in white, at scale 1 or 2; a caret of 2 x 16 pixels in `COLOR_TITLE` with the focus (4 x 32 at scale 2), at any place of the text; the placeholder in the dim color |
 | Panel with a flush input | The input is the top band of the panel, from edge to edge, with no border on its three outer sides: its fill and the line of 2 pixels under it are its edge. The rest of the panel has a border of 1 pixel at the left, the right and the bottom |
 | Large number | The font at 3 times its size, drawn from its outline at 24 x 48: the one number of a card (section 5) |
@@ -370,6 +371,71 @@ A chosen row is the chosen line of a list, of a menu of the bar, of the palette,
 - A host test computes the contrast of the text and of a matched character on the chosen row (`support/terminal/code_runs_test.odin`). A second host test computes the pairs of the palette: white on the chosen row, white on `COLOR_STOP_PROGRAM`, white and each color of code on the track of the input band, the dim color on the surface of a card, the dim placeholder of the input band as a large text, at 3 to 1, and each color of an icon of a row on the surface of a card, at 3 to 1 (`support/graphics/palette_colors_test.odin`).
 
 - An element that takes input can take the focus, and the keyboard reaches it: Tab, Enter, Space, the arrows (`docs/INTERFACE.md`, section 4).
+
+### The scroll bar
+
+A view that shows a part of a longer content has a scroll bar at its right (or under it, for a content that is wider): the lines of a terminal, the text of `manual`, a list, the palette. Each one is the same element (`docs/INTERFACE.md`, "4.1 The scroll bar"), and the scroll bars of the site are the same form (`docs/SITE.md`, "The scroll bars"). The sizes, the stops and the colors are one table, `support/graphics/scroll_bar.odin`: the interface package draws from it, and the kernel tool writes the style sheet of the site from it.
+
+![The scroll bar of the console with the pointer over its arrow button: the bar is lit and the button is blue](screenshots/scroll_bar.png)
+
+**The parts**, along the bar:
+
+| Part | Size | Look |
+|---|---|---|
+| Arrow button, at each end | 17 by 17 pixels | A solid triangle of four rows (1, 3, 5 and 7 pixels), its point toward its end of the bar. At rest it has no border and no fill: the track shows under it |
+| Track | The bar less the two buttons | A border of 1 pixel, and a gradient across it of three stops, at 0, 50 and 100 % |
+| Thumb, on the track | The share of the track that the view has of the content; at least 8 % of the track and 8 pixels | A border of 1 pixel; a gradient across it of four stops, at 0, 45, 55 and 100 %, lighter at the left; an inner line of 1 pixel inside the border, the fill moved toward white; a grip in its middle |
+| Grip | 4 lines of 7 by 1 pixels, 1 pixel apart | Only on a thumb longer than 20 pixels |
+
+- A gradient goes across the bar: from the left to the right of a vertical bar, from the top to the bottom of a horizontal one.
+- A bar too short for two buttons and a least thumb (under 42 pixels) has no arrow button: the track takes it whole.
+- A view that shows its whole content has a thumb as long as the track.
+- Each corner is square.
+
+**The states:**
+
+| State | When | What changes |
+|---|---|---|
+| At rest | The pointer is not over the bar | Nothing is lit |
+| Lit | The pointer is over the bar, or the thumb is held | Each arrow button has a border and a fill; the thumb has the blue border, the blue fill and the light grip |
+| Hot | The pointer is over an arrow button | That button has the blue border, a blue fill and a light triangle |
+| Pressed | The button of the pointer is down on an arrow button or on the thumb | A stronger blue fill |
+
+**The colors** of the dark form, the form of each surface of the system. The light form is in the same table, for the light form of the site.
+
+| Color | Dark | Light |
+|---|---|---|
+| Track, three stops | `0x26303A`, `0x2C3743`, `0x26303A` | `0xE3E3E3`, `0xF1F1F1`, `0xE3E3E3` |
+| Border of the track | `0x1B232B` | `0xD7D7D7` |
+| Border of an arrow button of a lit bar | `0x56687A` | `0x9DA8B2` |
+| Border of the thumb at rest | `0x56687A` | `0x9B9B9B` |
+| Border of a hot button, and of the thumb of a lit bar | `0x4B8FD0` | `0x3C7FB1` |
+| Fill of an arrow button: lit | `0x3A4855` to `0x313E4A` | `0xF3F3F3` to `0xDCDCDC` |
+| Fill of an arrow button: hot | `0x2A4660` to `0x223C53` | `0xE3F4FC` to `0xC6E8FA` |
+| Fill of an arrow button: pressed | `0x2D5578` to `0x244A6B` | `0xC2E4F6` to `0xA9D9F2` |
+| Triangle; triangle of a hot button | `0xA7B4C0`; `0xCFE6FA` | `0x606060`; `0x1C5180` |
+| Thumb at rest, four stops | `0x4A5967`, `0x43515E`, `0x3C4955`, `0x36424D` | `0xF3F3F3`, `0xE8E8E8`, `0xD9D9D9`, `0xCDCDCD` |
+| Thumb of a lit bar | `0x365B7D`, `0x305273`, `0x2A4968`, `0x25415D` | `0xE3F4FC`, `0xD0ECFA`, `0xBDE4F8`, `0xA9DCF6` |
+| Thumb held | `0x3C6890`, `0x355F85`, `0x2E5579`, `0x284D6F` | `0xCDE9F8`, `0xB4DEF4`, `0x9FD4F0`, `0x8CCAEC` |
+| Inner line of the thumb | The fill moved toward white by 31 of 255 | By 102 of 255 |
+| Grip; grip of a lit bar | `0x22303C`; `0x9CC8EE` | `0x8E8E8E`; `0x3C7FB1` |
+
+**The pointer:**
+
+- A press on an arrow button moves the view by one line. While the button is held and the pointer stays on it, the view moves again after 400 ms, then each 60 ms.
+- A press on the track moves the view by one page, toward the pointer.
+- A press on the thumb holds it: the thumb follows the pointer until the button goes up, also when the pointer leaves the bar.
+- A scroll bar takes no key: the keys of a view (Page Up, Page Down, the arrows) belong to the element that owns the view.
+
+**Where the scroll bar leaves the other rules**, each on purpose:
+
+- **Section 3**: its gradients go across the bar, not from the top down. They are the look of the control, not a level of depth.
+- **Section 4**: its colors are its own, and name no concept. No fact is said by them alone: the place of the thumb says where the view is.
+- **Section 6**: its thickness is 17 pixels, an odd number, so that the grip and the point of a triangle are on its middle line. A window places the bar so that the bar and the gap before it are a multiple of 8 (7 and 17 in the terminal, 11 and 17 in `manual`).
+- **Section 2**: the inner line of the thumb is drawn as an opaque color, the fill moved toward white: nothing is blended.
+- **Contrast**: at rest the bar is quiet. The border of the thumb has 2.1 to 1 on the track (2.5 in the light form) and the grip 1.7 to 1 on the thumb (2.7). Each part that the pointer lights has at least 3 to 1: the blue border on the track, a triangle on the track and on its button, the light grip on the blue thumb (a host test of the site computes them).
+
+The source of the form, and the forms that were refused: `src/md/features/scroll_bar.md`.
 
 ## 11. The mark
 

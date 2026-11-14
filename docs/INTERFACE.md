@@ -155,10 +155,45 @@ An example from `interface_elements`: `identity("list")` names its list in each 
 - The program gives each frame an `Input` record, filled from the `display.Event` records of the frame: the place of the pointer, a press and a release of the left button, and the keys pressed in this frame (at most 16).
 - **Element identity**: an element that takes input has an identity, a u64 that the caller makes from a text with `identity("list")` (the 64-bit FNV-1a hash of the text). The identity must stay the same from one frame to the next for one element. Two elements with one text have one identity: `identity_with(base, row)` and `identity_in(parent, name)` make them two, and `Frame.identity_collisions` counts the elements of a frame that repeat an identity (a host test).
 - The order of Tab holds 64 elements (`FOCUS_ORDER_CAPACITY`); an element after them takes a press but not Tab, and `Frame.focus_overflow` counts them.
-- **The interface state** (`Interface_State`, memory of the caller, 544 bytes: three identities, the order of 64 identities and its count) keeps between frames: the element that has the focus, the element under the pointer, the element pressed and not yet released, and the order of the elements that can take the focus in the last frame.
+- **The interface state** (`Interface_State`, memory of the caller, 576 bytes: three identities, the order of 64 identities and its count, and four fields of the scroll bar that holds the press) keeps between frames: the element that has the focus, the element under the pointer, the element pressed and not yet released, the order of the elements that can take the focus in the last frame, and, for a held scroll bar, its held part, the place of the pointer on its thumb and the time of its next step.
+- **The place of a press**: the input keeps where the left button went down (`Input.press_x`, `press_y`) beside the place of the pointer. One frame can hold a press and the moves after it; an element that follows a drag reads the press at its own place.
+- **The clock of a frame**: `frame_begin` takes the time of the system in milliseconds (`Frame.time`), and `window_frame_begin` gives it. A held arrow button of a scroll bar repeats by it. A frame with the time 0 has no clock: nothing repeats.
 - **The keyboard is a first path**: Tab and Shift+Tab move the focus in the order of the elements of the last frame; Enter and Space press the button that has the focus; up and down move the choice of a list that has the focus; a text input that has the focus takes the characters and Backspace. The palette of the compositor is the model: each thing that the pointer does, a key does.
 - **Elements that take no input**: `list_of_rows` and `text_input_line` only draw. Their caller owns the choice, the typed text and the caret, and decides what each key does in a pure procedure of its own (`support/palette`, `key_action`): a host test then runs each state with each key, with no frame. `list_of_rows` gets only the rows that its area shows, with the place of the first one in the whole list, so its work is the rows on the screen. A row can have a mark that is the outline of a square, a name in the font of the cells with its own color, and a quiet detail after the name. `text_input_line` draws a line that `support/line_editor` edits: a caret at any place, at a scale of 1 to 3, and a field with no border, whose fill reaches each edge of its area.
 - **The pointer**: an element under the pointer is "under the pointer" (the close button of a window is brighter); a press and a release on one element press it. A press on an element gives it the focus.
+
+### 4.1 The scroll bar
+
+The scroll bar is one element, `scroll_bar` (`support/interface/scroll_bar.odin`). Each scroll bar of the system is this element, so a change of its look or of its input is one change. Its look is in `DESIGN.md`, "The scroll bar"; its sizes and its colors are the table `support/graphics/scroll_bar.odin`.
+
+```odin
+moved := interface.scroll_bar(&frame, area, interface.identity("lines"), .Vertical, {total = line_count, visible = rows, first = first_line}, {page = rows - 1})
+if moved.changed {
+	first_line = moved.first
+}
+```
+
+- **The range** (`Scroll_Range`) is in units of the caller: the units of the whole content, the units that the view shows, and the first unit of the view. The element gives the first unit after the input (`Scroll_Bar_Result.first`); the caller shows it in its next frame.
+- **The direction** is `Vertical` or `Horizontal`. A horizontal bar is the vertical one turned: its gradients go from the top down.
+- **The area** is 17 pixels thick (`SCROLL_BAR_THICKNESS`) and as long as the view.
+- **The steps** (`Scroll_Bar_Steps`): a press on an arrow button moves the view by `line` units (1 by default), a press on the track by `page` units (the units in view by default).
+- **The geometry** is a pure procedure, `scroll_bar_geometry(length, thickness, range)`: the places of the arrow buttons, of the track and of the thumb, in pixels along the bar. `scroll_bar_part_at` gives the part at a place, and `scroll_bar_first_at` the first unit for a place of the thumb. Host tests run them with no frame.
+- **The gradients** are draw records of the two kinds that exist, `Horizontal_Gradient` and `Vertical_Gradient`, each with two colors. A gradient of three or four stops is one record for each pair of stops; the draw record did not change.
+- **The pointer**: the element holds the press on its own. The interface state keeps the held part, so a program keeps no state for its scroll bars. A held thumb follows the pointer outside the bar: the compositor sends the pointer to a window while a button is down.
+- **A held arrow button** repeats after 400 ms, then each 60 ms, by the clock of the frame, while the pointer stays on the button.
+- **No key and no focus**: a scroll bar is not in the order of Tab. The keys of a view belong to the element that owns the view.
+- **A bar that only shows a place**: `scroll_bar_draw(table, area, direction, geometry)` appends the records with no input. `list_of_rows` and the completion list of the terminal use it: another party owns their choice.
+- **A program that draws only after a change** has two procedures. `scroll_bar_wants_frame(state, input, area, element)` says if a pointer event needs a frame: the pointer is over the bar, the bar holds the press, or the last frame drew the bar lit. `window_scroll_bar_wake(drawing)` gives the time of the next step of a held arrow button: the program ends its wait there.
+- **The pointer that leaves**: the compositor sends a window one pointer event more when the pointer leaves its surface, with a place outside it, and one when another window takes the front. The bar then draws at rest. Without that event a bar at the edge of a window stays lit.
+- **The record count**: 24 records at rest, 28 when the whole bar is lit.
+
+| Where | Range | Pointer |
+|---|---|---|
+| The lines of a terminal | The lines kept, the rows of the window | Yes: the view stays where the bar puts it, as after Page Up |
+| The completion list of a terminal | The names of the program, the rows shown | No: the program that writes owns the list |
+| The text of `manual` | The rows of the page, the rows of the window | Yes |
+| `list_with_choice` | The lines, the lines in view | Yes: the bar moves the choice, which the view follows |
+| `list_of_rows`, the palette | The rows, the rows in view | No: the caller owns the choice |
 
 ## 5. Text
 

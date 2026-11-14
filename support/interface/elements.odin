@@ -166,9 +166,10 @@ List_Options :: struct {
 }
 
 // list_with_choice draws the lines of a list, the chosen line in blue, and
-// a bar at the right when the lines do not fit. With the focus, up and down
-// move the choice; Enter, or a press on a line, activates it. It gives
-// changed when the choice changed.
+// a scroll bar at the right when the lines do not fit. With the focus, up
+// and down move the choice; Enter, or a press on a line, activates it. The
+// scroll bar moves the choice, which the view follows. It gives changed
+// when the choice changed.
 list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, names: []string, choice: ^int, options: List_Options = {}) -> Element_Result {
 	result := element_interact(frame, element, area, .List)
 	rows := max(area.height / TABLE_LINE, 1)
@@ -194,7 +195,17 @@ list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Elem
 	first := max(choice^ - rows + 1, 0)
 	// A press on a line chooses it.
 	input := frame.input
-	scroll_width := len(names) > rows ? 8 : 0
+	scroll_width := len(names) > rows ? SCROLL_BAR_THICKNESS : 0
+	if scroll_width != 0 {
+		// The view of this list follows its choice, so the scroll bar
+		// moves the choice: to the last line of the view that it asks for.
+		bar_area := Area{area.x + area.width - scroll_width, area.y, scroll_width, rows * TABLE_LINE}
+		moved := scroll_bar(frame, bar_area, identity_in(element, "scroll bar"), .Vertical, {total = len(names), visible = rows, first = first})
+		if moved.changed {
+			choice^ = min(moved.first + rows - 1, len(names) - 1)
+			first = max(choice^ - rows + 1, 0)
+		}
+	}
 	if result.under_pointer && input.pressed {
 		// A press on a line that the list shows chooses it; a press under
 		// the last line or on the bar at the right chooses nothing.
@@ -242,12 +253,6 @@ list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Elem
 			end := text_measured_width(table, FONT_INTERFACE, name[:at + len(options.marked)])
 			draw_rectangle(table, area.x + 8 + start, y + 20, end - start, 2, chosen ? graphics.COLOR_WHITE : graphics.COLOR_KERNEL)
 		}
-	}
-	if scroll_width != 0 {
-		track := rows * TABLE_LINE
-		x := area.x + area.width - 2
-		draw_rectangle(frame.table, x, area.y, 2, track, graphics.COLOR_TRACK)
-		draw_rectangle(frame.table, x, area.y + first * track / len(names), 2, max(rows * track / len(names), 2), graphics.COLOR_DIM)
 	}
 	return result
 }
@@ -353,15 +358,15 @@ List_Rows_Options :: struct {
 	chosen:       int, // The chosen row, as an index in the rows given; -1: none.
 	chosen_color: graphics.Color, // The fill of the chosen row. 0: COLOR_CHOSEN.
 	chosen_hint:  string, // On the chosen row, this text takes the place of right_text, in white ("enter: start").
-	first:        int, // The index of the first row given in the whole list: the place of the bar at the right.
-	total:        int, // The rows of the whole list. More than the rows of the area: a bar of 2 pixels at the right.
+	first:        int, // The index of the first row given in the whole list: the place of the thumb of the scroll bar at the right.
+	total:        int, // The rows of the whole list. More than the rows of the area: a scroll bar at the right, which shows the place and takes no input.
 }
 
 LIST_ROW_ICON_X :: 16 // From the left of a row to its icon, and to the text of a heading.
 LIST_ROW_ICON_SIZE :: kind_icons.ICON_SIZE // The side of the icon: one pixel for each cell.
 LIST_ROW_NAME_X :: LIST_ROW_ICON_X + LIST_ROW_ICON_SIZE + 8 // From the left of a row to its name.
 LIST_ROW_RIGHT_MARGIN :: 16 // From the text at the right to the right of a row.
-LIST_ROW_SCROLL_WIDTH :: 2 // The bar at the right of a list that does not show each row.
+LIST_ROW_SCROLL_WIDTH :: SCROLL_BAR_THICKNESS // The scroll bar at the right of a list that does not show each row.
 
 #assert(LIST_ROW_ICON_SIZE <= LINE && (TABLE_LINE - LIST_ROW_ICON_SIZE) % 2 == 0)
 
@@ -464,10 +469,10 @@ list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row,
 		}
 	}
 	if scroll_width != 0 && options.total > 0 {
-		track := visible_rows * TABLE_LINE
-		x := area.x + area.width - scroll_width
-		draw_rectangle(table, x, area.y, scroll_width, track, graphics.COLOR_TRACK)
-		draw_rectangle(table, x, area.y + clamp(options.first, 0, options.total) * track / options.total, scroll_width, max(visible_rows * track / options.total, 2), graphics.COLOR_DIM)
+		// The caller owns the choice and the pointer: the bar shows the
+		// place of the rows, with no input.
+		bar_length := visible_rows * TABLE_LINE
+		scroll_bar_draw(table, {area.x + area.width - scroll_width, area.y, scroll_width, bar_length}, .Vertical, scroll_bar_geometry(bar_length, scroll_width, {total = options.total, visible = visible_rows, first = options.first}))
 	}
 	return shown_count
 }

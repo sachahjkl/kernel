@@ -47,6 +47,14 @@ SITE_MARK_HERON_CLASS :: "mark-heron"
 SITE_MARK_WATER_CLASS :: "mark-water"
 SITE_MARK_REPLACED_CLASS :: "mark-replaced"
 SITE_MARK_TRAVEL_CLASS :: "mark-travel"
+// The box of the heron of the home, which the page holds, and the class
+// that the script gives it while a press on it plays an animation.
+SITE_MARK_BOX_CLASS :: "mark-box"
+SITE_MARK_CONTROL_CLASS :: "mark-control"
+// The animation that the first press on the heron plays: the one that
+// crosses the window. Each next press plays the next one of the rule of
+// the choice.
+SITE_MARK_FIRST_PRESS_ANIMATION :: mark.Animation.Dash
 
 // The three tile maps of the site, as the table of the uses of the mark
 // gives them (mark_pictures.odin): the two of the home, one for each color
@@ -208,6 +216,7 @@ site_mark_animation_problems :: proc(files: map[string][]u8) -> []string {
 //   schedule: the bounds of a still time and the still share, in percent;
 //   check: the seed and the first steps of the model of the choice, each
 //     [still milliseconds, animation], which the self test compares;
+//   press: the animation that the first press on the heron plays;
 //   limits: the bounds of support/mark for a frame.
 // The paths are relative to the folder of the script: the root of the site.
 site_mark_animation_table_json :: proc(tile_maps: ^Site_Mark_Tile_Maps, sheet_addresses: [SITE_MARK_SHEET_COUNT]string) -> string {
@@ -261,7 +270,9 @@ site_mark_animation_table_json :: proc(tile_maps: ^Site_Mark_Tile_Maps, sheet_ad
 		number(&b, step.animation)
 		write(&b, "]")
 	}
-	write(&b, "]},\"limits\":{\"frameLeast\":")
+	write(&b, "]},\"press\":{\"first\":")
+	number(&b, int(SITE_MARK_FIRST_PRESS_ANIMATION))
+	write(&b, "},\"limits\":{\"frameLeast\":")
 	number(&b, frame_least)
 	write(&b, ",\"frameMost\":")
 	number(&b, mark.FRAME_DURATION_MOST)
@@ -333,6 +344,9 @@ site_mark_animation_rules :: proc() -> string {
 	strings.write_string(&b, "}\n")
 	strings.write_string(&b, ".home-head picture." + SITE_MARK_REPLACED_CLASS + " { display: none; }\n")
 	strings.write_string(&b, "html." + SITE_MARK_TRAVEL_CLASS + " { overflow-x: clip; }\n")
+	// The box of the heron is a control while the script can play: the
+	// pointer says that a press does something.
+	strings.write_string(&b, "." + SITE_MARK_CONTROL_CLASS + " { cursor: pointer; }\n")
 	strings.write_string(&b, "@media (prefers-reduced-motion: reduce) {\n  ." + SITE_MARK_STAGE_CLASS + " { display: none; }\n  .home-head picture." + SITE_MARK_REPLACED_CLASS + " { display: block; }\n}\n")
 	return strings.to_string(b)
 }
@@ -354,6 +368,8 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
 // animations the heron is still.
 // Nothing moves when the reader asks for reduced motion, nothing runs in a
 // hidden tab, and nothing plays while the reader types in a field.
+// A press on the heron (a click, a tap, Enter or Space) plays one
+// animation at once.
 // ?selftest=1 in the address checks the table and the rule of the choice.
 // #heron=<name> in the address plays one animation again and again, for a
 // developer who looks at it: #heron=dash.
@@ -383,6 +399,18 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
     memory.played |= 1 << pick;
     memory.last = pick;
     return pick;
+  }
+  // The animation that a press on the heron plays. The first press of a
+  // view of the page plays the one that crosses the window, unless it was
+  // played last; each next press plays the next one of the rule. So a
+  // press never plays the animation that was played just before it.
+  function pressAnimation(memory, below, first) {
+    const wanted = TABLE.press.first;
+    if (!first || memory.last === wanted) return nextAnimation(memory, below);
+    if ((memory.played & EVERY) === EVERY) memory.played = 0;
+    memory.played |= 1 << wanted;
+    memory.last = wanted;
+    return wanted;
   }
   // The still time before an animation: each whole number of milliseconds
   // of the range has the same chance.
@@ -460,6 +488,21 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
     check("no animation follows itself in a long play", follows === 0);
     check("no animation plays two times in one round of the memory", twice === 0);
     check("the heron is still for about its share of a long play", Math.abs(100 * stillSum / (stillSum + movingSum) - schedule.sharePercent) <= 1);
+    // The presses: the first one plays the animation of the table, each
+    // next one follows the rule, and none plays the one played before it.
+    const wanted = TABLE.press.first;
+    check("the first press names an animation", whole(wanted) && wanted >= 0 && wanted < COUNT);
+    const pressMemory = { played: 0, last: -1 }, pressSource = seeded(TABLE.check.seed + 2);
+    let pressed = pressAnimation(pressMemory, pressSource, true), repeats = 0;
+    check("the first press plays the animation of the table", pressed === wanted);
+    for (let press = 0; press < 3 * COUNT; press++) {
+      const after = pressAnimation(pressMemory, pressSource, false);
+      if (after === pressed) repeats++;
+      pressed = after;
+    }
+    check("no press plays the animation that was played before it", repeats === 0);
+    const lastMemory = { played: 1 << wanted, last: wanted };
+    check("a first press after the animation of the table plays another one", pressAnimation(lastMemory, pressSource, true) !== wanted);
     const passed = cases.filter(c => c.passed).length;
     const first = cases.find(c => !c.passed);
     return first ? "mark animation self test: FAIL, " + passed + " of " + cases.length + " cases pass; the first that fails: " + first.name :
@@ -508,6 +551,7 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
   let stage = null, heron = null, heronContext = null, water = null, waterContext = null;
   let playing = false, shown = -1, shownForm = -1, timer = 0, current = -1, step = -1, due = 0, motion = null;
   let typing = isField(document.activeElement);
+  let pressWaits = false, pressedBefore = false;
   let iconLink = null, iconSprite = -1;
   const iconAddresses = [];
 
@@ -658,14 +702,15 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
     stillIcon();
     timer = window.setTimeout(play, asked() >= 0 ? TABLE.schedule.stillLeast : stillTime(chance));
   }
-  function play() {
+  function play(byPress) {
     const only = asked();
     if (only >= 0) {
       current = only;
     } else {
-      current = nextAnimation(memory, chance);
+      current = byPress === true ? pressAnimation(memory, chance, !pressedBefore) : nextAnimation(memory, chance);
       keep();
     }
+    if (byPress === true) pressedBefore = true;
     step = -1;
     due = window.performance.now();
     startMove(TABLE.animations[current]);
@@ -695,6 +740,50 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
       picture.after(stage);
       picture.classList.add("mark-replaced");
       rest();
+      if (pressWaits) playNow();
+    });
+  }
+
+  // A press on the heron: a click, a tap, Enter or Space. It plays one
+  // animation at once, in the place of the still time. A press during an
+  // animation does nothing: the animation goes on to its end, and a press
+  // that waited would play at a moment that the reader no longer expects.
+  // A press before the pictures arrived plays when they arrive.
+  function playNow() {
+    pressWaits = false;
+    if (timer) window.clearTimeout(timer);
+    play(true);
+  }
+  function press() {
+    if (reduce.matches) return;
+    if (!playing) { pressWaits = true; start(); return; }
+    if (current >= 0) return;
+    playNow();
+  }
+  // The box of the heron is a control only while a press can play: for a
+  // reader who asks for reduced motion it stays the box of a picture, and
+  // nothing says that a press does something.
+  const box = picture.parentElement && picture.parentElement.classList.contains("mark-box") ? picture.parentElement : null;
+  function fitControl() {
+    if (!box) return;
+    if (reduce.matches) {
+      box.classList.remove("mark-control");
+      box.removeAttribute("role");
+      box.removeAttribute("tabindex");
+      box.removeAttribute("aria-label");
+    } else {
+      box.classList.add("mark-control");
+      box.setAttribute("role", "button");
+      box.setAttribute("tabindex", "0");
+      box.setAttribute("aria-label", "Play an animation of the heron");
+    }
+  }
+  if (box) {
+    box.addEventListener("click", press);
+    box.addEventListener("keydown", event => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      press();
     });
   }
 
@@ -703,6 +792,7 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
     if (timer) window.clearTimeout(timer);
     timer = 0;
     playing = false;
+    pressWaits = false;
     endMove();
     if (stage && stage.parentNode) stage.remove();
     picture.classList.remove("mark-replaced");
@@ -712,6 +802,8 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
 
   function fit() { if (canPlay()) start(); else stop(); }
   reduce.addEventListener("change", fit);
+  reduce.addEventListener("change", fitControl);
+  fitControl();
   document.addEventListener("visibilitychange", fit);
   document.addEventListener("focusin", event => { typing = isField(event.target); fit(); });
   document.addEventListener("focusout", () => { typing = false; fit(); });

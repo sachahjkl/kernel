@@ -1,5 +1,6 @@
 package kerneltool
 
+import "core:log"
 import "core:strings"
 import "core:testing"
 import "support:graphics"
@@ -218,30 +219,58 @@ site_style_sheet_polish :: proc(t: ^testing.T) {
 	testing.expect_value(t, strings.count(sheet, "scroll-behavior: smooth"), 0)
 }
 
-// The scroll bars: the parts of WebKit and Chromium with a button at each
-// end, a track, a thumb with its grip and its colors with the pointer over
-// it; the two standard properties only for an engine with no such parts,
-// because Chromium ignores the parts of an element that has them. Each
-// triangle and each grip is a data address in the colors of its form; the
-// rules of the scroll bars hold no color of their own; each border of a
-// thumb and each triangle keeps the contrast of a graphic.
+// The scroll bars: the parts of WebKit and Chromium with an arrow button
+// at each end, a track, a thumb with its gradient, its inner line and its
+// grip, and its colors with the pointer over it and while it is held; the
+// two standard properties only for an engine with no such parts, because
+// Chromium ignores the parts of an element that has them. Each size, each
+// color and each gradient is a variable written from the table of the
+// scroll bar of the system; each triangle and each grip is a data address
+// in the colors of its form; the rules hold no size and no color of their
+// own.
 @(test)
 site_style_sheet_scroll_bars :: proc(t: ^testing.T) {
 	sheet := site_style_sheet("")
 	expect := [?]string {
 		"@supports selector(::-webkit-scrollbar) {",
 		"@supports not selector(::-webkit-scrollbar) {",
-		"::-webkit-scrollbar { width: 16px; height: 16px;",
-		"::-webkit-scrollbar-track:vertical { border-left: 1px solid var(--scroll-edge); }",
-		"::-webkit-scrollbar-thumb { background: var(--scroll-thumb) var(--scroll-grip-vertical) no-repeat center; border: 1px solid var(--scroll-thumb-edge); border-radius: 0; }",
-		"::-webkit-scrollbar-thumb:hover, ::-webkit-scrollbar-thumb:active {",
+		"::-webkit-scrollbar { width: var(--scroll-thickness); height: var(--scroll-thickness);",
+		"::-webkit-scrollbar-track { border: var(--scroll-border) solid var(--scroll-track-border); }",
+		"::-webkit-scrollbar-track:vertical { background: var(--scroll-track-vertical);",
+		"::-webkit-scrollbar-track:horizontal { background: var(--scroll-track-horizontal);",
+		"::-webkit-scrollbar-thumb { border: var(--scroll-border) solid var(--scroll-thumb-border); border-radius: 0;",
+		"box-shadow: inset 0 0 0 var(--scroll-border) var(--scroll-thumb-line); }",
+		"::-webkit-scrollbar-thumb:vertical { min-height: var(--scroll-thumb-least); background-image: var(--scroll-grip-vertical), var(--scroll-thumb-vertical); }",
+		"::-webkit-scrollbar-thumb:horizontal { min-width: var(--scroll-thumb-least); background-image: var(--scroll-grip-horizontal), var(--scroll-thumb-horizontal); }",
+		"::-webkit-scrollbar-thumb:hover { border-color: var(--scroll-hot-border); }",
+		"::-webkit-scrollbar-thumb:vertical:hover { background-image: var(--scroll-grip-vertical-lit), var(--scroll-thumb-hot-vertical); }",
+		"::-webkit-scrollbar-thumb:vertical:active { background-image: var(--scroll-grip-vertical-lit), var(--scroll-thumb-pressed-vertical); }",
 		"::-webkit-scrollbar-button:single-button {",
-		"::-webkit-scrollbar-button:single-button:vertical:decrement { background-image: var(--scroll-arrow-up); }",
-		"::-webkit-scrollbar-button:single-button:vertical:increment { background-image: var(--scroll-arrow-down); }",
-		"::-webkit-scrollbar-button:single-button:horizontal:decrement { background-image: var(--scroll-arrow-left); }",
-		"::-webkit-scrollbar-button:single-button:horizontal:increment { background-image: var(--scroll-arrow-right); }",
+		"::-webkit-scrollbar-button:single-button:vertical:decrement { background-image: var(--scroll-arrow-up), var(--scroll-track-vertical); }",
+		"::-webkit-scrollbar-button:single-button:vertical:increment { background-image: var(--scroll-arrow-down), var(--scroll-track-vertical); }",
+		"::-webkit-scrollbar-button:single-button:horizontal:decrement { background-image: var(--scroll-arrow-left), var(--scroll-track-horizontal); }",
+		"::-webkit-scrollbar-button:single-button:horizontal:increment { background-image: var(--scroll-arrow-right), var(--scroll-track-horizontal); }",
+		"::-webkit-scrollbar-button:single-button:vertical:increment:hover { background-image: var(--scroll-arrow-down-hot), var(--scroll-arrow-hot-vertical); }",
+		"::-webkit-scrollbar-button:single-button:vertical:increment:active { background-image: var(--scroll-arrow-down-hot), var(--scroll-arrow-pressed-vertical); }",
 		"::-webkit-scrollbar-corner {",
-		"scrollbar-color: var(--scroll-thumb-edge) var(--scroll-track); scrollbar-width: auto;",
+		"scrollbar-color: var(--scroll-thumb-border) var(--scroll-track-middle); scrollbar-width: auto;",
+		// The variables of the dark form, each from the table of the scroll
+		// bar of the system: the sizes, a color, the inner line, a gradient
+		// of the track, of the thumb and of an arrow button.
+		"--scroll-thickness: 17px;",
+		"--scroll-border: 1px;",
+		"--scroll-thumb-least: 21px;",
+		"--scroll-track-middle: #2c3743;",
+		"--scroll-thumb-line: rgb(255 255 255 / 12%);",
+		"--scroll-track-vertical: linear-gradient(to right, #26303a 0%, #2c3743 50%, #26303a 100%);",
+		"--scroll-thumb-vertical: linear-gradient(to right, #4a5967 0%, #43515e 45%, #3c4955 55%, #36424d 100%);",
+		"--scroll-thumb-horizontal: linear-gradient(to bottom, #4a5967 0%, #43515e 45%, #3c4955 55%, #36424d 100%);",
+		"--scroll-thumb-hot-vertical: linear-gradient(to right, #365b7d 0%, #305273 45%, #2a4968 55%, #25415d 100%);",
+		"--scroll-arrow-pressed-vertical: linear-gradient(to right, #2d5578 0%, #244a6b 100%);",
+		// And of the light form.
+		"--scroll-track-middle: #f1f1f1;",
+		"--scroll-thumb-line: rgb(255 255 255 / 40%);",
+		"--scroll-thumb-vertical: linear-gradient(to right, #f3f3f3 0%, #e8e8e8 45%, #d9d9d9 55%, #cdcdcd 100%);",
 	}
 	for part in expect {
 		testing.expectf(t, strings.contains(sheet, part), "the style sheet has no %q", part)
@@ -253,9 +282,11 @@ site_style_sheet_scroll_bars :: proc(t: ^testing.T) {
 	testing.expect(t, standard > no_parts && no_parts >= 0, "scrollbar-color is outside the test of the engines with no parts of WebKit")
 	testing.expect_value(t, strings.count(sheet, "scrollbar-color:"), 1)
 	testing.expect_value(t, strings.count(sheet, "scrollbar-width:"), 1)
-	// The rules of the scroll bars name no color: the colors come from the
-	// variables, which the table of colors writes.
-	testing.expect(t, !strings.contains(SITE_SCROLL_RULES, "#") && !strings.contains(SITE_SCROLL_RULES, "rgb") && !strings.contains(SITE_SCROLL_RULES, "data:"), "the rules of the scroll bars hold a color of their own")
+	// The rules of the scroll bars name no color and no size in pixels but
+	// the 0 of an inset: both come from the variables, which the table of
+	// the scroll bar of the system writes.
+	testing.expect(t, !strings.contains(SITE_SCROLL_RULES, "#") && !strings.contains(SITE_SCROLL_RULES, "rgb") && !strings.contains(SITE_SCROLL_RULES, "data:") && !strings.contains(SITE_SCROLL_RULES, "gradient("), "the rules of the scroll bars hold a color of their own")
+	testing.expect(t, !strings.contains(SITE_SCROLL_RULES, "px"), "the rules of the scroll bars hold a size of their own")
 	// The variables of each form, and each data address well formed, in
 	// the colors of its form only.
 	for is_light in ([]bool{false, true}) {
@@ -264,7 +295,7 @@ site_style_sheet_scroll_bars :: proc(t: ^testing.T) {
 		site_scroll_variables(&b, is_light)
 		variables := strings.to_string(b)
 		testing.expectf(t, strings.contains(sheet, variables), "the style sheet has not the variables of the scroll bars (light form: %v)", is_light)
-		allowed := []graphics.Color{colors.arrow, colors.arrow_hover, colors.grip, colors.grip_hover}
+		allowed := []graphics.Color{colors.triangle, colors.triangle_hot, colors.grip, colors.grip_lit}
 		addresses := 0
 		rest := variables
 		for {
@@ -307,21 +338,38 @@ site_style_sheet_scroll_bars :: proc(t: ^testing.T) {
 		}
 		// Four triangles and two grips, each at rest and with the pointer.
 		testing.expect_value(t, addresses, 12)
-		// A thumb is a graphic: its border at rest and with the pointer over
-		// it keeps 3 to 1 on the track; a triangle on its button too.
-		for edge in ([]graphics.Color{colors.thumb_edge, colors.thumb_hover_edge}) {
-			ratio := site_contrast_ratio(edge, colors.track)
-			testing.expectf(t, ratio >= SITE_VALUE_GRAPHIC_CONTRAST_LEAST, "the border of a thumb %06x on the track %06x (light form: %v): %.2f; at least %.1f", u32(edge), u32(colors.track), is_light, ratio, SITE_VALUE_GRAPHIC_CONTRAST_LEAST)
+		// The parts that the pointer lights keep the contrast of a graphic:
+		// the border of the thumb under the pointer on the track, a
+		// triangle on the track and on the fill of its button, the grip on
+		// the thumb under the pointer and while it is held.
+		pairs := [?][2]graphics.Color {
+			{colors.hot_border, colors.track[1]},
+			{colors.triangle, colors.track[1]},
+			{colors.triangle_hot, colors.arrow_hot[0]},
+			{colors.triangle_hot, colors.arrow_pressed[0]},
+			{colors.grip_lit, colors.thumb_hot[1]},
+			{colors.grip_lit, colors.thumb_pressed[1]},
 		}
-		for arrow in ([]graphics.Color{colors.arrow, colors.arrow_hover}) {
-			ratio := site_contrast_ratio(arrow, colors.button)
-			testing.expectf(t, ratio >= SITE_VALUE_GRAPHIC_CONTRAST_LEAST, "a triangle %06x on its button %06x (light form: %v): %.2f", u32(arrow), u32(colors.button), is_light, ratio)
+		for pair in pairs {
+			ratio := site_contrast_ratio(pair[0], pair[1])
+			testing.expectf(t, ratio >= SITE_VALUE_GRAPHIC_CONTRAST_LEAST, "%06x on %06x (light form: %v): %.2f; at least %.1f", u32(pair[0]), u32(pair[1]), is_light, ratio, SITE_VALUE_GRAPHIC_CONTRAST_LEAST)
 		}
-		testing.expectf(t, site_contrast_ratio(colors.grip_hover, colors.thumb_hover) >= SITE_VALUE_GRAPHIC_CONTRAST_LEAST, "the grip on a thumb under the pointer (light form: %v): %.2f", is_light, site_contrast_ratio(colors.grip_hover, colors.thumb_hover))
+		// At rest the standard is quiet: the border of the thumb and its
+		// grip are under 3 to 1. The numbers are a measure, not a bound.
+		log.infof("the scroll bar at rest (light form: %v): the border of the thumb on the track %.2f to 1, the grip on the thumb %.2f to 1", is_light, site_contrast_ratio(colors.thumb_border, colors.track[1]), site_contrast_ratio(colors.grip, colors.thumb_rest[1]))
 	}
-	// The triangles are four rows of pixels in the middle of a square of 16.
+	// A triangle is four rows of 1, 3, 5 and 7 pixels in the middle of a
+	// square of 17, its point on the middle line, toward its end of the bar.
 	up := site_scroll_arrow_svg(.Up, graphics.COLOR_WHITE)
-	testing.expect(t, strings.contains(up, "<rect x=\"7\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"6\" y=\"7\" width=\"4\" height=\"1\"/><rect x=\"5\" y=\"8\" width=\"6\" height=\"1\"/><rect x=\"4\" y=\"9\" width=\"8\" height=\"1\"/>"), up)
+	testing.expect(t, strings.contains(up, "width=\"17\" height=\"17\""), up)
+	testing.expect(t, strings.contains(up, "<rect x=\"8\" y=\"6\" width=\"1\" height=\"1\"/><rect x=\"7\" y=\"7\" width=\"3\" height=\"1\"/><rect x=\"6\" y=\"8\" width=\"5\" height=\"1\"/><rect x=\"5\" y=\"9\" width=\"7\" height=\"1\"/>"), up)
+	down := site_scroll_arrow_svg(.Down, graphics.COLOR_WHITE)
+	testing.expect(t, strings.contains(down, "<rect x=\"5\" y=\"6\" width=\"7\" height=\"1\"/>") && strings.contains(down, "<rect x=\"8\" y=\"9\" width=\"1\" height=\"1\"/>"), down)
 	right := site_scroll_arrow_svg(.Right, graphics.COLOR_WHITE)
-	testing.expect(t, strings.contains(right, "<rect x=\"9\" y=\"7\" width=\"1\" height=\"2\"/>") && strings.contains(right, "<rect x=\"6\" y=\"4\" width=\"1\" height=\"8\"/>"), right)
+	testing.expect(t, strings.contains(right, "<rect x=\"6\" y=\"5\" width=\"1\" height=\"7\"/>") && strings.contains(right, "<rect x=\"9\" y=\"8\" width=\"1\" height=\"1\"/>"), right)
+	// A grip is four lines of 7 pixels, 2 pixels from one to the next.
+	grip := site_scroll_grip_svg(true, graphics.COLOR_WHITE)
+	testing.expect(t, strings.contains(grip, "width=\"7\" height=\"7\"") && strings.contains(grip, "<rect x=\"0\" y=\"0\" width=\"7\" height=\"1\"/><rect x=\"0\" y=\"2\" width=\"7\" height=\"1\"/><rect x=\"0\" y=\"4\" width=\"7\" height=\"1\"/><rect x=\"0\" y=\"6\" width=\"7\" height=\"1\"/>"), grip)
+	// Each size of the variables is a number of the table.
+	testing.expect_value(t, SITE_SCROLL_THUMB_LEAST, graphics.SCROLL_BAR_GRIP_THUMB_LEAST + 1)
 }
