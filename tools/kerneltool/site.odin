@@ -1,7 +1,7 @@
 // The data of the site and the helpers that its pages share (docs/SITE.md):
-// the pictures of the machine that the home shows, the measured numbers
-// and the logs that they come from, and the escape of every text of a file.
-// The pages are in site_frame.odin and site_pages.odin.
+// the measured numbers and the logs that they come from, and the escape of
+// every text of a file. The pages are in site_frame.odin and
+// site_pages.odin; the pictures of the screen are in site_gallery.odin.
 package kerneltool
 
 import "core:fmt"
@@ -23,37 +23,6 @@ SITE_LICENSE_FILE :: "LICENSE"
 SITE_NOT_MEASURED :: "Not measured."
 // `kerneltool check` writes here the line of its comparison of two builds.
 REPRODUCIBLE_BUILD_RECORD :: BUILD_FOLDER + "/reproducible_build.txt"
-
-// One picture of the section "What runs today". The pictures of one group
-// follow each other. A picture of docs/screenshots takes its caption from
-// README.md, a file of the mark from the table of docs/DESIGN.md.
-Site_Picture :: struct {
-	group: string,
-	path:  string,
-}
-
-site_pictures := [?]Site_Picture {
-	{"The desktop", "docs/screenshots/desktop.png"},
-	{"The desktop", "docs/screenshots/palette.png"},
-	{"The desktop", "docs/screenshots/menu.png"},
-	{"The console", "docs/screenshots/console_completion.png"},
-	{"The console", "docs/screenshots/console.png"},
-	{"The console", "docs/screenshots/tools.png"},
-	{"The monitor and the developer tool", "docs/screenshots/remote.png"},
-	{"The monitor and the developer tool", "docs/screenshots/inspect.png"},
-	{"The monitor and the developer tool", "docs/screenshots/inspect_stopped.png"},
-	{"Isolation, rights and budgets", "docs/screenshots/isolated.png"},
-	{"Isolation, rights and budgets", "docs/screenshots/rights.png"},
-	{"Isolation, rights and budgets", "docs/screenshots/budget.png"},
-	{"The network", "docs/screenshots/network.png"},
-	{"The network", "docs/screenshots/server.png"},
-	{"The network", "docs/screenshots/server_real.png"},
-	{"The storage", "docs/screenshots/storage.png"},
-	{"The storage", "docs/screenshots/notes.png"},
-	{"The storage", "docs/screenshots/power_loss.png"},
-	{"The fonts", "docs/screenshots/font_vector.png"},
-	{"The fonts", "docs/screenshots/font_candidates.png"},
-}
 
 // Which line a number takes when the log has several lines with its text.
 Site_Line_Choice :: enum {
@@ -155,16 +124,6 @@ Site_Measure_Record :: struct {
 	present: bool,
 	record:  Measure_Record,
 	written: time.Time, // The time of the file in the work tree.
-}
-
-// One picture as the page shows it.
-Site_Figure :: struct {
-	group:     string,
-	file_name: string, // In the picture folder of the site.
-	caption:   string,
-	width:     int,
-	height:    int,
-	pixelated: bool,
 }
 
 Site_Accent :: struct {
