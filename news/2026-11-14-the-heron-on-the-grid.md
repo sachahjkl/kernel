@@ -1,6 +1,6 @@
 title: The heron squashes and stretches on its grid
 date: 2026-11-14
-release: next
+release: 0.92.0
 picture: none
 kind: Decided
 guide: docs/DESIGN.md

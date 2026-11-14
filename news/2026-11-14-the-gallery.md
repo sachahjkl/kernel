@@ -1,6 +1,6 @@
 title: The site has a gallery of every picture of the screen
 date: 2026-11-14
-release: next
+release: 0.92.0
 picture: docs/screenshots/heron.png
 kind: Shown
 guide: none

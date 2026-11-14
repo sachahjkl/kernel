@@ -1,6 +1,6 @@
 title: The name of the mark is a font
 date: 2026-11-13
-release: next
+release: 0.92.0
 picture: none
 kind: Decided
 guide: docs/DESIGN.md

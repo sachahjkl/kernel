@@ -1,3 +1,0 @@
-type: Changed
-
-**No test depends on the speed of the computer that runs it**: a time in a test only ends a test that hangs, with one generous bound (120 s for each step of a machine test, 60 s in the checks of a program, a stall of 60 s with no progress for a long case), and a number of speed is printed, never checked. The idle end of a QUIC connection and the bounds of a call stream of `remote` now check only that the end came no earlier than its bound, and print how late it came; `scheduler` checks that a wake ends turns under EEVDF and none under round robin, and prints how many times as often EEVDF woke as a measure.

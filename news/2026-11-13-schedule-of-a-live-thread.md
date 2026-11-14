@@ -1,6 +1,6 @@
 title: The share of a thread changes while it runs
 date: 2026-11-13
-release: next
+release: 0.92.0
 picture: none
 kind: Shown
 guide: docs/SCHEDULING.md

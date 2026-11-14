@@ -1,6 +1,6 @@
 title: The bar of the site has three buttons and one menu
 date: 2026-11-14
-release: next
+release: 0.92.0
 picture: none
 kind: Decided
 guide: none

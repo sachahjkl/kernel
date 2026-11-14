@@ -1,3 +1,0 @@
-type: Added
-
-**Each row of the palette has the icon of its kind**: a window, a program, a command, an export, a setting and an entry that destroys each have their own picture of 12 by 12 pixels at the left of the row, and the word of the kind stays at the right. The color of the icon says one fact, as the square mark did: a program that has a window is green and one that has none is dim, the window that has the focus is blue, the value of a setting in use is in the text color. The candidates of a field of a form have the icon of a module or of a grant. The icons are one table of cells, `support/kind_icons`, that the site draws too: a module or a command has the same picture on the site and on the desktop.

@@ -1,6 +1,6 @@
 title: The log shows each value in the color of its kind
 date: 2026-11-13
-release: next
+release: 0.92.0
 picture: docs/screenshots/log.png
 kind: Shown
 guide: docs/TOOLS.md

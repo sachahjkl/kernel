@@ -1,6 +1,6 @@
 title: The site shows the planned work
 date: 2026-11-14
-release: next
+release: 0.92.0
 picture: none
 kind: Shown
 guide: docs/TOOLS.md

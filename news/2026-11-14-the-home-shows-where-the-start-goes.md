@@ -1,6 +1,6 @@
 title: The home shows where the time of a start goes
 date: 2026-11-14
-release: next
+release: 0.92.0
 picture: none
 kind: Shown
 guide: docs/DESIGN.md

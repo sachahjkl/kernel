@@ -1,6 +1,6 @@
 title: The calls of the host go over QUIC
 date: 2026-11-12
-release: next
+release: 0.92.0
 picture: docs/screenshots/remote.png
 kind: Shown
 guide: docs/QUIC.md

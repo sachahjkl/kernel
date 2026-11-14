@@ -1,6 +1,6 @@
 title: The palette: one panel for the programs and the windows
 date: 2026-11-13
-release: next
+release: 0.92.0
 picture: docs/screenshots/palette_arguments_two.png
 kind: Shown
 guide: docs/DESIGN.md

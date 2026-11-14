@@ -1,6 +1,6 @@
 title: A program of the system plays the animations of the heron
 date: 2026-11-14
-release: next
+release: 0.92.0
 picture: docs/screenshots/heron.png
 kind: Shown
 guide: docs/DESIGN.md

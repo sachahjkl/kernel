@@ -1,6 +1,6 @@
 title: A named principal, unlocked by its passphrase
 date: 2026-11-12
-release: next
+release: 0.92.0
 picture: none
 kind: Shown
 guide: docs/PRINCIPALS.md

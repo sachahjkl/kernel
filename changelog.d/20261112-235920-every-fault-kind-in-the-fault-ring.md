@@ -1,3 +1,0 @@
-type: Added
-
-**Every fault kind of a thread can go to the fault ring**: a fault handler names the kinds that it takes (divide error, invalid opcode, protection fault, breakpoint, the floating-point errors, and page faults), and a fault of such a kind becomes a record with its kind and its error code in place of a stop. A breakpoint answered Resume goes on after its int3; Resume after a fault other than a page fault is refused, so a handler cannot make a thread fault again forever, and Stop gives the report of the fault. A handler that asks for nothing gets page faults only, as before. A program with no handler that runs int3 now stops on a breakpoint, not on a protection fault.
