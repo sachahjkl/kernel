@@ -179,6 +179,7 @@ The full check runs after step 7.
 ## What the move of the folders showed
 
 - **The hashes of the modules changed, and the reason is the order.** 64 of the 89 modules have another hash after the move, with the same size. In the LLVM IR of a module the set of the procedures is the same and their order is another: the compiler orders the packages by their path. So the hashes of the modules are not the proof of a move. The proof is the full check: each machine test passes, two builds give the same bytes, and a module is the same bytes with and without debug information. The 25 modules that keep their hash import no package of the library.
+- **The one library changed the order again.** After the change of the import lines, 66 of the 89 modules have another hash, with the same size and the same set of procedures in another order: the two libraries are one, so the compiler orders their packages together. An import line is not in a module, but the order that follows from it is. Each contract package has an importer, so each is still compiled by a build.
 - **A longer path shows where a text had no room.** The stack trace of a stop report is cut at the edge of its box in the windows of `errors` and of `inspect`: four more bytes for each frame. The roadmap holds the correction.
 
 - **The constants held.** In the tool, the move of the seven folders is seven lines of one file. One text was left outside them: a sentence of the page of the modules of the site named the folder of the programs. It is made from the constant now.
