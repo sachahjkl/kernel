@@ -103,8 +103,11 @@ scenario_debugger := [?]Step {
 
 TEST_OUTPUT_DEBUGGER_COMMANDS :: BUILD_FOLDER + "/test_output_debugger_commands.txt"
 
-// The line of the second statement of the procedure add_step of
-// programs/debug_target/main.odin, a volatile store. The compiler gives
+// The source file of the program debug_target, as its debug object names it.
+DEBUG_TARGET_SOURCE_FILE :: PROGRAM_SOURCES + "debug_target/main.odin"
+
+// The line of the second statement of the procedure add_step of that
+// file, a volatile store. The compiler gives
 // the load of the first statement and the store one row of the line table,
 // with this line. A change of that file above the procedure changes it.
 DEBUG_TARGET_LINE_OF_THE_STORE :: "79"
@@ -174,7 +177,7 @@ scenario_debugger_commands := [?]Step {
 	// A breakpoint by a file and a line, in the place of the second one.
 	{kind = .Type, text = "columns(break_remove(1), \"number place\")"},
 	{kind = .Wait, text = "[console]      0  debug_target::count_rounds"},
-	{kind = .Type, text = "columns(where(break_at(\"programs/debug_target/main.odin:" + DEBUG_TARGET_LINE_OF_THE_STORE + "\"), \"number\", 1), \"number kind\")"},
+	{kind = .Type, text = "columns(where(break_at(\"" + DEBUG_TARGET_SOURCE_FILE + ":" + DEBUG_TARGET_LINE_OF_THE_STORE + "\"), \"number\", 1), \"number kind\")"},
 	{kind = .Wait, text = "[console]      1  execute"},
 	{kind = .Type, text = "columns(resume(0), \"thread\")"},
 	{kind = .Wait, text = "[console]      0", any_order = true},
@@ -274,12 +277,12 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Remote_Key, text = "remote: the public key of this service: "},
 	{kind = .Wait, text = "remote: listening on the UDP port 7100, for the host 10.0.2.2 only", any_order = true},
 	{kind = .Call, text = "debugger.attach(\"debug_target\")", expected = "1 rows of Attached"},
-	{kind = .Call, text = "debugger.break_at(\"programs/debug_target/main.odin:" + DEBUG_TARGET_LINE_OF_THE_STORE + "\")", expected = "1 rows of Break_Row"},
+	{kind = .Call, text = "debugger.break_at(\"" + DEBUG_TARGET_SOURCE_FILE + ":" + DEBUG_TARGET_LINE_OF_THE_STORE + "\")", expected = "1 rows of Break_Row"},
 	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 0"},
 	{kind = .Call, text = "debugger.events()", expected = "breakpoint 0"},
 	// The machine has no source text: the tool reads the line in the
 	// repository, because the file has the hash of the build.
-	{kind = .Call, text = "debugger.source(0, 0)", expected = "source: programs/debug_target/main.odin:" + DEBUG_TARGET_LINE_OF_THE_STORE + ": " + DEBUG_TARGET_TEXT_OF_THE_STORE},
+	{kind = .Call, text = "debugger.source(0, 0)", expected = "source: " + DEBUG_TARGET_SOURCE_FILE + ":" + DEBUG_TARGET_LINE_OF_THE_STORE + ": " + DEBUG_TARGET_TEXT_OF_THE_STORE},
 	{kind = .Call, text = "debugger.attach(\"notes\")", outcome = .Failed, expected = "error: debugger.attach: no free place: the table has its 1 programs that the debugger service debugs for this caller (-3)"},
 	{kind = .Call, text = "debugger.detach()", expected = "1 rows of Detached"},
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},

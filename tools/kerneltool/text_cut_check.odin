@@ -13,8 +13,8 @@ import "core:strings"
 // named `writer`: the name that each source of the system gives to its
 // writer today. It cannot see a writer of another name: it reads text, not
 // types.
-TEXT_CUT_CHECKED_FOLDERS :: [?]string{"kernel", "contract", "support", "programs", "modules"}
-TEXT_CUT_WRITER_FOLDER :: "support/sentence"
+TEXT_CUT_CHECKED_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_PROGRAMS, SOURCE_FOLDER_MODULES}
+TEXT_CUT_WRITER_FOLDER :: SOURCE_FOLDER_SUPPORT + "/sentence"
 
 text_cut_check :: proc() -> bool {
 	files := make([dynamic]string, context.temp_allocator)

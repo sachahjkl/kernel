@@ -642,7 +642,7 @@ mark_font_of_the_repository :: proc() -> (file: []u8, ok: bool) {
 	license_text := read_file(MARK_FONT_LICENSE_FILE) or_return
 	file, ok = mark_font_build(string(license_text))
 	if !ok {
-		fmt.eprintln("kerneltool: cannot build the font of the name of the mark from the letters of support/mark")
+		fmt.eprintln("kerneltool: cannot build the font of the name of the mark from the letters of " + MARK_SOURCE_FOLDER)
 	}
 	return
 }
@@ -669,9 +669,9 @@ mark_font_check :: proc() -> bool {
 		return false
 	}
 	if string(data) != string(expected) {
-		fmt.eprintfln("kerneltool: test failed: %s is not the font of the letters of support/mark and of %s: run kerneltool logo", MARK_FONT_FILE, MARK_FONT_LICENSE_FILE)
+		fmt.eprintfln("kerneltool: test failed: %s is not the font of the letters of " + MARK_SOURCE_FOLDER + " and of %s: run kerneltool logo", MARK_FONT_FILE, MARK_FONT_LICENSE_FILE)
 		return false
 	}
-	test_passed_print("%s is the font of the letters of support/mark", MARK_FONT_FILE)
+	test_passed_print("%s is the font of the letters of " + MARK_SOURCE_FOLDER, MARK_FONT_FILE)
 	return true
 }

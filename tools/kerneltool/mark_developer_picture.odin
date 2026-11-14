@@ -46,7 +46,7 @@ mark_animations_picture_write :: proc() -> bool {
 	graphics.text_choice_set(.Spleen, .Red_Green_Blue)
 
 	y := MARK_ANIMATIONS_MARGIN
-	graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, "The animations of the mark (support/mark): frame 0 is the still heron; cells of 8 pixels", graphics.COLOR_TEXT)
+	graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, "The animations of the mark (" + MARK_SOURCE_FOLDER + "): frame 0 is the still heron; cells of 8 pixels", graphics.COLOR_TEXT)
 	y += MARK_ANIMATIONS_LINE
 	for animation in mark.Animation {
 		moves := "" if !mark.animation_moves(animation) else "; the home of the site and the program heron move the heron"

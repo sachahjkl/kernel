@@ -139,11 +139,14 @@ boot_volume_kernel_module_path :: proc(volume: Boot_Volume) -> string {
 // boot program of a volume. Each flag is an input of the build key.
 boot_program_compile_command :: proc(volume: Boot_Volume) -> []string {
 	command := make([dynamic]string, context.temp_allocator)
+	// The compiler reads the file of a `#load` from the folder of the boot
+	// program; the tool names each file from the root of the repository.
+	to_root := path_from_folder_to_root(SOURCE_FOLDER_BOOT)
 	append(
 		&command,
 		"odin",
 		"build",
-		"boot",
+		SOURCE_FOLDER_BOOT,
 		"-target:freestanding_amd64_win64",
 		"-build-mode:obj",
 		"-no-entry-point",
@@ -158,19 +161,22 @@ boot_program_compile_command :: proc(volume: Boot_Volume) -> []string {
 		join("-export-dependencies-file:", boot_volume_dependency_file(volume)),
 		CONTRACT_LIBRARY,
 		SUPPORT_LIBRARY,
-		join("-define:BOOT_IMAGE=../", signed_image_path(volume.path)),
-		"-define:SYSTEM_PUBLIC_KEY=../" + SYSTEM_PUBLIC_KEY_FILE,
+		join("-define:BOOT_IMAGE=", to_root, signed_image_path(volume.path)),
+		join("-define:SYSTEM_PUBLIC_KEY=", to_root, SYSTEM_PUBLIC_KEY_FILE),
 		fmt.tprintf("-define:SELF_TEST=%d", volume.self_test),
-		join("-define:KERNEL_MODULE=../", boot_volume_kernel_module_path(volume)),
+		join("-define:KERNEL_MODULE=", to_root, boot_volume_kernel_module_path(volume)),
 		join("-out:", boot_volume_object_path(volume)),
 	)
 	return command[:]
 }
 
+// The assembly file of the boot program: the jump to the kernel.
+BOOT_PROGRAM_JUMP_SOURCE :: SOURCE_FOLDER_BOOT + "/jump.asm"
+
 // The two assembly files of the boot program, and the object of each.
 boot_program_jump_command :: proc(volume: Boot_Volume) -> []string {
 	command := make([dynamic]string, context.temp_allocator)
-	append(&command, "nasm", "-f", "win64", "-o", join(boot_volume_folder(volume), "/jump.obj"), "boot/jump.asm")
+	append(&command, "nasm", "-f", "win64", "-o", join(boot_volume_folder(volume), "/jump.obj"), BOOT_PROGRAM_JUMP_SOURCE)
 	return command[:]
 }
 
@@ -406,7 +412,7 @@ boot_volume_key_inputs :: proc(volume: Boot_Volume, shared: Boot_Volume_Shared_I
 	append(&settings, fmt.tprintf("firmware signature %v", volume.firmware_signature))
 	append(&settings, volume.with_secure_boot_variables ? "with the variable store of Secure Boot" : "with no variable store")
 	fixed_files := make([dynamic]string, context.temp_allocator)
-	append(&fixed_files, "boot/jump.asm", RUNTIME_MEMORY, TEST_SIGNING_KEY_FILE)
+	append(&fixed_files, BOOT_PROGRAM_JUMP_SOURCE, RUNTIME_MEMORY, TEST_SIGNING_KEY_FILE)
 	if volume.firmware_signature != .None || volume.with_secure_boot_variables {
 		append(&fixed_files, TEST_FIRMWARE_SIGNING_KEY_FILE, TEST_FIRMWARE_CERTIFICATE_FILE)
 	}

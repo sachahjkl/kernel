@@ -1218,7 +1218,7 @@ site_document_of_code_span :: proc(site: ^Site, code: string) -> (path: string, 
 // The folders whose source comments the check of the pointers reads: the
 // sources of the system. The tool is not read: its tests hold pointers
 // that do not resolve on purpose.
-SITE_POINTER_SOURCE_FOLDERS :: [?]string{"kernel", "programs", "modules", "support", "contract", "runtime", "boot"}
+SITE_POINTER_SOURCE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_PROGRAMS, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_BOOT}
 
 // site_odin_files_under adds the path of each source file of a folder and
 // of its folders, but the tests, to paths.

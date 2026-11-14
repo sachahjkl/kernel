@@ -716,13 +716,16 @@ site_search_field_problem :: proc(page: Site_Page, html: string) -> string {
 	return ""
 }
 
-// The script. The match is support/line_editor/fuzzy_match.odin: lower, fuzzy_match,
+// The source of the match of the console, which the script ports.
+SITE_SEARCH_MATCH_SOURCE :: SOURCE_FOLDER_SUPPORT + "/line_editor/fuzzy_match.odin"
+
+// The script. The match is that of SITE_SEARCH_MATCH_SOURCE: lower, fuzzy_match,
 // ranked_before and rank_candidates (with no skip of equal names), on the
 // UTF-8 bytes of the query and of the name, as the console reads them.
 SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool site (tools/kerneltool/site_search.odin).
 // It reads search.json of this site on the first key; no other request.
 // The match and the order are those of the console of the system:
-// support/line_editor/fuzzy_match.odin (fuzzy_match, ranked_before,
+// ` + SITE_SEARCH_MATCH_SOURCE + ` (fuzzy_match, ranked_before,
 // rank_candidates), ported rule for rule; docs/CONSOLE.md, section 3.
 // The tool writes the constants of that file into RULE and its table of
 // cases into CASES; ?selftest=1 in the address runs the cases.

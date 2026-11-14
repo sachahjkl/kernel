@@ -319,11 +319,11 @@ each_volume_that_a_scenario_names_is_in_the_table_of_its_part :: proc(t: ^testin
 boot_tree_make :: proc(t: ^testing.T) -> (root: string) {
 	folder, error := os.make_directory_temp("", "boot_volumes_test_*", context.temp_allocator)
 	testing.expect_value(t, error, nil)
-	for name in ([]string{"boot", "runtime", "resources/keys"}) {
+	for name in ([]string{SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, "resources/keys"}) {
 		_ = os.make_directory_all(fmt.tprintf("%s/%s", folder, name))
 	}
-	boot_tree_file_write(folder, "boot/main.odin", "package boot\n\nefi_main :: proc() {}\n")
-	boot_tree_file_write(folder, "boot/jump.asm", "global jump\njump: ret\n")
+	boot_tree_file_write(folder, SOURCE_FOLDER_BOOT + "/main.odin", "package boot\n\nefi_main :: proc() {}\n")
+	boot_tree_file_write(folder, BOOT_PROGRAM_JUMP_SOURCE, "global jump\njump: ret\n")
 	boot_tree_file_write(folder, RUNTIME_MEMORY, "global copy\ncopy: ret\n")
 	boot_tree_file_write(folder, TEST_SIGNING_KEY_FILE, "00\n")
 	boot_tree_file_write(folder, TEST_FIRMWARE_SIGNING_KEY_FILE, "a key\n")
@@ -360,7 +360,7 @@ shared_inputs_of_a_test :: proc(image_content: string) -> Boot_Volume_Shared_Inp
 @(private = "file")
 boot_sources :: proc(root: string) -> []string {
 	sources := make([]string, 1, context.temp_allocator)
-	sources[0] = fmt.tprintf("%s/boot/main.odin", root)
+	sources[0] = fmt.tprintf("%s/%s/main.odin", root, SOURCE_FOLDER_BOOT)
 	return sources
 }
 
@@ -369,7 +369,7 @@ boot_sources :: proc(root: string) -> []string {
 volume_key_of_a_new_build :: proc(t: ^testing.T, root: string, volume: Boot_Volume, shared: Boot_Volume_Shared_Inputs) -> blake3.Hash {
 	inputs, readable := boot_volume_key_inputs(volume, shared, boot_sources(root), nil)
 	testing.expect(t, readable, "each built file of the volume has its hash")
-	table := input_file_table_make(root, {"boot"})
+	table := input_file_table_make(root, {SOURCE_FOLDER_BOOT})
 	defer input_file_table_destroy(table)
 	key, complete := build_key(inputs, table)
 	testing.expect(t, complete, "each input of the tree can be read")
@@ -438,11 +438,11 @@ boot_volume_key_changes_with_each_input :: proc(t: ^testing.T) {
 	testing.expect(t, volume_key_of_a_new_build(t, root, measure_volume, other_measure_image) != measure_key, "another boot image of a measure run changes the key of its volume")
 	testing.expect_value(t, volume_key_of_a_new_build(t, root, main_volume, other_measure_image), first)
 
-	boot_tree_file_write(root, "boot/main.odin", "package boot\n\nefi_main :: proc() {_ = 1}\n")
+	boot_tree_file_write(root, SOURCE_FOLDER_BOOT + "/main.odin", "package boot\n\nefi_main :: proc() {_ = 1}\n")
 	after_source := volume_key_of_a_new_build(t, root, main_volume, shared)
 	testing.expect(t, after_source != first, "a byte of a source of the boot program changes the key")
 
-	boot_tree_file_write(root, "boot/jump.asm", "global jump\njump: nop\nret\n")
+	boot_tree_file_write(root, BOOT_PROGRAM_JUMP_SOURCE, "global jump\njump: nop\nret\n")
 	after_assembly := volume_key_of_a_new_build(t, root, main_volume, shared)
 	testing.expect(t, after_assembly != after_source, "a byte of an assembly file changes the key")
 
@@ -475,7 +475,7 @@ kept_boot_volume_with_a_changed_file_is_built_again :: proc(t: ^testing.T) {
 	testing.expect(t, build_record_write(record_file, key, {volume_file, image_file}, sources, nil), "the record is written")
 
 	decision :: proc(root, record_file: string, inputs: Build_Key_Inputs, outputs: []string) -> (kept: bool, reason: string) {
-		table := input_file_table_make(root, {"boot"})
+		table := input_file_table_make(root, {SOURCE_FOLDER_BOOT})
 		defer input_file_table_destroy(table)
 		return recorded_build_is_kept(record_file, inputs, table, outputs)
 	}
@@ -506,18 +506,18 @@ kept_boot_volume_with_a_changed_file_is_built_again :: proc(t: ^testing.T) {
 	testing.expect(t, !kept, "a volume whose boot image changed is built again")
 	testing.expect_value(t, reason, "an input changed")
 
-	boot_tree_file_write(root, "boot/main.odin", "package boot\n\nefi_main :: proc() {_ = 2}\n")
+	boot_tree_file_write(root, SOURCE_FOLDER_BOOT + "/main.odin", "package boot\n\nefi_main :: proc() {_ = 2}\n")
 	kept, reason = decision(root, record_file, inputs, {volume_file, image_file})
 	testing.expect(t, !kept, "a volume whose boot program changed is built again")
 	testing.expect_value(t, reason, "an input changed")
-	boot_tree_file_write(root, "boot/main.odin", "package boot\n\nefi_main :: proc() {}\n")
+	boot_tree_file_write(root, SOURCE_FOLDER_BOOT + "/main.odin", "package boot\n\nefi_main :: proc() {}\n")
 	kept, _ = decision(root, record_file, inputs, {volume_file, image_file})
 	testing.expect(t, kept, "the same source again gives the recorded key")
 
 	// The two parts of the decision, as the build of all the volumes uses
 	// them: the key first, then the hashes of the outputs read at once.
 	{
-		table := input_file_table_make(root, {"boot"})
+		table := input_file_table_make(root, {SOURCE_FOLDER_BOOT})
 		defer input_file_table_destroy(table)
 		record, same, _ := recorded_build_has_its_key(record_file, inputs, table)
 		testing.expect(t, same, "the record has the key of the inputs")

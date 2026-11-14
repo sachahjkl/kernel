@@ -14,7 +14,9 @@ import "core:time"
 source_tree_make :: proc(t: ^testing.T) -> (root: string) {
 	folder, error := os.make_directory_temp("", "incremental_build_test_*", context.temp_allocator)
 	testing.expect_value(t, error, nil)
-	for name in ([]string{"program", "library", "unused", "tool", "contract/record", "support/draw", "support/idle"}) {
+	// The two libraries are at the folders of the tool: the tool finds the
+	// package of an import of a library there.
+	for name in ([]string{"program", "library", "unused", "tool", SOURCE_FOLDER_CONTRACT + "/record", SOURCE_FOLDER_SUPPORT + "/draw", SOURCE_FOLDER_SUPPORT + "/idle"}) {
 		_ = os.make_directory_all(fmt.tprintf("%s/%s", folder, name))
 	}
 	file_write(folder, "program/main.odin", "package program\n\nimport \"../library\"\n\nmain :: proc() {library.work()}\n")
@@ -24,9 +26,9 @@ source_tree_make :: proc(t: ^testing.T) -> (root: string) {
 	file_write(folder, "library/library.odin", "package library\n\nwork :: proc() {}\n")
 	file_write(folder, "unused/unused.odin", "package unused\n")
 	file_write(folder, "tool/main.odin", "package tool\n\nimport \"core:fmt\"\nimport record \"contract:record\"\n\t import \"support:draw\"\nSAMPLE :: `\nimport \"support:absent\"\n`\n")
-	file_write(folder, "contract/record/record.odin", "package record\n")
-	file_write(folder, "support/draw/draw.odin", "package draw\n\nimport \"contract:record\"\n")
-	file_write(folder, "support/idle/idle.odin", "package idle\n")
+	file_write(folder, SOURCE_FOLDER_CONTRACT + "/record/record.odin", "package record\n")
+	file_write(folder, SOURCE_FOLDER_SUPPORT + "/draw/draw.odin", "package draw\n\nimport \"contract:record\"\n")
+	file_write(folder, SOURCE_FOLDER_SUPPORT + "/idle/idle.odin", "package idle\n")
 	return folder
 }
 
@@ -36,7 +38,7 @@ file_write :: proc(root, name, text: string) {
 }
 
 @(private = "file")
-SOURCE_TREE_FOLDERS :: [?]string{"program", "library", "unused", "tool", "contract", "support"}
+SOURCE_TREE_FOLDERS :: [?]string{"program", "library", "unused", "tool", SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT}
 
 // The inputs of the key of the program of the tree, as a compiler lists them.
 @(private = "file")
@@ -337,8 +339,8 @@ imports_of_a_source_name_the_folders_of_the_repository :: proc(t: ^testing.T) {
 	source := "package kerneltool\n\nimport \"core:fmt\"\nimport module \"contract:module\"\nimport \"support:cryptography/ed25519\"\nimport \"../shared\"\nimport\t\"./beside\"\nimported := 1\n// the word import in a comment\nforeign import library \"system:c\"\n"
 	imported_folders_of_source(source, "tools/kerneltool", &folders)
 	testing.expect_value(t, len(folders), 4)
-	testing.expect_value(t, folders[0], "contract/module")
-	testing.expect_value(t, folders[1], "support/cryptography/ed25519")
+	testing.expect_value(t, folders[0], SOURCE_FOLDER_CONTRACT + "/module")
+	testing.expect_value(t, folders[1], SOURCE_FOLDER_SUPPORT + "/cryptography/ed25519")
 	testing.expect_value(t, folders[2], "tools/shared")
 	testing.expect_value(t, folders[3], "tools/kerneltool/beside")
 	testing.expect_value(t, path_without_dots("a/b/../../c/./d"), "c/d")
@@ -361,15 +363,15 @@ tool_identity_follows_the_imports_of_the_tool :: proc(t: ^testing.T) {
 	first := identity_of(t, root)
 	testing.expect_value(t, identity_of(t, root), first)
 
-	file_write(root, "support/idle/idle.odin", "package idle\n\nchanged :: 1\n")
+	file_write(root, SOURCE_FOLDER_SUPPORT + "/idle/idle.odin", "package idle\n\nchanged :: 1\n")
 	file_write(root, "program/main.odin", "package program\n")
 	testing.expect_value(t, identity_of(t, root), first)
 
-	file_write(root, "support/draw/draw.odin", "package draw\n\nimport \"contract:record\"\n\nchanged :: 1\n")
+	file_write(root, SOURCE_FOLDER_SUPPORT + "/draw/draw.odin", "package draw\n\nimport \"contract:record\"\n\nchanged :: 1\n")
 	after_import := identity_of(t, root)
 	testing.expect(t, after_import != first, "a package that the tool imports is a source of the tool")
 
-	file_write(root, "contract/record/record.odin", "package record\n\nchanged :: 1\n")
+	file_write(root, SOURCE_FOLDER_CONTRACT + "/record/record.odin", "package record\n\nchanged :: 1\n")
 	after_deep_import := identity_of(t, root)
 	testing.expect(t, after_deep_import != after_import, "a package that a package of the tool imports is a source of the tool")
 
@@ -770,8 +772,8 @@ no_conversion_record_with_a_source_that_changed_during_the_build :: proc(t: ^tes
 // and no built file: the compile step reads none.
 @(test)
 compile_key_of_a_module_holds_no_import :: proc(t: ^testing.T) {
-	importer := Module_Build{name = "importer", source = "modules/agenda", imports = {"calendar"}}
-	alone := Module_Build{name = "importer", source = "modules/agenda"}
+	importer := Module_Build{name = "importer", source = MODULE_SOURCES + "agenda", imports = {"calendar"}}
+	alone := Module_Build{name = "importer", source = MODULE_SOURCES + "agenda"}
 	with_import, readable := module_compile_key_inputs(importer)
 	without_import, readable_alone := module_compile_key_inputs(alone)
 	testing.expect(t, readable && readable_alone, "the folder of the module can be listed")

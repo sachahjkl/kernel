@@ -51,7 +51,7 @@ TOOL_SOURCE_FOLDER :: "tools/kerneltool"
 // hashes each of their files once, before the first compiler starts. A
 // file outside them (the libraries of the compiler) is hashed at its first
 // use.
-INPUT_FOLDERS :: [?]string{"boot", "contract", "kernel", "modules", "programs", "resources", "runtime", "support", TOOL_SOURCE_FOLDER}
+INPUT_FOLDERS :: [?]string{SOURCE_FOLDER_BOOT, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_PROGRAMS, RESOURCE_FOLDER, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_SUPPORT, TOOL_SOURCE_FOLDER}
 
 // The threads that read and hash files at once. A thread holds one whole
 // file in memory, and a boot volume is 64 MiB.
@@ -780,13 +780,9 @@ imported_folders_of_source :: proc(source: string, folder: string, folders: ^[dy
 		}
 		path := line[first + 1:][:length]
 		colon := strings.index_byte(path, ':')
-		switch {
-		case strings.has_prefix(path, "contract:"):
-			append(folders, join("contract/", path[len("contract:"):]))
-		case strings.has_prefix(path, "support:"):
-			append(folders, join("support/", path[len("support:"):]))
-		case colon >= 0:
-		case:
+		if package_folder, in_source_library := source_library_package_folder(path); in_source_library {
+			append(folders, package_folder)
+		} else if colon < 0 {
 			append(folders, path_without_dots(join(folder, "/", path)))
 		}
 	}

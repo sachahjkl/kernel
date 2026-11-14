@@ -145,13 +145,9 @@ parse_source :: proc(path, source: string, state: ^Describe_State) -> (file: ^as
 	}
 	for item in file.imports {
 		full := strings.trim(item.fullpath, "\"")
-		folder := ""
-		for library in ([]string{"support", "contract"}) {
-			if strings.has_prefix(full, library) && len(full) > len(library) && full[len(library)] == ':' {
-				folder = strings.concatenate({library, "/", full[len(library) + 1:]})
-			}
-		}
-		if folder == "" {
+		// The folder lives as long as the description, not as one step.
+		folder, in_source_library := source_library_package_folder(full, context.allocator)
+		if !in_source_library {
 			continue
 		}
 		name := item.name.text

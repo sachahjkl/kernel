@@ -10,8 +10,8 @@ import "core:slice"
 // PORTRAIT_HEIGHT colors of 32 bits (0x00RRGGBB), line after line.
 // The result is in the repository, so that a build does not decode a JPEG file.
 
-PORTRAIT_SOURCE :: "programs/temple/portrait.jpg"
-PORTRAIT_OUTPUT :: "programs/temple/portrait.pixels"
+PORTRAIT_SOURCE :: PROGRAM_SOURCES + "temple/portrait.jpg"
+PORTRAIT_OUTPUT :: PROGRAM_SOURCES + "temple/portrait.pixels"
 PORTRAIT_WIDTH :: 180
 PORTRAIT_HEIGHT :: 240
 PORTRAIT_SAMPLES :: 4 // Each pixel is the mean of SAMPLES x SAMPLES points of the source.

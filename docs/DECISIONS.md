@@ -1341,8 +1341,15 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-09. Decided by: the owner.
 - Decision: documents in `docs/`, research notes in `docs/research/`, the boot program in `boot/`, the kernel tool in `tools/kerneltool/`, build output in `build/`, which git ignores. Code is in named Odin libraries, with no relative import.
 - Words: none recorded.
-- State: in force (the libraries since 2026-11-10, choice 87).
+- State: in force (the libraries since 2026-11-10, choice 87). Changed by D-249: the sources of the system are in `src/`, and the two libraries are one source library, `modus`.
 - Where: `README.md`; `FIRST_MILESTONE.md`, choice 87.
+
+### D-249 Everything that becomes the system is in `src`, and one source library `modus`
+- 2026-11-14. Decided by: the owner (the folder `src`; one name for a program of a third party; the form with one library); the coordinator and an agent (the layout, the order of the move).
+- Decision: the folder `src` holds everything that becomes the system: `src/md` (the intent), `src/kernel`, `src/boot`, `src/runtime`, `src/programs`, `src/modules`, and the source library `modus` in the folder `src/library` (`src/library/contract` and `src/library/support`). The name of the library is `modus`; the name of its folder is `library`: the system modus is the whole of `src`, and a folder `src/modus` beside `src/kernel` reads as if the kernel were not a part of modus. The flag is `-collection:modus=src/library`. The tool, the documents, the news, the changelog and the resources stay at the root. A source imports `"modus:contract/ring"` and `"modus:support/system"`: one name, one flag, the same lines in the kernel, in a program of the system and in a program of a third party. The compiler no longer refuses an import of a support package in the kernel, because the kernel gets the same library: the tool refuses it, at the start of each build, by reading the imports of each file of the kernel and of the contract packages. Refused: two spellings of one package (`contract:` for the kernel, `modus:contract/` for a program), which keeps the refusal by the compiler. The move runs in steps that each leave a system that builds, and each step that only moves files is proved by the hashes of the modules.
+- Words: "comment ça le projet n'a pas de dossier SRC, c'est pas normal, ça veut dire qu'on a mal organisé le code, il va falloir absolument le faire [...] un programme tiers qui est en gros utilisateur de la bibliothèque Modus il devrait pas faire des références relatives [...] il devrait avoir une collection qui s'appelle Modus ou Modus SDK [...] déplacer des fichiers et mieux ranger c'est un investissement sur le futur, on le fait dans tous les cas, n'attends pas mon go"; to the question of one spelling held by the tool or two spellings held by the compiler: "oui oui" (the recommended form: one spelling). On the folder of the library, first proposed as `src/modus`: "c'est quoi la différence entre kernel et Modus [...] c'est le [kernel] de Modus mais du coup pourquoi il y a un dossier kernel et un dossier Modus"; to the proposal `src/library` with the import name `modus`: "non c'est nickel très bien".
+- State: in work.
+- Where: `src/md/infrastructure/repository_layout.md`; `README.md`.
 
 ### D-152 Do not write a linker
 - 2026-11-09. Decided by: the owner.

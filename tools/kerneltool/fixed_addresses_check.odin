@@ -9,8 +9,8 @@ import "core:strings"
 // file written as BAND_START + n * SLOT would be a range with no member,
 // which no check of the package sees. So no file of these folders, but the
 // package itself, names BAND_START or SLOT of that package.
-FIXED_ADDRESSES_FOLDER :: "contract/fixed_addresses"
-FIXED_ADDRESSES_CHECKED_FOLDERS :: [?]string{"contract", "support", "programs", "modules"}
+FIXED_ADDRESSES_FOLDER :: SOURCE_FOLDER_CONTRACT + "/fixed_addresses"
+FIXED_ADDRESSES_CHECKED_FOLDERS :: [?]string{SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_PROGRAMS, SOURCE_FOLDER_MODULES}
 FIXED_ADDRESSES_PRIVATE_NAMES :: [?]string{"BAND_START", "SLOT"}
 
 fixed_addresses_check :: proc() -> bool {
