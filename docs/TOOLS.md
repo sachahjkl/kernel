@@ -438,7 +438,7 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `key new <folder>`, `key show` | The key that signs the system description |
 | `font`, `vector_fonts`, `pointers`, `logo`, `portrait` | Convert a source (a font, a pointer theme, the mark, a picture) into the files of the repository. A build reads the result, never the source |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
-| `film [terminal \| palette]` | Films a scenario of the machine for the development log, while the scenario types: `build/films/<name>.mp4` ("The film"; needs ffmpeg). No argument: the film of the terminal |
+| `film [terminal \| palette]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4` and `build/films/<name>.webm` ("The film"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
 
 ### The parts of the machine test
 
@@ -700,14 +700,14 @@ The hang bound ends a wait for a screen that never settles. The test fails, and 
 
 ### The film
 
-`kerneltool film <name>` builds the main boot volume, starts a test machine, runs the scenario of the film, and writes `build/films/<name>.mp4`. It copies the film and three of its pictures, as PNG files, to a new folder of the development log (`<date>_film_<name>`). A film is not a test: no check runs it. The code is `tools/kerneltool/film.odin`.
+`kerneltool film <name>` builds the main boot volume, starts a test machine, runs the scenario of the film, and writes two files from the same pictures: `build/films/<name>.mp4` and `build/films/<name>.webm`. It copies the MP4 file and three of its pictures, as PNG files, to a new folder of the development log (`<date>_film_<name>`). It copies the WebM file to `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). A film is not a test: no check runs it. The code is `tools/kerneltool/film.odin`.
 
 | Film | What it shows | Scenario |
 |---|---|---|
 | `terminal` (also with no argument) | The program `flood` writes lines in the terminal; the keys move in the lines, stop them and start them again | `scenario_film` (`machine.odin`) |
 | `palette` | The palette: a program, a window, a command and its record, the form of a command with its candidates, a question before an entry that destroys, a setting that changes the font of the desktop | `scenario_palette_film` (`palette_film_scenario.odin`) |
 
-The two films differ by their scenario only. The worker, the list of the encoder and the encoder are the same code.
+The two films differ by their scenario only. The worker, the list of the encoder and the encoders are the same code.
 
 **The worker.** Between the steps `Film_Start` and `Film_Stop`, a thread of the tool asks QEMU for a picture of the screen 30 times in one second (`FILM_RATE`), while the scenario runs its steps. The worker has its own connection to QEMU: each test machine has a second socket of the machine protocol (`build/test_output*.film.qmp`), and a machine with no film leaves it with no connection. The keys of the scenario go on the first socket. So a batch of keys and a picture never share a reply, and the tool needs no lock. QEMU does one command at a time: a batch of keys waits at most for one picture, and a picture at most for one batch.
 
@@ -715,17 +715,42 @@ The two films differ by their scenario only. The worker, the list of the encoder
 
 **The list of the encoder.** After the machine, the tool reads the times in the names and gives the encoder one list (`pictures.ffconcat`): each picture with the time that it stays on the screen. A slot shows the newest picture that was asked for before its end. A slot with no picture of its own shows the picture before, and the pictures after it keep their own slots: a picture that came late shifts nothing, and the film has the speed of the machine, also on a loaded host. The time of a run of slots is the difference of its two ends in microseconds, so no rounding adds from run to run.
 
-**The encoder.** `ffmpeg`, from the development shell:
+**The encoders.** `ffmpeg`, from the development shell, runs twice on the same list. The two commands differ by the arguments of their encoder (`FILM_MP4_ENCODER`, `FILM_WEBM_ENCODER`) and by their output only:
 
 ```
 ffmpeg -f concat -safe 0 -i build/films/<name>/pictures.ffconcat
   -vf fps=30,scale=iw*2:ih*2:flags=neighbor:out_color_matrix=bt709:out_range=tv
-  -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p
+  -c:v libx264 -preset slow -crf 18 -movflags +faststart -pix_fmt yuv420p
   -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv
-  -movflags +faststart build/films/<name>.mp4
+  build/films/<name>.mp4
+
+ffmpeg -f concat -safe 0 -i build/films/<name>/pictures.ffconcat
+  -vf fps=30,scale=iw*2:ih*2:flags=neighbor:out_color_matrix=bt709:out_range=tv
+  -c:v libsvtav1 -preset 6 -crf 45 -an -pix_fmt yuv420p
+  -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv
+  build/films/<name>.webm
 ```
 
-The film is H.264 in an MP4 file, at a constant 30 pictures in one second. Each pixel of the screen is a square of 2 by 2 pixels of the film, with no filter: the screen of 1024 by 768 is a film of 2048 by 1536. The color planes of the pixel format `yuv420p` have half the size of the picture, so with this scale each pixel of the screen keeps its own color, and the squares of the design stay sharp. The colors are converted and named as those of a film in high definition, so that a player shows the colors of the screen. The tool makes no GIF and no WebP file: at this size and length, with a window that draws at each frame, such a file is many times larger than the MP4 file.
+| File | Format | For |
+|---|---|---|
+| `build/films/<name>.mp4` | H.264 in MP4, the index at the start of the file | The development log, and a post on another site: each site that takes a film plays H.264. The repository does not hold it |
+| `build/films/<name>.webm` | AV1 in WebM, no sound | The repository and the site ("The film of a document") |
+
+Measured on the film of the palette (36.8 s): the MP4 file has 3 169 392 bytes and the WebM file 1 572 784 bytes, about half, with the text of the screen sharp.
+
+Each file is at a constant 30 pictures in one second. Each pixel of the screen is a square of 2 by 2 pixels of the film, with no filter: the screen of 1024 by 768 is a film of 2048 by 1536. The color planes of the pixel format `yuv420p` have half the size of the picture, so with this scale each pixel of the screen keeps its own color, and the squares of the design stay sharp. The colors are converted and named as those of a film in high definition, so that a player shows the colors of the screen. The tool makes no GIF and no WebP file: at this size and length, with a window that draws at each frame, such a file is many times larger than the MP4 file.
+
+### The film of a document
+
+A news entry can name a film: `film: docs/films/<name>.webm` in its head (`news/README.md`, "The film"). The repository holds that file, as it holds the screen pictures, so `kerneltool site` copies it and needs no encoder.
+
+- `kerneltool film <name>` writes `docs/films/<name>.webm` after its two files, when a news entry names the film with that name (`film_is_named_by_a_news_entry`). A film that no entry names stays in the build folder. So the line `film:` is written first, then the command runs.
+- The file is the WebM file of the build folder, byte for byte.
+- Before the copy, the command makes the checks of `kerneltool news check` on the file (`film_document_problem`): a WebM file (an EBML header of the document type `webm`), at most 4 MiB (`FILM_DOCUMENT_SIZE_LIMIT`), whose tracks state the width and the height of its pictures. A file that fails is not copied: the repository keeps the film that it has, and the command fails.
+- The bound of 4 MiB: each version of the file stays in the history of the repository, and a reader of the site loads it on a phone. The film of the palette, 36.8 s of the whole screen, has 1.5 MiB.
+- A film is not the same bytes at each run: the pictures are taken at the times of the host. Run the command to change the film, and commit the new file only then.
+
+The tool reads the width and the height of the pictures from the file itself (`film_document_picture_size`: the element `Tracks` of the segment, the first track with `PixelWidth` and `PixelHeight`). The site states them on the `video` element (`SITE.md`, "The film of a news entry"). The code is `tools/kerneltool/film_document.odin`.
 
 **A film shows time; a test waits for conditions.** A scenario of a test has no fixed time ("How the tool sends input and waits"). A film is for a viewer, who must see a text being typed and must have the time to read a state. So a film has two kinds of step with a fixed time, and they exist only in the scenario of a film:
 

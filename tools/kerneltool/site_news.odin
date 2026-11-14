@@ -1,6 +1,6 @@
 // The news on the site (docs/SITE.md, "The news"): the page of the news, the
-// newest entries on the home, the Atom feed news.xml, and a link from each
-// release to the entries that name it. The entries are the files of news/
+// newest entries on the home, the Atom feed news.xml, the film of an entry
+// that has one, and a link from each release to the entries that name it. The entries are the files of news/
 // (tools/kerneltool/news.odin); the site adds no sentence to them.
 package kerneltool
 
@@ -10,6 +10,19 @@ import "core:strings"
 SITE_NEWS_FEED :: "news.xml"
 // The entries that the home shows.
 SITE_NEWS_HOME_COUNT :: 3
+// The folder of the site that holds the films of the news.
+SITE_FILM_FOLDER :: "films"
+// The type of a film of the site, for a browser and for a feed reader.
+SITE_FILM_TYPE :: "video/webm"
+// The codec of a film, as a browser reads it before it asks for the file:
+// AV1, the main profile (0), the level 5.0 (12, the first level that holds
+// a picture of 2048 by 1536, twice the screen of the system), the main
+// tier (M), 8 bits a channel. A browser that does not play it never asks
+// for the file.
+SITE_FILM_CODEC :: "av01.0.12M.08"
+// The attribute of the source of a film. Its value holds double quotes, so
+// single quotes are around it.
+SITE_FILM_SOURCE_TYPE :: "type='" + SITE_FILM_TYPE + "; codecs=\"" + SITE_FILM_CODEC + "\"'"
 
 // The class of the accent of a kind: the colored mark of its card.
 site_news_kind_classes := [News_Kind]string {
@@ -28,6 +41,10 @@ Site_News :: struct {
 	picture_width:  int,
 	picture_height: int,
 	picture_alt:    string,
+	film:           string, // Its path in the site, or "". An entry with a film has a picture.
+	film_width:     int, // The width and the height of the pictures of the film, in pixels.
+	film_height:    int,
+	film_bytes:     int,
 }
 
 // site_news_anchor gives the id of an entry on the page of the news: from its file
@@ -63,6 +80,18 @@ site_news_read :: proc(site: ^Site) -> bool {
 			} else {
 				item.picture_alt = entry.title
 			}
+		}
+		if news_entry_has_film(entry) && item.picture != "" {
+			// The site copies the file as it is: it needs no encoder.
+			data := read_file(entry.film) or_return
+			film_width, film_height, sized := film_document_picture_size(data)
+			if !sized {
+				fmt.eprintfln("kerneltool: site: the film %s states no width and no height of its pictures", entry.film)
+				return false
+			}
+			item.film = strings.concatenate({SITE_FILM_FOLDER, "/", site_file_name(entry.film)}, context.temp_allocator)
+			item.film_width, item.film_height, item.film_bytes = film_width, film_height, len(data)
+			site.copies[item.film] = entry.film
 		}
 		append(&news, item)
 	}
@@ -120,6 +149,43 @@ site_news_picture :: proc(b: ^strings.Builder, from_page: string, item: Site_New
 	strings.write_string(b, "\"></a></figure>\n")
 }
 
+// site_film_size_text gives the size of a film for a reader, who chooses
+// with it whether to load the film on a slow link.
+site_film_size_text :: proc(bytes: int) -> string {
+	return fmt.tprintf("%.1f MiB", f64(bytes) / (1024 * 1024))
+}
+
+// site_news_film writes the film of an entry on the page of the news. The
+// film plays only when the reader starts it, and a browser loads only its
+// head before that: the picture of the entry stands in its place. The
+// width and the height of the film keep its room on the page before any
+// byte of it came. The picture inside the element is for a browser with no
+// video element, and the caption links to the file for each reader.
+site_news_film :: proc(b: ^strings.Builder, from_page: string, item: Site_News) {
+	if item.film == "" {
+		return
+	}
+	film_link := site_relative(from_page, item.film)
+	picture_link := site_relative(from_page, item.picture)
+	fmt.sbprintf(b, "<figure class=\"news-film\"><video controls preload=\"metadata\" playsinline muted loop poster=\"%s\" width=\"%d\" height=\"%d\">", picture_link, item.film_width, item.film_height)
+	fmt.sbprintf(b, "<source src=\"%s\" %s>", film_link, SITE_FILM_SOURCE_TYPE)
+	fmt.sbprintf(b, "<a href=\"%s\"><img src=\"%s\" width=\"%d\" height=\"%d\" loading=\"lazy\" decoding=\"async\" alt=\"", film_link, picture_link, item.picture_width, item.picture_height)
+	site_plain(b, item.picture_alt)
+	fmt.sbprintf(b, "\"></a></video><figcaption>Film: <a href=\"%s\">%s</a>, WebM with AV1, %s.</figcaption></figure>\n", film_link, site_file_name(item.film), site_film_size_text(item.film_bytes))
+}
+
+// site_news_film_card_picture writes the picture of an entry with a film
+// on a card of the home. A card is a third of the width of the page: a
+// film of the whole screen is not readable there, and three players on
+// the first page would each ask for a part of their file. So the card
+// shows the picture, with a mark that says in a word that the entry has a
+// film, and the picture links to the entry, where the film is.
+site_news_film_card_picture :: proc(b: ^strings.Builder, from_page: string, item: Site_News, entry_link: string) {
+	fmt.sbprintf(b, "<figure class=\"news-card-picture\"><a class=\"film-link\" href=\"%s\"><img src=\"%s\" width=\"%d\" height=\"%d\" loading=\"lazy\" decoding=\"async\" alt=\"", entry_link, site_relative(from_page, item.picture), item.picture_width, item.picture_height)
+	site_plain(b, item.picture_alt)
+	strings.write_string(b, "\"><span class=\"film-mark\">film</span></a></figure>\n")
+}
+
 // site_news_add writes the page of the news: every entry, newest first.
 site_news_add :: proc(site: ^Site) {
 	if len(site.news) == 0 {
@@ -149,10 +215,24 @@ site_news_add :: proc(site: ^Site) {
 		site_escape(&b, entry.title)
 		strings.write_string(&b, "</h2>\n")
 		site_news_meta(site, &b, path, entry, true)
-		strings.write_string(&b, item.picture != "" ? "<div class=\"news-body with-picture\">\n<div class=\"prose\">\n" : "<div class=\"news-body\">\n<div class=\"prose\">\n")
+		// A picture stands beside the text. A film stands under it, over
+		// the width of the card: in the column of a picture it is too
+		// small to read.
+		switch {
+		case item.film != "":
+			strings.write_string(&b, "<div class=\"news-body with-film\">\n<div class=\"prose\">\n")
+		case item.picture != "":
+			strings.write_string(&b, "<div class=\"news-body with-picture\">\n<div class=\"prose\">\n")
+		case:
+			strings.write_string(&b, "<div class=\"news-body\">\n<div class=\"prose\">\n")
+		}
 		strings.write_string(&b, item.body)
 		strings.write_string(&b, "</div>\n")
-		site_news_picture(&b, path, item, "news-picture")
+		if item.film != "" {
+			site_news_film(&b, path, item)
+		} else {
+			site_news_picture(&b, path, item, "news-picture")
+		}
 		fmt.sbprintf(&b, "</div>\n<p class=\"source\">From <a href=\"%s\"><code>%s/%s</code></a>.</p>\n</article>\n", site_repository_file(site, renderer.source), NEWS_FOLDER, entry.file_name)
 	}
 	newest := site.news[0].entry
@@ -174,7 +254,11 @@ site_news_home :: proc(site: ^Site, b: ^strings.Builder) {
 		site_escape(b, entry.title)
 		strings.write_string(b, "</a></h3>\n")
 		site_news_meta(site, b, home, entry, false)
-		site_news_picture(b, home, item, "news-card-picture")
+		if item.film != "" {
+			site_news_film_card_picture(b, home, item, fmt.tprintf("%s#%s", news_link, item.anchor))
+		} else {
+			site_news_picture(b, home, item, "news-card-picture")
+		}
 		strings.write_string(b, "<p>")
 		site_inline(b, site_news_lead(entry))
 		strings.write_string(b, "</p>\n</article>\n")
@@ -260,7 +344,15 @@ site_news_feed :: proc(site: ^Site) -> string {
 		fmt.sbprintf(&b, "</title>\n<id>%s/blob/master/%s/%s</id>\n", SITE_REPOSITORY_ADDRESS, NEWS_FOLDER, entry.file_name)
 		strings.write_string(&b, "<link rel=\"alternate\" type=\"text/html\" href=\"")
 		site_xml_escape(&b, site_feed_page_address(site, strings.concatenate({site_section_page(.News), "#", item.anchor}, context.temp_allocator)))
-		fmt.sbprintf(&b, "\"/>\n<published>%sT00:00:00Z</published>\n<updated>%sT00:00:00Z</updated>\n", entry.date, entry.date)
+		strings.write_string(&b, "\"/>\n")
+		if item.film != "" {
+			// The film as a file that goes with the entry: a feed reader
+			// offers it, and knows its type and its size before it asks.
+			strings.write_string(&b, "<link rel=\"enclosure\" type=\"" + SITE_FILM_TYPE + "\" href=\"")
+			site_xml_escape(&b, site_feed_address(site, item.film))
+			fmt.sbprintf(&b, "\" length=\"%d\"/>\n", item.film_bytes)
+		}
+		fmt.sbprintf(&b, "<published>%sT00:00:00Z</published>\n<updated>%sT00:00:00Z</updated>\n", entry.date, entry.date)
 		fmt.sbprintf(&b, "<category term=\"%s\"/>\n<summary>", news_kind_names[entry.kind])
 		plain := strings.builder_make(context.temp_allocator)
 		site_plain(&plain, site_news_lead(entry))
@@ -275,6 +367,10 @@ site_news_feed :: proc(site: ^Site) -> string {
 			fmt.sbprintf(&html, "<p><img src=\"%s\" width=\"%d\" height=\"%d\" alt=\"", site_feed_address(site, item.picture), item.picture_width, item.picture_height)
 			site_plain(&html, item.picture_alt)
 			strings.write_string(&html, "\"></p>")
+		}
+		if item.film != "" {
+			// A link, not a video element: many feed readers remove one.
+			fmt.sbprintf(&html, "<p><a href=\"%s\">Film</a> (WebM with AV1, %s)</p>", site_feed_address(site, item.film), site_film_size_text(item.film_bytes))
 		}
 		site_xml_escape(&b, strings.to_string(html))
 		strings.write_string(&b, "</content>\n</entry>\n")

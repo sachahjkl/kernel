@@ -589,6 +589,21 @@ figcaption { padding-top: 8px; font-size: 14px; }
 .news-body.with-picture { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 384px); gap: 16px; align-items: start; }
 .news-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
 .news-card figure { margin-bottom: 8px; padding: 4px; }
+/* The film of an entry: under the text, over the width of the card, and
+   at most 1024 pixels wide, the width of the screen of the system: one
+   pixel of the screen is never wider than one pixel of the page. Its width
+   and its height in the page give its ratio, so the page keeps its room.
+   On a narrow screen it takes the width of the column. */
+.news-film { margin-top: 16px; max-width: 1024px; }
+.news-film video { display: block; width: 100%; height: auto; background: var(--track); }
+/* The link of the caption is a word of its line, not a block as the link
+   around a picture is. */
+.news-film figcaption a { display: inline; }
+.news-film figcaption a:hover { background: var(--track); }
+/* The mark of a film on a card of the home: a rectangle with one word, in
+   the lower left corner of the picture, on the surface of a card. */
+.film-link { position: relative; text-decoration: none; }
+.film-mark { position: absolute; left: 0; bottom: 0; padding: 0 8px; font-family: var(--mono); font-size: 12px; line-height: 24px; text-transform: uppercase; color: var(--text); background: var(--card-bottom); border-top: 1px solid var(--line); border-right: 1px solid var(--line); }
 /* The cards of the news on the home: in a row of cards, the title, the
    line of the kind and the date, the picture and the text of each card
    start at the same height, whatever the length of a title. Each card

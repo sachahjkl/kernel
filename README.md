@@ -29,7 +29,7 @@ The Nix flake supplies every tool. `nix develop`, then `kerneltool run`, builds 
 
 ![The desktop: console, life, monitor and plasma. The title bar of the window in front goes from blue to a darker blue; the others are quiet](docs/screenshots/desktop.png)
 
-![The palette: the key super opens it, one list of the programs and of the windows narrows at each typed key, Enter starts the chosen program or brings the chosen window to the front](docs/screenshots/palette.png)
+![The palette: the key super opens it, one list of the programs, of the windows, of the commands of the console and of the settings narrows at each typed key, Enter starts the chosen program, brings the chosen window to the front or runs the chosen command](docs/screenshots/palette.png)
 
 ![The menu of the programs: the button of the bar opens it](docs/screenshots/menu.png)
 
@@ -253,7 +253,7 @@ kerneltool run
 | `run` | Build, then start the machine under QEMU, with the log of the kernel on the terminal of the host |
 | `test` | Build, start the machine, act as the input (keys, pointer), check the log, save pictures |
 | `screenshots` | `test`, then copy the pictures to `docs/screenshots/`. The pictures are compressed PNG files; `screenshots compress` compresses, with no machine, each PNG file of `docs/screenshots/` and `resources/` that is not compressed yet |
-| `film [terminal \| palette]` | Build, start the machine, film a scenario while it types, write `build/films/<name>.mp4` (not a test; no argument: the terminal) |
+| `film [terminal \| palette]` | Build, start the machine, film a scenario while it types, write `build/films/<name>.mp4` and `build/films/<name>.webm`, and `docs/films/<name>.webm` when a news entry names the film (not a test; no argument: the terminal) |
 | `font` | Convert the BDF file of the font to `support/graphics/font.odin` |
 | `pointers` | Convert the pointer manifests of `resources/pointers/` to pointer theme files in `build/pointers/`, and print a table of each theme (`build` does it too) |
 | `vector_fonts` | Subset the candidate vector fonts to `resources/fonts/`, and draw the picture of the choice `build/fonts/candidates.png` |
