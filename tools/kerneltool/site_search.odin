@@ -56,6 +56,7 @@ Site_Search_Kind :: enum u8 {
 	Gap,
 	License_Row,
 	Type,
+	Roadmap_Entry,
 }
 
 // What the site shows of a kind of entry: its name for one entry (the list
@@ -92,6 +93,7 @@ site_search_kinds := [Site_Search_Kind]Site_Search_Kind_Description {
 	.Gap             = {name = "gap", value_kind = .No, folder = SITE_STATUS_FOLDER},
 	.License_Row     = {name = "license row", value_kind = .Grant, folder = SITE_LICENSES_FOLDER},
 	.Type            = {name = "type", value_kind = .Type, folder = SITE_TYPES_FOLDER},
+	.Roadmap_Entry   = {name = "roadmap entry", value_kind = .Status, folder = SITE_ROADMAP_FOLDER},
 }
 
 // site_search_kind_words gives the name of a kind of entry for a count:
@@ -407,6 +409,7 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 	for row, index in site.licenses.build_rows {
 		site_search_add(&entries, row.what, license_page, build_ids[index], .License_Row, strings.concatenate({row.license, ", ", row.author}, context.temp_allocator))
 	}
+	site_roadmap_search_add(site, &entries)
 	return entries[:]
 }
 
@@ -964,6 +967,33 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
       if (event.key !== "Escape" || event.defaultPrevented || wide.matches || !menu.open) return;
       menu.open = false;
       menu.querySelector("summary").focus();
+    });
+  }
+
+  // The menu of the bar that holds the sections that are not buttons. On
+  // a wide screen it is closed until its button opens it, and Escape, a
+  // click outside or a focus that leaves it closes it. On a narrow screen
+  // its sections are lines of the site menu: it is open, and its button is
+  // a word. With no script the button still opens and closes it.
+  const projectMenu = document.querySelector("details.project-menu");
+  if (projectMenu) {
+    const projectButton = projectMenu.querySelector("summary");
+    function fitProjectMenu() { projectMenu.open = !wide.matches; }
+    fitProjectMenu();
+    wide.addEventListener("change", fitProjectMenu);
+    projectButton.addEventListener("click", event => {
+      if (!wide.matches) event.preventDefault();
+    });
+    document.addEventListener("click", event => {
+      if (wide.matches && projectMenu.open && !projectMenu.contains(event.target)) projectMenu.open = false;
+    });
+    projectMenu.addEventListener("keydown", event => {
+      if (event.key !== "Escape" || event.defaultPrevented || !wide.matches || !projectMenu.open) return;
+      projectMenu.open = false;
+      projectButton.focus();
+    });
+    projectMenu.addEventListener("focusout", event => {
+      if (wide.matches && projectMenu.open && event.relatedTarget && !projectMenu.contains(event.relatedTarget)) projectMenu.open = false;
     });
   }
 

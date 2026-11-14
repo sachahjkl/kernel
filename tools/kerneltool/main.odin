@@ -367,9 +367,22 @@ COMMANDS :: [?]Command {
 	// - `check`: checks the head, the date, the picture, the release, the
 	//   guide and the length of each entry. `kerneltool check` runs it.
 	{name = "news", about = "new <subject> | check: the news entries of " + NEWS_FOLDER + ", dated reports in prose of what a reader can now see or use, for the page of the news of the site", run = run_news},
+	// Checks the roadmap, `ROADMAP.md`: the planned work of the system, in
+	// the sections Now, Next and Later.
+	//
+	// - `check`: checks the title, the three sections in their order, the
+	//   form of each entry (a bold summary, then one or two sentences), the
+	//   design link of an entry, and that the file gives no date. It refuses
+	//   an entry whose summary is the summary of an entry of the changelog:
+	//   that work is done. `kerneltool check` runs it.
+	//
+	// The file is written by hand: an entry is added when a work is planned,
+	// and removed in the commit that ends the work
+	// (docs/TOOLS.md, "The roadmap").
+	{name = "roadmap", about = "check: the planned work of `" + ROADMAP_FILE + "`, in the sections Now, Next and Later, for the page of the roadmap of the site", run = run_roadmap},
 	// Writes the site in `build/site/`: the home, the guides, the reference
 	// tables read from the code, the status, the news, the releases, the
-	// index of the search and its script.
+	// roadmap, the index of the search and its script.
 	//
 	// - `--address https://<host>/<path>` (optional): the address of the
 	//   published site, for the canonical addresses, the sitemap and the
@@ -391,9 +404,9 @@ COMMANDS :: [?]Command {
 	// alone, the host tests of each library, the origin of the cryptography,
 	// the mark, the pictures of the README, the fixed addresses, the bounds
 	// of the tests, the rule on comments, the form of the glossary, the
-	// changelog and the news. Then the whole machine test (`test`) and a
-	// second build that must give the same bytes.
-	{name = "check", about = "odin check -vet and odin test of the host code, the checks of the sources (among them the rule on comments and the form of the glossary), changelog check, news check, then test", run = run_check},
+	// changelog, the news and the roadmap. Then the whole machine test
+	// (`test`) and a second build that must give the same bytes.
+	{name = "check", about = "odin check -vet and odin test of the host code, the checks of the sources (among them the rule on comments and the form of the glossary), changelog check, news check, roadmap check, then test", run = run_check},
 	// Makes or shows the key that signs the system description.
 	//
 	// - `new <folder>`: writes a new private key, readable by its owner only,
@@ -857,6 +870,9 @@ run_check :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	if !news_check() {
+		return EXIT_FAILURE
+	}
+	if !roadmap_check() {
 		return EXIT_FAILURE
 	}
 	if run_test(nil) != 0 {

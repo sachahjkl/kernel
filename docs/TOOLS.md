@@ -465,10 +465,11 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "kerneltool: all tests passed", then the times of the test (below) |
 | `measure ...` | A measure run: a machine that measures with no other load. No argument: the locks. `scheduler N`, `clock`, `crowd`, `disk`, `flow`, `limits`: the program alone, and its lines. `windows`, `address_space`, `shortage`. The numbers are measures, never conditions ("A check by count, a measure by time") |
 | `screenshots` | The whole test, then the copy of the pictures to `docs/screenshots` and to the development log: the pictures are a fact of the machines, so they are copied as soon as each machine passed. Then a second build and the measure runs whose numbers the measure record holds (the locks, `clock`, `disk`, `scheduler`), then the measure record. `screenshots compress` compresses the PNG files that are stored with no compression |
-| `check` | `odin check -vet` and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the file index of the intent folder, the changelog, the news), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
+| `check` | `odin check -vet` and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the file index of the intent folder, the changelog, the news, the roadmap), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
 | `repeat <module> <count>` | Builds one module again and again, with no machine, and counts the distinct results (`docs/REPRODUCIBLE_BUILD.md`). Each of its builds is a whole build |
 | `site` | Writes the site in `build/site/` |
 | `changelog ...`, `news ...`, `release_number` | The fragments of the changelog and its releases, the news entries, the number of the newest release |
+| `roadmap check` | Checks the form of `ROADMAP.md`, the planned work, and refuses an entry whose work has an entry of the changelog ("The roadmap") |
 | `key new <folder>`, `key show` | The key that signs the system description |
 | `font`, `vector_fonts`, `pointers`, `logo`, `portrait` | Convert a source (a font, a pointer theme, the mark, a picture) into the files of the repository. A build reads the result, never the source |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
@@ -799,6 +800,55 @@ The tool reads the width and the height of the pictures from the file itself (`f
 These times never stand for a condition. After each key of `Film_Type` the tool waits, as in a test, until the system read the key. Each scene waits for its line of the log (a step `Wait`) before its hold: the film never shows a state that the machine did not reach, and a film on a slow host is longer, not wrong. The film of the palette uses the keys and the lines of the main scenario of the machine test: it shows what the test checks. It runs without `remote`: the condition after a key is that the system read each byte of the keyboard.
 
 **The measures.** At `Film_Stop` the tool prints, as measures: the count of the pictures and the rate that they reached, the slots with no picture of their own, the longest time between two pictures, and the time of one picture of QEMU (in the middle, and at most). No number of these makes a film fail. Measured on one host with a bare QEMU: two sockets of the machine protocol at once, and 1.7 ms for one picture of 0.86 MB; a picture of the screen of the system is 2.3 MB. The pictures of one film of 37 s are about 2.5 GB in `build/films/<name>/`; the tool removes them after the encoder.
+
+### The roadmap
+
+`ROADMAP.md`, at the root of the repository, holds the planned work of the system. It is the one place of the plans: a guide says what is built and what is not built, and no other file lists the work to come. The changelog is its other half: `CHANGELOG.md` lists the work that is done, `ROADMAP.md` the work that is planned.
+
+The file is plain Markdown that a reader understands with no tool. It has no front matter, no metadata field and no HTML.
+
+```
+# Roadmap
+
+A few lines that say what the file is.
+
+## Now
+
+- **A short summary.** One or two sentences on what the work gives the user.
+
+## Next
+
+- **Another summary.** One sentence. [Design](src/md/features/the_design.md)
+
+## Later
+```
+
+- The title is `# Roadmap`. A preamble of text can follow it.
+- The sections are `## Now`, `## Next` and `## Later`, in this order, each one time. **Now** is the work that is in progress. **Next** is the work that is decided and comes after. **Later** is the work that is wanted and has no order. The file has no other heading.
+- A section is a list, which can be empty. An entry (`GLOSSARY.md`, "Roadmap entry") is `- **<summary>.** <one or two sentences>`. The summary is plain text of at most 80 bytes (`ROADMAP_SUMMARY_MOST`), with its period inside the bold. A next line of the same entry starts with two spaces.
+- The sentences say what the work gives a user of the system, or a developer who builds on it. They do not say how the code changes.
+- When an intent file holds the design of the work, the entry ends with its design link: `[Design](src/md/<file>.md)`. An entry has no other link.
+- The file gives no date: a planned date that passed is a false sentence that nothing corrects. It names no decision and no person: that record is `DECISIONS.md`.
+
+**Who changes the file, and when.** The file is written by hand. An entry is added when a work is planned, and it moves from one section to another when its state changes. When a work is done, its entry is removed in the commit that adds the changelog fragment of the work. A work that is done in part keeps an entry whose summary names the part that is left.
+
+`kerneltool roadmap check` checks the file; `kerneltool check` runs it, and `kerneltool site` stops on the same faults of form. Each problem is one sentence with the line of its fault. The check refuses:
+
+| Fault | The rule |
+|---|---|
+| The title or a section | Line 1 is `# Roadmap`. The three sections are present, in their order, each one time, and no other heading exists |
+| The lines | One empty line before and after a heading, no two empty lines, one line feed at the end, no tab, no space at the end of a line |
+| The preamble | No front matter (`---`), no field `key: value`, no entry before the first section |
+| The form of an entry | A bold summary with its period, not empty, at most 80 bytes, with none of the characters `*`, `[`, `]`, `<`, `>`; then one space and one or two sentences. A sentence ends at a `.`, a `?` or a `!` outside a code span, before a space or the end of the text |
+| A date | A text `yyyy-mm-dd`, or the name of a month with a year after it. A year alone is not refused: `2048 pixels` is a count |
+| HTML, a decision, a role | A tag of HTML outside a code span; the identifier of a decision (a capital D, a `-`, then digits); the word `owner` |
+| A link | A link in the sentences; a design link that is not the last part of the entry, or that names no file `src/md/<file>.md`, or a file that does not exist |
+| An entry twice | Two summaries that are the same but for the case and the marks: on the site they would have one address |
+| A work that is done | A summary that is the bold summary of a fragment, or of an entry of a release |
+
+**The last rule, and its limit.** The tool cannot know that a work is done. It knows that an entry of the changelog has the summary of an entry of the roadmap. So the fragment that ends a planned work takes the summary of its roadmap entry as its bold summary, and the check then fails until the entry is removed: the removal cannot be forgotten in that commit. A fragment with another summary is not seen: the rule helps the writer who follows it, and proves nothing about the others. Two summaries that are equal by chance name two works with one name; the roadmap entry then takes a more exact summary. Two summaries are compared with no regard to the case and to the marks (`roadmap_summary_key`).
+
+The code is `tools/kerneltool/roadmap.odin`; the host tests are `roadmap_test.odin`. The page of the site: `SITE.md`, "The roadmap".
 
 ## The bounds of the tests
 

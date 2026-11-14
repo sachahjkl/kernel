@@ -61,6 +61,7 @@ Site_Section :: enum {
 	Status,
 	News,
 	Releases,
+	Roadmap,
 	Gallery,
 }
 
@@ -72,6 +73,7 @@ site_section_titles := [Site_Section]string {
 	.Status    = "Status",
 	.News      = "News",
 	.Releases  = "Releases",
+	.Roadmap   = "Roadmap",
 	.Gallery   = "Gallery",
 }
 
@@ -84,6 +86,7 @@ site_section_folders := [Site_Section]string {
 	.Status    = SITE_STATUS_FOLDER,
 	.News      = SITE_NEWS_FOLDER,
 	.Releases  = SITE_RELEASES_FOLDER,
+	.Roadmap   = SITE_ROADMAP_FOLDER,
 	.Gallery   = SITE_GALLERY_FOLDER,
 }
 
@@ -99,6 +102,7 @@ site_section_parents := [Site_Section]Site_Section {
 	.Status    = .Home,
 	.News      = .Home,
 	.Releases  = .Home,
+	.Roadmap   = .Home,
 	.Gallery   = .Home,
 }
 
@@ -113,14 +117,14 @@ site_section_under_home :: proc(section: Site_Section) -> bool {
 	return section != .Home && site_section_parents[section] == .Home
 }
 
-// site_section_in_bar tells whether the bar names a section: a section
-// right under the home, but the gallery. The bar has one line of a fixed
-// height, and the parts under it are placed by that height: with one more
-// section, the sections and the search field pass one line on a window of
-// 720 pixels. The home is the door of the gallery (docs/SITE.md, "The
-// gallery").
+// site_section_in_bar tells whether the bar names a section: as a button,
+// or as a line of its menu (site_bar.odin). The bar has one line of a
+// fixed height, and the parts under it are placed by that height: a
+// button for each section under the home, with the search field, passes
+// one line on a window of 720 pixels
+// (docs/SITE.md, "The buttons and the menu of the bar").
 site_section_in_bar :: proc(section: Site_Section) -> bool {
-	return site_section_under_home(section) && section != .Gallery
+	return site_section_is_bar_button(section) || site_section_in_project_menu(section)
 }
 
 // site_bar_section gives the section of the bar that holds a section: the
@@ -196,6 +200,7 @@ Site :: struct {
 	code_links:   map[string]string, // The text of a code span to the row of a reference table that it names.
 	tile_rules:   string, // The rules of the style sheet for the tiles of the boot image on the home.
 	news:         []Site_News, // Newest first.
+	roadmap:      Roadmap, // ROADMAP.md, as roadmap_read gives it.
 	gaps:         []Site_Gap, // The gaps of docs/FIRST_MILESTONE.md, as the status page shows them.
 	redirects:    map[string]string, // The HTML of each redirect page, by its old path.
 	redirect_counts: [Site_Address_Generation]int, // The redirect pages of each generation of old addresses.
@@ -593,6 +598,8 @@ site_build :: proc(address: string) -> bool {
 	site.release = release_number_text(site.changelog.releases[0].number)
 	// The news names releases of the changelog, pictures and guides.
 	site_news_read(&site) or_return
+	// The planned work: a fault of the form of its file stops the command.
+	site_roadmap_read(&site) or_return
 	site.commit = site_git_commit()
 	now := time.now()
 	year, month, day := time.date(now)
@@ -717,6 +724,7 @@ site_build :: proc(address: string) -> bool {
 	site_status_add(&site) or_return
 	site_news_add(&site)
 	site_releases_add(&site)
+	site_roadmap_add(&site)
 	// The gallery after the guides, whose titles its captions link to, and
 	// before the home, which links to it.
 	site_gallery_add(&site)
@@ -1038,16 +1046,9 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	// screen the style sheet and the script show it open, as a bar
 	// (docs/SITE.md, "The site menu").
 	write(&b, SITE_MENU_OPEN)
-	write(&b, "<nav class=\"bar-sections\" aria-label=\"Sections\">\n<ul>\n")
-	bar_section := site_bar_section(page.section)
-	for section in Site_Section {
-		if !site_section_in_bar(section) || !site_page_exists(site, site_section_page(section)) {
-			continue
-		}
-		current: string = section == bar_section ? " aria-current=\"page\"" : ""
-		fmt.sbprintf(&b, "<li><a href=\"%s\"%s>%s</a></li>\n", site_page_link(site, page.path, site_section_page(section)), current, site_section_titles[section])
-	}
-	write(&b, "</ul>\n</nav>\n")
+	// Three sections are buttons; the others are the lines of one menu
+	// under its button (site_bar.odin).
+	write(&b, site_bar_sections_html(site, page))
 	// One search field on a page: the home of the docs has its own large
 	// field, so its bar has none (docs/SITE.md, "The search").
 	if !page.search_in_page {

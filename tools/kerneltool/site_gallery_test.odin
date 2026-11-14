@@ -327,13 +327,13 @@ site_gallery_group_of_pictures :: proc(t: ^testing.T) {
 	testing.expect(t, !strings.contains(film_html, "thumbnails/network.png"))
 }
 
-// The page of the gallery: one page under the home, which the bar does not
-// name, with each group that has a picture, and with pictures that pass
+// The page of the gallery: one page under the home, which is a button of
+// the bar, with each group that has a picture, and with pictures that pass
 // the checks of the pages.
 @(test)
 site_gallery_page :: proc(t: ^testing.T) {
 	testing.expect(t, site_section_under_home(.Gallery))
-	testing.expect(t, !site_section_in_bar(.Gallery), "the bar names the gallery: its sections pass one line at 720 pixels")
+	testing.expect(t, site_section_is_bar_button(.Gallery), "the gallery is not a button of the bar: a reader reaches the pictures in one click")
 	testing.expect(t, site_section_in_bar(.Docs) && site_section_in_bar(.Status) && site_section_in_bar(.News) && site_section_in_bar(.Releases))
 	testing.expect(t, !site_section_under_home(.Home) && !site_section_under_home(.Guides))
 
