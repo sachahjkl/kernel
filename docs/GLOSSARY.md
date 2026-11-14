@@ -5590,13 +5590,23 @@ Do not use: idle ratio, duty cycle, pause.
 
 ### Move of the heron
 
-A move of the heron is a change of the place and of the size of the picture of the heron on the home of the site during an animation of the mark.
+A move of the heron is the list of the forms and of the places that the heron takes during an animation of the mark, each in whole cells.
 
-An animation of the mark changes cells; a move takes the whole picture above the line of the water: across the window in the dash, up in the hop and the flap, wider and lower in a squash. The two rows of the water stay in their place. A move is a list of keys in the tool (`site_mark_motion_keys`): a time, a place in cells or past an edge of the window, a width and a height in percent. It is not data of `support/mark`: a picture that cannot move, as the icon of a tab, shows the frames alone.
+An animation of the mark changes cells; a move takes the whole heron above the line of the water: across the window in the dash, up in the hop and the flap, wider and lower in a crouch. The two rows of the water stay in their place. A move is a list of keys in `support/mark` (`move_keys`): a time, the form of the heron from that time to the next key, and a place in whole cells or past an edge of the window. The place goes from a key to the next one cell by cell: the heron is never between two cells, and no picture of it changes its size. The home of the site and the program `heron` play the same keys. A picture that cannot move, as the icon of a tab, shows the frames alone.
 
-The design: `docs/SITE.md`, "The moves of the heron".
+The design: `docs/DESIGN.md`, "The moves".
 
-Do not use: tween, sprite motion.
+Do not use: tween, sprite motion, scale.
+
+### Form of the heron
+
+A form of the heron is one drawing, in whole cells, of the part of the heron above the water: the natural heron, or the heron squashed or stretched.
+
+A cell of the heron is a square of one size, so a squashed heron is not a picture made wider: it is the heron drawn with more columns and fewer rows of the same cells. A form names the columns and the rows of a frame that it draws two times and those that it leaves out, chosen by hand, and then cells that are corrected by hand (`form_lines` and `form_corrections` in `support/mark`). The head, the eye, the beak and the crest are the same in every form, and the column of the standing leg keeps its place. Example: the crouch is 28 by 19 cells; it repeats four columns of the body and leaves out two rows of the neck and one of the legs.
+
+The design: `docs/DESIGN.md`, "The moves".
+
+Do not use: scaled frame, deformation, sampled frame.
 
 ### Sprite sheet
 
