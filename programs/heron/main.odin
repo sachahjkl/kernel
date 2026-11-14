@@ -80,7 +80,7 @@ TILE_COUNT :: TILE_COLUMNS * TILE_ROWS
 #assert(STAGE_WIDTH % TILE == 0 && STAGE_HEIGHT % TILE == 0)
 
 // The band under the stage: the animation that plays, then the keys.
-BAND_HEIGHT :: 88
+BAND_HEIGHT :: 104 // The name line, three lines of keys, the line of the controls.
 BAND_MARGIN :: 16
 WIDTH :: STAGE_WIDTH
 HEIGHT :: STAGE_HEIGHT + BAND_HEIGHT
@@ -639,15 +639,18 @@ way_text :: proc "contextless" (which: Move_Way) -> string {
 // pixels for each character. Each text of the band has a box that holds
 // its longest value at that width.
 BAND_CHARACTER :: 8
-KEYS_IN_A_LINE :: 8
+// Five keys in a line: with eight, the longest name ended half a character
+// before the next key, and the two read as one word ("scratch8").
+KEYS_IN_A_LINE :: 5
+KEY_LINES :: (len(mark.Animation) + KEYS_IN_A_LINE - 1) / KEYS_IN_A_LINE
 KEY_COLUMN :: (WIDTH - 2 * BAND_MARGIN) / KEYS_IN_A_LINE
 NAME_LONGEST :: 7 // "scratch", "stretch": the longest name of an animation.
 FRAME_TEXT_X :: 96
 FRAME_TEXT_LONGEST :: 14 // "frame 17 of 17".
 PROGRESS_X :: 224
-// A key of an animation, a gap, and the longest name fit a column, with a
-// gap before the next key.
-#assert((1 + 1 + NAME_LONGEST) * BAND_CHARACTER + BAND_CHARACTER / 2 <= KEY_COLUMN)
+// A key of an animation, a gap, and the longest name fit a column, with two
+// characters or more before the next key.
+#assert((1 + 1 + NAME_LONGEST + 2) * BAND_CHARACTER <= KEY_COLUMN)
 // The name of the animation ends before the text of the frame, and that
 // text before the bar of the progress.
 #assert(BAND_MARGIN + NAME_LONGEST * BAND_CHARACTER + BAND_CHARACTER <= FRAME_TEXT_X)
@@ -692,7 +695,7 @@ band_draw :: proc "contextless" (frame: ^interface.Frame) {
 	for name, index in animation_keys {
 		band_key(table, BAND_MARGIN + index % KEYS_IN_A_LINE * KEY_COLUMN, y + index / KEYS_IN_A_LINE * interface.LINE, name, mark.animation_names[mark.Animation(index)], state_color(playing && int(animation) == index))
 	}
-	y += 2 * interface.LINE + 4
+	y += KEY_LINES * interface.LINE + 4
 	band_key(table, CONTROL_PAUSE_X, y, "space", "pause", state_color(paused))
 	band_key(table, CONTROL_FRAME_X, y, ".", "next frame", graphics.COLOR_DIM)
 	band_key(table, CONTROL_SLOW_X, y, "s", "slow", state_color(slow))
