@@ -13,10 +13,12 @@ import "core:fmt"
 import "core:math"
 import "core:strings"
 import "support:graphics"
+import "support:kind_icons"
 
-// The icons are pixel forms on a grid of 12 by 12 cells, as the heron of
-// the mark is: each cell is one pixel at the size that the site shows.
-SITE_VALUE_ICON_SIZE :: 12
+// The icons are the kind icons of the system (support/kind_icons): pixel
+// forms on a grid of 12 by 12 cells, as the heron of the mark is. Each cell
+// is one pixel at the size that the site shows.
+SITE_VALUE_ICON_SIZE :: kind_icons.ICON_SIZE
 // The least contrast of the text of a value on each surface of a table,
 // in both color schemes (WCAG 2, the bound of normal text).
 SITE_VALUE_CONTRAST_LEAST :: 4.5
@@ -30,87 +32,70 @@ SITE_VALUE_GRAPHIC_CONTRAST_LEAST :: 3.0
 Site_Value_Kind_Description :: struct {
 	title:         string, // In the legend.
 	meaning:       string, // One line, in the legend.
-	cells:         [SITE_VALUE_ICON_SIZE]string, // "#" is a cell of the icon, "." is empty.
 }
 
-// The one table of the names, the meanings and the icons of the kinds. The
-// color of each kind is in the table of the system, which the programs
-// read too (support/graphics/value_colors.odin).
+// The one table of the titles and the meanings of the kinds: what only the
+// site shows. The color of each kind and its icon are in the tables of the
+// system, which the programs read too (support/graphics/value_colors.odin,
+// support/kind_icons).
 site_value_kinds := [value_kinds.Value_Kind]Site_Value_Kind_Description {
 	.None = {},
 	.Number = {
 		title = "Number", meaning = "A count, a place, an index or an address.",
-		cells = {"............", "...##..##...", "...##..##...", ".##########.", "...##..##...", "...##..##...", "...##..##...", ".##########.", "...##..##...", "...##..##...", "............", "............"},
 	},
 	.Size = {
 		title = "Size", meaning = "A size in bytes or in pages.",
-		cells = {"............", "..########..", "..########..", "............", ".##########.", ".##########.", "............", "############", "############", "............", "............", "............"},
 	},
 	.Time = {
 		title = "Time", meaning = "A duration, a date or a time.",
-		cells = {"............", ".##########.", ".#........#.", ".#...##...#.", ".#...##...#.", ".#...####.#.", ".#...####.#.", ".#........#.", ".#........#.", ".##########.", "............", "............"},
 	},
 	.Handle = {
 		title = "Handle", meaning = "A handle of a kernel object, held by a program.",
-		cells = {"............", "...######...", "...#....#...", "...#....#...", "...######...", ".....##.....", ".....##.....", ".....##.....", "....####....", "....####....", "............", "............"},
 	},
 	.Value = {
 		title = "Value", meaning = "A plain value of the context of a program: not a handle.",
-		cells = {"............", "............", "............", "....####....", "....####....", "....####....", "....####....", "............", "............", "............", "............", "............"},
 	},
 	.Grant = {
 		title = "Grant", meaning = "What the root service gives a program, or records and can revoke.",
-		cells = {"............", "..........##", ".........##.", "........##..", ".......##...", "##....##....", ".##..##.....", "..####......", "...##.......", "............", "............", "............"},
 	},
 	.Status = {
 		title = "Status", meaning = "A status, an error kind or the state of a property.",
-		cells = {"............", ".##.........", ".#######....", ".########...", ".#######....", ".##.........", ".##.........", ".##.........", ".##.........", ".##.........", "............", "............"},
 	},
 	.Type = {
 		title = "Type", meaning = "A type: of the contract, a wire form of the module contract, a record of a module, or a basic type.",
-		cells = {"............", "...##..##...", "..##....##..", ".##......##.", "##........##", ".##......##.", "..##....##..", "...##..##...", "............", "............", "............", "............"},
 	},
 	.Operation = {
 		title = "Operation", meaning = "An operation that a program asks the kernel.",
-		cells = {"............", "......######", "......#....#", "......#....#", "##########.#", "##########.#", "......#....#", "......#....#", "......######", "............", "............", "............"},
 	},
 	.Command = {
 		title = "Command", meaning = "A command of the console or of kerneltool.",
-		cells = {"............", ".##.........", "..##........", "...##.......", "....##......", "...##.......", "..##........", ".##...#####.", "......#####.", "............", "............", "............"},
 	},
 	.Module = {
 		title = "Module", meaning = "A module or a program of the boot image or of the build.",
-		cells = {"............", ".###....###.", ".###....###.", ".##########.", ".##########.", ".##########.", ".##########.", ".##########.", "............", "............", "............", "............"},
 	},
 	.File = {
 		title = "File", meaning = "A file or a folder of the repository.",
-		cells = {".######.....", ".#....##....", ".#.....##...", ".#......##..", ".#.......#..", ".#.......#..", ".#.......#..", ".#.......#..", ".#.......#..", ".#########..", "............", "............"},
 	},
 	// A document is text to read: the color of the text. Its reference is
 	// a name in the reading font, not a value: the kind gives its color and
 	// its icon (docs/SITE.md, "The references to documents").
 	.Guide = {
 		title = "Guide", meaning = "A document of the site, a guide or the glossary, and the heading that a reference names; a working record is a file of the repository.",
-		cells = {"............", ".##########.", ".#........#.", ".#.######.#.", ".#........#.", ".#.######.#.", ".#........#.", ".#.####...#.", ".#........#.", ".##########.", "............", "............"},
 	},
 	// A term of the glossary is a name, not a value, as a document is: the
 	// kind gives the glossary and the terms of the search their icon and
 	// their color, so that a term does not look like a guide section.
 	.Term = {
 		title = "Term", meaning = "A term of the glossary: one name for one concept.",
-		cells = {"............", ".##########.", ".##########.", ".....##.....", ".....##.....", ".....##.....", ".....##.....", ".....##.....", ".....##.....", "....####....", "............", "............"},
 	},
 	.Version = {
 		title = "Version", meaning = "A version, a release, a commit or a hash.",
-		cells = {"............", "...#######..", "..##.....#..", ".##..##..#..", ".##..##..#..", "..##.....#..", "...#######..", "............", "............", "............", "............", "............"},
 	},
 	.Yes = {
 		title = "Yes", meaning = "A state that holds: in the boot image, measured.",
-		cells = {"............", ".##########.", ".##########.", ".##########.", ".##########.", ".##########.", ".##########.", ".##########.", ".##########.", ".##########.", "............", "............"},
 	},
 	.No = {
 		title = "No", meaning = "A state that does not hold: not in the boot image, not built.",
-		cells = {"............", ".##########.", ".#........#.", ".#........#.", ".#........#.", ".#........#.", ".#........#.", ".#........#.", ".#........#.", ".##########.", "............", "............"},
 	},
 	// The three kinds of a declaration of the sources that are not a type
 	// (docs/SITE.md, "The declarations of the sources"). A procedure is
@@ -119,15 +104,12 @@ site_value_kinds := [value_kinds.Value_Kind]Site_Value_Kind_Description {
 	// changes over the run, as a time does: the color of the boot program.
 	.Procedure = {
 		title = "Procedure", meaning = "A procedure that the sources of the system declare.",
-		cells = {"............", "...#....#...", "..##....##..", "..#......#..", ".##......##.", ".##......##.", ".##......##.", "..#......#..", "..##....##..", "...#....#...", "............", "............"},
 	},
 	.Constant = {
 		title = "Constant", meaning = "A constant that the sources of the system declare.",
-		cells = {"............", "....####....", "...#....#...", "...#....#...", "..########..", "..########..", "..###..###..", "..###..###..", "..########..", "..########..", "............", "............"},
 	},
 	.Variable = {
 		title = "Global variable", meaning = "A variable that the sources of the system declare at the top of a package.",
-		cells = {"............", ".##......##.", "..##....##..", "...##..##...", "....####....", ".....##.....", "....####....", "...##..##...", "..##....##..", ".##......##.", "............", "............"},
 	},
 }
 
@@ -201,13 +183,22 @@ site_value_link_html :: proc(kind: value_kinds.Value_Kind, address, text: string
 	return strings.to_string(b)
 }
 
+// site_value_icon_cells gives the cells of the icon of a kind: the kind
+// icon of the system, so the site and a list of the desktop show one
+// picture for one kind. The kind None has empty cells.
+site_value_icon_cells :: proc(kind: value_kinds.Value_Kind) -> kind_icons.Cells {
+	cells := kind_icons.cells_of_value_kind(kind)
+	return cells != nil ? cells^ : kind_icons.Cells{}
+}
+
 // site_value_icon_svg gives the icon of a kind as an SVG picture: one rect
 // for each run of cells of a row, in black: the style sheet uses it as a
 // mask, so the icon takes the color of its kind.
 site_value_icon_svg :: proc(kind: value_kinds.Value_Kind) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&b, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%d\" height=\"%d\" viewBox=\"0 0 %d %d\" shape-rendering=\"crispEdges\">", SITE_VALUE_ICON_SIZE, SITE_VALUE_ICON_SIZE, SITE_VALUE_ICON_SIZE, SITE_VALUE_ICON_SIZE)
-	for row, y in site_value_kinds[kind].cells {
+	cells := site_value_icon_cells(kind)
+	for row, y in cells {
 		x := 0
 		for x < len(row) {
 			if row[x] != '#' {
@@ -226,7 +217,7 @@ site_value_icon_svg :: proc(kind: value_kinds.Value_Kind) -> string {
 }
 
 // site_value_icon_address gives the icon of a kind as a data address of the
-// style sheet. Its source stays the cells of the table; only its delivery
+// style sheet. Its source stays the cells of the kind icon; only its delivery
 // is inside the style sheet: a file for each icon was one more request for
 // each, which the browser learns of only after the style sheet, so the
 // icons came after the first paint (docs/SITE.md, "The kinds of values").

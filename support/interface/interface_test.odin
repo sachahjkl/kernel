@@ -3,6 +3,7 @@ package interface
 
 import "support:display"
 import "support:graphics"
+import "support:kind_icons"
 import "core:testing"
 
 @(private = "file")
@@ -1335,22 +1336,90 @@ rectangles_of_color :: proc(table: ^Draw_Table, color: graphics.Color) -> (count
 	return
 }
 
-// A list of rows: a heading is a dim text with no mark; an entry has its
-// mark, its name and its text at the right; the chosen row is filled, its
-// hint takes the place of the text at the right, and a line of 2 pixels is
-// under each run of matched characters.
+// rectangles_in_box counts the rectangles of one color that are whole
+// inside a box, and their pixels.
+@(private = "file")
+rectangles_in_box :: proc(table: ^Draw_Table, color: graphics.Color, x, y, width, height: int) -> (count: int, pixels: int) {
+	for record in table.records[:table.record_count] {
+		if record.kind != .Rectangle || record.first_color != u32(color) {
+			continue
+		}
+		if int(record.x) >= x && int(record.y) >= y && int(record.x + record.width) <= x + width && int(record.y + record.height) <= y + height {
+			count += 1
+			pixels += int(record.width) * int(record.height)
+		}
+	}
+	return
+}
+
+// set_cells_of counts the cells of an icon.
+@(private = "file")
+set_cells_of :: proc(icon: ^kind_icons.Cells) -> (count: int) {
+	for y in 0 ..< kind_icons.ICON_SIZE {
+		for x in 0 ..< kind_icons.ICON_SIZE {
+			count += kind_icons.cell_is_set(icon, x, y) ? 1 : 0
+		}
+	}
+	return
+}
+
+// An icon of a kind is its cells, each one a square of whole pixels, at
+// each cell size: every pixel of a set cell has the color, and no other
+// pixel is drawn.
 @(test)
-list_of_rows_draws_marks_matches_and_the_choice :: proc(t: ^testing.T) {
+kind_icon_is_its_cells_at_each_cell_size :: proc(t: ^testing.T) {
+	SIDE :: 48
+	LEFT :: 5
+	TOP :: 7
+	memory: Tables
+	table := table_of(&memory)
+	icons := [?]^kind_icons.Cells{kind_icons.cells_of_value_kind(.Command), kind_icons.cells_of_value_kind(.Variable), kind_icons.cells_of_desktop_kind(.Stop)}
+	for icon in icons {
+		for cell_size in 1 ..= 3 {
+			draw_table_clear(&table)
+			draw_kind_icon(&table, LEFT, TOP, icon, cell_size, graphics.COLOR_PROGRAM)
+			testing.expect(t, !table.full && table.record_count <= kind_icons.RECTANGLE_LIMIT)
+			pixels: [SIDE * SIDE]graphics.Color
+			execute(&table, {pixels = raw_data(pixels[:]), width = SIDE, height = SIDE, stride = SIDE})
+			wrong := 0
+			for y in 0 ..< SIDE {
+				for x in 0 ..< SIDE {
+					set := x >= LEFT && y >= TOP && kind_icons.cell_is_set(icon, (x - LEFT) / cell_size, (y - TOP) / cell_size)
+					expected := set ? graphics.Color(graphics.COLOR_PROGRAM) : graphics.Color(0)
+					wrong += pixels[y * SIDE + x] == expected ? 0 : 1
+				}
+			}
+			testing.expectf(t, wrong == 0, "an icon at the cell size %d: %d pixels are not its cells", cell_size, wrong)
+		}
+	}
+	// No icon and no cell size: no record.
+	draw_table_clear(&table)
+	draw_kind_icon(&table, 0, 0, nil, 1, graphics.COLOR_PROGRAM)
+	draw_kind_icon(&table, 0, 0, icons[0], 0, graphics.COLOR_PROGRAM)
+	testing.expect_value(t, table.record_count, 0)
+}
+
+// A list of rows: a heading is a dim text with no icon; an entry has the
+// icon of its kind, its name and its text at the right; the chosen row is
+// filled, its icon is white, its hint takes the place of the text at the
+// right, and a line of 2 pixels is under each run of matched characters.
+@(test)
+list_of_rows_draws_icons_matches_and_the_choice :: proc(t: ^testing.T) {
 	memory: Tables
 	table := table_of(&memory)
 	state: Interface_State
 	input: Input
+	window_icon := kind_icons.cells_of_desktop_kind(.Window)
+	module_icon := kind_icons.cells_of_value_kind(.Module)
 	rows := [?]List_Row {
 		{kind = .Heading, name = "windows"},
-		{name = "console", mark_shown = true, mark_color = graphics.COLOR_TITLE, right_text = "window"},
+		{name = "console", icon = window_icon, icon_color = graphics.COLOR_TITLE, right_text = "window"},
 		// The bytes 0, 1 and 3 matched: two runs.
-		{name = "plasma", matched_places = 0b1011, mark_shown = true, mark_color = graphics.COLOR_PROGRAM, right_text = "program"},
+		{name = "plasma", matched_places = 0b1011, icon = module_icon, icon_color = graphics.COLOR_PROGRAM, right_text = "program"},
 		{name = "paint", right_text = "program"},
+	}
+	icon_y :: proc(row: int) -> int {
+		return row * TABLE_LINE + (TABLE_LINE - LIST_ROW_ICON_SIZE) / 2
 	}
 	frame := frame_begin(&table, &state, &input)
 	shown := list_of_rows(&frame, {0, 0, 320, 96}, rows[:], {chosen = 2, chosen_hint = "enter: start", total = len(rows)})
@@ -1374,17 +1443,32 @@ list_of_rows_draws_marks_matches_and_the_choice :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect_value(t, words, 1)
-	// The marks: the one of the row that is not chosen keeps its color;
-	// the lines under the matched runs of the chosen row are white, and
+	// The icons: the one of the row that is not chosen keeps its color,
+	// and each of its cells is drawn once, in the box of 12 pixels before
+	// the name; the one of the chosen row is white, and no rectangle has
+	// its own color. A row with no icon draws none.
+	pixels: int
+	count, pixels = rectangles_in_box(&table, graphics.COLOR_TITLE, LIST_ROW_ICON_X, icon_y(1), LIST_ROW_ICON_SIZE, LIST_ROW_ICON_SIZE)
+	testing.expect_value(t, pixels, set_cells_of(window_icon))
+	all_of_color, _ := rectangles_of_color(&table, graphics.COLOR_TITLE)
+	testing.expect_value(t, all_of_color, count)
+	_, pixels = rectangles_in_box(&table, graphics.COLOR_WHITE, LIST_ROW_ICON_X, icon_y(2), LIST_ROW_ICON_SIZE, LIST_ROW_ICON_SIZE)
+	testing.expect_value(t, pixels, set_cells_of(module_icon))
+	count, _ = rectangles_of_color(&table, graphics.COLOR_PROGRAM)
+	testing.expect_value(t, count, 0)
+	for record in table.records[:table.record_count] {
+		if record.kind == .Rectangle && int(record.y) >= 3 * TABLE_LINE {
+			testing.expectf(t, false, "a row with no icon has a rectangle at %d,%d", record.x, record.y)
+		}
+	}
+	testing.expect(t, LIST_ROW_NAME_X >= LIST_ROW_ICON_X + LIST_ROW_ICON_SIZE + 8, "the name starts after the icon and a gap")
+	// The lines under the matched runs of the chosen row are white, and
 	// each run is one line: "pl" (2 cells) and "s" (1 cell).
-	count, _ = rectangles_of_color(&table, graphics.COLOR_TITLE)
-	testing.expect_value(t, count, 1)
 	lines: [2]Draw_Record
 	line_count := 0
 	for record in table.records[:table.record_count] {
-		if record.kind == .Rectangle && record.height == 2 {
+		if record.kind == .Rectangle && record.height == 2 && int(record.y) == 2 * TABLE_LINE + 20 {
 			testing.expect_value(t, record.first_color, u32(graphics.COLOR_WHITE))
-			testing.expect_value(t, int(record.y), 2 * TABLE_LINE + 20)
 			if line_count < len(lines) {
 				lines[line_count] = record
 			}
@@ -1396,13 +1480,23 @@ list_of_rows_draws_marks_matches_and_the_choice :: proc(t: ^testing.T) {
 	testing.expect_value(t, int(lines[0].width), 2 * graphics.CELL_WIDTH)
 	testing.expect_value(t, int(lines[1].x), LIST_ROW_NAME_X + 3 * graphics.CELL_WIDTH)
 	testing.expect_value(t, int(lines[1].width), graphics.CELL_WIDTH)
-	// A mark in the color of its own row has no contrast there: it is white.
-	rows[1].mark_color = graphics.COLOR_CHOSEN
+	// An icon in the blue that the chosen blue is made from has no
+	// contrast on its own chosen row: it is white there, as each icon is.
 	frame = frame_begin(&table, &state, &input)
 	list_of_rows(&frame, {0, 0, 320, 96}, rows[:], {chosen = 1, total = len(rows)})
 	frame_end(&frame)
 	count, _ = rectangles_of_color(&table, graphics.COLOR_CHOSEN)
-	testing.expect_value(t, count, 1) // The fill of the row, and no mark in its color.
+	testing.expect_value(t, count, 1) // The fill of the row.
+	count, _ = rectangles_of_color(&table, graphics.COLOR_TITLE)
+	testing.expect_value(t, count, 0)
+	_, pixels = rectangles_in_box(&table, graphics.COLOR_WHITE, LIST_ROW_ICON_X, icon_y(1), LIST_ROW_ICON_SIZE, LIST_ROW_ICON_SIZE)
+	testing.expect_value(t, pixels, set_cells_of(window_icon))
+	// The row of the question: the same white icon on the red of the act.
+	frame = frame_begin(&table, &state, &input)
+	list_of_rows(&frame, {0, 0, 320, 96}, rows[:], {chosen = 2, chosen_color = graphics.COLOR_STOP_PROGRAM, total = len(rows)})
+	frame_end(&frame)
+	_, pixels = rectangles_in_box(&table, graphics.COLOR_WHITE, LIST_ROW_ICON_X, icon_y(2), LIST_ROW_ICON_SIZE, LIST_ROW_ICON_SIZE)
+	testing.expect_value(t, pixels, set_cells_of(module_icon))
 	// With no choice, no row is filled, and a line under a match is in the accent.
 	frame = frame_begin(&table, &state, &input)
 	list_of_rows(&frame, {0, 0, 320, 96}, rows[:], {chosen = -1, total = len(rows)})
