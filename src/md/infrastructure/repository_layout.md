@@ -164,6 +164,9 @@ The full check runs after step 6 and after step 7.
 
 ## What the move of the folders showed
 
+- **The hashes of the modules changed, and the reason is the order.** 64 of the 89 modules have another hash after the move, with the same size. In the LLVM IR of a module the set of the procedures is the same and their order is another: the compiler orders the packages by their path. So the hashes of the modules are not the proof of a move. The proof is the full check: each machine test passes, two builds give the same bytes, and a module is the same bytes with and without debug information. The 25 modules that keep their hash import no package of the library.
+- **A longer path shows where a text had no room.** The stack trace of a stop report is cut at the edge of its box in the windows of `errors` and of `inspect`: four more bytes for each frame. The roadmap holds the correction.
+
 - **The constants held.** In the tool, the move of the seven folders is seven lines of one file. One text was left outside them: a sentence of the page of the modules of the site named the folder of the programs. It is made from the constant now.
 - **A folder named with no `/` is not a path for the check.** Five sentences of the guides listed the folders of a check or of the site by their names alone. The check of the source paths reads a span that starts with a name and a `/`, so it cannot see them: they were found by a search for each name as a whole span.
 - **A comment can be a text of a page.** The comments of the contract packages and of the kernel become pages of the reference of the site. Their paths are longer on those pages.
