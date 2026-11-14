@@ -1,6 +1,6 @@
 package system
 
-import op "contract:operation"
+import op "modus:contract/operation"
 
 // The name of the resource of the boot image that makes a measure run: the
 // root service looks for it, and the tool puts it in the boot image of

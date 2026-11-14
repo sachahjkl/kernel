@@ -1,11 +1,11 @@
 #+build !freestanding
 package random
 
-import "contract:errors"
+import "modus:contract/errors"
 import "core:testing"
-import "support:system"
-import op "contract:operation"
-import "support:cryptography/chacha20"
+import "modus:support/system"
+import op "modus:contract/operation"
+import "modus:support/cryptography/chacha20"
 
 seed_of :: proc(first: u8) -> (seed: [SEED_SIZE]u8) {
 	for &byte, index in seed {

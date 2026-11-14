@@ -36,11 +36,11 @@
 // the program prints them as measures and asserts no speed-up.
 package processors
 
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import op "contract:operation"
-import "support:system"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import op "modus:contract/operation"
+import "modus:support/system"
 import "base:intrinsics"
 
 PICTURE_WIDTH :: 448

@@ -7,10 +7,10 @@ See:
 */
 package poly1305
 
-import crypto "support:cryptography/compatibility_crypto"
-import field "support:cryptography/_fiat/field_poly1305"
-import endian "support:cryptography/compatibility_endian"
-import bits "support:cryptography/compatibility_bits"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import field "modus:support/cryptography/_fiat/field_poly1305"
+import endian "modus:support/cryptography/compatibility_endian"
+import bits "modus:support/cryptography/compatibility_bits"
 
 // KEY_SIZE is the Poly1305 key size in bytes.
 KEY_SIZE :: 32

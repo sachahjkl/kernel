@@ -5,7 +5,7 @@
 // tests run the code that the module ships.
 package quic
 
-import "contract:errors"
+import "modus:contract/errors"
 import "core:encoding/hex"
 import "core:testing"
 import cryptography_module "../../../modules/cryptography"

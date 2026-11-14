@@ -91,9 +91,9 @@
 // See [isolated call](term:isolated-call) and [call host](term:call-host).
 package isolated
 
-import "contract:errors"
-import "contract:fixed_addresses"
-import module "contract:module"
+import "modus:contract/errors"
+import "modus:contract/fixed_addresses"
+import module "modus:contract/module"
 import "base:intrinsics"
 
 // The roles of the context of a call host.

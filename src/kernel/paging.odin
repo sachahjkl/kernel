@@ -1,9 +1,9 @@
 package kernel
 
-import info "contract:boot_info"
-import module "contract:module"
+import info "modus:contract/boot_info"
+import module "modus:contract/module"
 import "base:intrinsics"
-import op "contract:operation"
+import op "modus:contract/operation"
 
 // Paging as a tool of the kernel on itself: the kernel protects its own
 // pages as it protects the pages of a program, so that a fault of the

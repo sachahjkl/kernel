@@ -2,7 +2,7 @@
 package mark
 
 import "core:testing"
-import "support:graphics"
+import "modus:support/graphics"
 
 // Each change is inside the grid, names a part or an empty cell, belongs to
 // a frame of the table, changes its cell (a change to the letter that the

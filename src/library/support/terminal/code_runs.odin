@@ -14,8 +14,8 @@ package terminal_records
 // A run gives a color, never text: a run that is refused, or a row with
 // more runs than CODE_RUN_LIMIT, leaves the text whole and plain.
 
-import "contract:ring"
-import "support:graphics"
+import "modus:contract/ring"
+import "modus:support/graphics"
 
 // What a run of code is.
 Code_Kind :: enum u8 {

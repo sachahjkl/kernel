@@ -2,7 +2,7 @@ package kerneltool
 
 import "core:fmt"
 import "core:os"
-import "support:graphics"
+import "modus:support/graphics"
 
 // The picture of the choice of the font (docs/FONTS.md, "The font file"):
 // the same lines of the system in each candidate and in Spleen, at the

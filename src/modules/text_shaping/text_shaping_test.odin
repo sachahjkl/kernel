@@ -1,12 +1,12 @@
 #+build !freestanding
 package text_shaping_module
 
-import "contract:errors"
-import "contract:glyph_cache"
+import "modus:contract/errors"
+import "modus:contract/glyph_cache"
 import "core:testing"
-import "support:system"
-import shaping "support:text_shaping"
-import "support:vector_font"
+import "modus:support/system"
+import shaping "modus:support/text_shaping"
+import "modus:support/vector_font"
 
 @(private = "file")
 b612_regular := #load("../../../resources/fonts/b612.ttf")

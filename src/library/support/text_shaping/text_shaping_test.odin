@@ -1,9 +1,9 @@
 #+build !freestanding
 package text_shaping
 
-import "contract:glyph_cache"
+import "modus:contract/glyph_cache"
 import "core:testing"
-import "support:vector_font"
+import "modus:support/vector_font"
 
 @(private = "file")
 b612_regular := #load("../../../../resources/fonts/b612.ttf")

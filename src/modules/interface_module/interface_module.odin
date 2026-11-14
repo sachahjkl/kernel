@@ -26,12 +26,12 @@
 package interface_module
 
 import "base:intrinsics"
-import "contract:glyph_cache"
-import "contract:settings"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:system"
+import "modus:contract/glyph_cache"
+import "modus:contract/settings"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/system"
 
 // A rectangle of the surface: the place of an element.
 Area :: struct {

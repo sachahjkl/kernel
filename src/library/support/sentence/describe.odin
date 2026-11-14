@@ -1,7 +1,7 @@
 package sentence
 
-import module "contract:module"
-import op "contract:operation"
+import module "modus:contract/module"
+import op "modus:contract/operation"
 
 // The text of a description: what a program shows to a reader about the
 // types of an export (module.Function).

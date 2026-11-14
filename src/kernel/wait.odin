@@ -1,7 +1,7 @@
 package kernel
 
 import "base:intrinsics"
-import op "contract:operation"
+import op "modus:contract/operation"
 
 // The word wait (docs/ARCHITECTURE.md, "Locks of the kernel", "The word
 // wait"). A thread that waits on a word has an entry in the bucket of the

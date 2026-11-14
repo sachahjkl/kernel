@@ -23,8 +23,8 @@
 package virtio
 
 import "base:intrinsics"
-import "support:pci"
-import "support:system"
+import "modus:support/pci"
+import "modus:support/system"
 
 // The capabilities of a virtio device in its configuration (kind 9).
 CAPABILITY_VIRTIO :: 0x09

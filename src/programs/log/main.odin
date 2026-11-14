@@ -6,7 +6,7 @@
 // counts the records of each channel. The bottom part shows the last
 // records: the color of the mark is the level, and the color of the name
 // is the program. Each value of a text is in the color of its value kind,
-// as the record keeps it (contract:value_kinds); the head of the column of
+// as the record keeps it (modus:contract/value_kinds); the head of the column of
 // the text is the legend of the kinds. A text that starts with its program,
 // or its channel, and ": " shows without that start: the columns at its
 // left already say it. The record keeps its text whole.
@@ -60,10 +60,10 @@
 // ```
 package log
 
-import "contract:value_kinds"
-import "support:display"
-import "support:graphics"
-import "support:system"
+import "modus:contract/value_kinds"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/system"
 
 ROWS :: 30
 CHANNELS :: 12

@@ -64,13 +64,13 @@
 // between two writers: one terminal serves one program.
 package terminal_program
 
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:key_path"
-import "contract:ring"
-import "support:system"
-import terminal "support:terminal"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/key_path"
+import "modus:contract/ring"
+import "modus:support/system"
+import terminal "modus:support/terminal"
 import "base:intrinsics"
 
 COLUMNS_LIMIT :: terminal.COLUMNS_LIMIT

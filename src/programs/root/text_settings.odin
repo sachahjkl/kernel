@@ -1,13 +1,13 @@
 package root
 
-import "contract:fixed_addresses"
-import "contract:glyph_cache"
-import "support:bootscreen"
-import "support:display"
-import "contract:settings"
-import op "contract:operation"
-import "support:graphics"
-import "support:system"
+import "modus:contract/fixed_addresses"
+import "modus:contract/glyph_cache"
+import "modus:support/bootscreen"
+import "modus:support/display"
+import "modus:contract/settings"
+import op "modus:contract/operation"
+import "modus:support/graphics"
+import "modus:support/system"
 
 // The text of the system and the settings of the system (docs/FONTS.md):
 // this service creates the settings page, checks the hashes and the format

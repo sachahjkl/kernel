@@ -32,10 +32,10 @@
 // setting.
 package input
 
-import "support:display"
-import "support:key_path"
-import "contract:ring"
-import "support:system"
+import "modus:support/display"
+import "modus:support/key_path"
+import "modus:contract/ring"
+import "modus:support/system"
 
 // The context of this service.
 GRANT_RING :: 0

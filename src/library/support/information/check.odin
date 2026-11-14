@@ -1,7 +1,7 @@
 package information
 
-import module "contract:module"
-import "support:system"
+import module "modus:contract/module"
+import "modus:support/system"
 
 // What is wrong in a module file, or in a question.
 Problem_Kind :: enum u32 {

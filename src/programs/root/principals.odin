@@ -1,8 +1,8 @@
 package root
 
-import "contract:system_description"
-import "support:principals"
-import "support:system"
+import "modus:contract/system_description"
+import "modus:support/principals"
+import "modus:support/system"
 
 // The principals in the root service (docs/PRINCIPALS.md).
 //

@@ -10,20 +10,20 @@ package compositor
 // there. An animated shape wakes the compositor at the time of its next
 // frame, and only while it shows.
 
-import op "contract:operation"
-import "contract:pointer_pictures"
-import "contract:ring"
-import "contract:settings"
-import "support:bar"
-import "support:graphics"
-import "support:palette"
-import "support:system"
+import op "modus:contract/operation"
+import "modus:contract/pointer_pictures"
+import "modus:contract/ring"
+import "modus:contract/settings"
+import "modus:support/bar"
+import "modus:support/graphics"
+import "modus:support/palette"
+import "modus:support/system"
 
 // The values of the context that give the theme file, mapped read-only.
 VALUE_POINTER_THEME_ADDRESS :: 6
 VALUE_POINTER_THEME_SIZE :: 7
 // The places of the address and the size of each theme: the second one is
-// at the values that contract:operation names for it.
+// at the values that modus:contract/operation names for it.
 POINTER_THEME_VALUES := [2][2]int{{VALUE_POINTER_THEME_ADDRESS, VALUE_POINTER_THEME_SIZE}, {op.CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS, op.CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE}}
 // The nominal size that the compositor asks: the smallest size of the theme
 // that is at least this one. 24 for the theme of the system, 32 for the
@@ -69,7 +69,7 @@ pointer_themes: [len(pointer_pictures.RESOURCE_PREFERENCE)][]u8
 
 // pointer_theme_open maps nothing: the root service mapped the files, the
 // first one at the values 6 and 7, the second at the values that
-// contract:operation names for it. It validates
+// modus:contract/operation names for it. It validates
 // each file once; a file that is not valid is not used.
 pointer_theme_open :: proc "contextless" (ctx: ^system.Context) {
 	for &theme, index in pointer_themes {

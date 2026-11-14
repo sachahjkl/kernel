@@ -20,7 +20,7 @@
 //   ends: not one line for each record.
 package key_path
 
-import "contract:ring"
+import "modus:contract/ring"
 import "base:intrinsics"
 
 // A time when a queue refuses records, from the first refusal to the

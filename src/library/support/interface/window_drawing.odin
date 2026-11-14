@@ -1,9 +1,9 @@
 package interface
 
-import "contract:errors"
-import "support:display"
-import "support:graphics"
-import "support:system"
+import "modus:contract/errors"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/system"
 
 // A program built with this setting draws its window through the drawing
 // module (docs/INTERFACE.md, section 7): window_frame_end calls the two

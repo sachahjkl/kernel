@@ -1,6 +1,6 @@
 package system
 
-import op "contract:operation"
+import op "modus:contract/operation"
 
 // frame_text writes one frame of a stack trace. With the debug object of
 // its module: "fault::three + 0x8 in fault (src/programs/fault/main.odin:15)".

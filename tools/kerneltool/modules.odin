@@ -1,9 +1,9 @@
 package kerneltool
 
-import "contract:blake3"
-import module "contract:module"
+import "modus:contract/blake3"
+import module "modus:contract/module"
 import "core:fmt"
-import info "contract:boot_info"
+import info "modus:contract/boot_info"
 import "core:mem"
 import "core:os"
 import "core:slice"
@@ -330,7 +330,12 @@ module_compile_command :: proc(build: Module_Build) -> []string {
 		// of the next build of this module.
 		"-export-dependencies:json",
 		join("-export-dependencies-file:", module_dependency_file(build.name)),
-		CONTRACT_LIBRARY,
+		// The same one library for each module, the kernel too: one package
+		// has one import line in each file. The compiler then accepts an
+		// import of a support package in the kernel; the check of the
+		// imports refuses it before this command runs
+		// (library_imports_check.odin).
+		SOURCE_LIBRARY_FLAG,
 		join("-out:", llvm_ir_folder),
 	)
 	// The line program of DWARF, for the line table of the debug object.
@@ -352,8 +357,6 @@ module_compile_command :: proc(build: Module_Build) -> []string {
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_LOCK_ORDER=true" : "-define:TEST_BUILD_CHECKS_LOCK_ORDER=false")
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_FRAME_SUMS=true" : "-define:TEST_BUILD_CHECKS_FRAME_SUMS=false")
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_PLACEMENT=true" : "-define:TEST_BUILD_CHECKS_PLACEMENT=false")
-	} else {
-		append(&compile, SUPPORT_LIBRARY) // The kernel has the contract library only.
 	}
 	return compile[:]
 }

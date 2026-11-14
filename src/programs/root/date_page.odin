@@ -1,9 +1,9 @@
 package root
 
-import "contract:fixed_addresses"
-import "contract:date"
-import op "contract:operation"
-import "support:system"
+import "modus:contract/fixed_addresses"
+import "modus:contract/date"
+import op "modus:contract/operation"
+import "modus:support/system"
 
 // The date (src/library/contract/date): this service creates the date page, gives it
 // with Write and the two ports of the real-time clock to the program

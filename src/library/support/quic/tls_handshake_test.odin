@@ -6,9 +6,9 @@
 // and 20 000 random messages.
 package quic
 
-import "contract:errors"
+import "modus:contract/errors"
 import "core:testing"
-import "support:random"
+import "modus:support/random"
 
 // The values of RFC 8448, section 3, of RFC 8446, section 4.1.3, and of RFC
 // 8410, section 4. A script that is not in the repository copied each value

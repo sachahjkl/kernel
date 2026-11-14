@@ -30,13 +30,14 @@
 // **Its grants**: none. A window is all that it needs.
 package interface_elements
 
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:system"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/system"
 
 WIDTH :: 816
 HEIGHT :: 560
+ELEMENTS_CARD_WIDTH :: 472 // The card of the elements; the card of the frame takes the rest.
 TICK :: 100 // Milliseconds between two frames.
 
 records_now, records_before: [512]interface.Draw_Record
@@ -66,7 +67,9 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 	interface.background(frame, {0, 0, WIDTH, HEIGHT})
 
 	// The elements.
-	content := interface.card(frame, {8 + offset, 8, 456, HEIGHT - 16}, "ELEMENTS", "support/interface", graphics.COLOR_KERNEL, "Tab, Enter, arrows")
+	// The width of the card holds its three texts in the font of the cells,
+	// the widest font: the title, the caption of 23 characters and the keys.
+	content := interface.card(frame, {8 + offset, 8, ELEMENTS_CARD_WIDTH, HEIGHT - 16}, "ELEMENTS", "modus:support/interface", graphics.COLOR_KERNEL, "Tab, Enter, arrows")
 	column := interface.column_of(content, 8)
 	pressed := interface.button(frame, interface.column_take(&column, 24), interface.identity("press"), "press this button")
 	if pressed.activated {
@@ -109,7 +112,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 	}
 
 	// The draw table of the last frame.
-	content = interface.card(frame, {472 + offset, 8, WIDTH - 480, HEIGHT - 16}, "THE FRAME", "Draw_Table, Damage", graphics.COLOR_MACHINE)
+	content = interface.card(frame, {ELEMENTS_CARD_WIDTH + 16 + offset, 8, WIDTH - ELEMENTS_CARD_WIDTH - 24, HEIGHT - 16}, "THE FRAME", "Draw_Table, Damage", graphics.COLOR_MACHINE)
 	column = interface.column_of(content, 8)
 	interface.large_number(frame, content.x, interface.column_take(&column, 48).y, interface.number_text(&builder, number), graphics.COLOR_MACHINE)
 	interface.cell_text(frame, interface.column_take(&column, 16), "frames", graphics.COLOR_DIM, .Left, interface.FONT_INTERFACE)

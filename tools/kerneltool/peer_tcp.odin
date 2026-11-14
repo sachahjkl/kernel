@@ -5,9 +5,9 @@ import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:time"
-import "contract:datagram"
-import "support:tcp"
-import "support:web"
+import "modus:contract/datagram"
+import "modus:support/tcp"
+import "modus:support/web"
 
 // The peer as a TCP client of the program `server` (docs/NETWORK.md, "With
 // the controlled peer"). The tool asks for one case at a time (step Peer);

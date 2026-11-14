@@ -1,9 +1,9 @@
 package kernel
 
 import "base:intrinsics"
-import "contract:cut_mark"
-import op "contract:operation"
-import "contract:value_kinds"
+import "modus:contract/cut_mark"
+import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 
 // The serial port is the log of the kernel. It is the only device that the
 // kernel has code for, apart from the processor and its interrupt controller.
@@ -37,7 +37,7 @@ log_bytes :: proc "contextless" (bytes: []u8) {
 // The log (operation.Log_Record). Each record goes to two places: the
 // serial port, as one line of text, and the memory object of the log,
 // that programs with the grant read. The record also keeps the kind of each
-// typed part of its text (contract:value_kinds); the serial port has the
+// typed part of its text (modus:contract/value_kinds); the serial port has the
 // text only.
 Hex :: distinct u64
 Size :: value_kinds.Size
@@ -198,7 +198,7 @@ log :: proc "contextless" (parts: ..Log_Part) {
 //
 // The text of one record of the kernel has at most 352 bytes: the stack of
 // the kernel is small. A longer text ends with the cut mark and the count
-// of the missing bytes (contract:cut_mark): never cut in silence.
+// of the missing bytes (modus:contract/cut_mark): never cut in silence.
 log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Log_Part) {
 	buffer: [352]u8
 	count := 0

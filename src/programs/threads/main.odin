@@ -29,10 +29,10 @@
 // "started" after a key.
 package threads
 
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:system"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/system"
 import "base:intrinsics"
 
 SQUARE :: 176

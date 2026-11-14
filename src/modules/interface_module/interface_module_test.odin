@@ -2,8 +2,8 @@
 package interface_module
 
 import "core:testing"
-import "support:interface"
-import "support:system"
+import "modus:support/interface"
+import "modus:support/system"
 
 // A capacity over the largest int, as a hostile caller gives it: the
 // capacity is refused, and a table of 4 places takes the two records.

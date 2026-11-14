@@ -1,11 +1,11 @@
 package storage_service
 
 import "base:intrinsics"
-import "contract:errors"
-import format "contract:store"
-import answers "support:storage"
-import block_tree "support:storage_object"
-import "support:system"
+import "modus:contract/errors"
+import format "modus:contract/store"
+import answers "modus:support/storage"
+import block_tree "modus:support/storage_object"
+import "modus:support/system"
 
 // Ranges (docs/STORAGE.md, "Ranges"): a connection writes ranges of an
 // object and changes its size as pending changes, then commits them in one

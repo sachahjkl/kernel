@@ -5,7 +5,7 @@
 // the closing state.
 package quic
 
-import "contract:errors"
+import "modus:contract/errors"
 import "core:testing"
 
 // RFC 9001, appendix A.4: retry_packet_write gives the Retry packet of the

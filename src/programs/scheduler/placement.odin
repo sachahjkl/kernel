@@ -12,9 +12,9 @@
 package scheduler
 
 import "base:intrinsics"
-import "contract:errors"
-import op "contract:operation"
-import "support:system"
+import "modus:contract/errors"
+import op "modus:contract/operation"
+import "modus:support/system"
 
 PLACEMENT_SAMPLES :: 50 // Reports of one thread, after the first one that shows it inside its set.
 PLACEMENT_LIMIT_ROUNDS :: 1000

@@ -1,8 +1,8 @@
 // Altered source: Odin dev-2026-11a, core/crypto/aes/aes_impl.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package aes
 
-import crypto "support:cryptography/compatibility_crypto"
-import "support:cryptography/_aes/ct64"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import "modus:support/cryptography/_aes/ct64"
 import "core:reflect"
 
 zero_explicit :: crypto.zero_explicit

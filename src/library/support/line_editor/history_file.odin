@@ -1,6 +1,6 @@
 package line_editor
 
-import "contract:blake3"
+import "modus:contract/blake3"
 
 // The line history as bytes, to keep it in a store across a stop of the
 // program (docs/CONSOLE.md, section 6). The bytes come back from a disk:

@@ -30,10 +30,10 @@
 // rules of the picture are in docs/DESIGN.md.
 package boot
 
-import "support:bootscreen"
-import "support:bootscreen/collect"
-import "support:display"
-import "support:system"
+import "modus:support/bootscreen"
+import "modus:support/bootscreen/collect"
+import "modus:support/display"
+import "modus:support/system"
 
 INTERVAL :: 500
 

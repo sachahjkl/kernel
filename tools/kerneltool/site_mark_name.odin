@@ -10,7 +10,7 @@ package kerneltool
 
 import "core:fmt"
 import "core:strings"
-import "support:mark"
+import "modus:support/mark"
 
 // The font in the site. Its address carries no version: the preload of a
 // page and the rule of the style sheet must name the same address, and its

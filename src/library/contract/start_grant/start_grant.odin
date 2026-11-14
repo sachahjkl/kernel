@@ -46,8 +46,8 @@ Grant :: enum i64 {
 	Network_Device     = 14, // The frame service of the network device and its frame ring, and a control ring from the root service.
 	Connect            = 15, // A ring to the root service that serves Connect and Disconnect only, to the services of callable_of.
 	Schedule           = 16, // The machine, with the right Schedule: change the scheduling strategy of the machine.
-	Settings           = 17, // The settings page with Write (contract:settings): the one writer of the settings of the machine.
-	Clock              = 18, // The date page with Write and the two ports of the real-time clock (contract:date): the one writer of the date.
+	Settings           = 17, // The settings page with Write (modus:contract/settings): the one writer of the settings of the machine.
+	Clock              = 18, // The date page with Write and the two ports of the real-time clock (modus:contract/date): the one writer of the date.
 	History_Store      = 19, // A store of its own in the storage service for the line history of the program, apart from its private store (Root_Command.Connect_History).
 	Events             = 20, // The machine, with the right Events: give the event table of the machine (kernel events of every program).
 	Principals         = 21, // A ring to the root service for Principal_Record and Principal_Unlock only: the program that keeps the records of the named principals (docs/PRINCIPALS.md).

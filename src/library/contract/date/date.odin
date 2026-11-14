@@ -29,8 +29,8 @@
 package date
 
 import "base:intrinsics"
-import "contract:fixed_addresses"
-import op "contract:operation"
+import "modus:contract/fixed_addresses"
+import op "modus:contract/operation"
 
 PAGE_ADDRESS :: fixed_addresses.DATE_PAGE_ADDRESS // Where a program maps the date page.
 GRANT_PAGE :: 6 // The handle of the context of the program `date`: the page, with Read and Write.

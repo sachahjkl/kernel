@@ -9,8 +9,8 @@ package kerneltool
 import "core:fmt"
 import "core:os"
 import "core:strings"
-import "contract:blake3"
-import "support:graphics"
+import "modus:contract/blake3"
+import "modus:support/graphics"
 
 SITE_MODULE_GRAPH_FOLDER :: SITE_REFERENCE_FOLDER + "/module-graph"
 SITE_MODULE_GRAPH_SCRIPT :: "module_graph.js"

@@ -1,6 +1,6 @@
 package kerneltool
 
-import "contract:blake3"
+import "modus:contract/blake3"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -14,8 +14,8 @@ import "core:time"
 source_tree_make :: proc(t: ^testing.T) -> (root: string) {
 	folder, error := os.make_directory_temp("", "incremental_build_test_*", context.temp_allocator)
 	testing.expect_value(t, error, nil)
-	// The two libraries are at the folders of the tool: the tool finds the
-	// package of an import of a library there.
+	// The two parts of the library are at the folders of the tool: the tool
+	// finds the package of an import of the library there.
 	for name in ([]string{"program", "library", "unused", "tool", SOURCE_FOLDER_CONTRACT + "/record", SOURCE_FOLDER_SUPPORT + "/draw", SOURCE_FOLDER_SUPPORT + "/idle"}) {
 		_ = os.make_directory_all(fmt.tprintf("%s/%s", folder, name))
 	}
@@ -25,9 +25,9 @@ source_tree_make :: proc(t: ^testing.T) -> (root: string) {
 	file_write(folder, "program/picture.pixels", "pixels")
 	file_write(folder, "library/library.odin", "package library\n\nwork :: proc() {}\n")
 	file_write(folder, "unused/unused.odin", "package unused\n")
-	file_write(folder, "tool/main.odin", "package tool\n\nimport \"core:fmt\"\nimport record \"contract:record\"\n\t import \"support:draw\"\nSAMPLE :: `\nimport \"support:absent\"\n`\n")
+	file_write(folder, "tool/main.odin", "package tool\n\nimport \"core:fmt\"\nimport record \"modus:contract/record\"\n\t import \"modus:support/draw\"\nSAMPLE :: `\nimport \"modus:support/absent\"\n`\n")
 	file_write(folder, SOURCE_FOLDER_CONTRACT + "/record/record.odin", "package record\n")
-	file_write(folder, SOURCE_FOLDER_SUPPORT + "/draw/draw.odin", "package draw\n\nimport \"contract:record\"\n")
+	file_write(folder, SOURCE_FOLDER_SUPPORT + "/draw/draw.odin", "package draw\n\nimport \"modus:contract/record\"\n")
 	file_write(folder, SOURCE_FOLDER_SUPPORT + "/idle/idle.odin", "package idle\n")
 	return folder
 }
@@ -336,7 +336,7 @@ dependency_list_of_the_compiler_is_read :: proc(t: ^testing.T) {
 @(test)
 imports_of_a_source_name_the_folders_of_the_repository :: proc(t: ^testing.T) {
 	folders := make([dynamic]string, context.temp_allocator)
-	source := "package kerneltool\n\nimport \"core:fmt\"\nimport module \"contract:module\"\nimport \"support:cryptography/ed25519\"\nimport \"../shared\"\nimport\t\"./beside\"\nimported := 1\n// the word import in a comment\nforeign import library \"system:c\"\n"
+	source := "package kerneltool\n\nimport \"core:fmt\"\nimport module \"modus:contract/module\"\nimport \"modus:support/cryptography/ed25519\"\nimport \"../shared\"\nimport\t\"./beside\"\nimported := 1\n// the word import in a comment\nforeign import library \"system:c\"\n"
 	imported_folders_of_source(source, "tools/kerneltool", &folders)
 	testing.expect_value(t, len(folders), 4)
 	testing.expect_value(t, folders[0], SOURCE_FOLDER_CONTRACT + "/module")
@@ -367,7 +367,7 @@ tool_identity_follows_the_imports_of_the_tool :: proc(t: ^testing.T) {
 	file_write(root, "program/main.odin", "package program\n")
 	testing.expect_value(t, identity_of(t, root), first)
 
-	file_write(root, SOURCE_FOLDER_SUPPORT + "/draw/draw.odin", "package draw\n\nimport \"contract:record\"\n\nchanged :: 1\n")
+	file_write(root, SOURCE_FOLDER_SUPPORT + "/draw/draw.odin", "package draw\n\nimport \"modus:contract/record\"\n\nchanged :: 1\n")
 	after_import := identity_of(t, root)
 	testing.expect(t, after_import != first, "a package that the tool imports is a source of the tool")
 

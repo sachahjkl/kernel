@@ -1,10 +1,10 @@
 #+build !freestanding
 package graphics
 
-import "contract:glyph_cache"
+import "modus:contract/glyph_cache"
 import "core:testing"
-import "support:text_shaping"
-import "support:vector_font"
+import "modus:support/text_shaping"
+import "modus:support/vector_font"
 
 // The glyph cache of B612 Regular, three positions at scale 1 and one at
 // the scales 2 and 3, in memory that the caller frees.

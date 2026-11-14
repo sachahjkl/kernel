@@ -1,6 +1,6 @@
 package system
 
-import op "contract:operation"
+import op "modus:contract/operation"
 import "base:intrinsics"
 
 // A reader of the records of the log (operation.Log_Record). The program

@@ -1,11 +1,11 @@
 package debugger
 
-import debug_object "contract:debug_object"
-import "contract:errors"
-import "contract:isolated"
-import op "contract:operation"
-import "support:debugging"
-import "support:system"
+import debug_object "modus:contract/debug_object"
+import "modus:contract/errors"
+import "modus:contract/isolated"
+import op "modus:contract/operation"
+import "modus:support/debugging"
+import "modus:support/system"
 
 // The exports of the debugger service: each one gives a table of records.
 // A caller that does not act for the principal gets a refusal; each export

@@ -1,10 +1,10 @@
 package console_results
 
-import "contract:errors"
-import module "contract:module"
-import op "contract:operation"
-import "contract:value_kinds"
-import "support:sentence"
+import "modus:contract/errors"
+import module "modus:contract/module"
+import op "modus:contract/operation"
+import "modus:contract/value_kinds"
+import "modus:support/sentence"
 
 // What a part of a drawn result is. The caller of a drawer chooses the
 // color of each part: a value has the color of its value kind

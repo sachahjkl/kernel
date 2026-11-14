@@ -1,13 +1,13 @@
 package compositor
 
-import "contract:palette_table"
-import "contract:ring"
-import "contract:settings"
-import "support:bar"
-import "support:display"
-import "support:interface"
-import "support:palette"
-import "support:system"
+import "modus:contract/palette_table"
+import "modus:contract/ring"
+import "modus:contract/settings"
+import "modus:support/bar"
+import "modus:support/display"
+import "modus:support/interface"
+import "modus:support/palette"
+import "modus:support/system"
 import "base:intrinsics"
 
 // The palette of the desktop (docs/DESIGN.md, "Palette"): the panel that
@@ -82,7 +82,7 @@ palette_tab_waits: bool // Tab came while the candidates of the field were on th
 palette_adoptions, palette_adoptions_same: u64
 
 // The palette provider, as the root service gave it: its ring and its
-// entry table, read-only (contract:palette_table). The table is hostile
+// entry table, read-only (modus:contract/palette_table). The table is hostile
 // input: the ranking thread copies it and checks the copy.
 palette_provider_ring: ring.Ring
 palette_provider_ring_handle, palette_provider_table_handle: system.Handle

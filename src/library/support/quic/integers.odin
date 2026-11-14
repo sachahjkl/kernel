@@ -29,7 +29,7 @@
 // packet numbers (RFC 9000, section 17.1 and appendix A).
 package quic
 
-import "contract:errors"
+import "modus:contract/errors"
 
 // The largest value that a variable-length integer holds: 2^62 - 1, in the encoding of 8 bytes.
 //

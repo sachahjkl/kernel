@@ -1,9 +1,9 @@
 package information
 
-import "contract:cut_mark"
-import module "contract:module"
-import op "contract:operation"
-import "support:system"
+import "modus:contract/cut_mark"
+import module "modus:contract/module"
+import op "modus:contract/operation"
+import "modus:support/system"
 
 // The modules that a program can see, and the replacements of the
 // machine. Today: the boot image that the program was granted
@@ -108,7 +108,7 @@ hash_text :: proc "contextless" (hash: [32]u8, into: ^[64]u8) {
 
 // text_put writes a text in a Text field. A text longer than the field
 // ends with the cut mark and the count of the missing bytes, after a whole
-// character (contract:cut_mark); the bytes after it are zero.
+// character (modus:contract/cut_mark); the bytes after it are zero.
 text_put :: proc "contextless" (field: []u8, text: string) {
 	for &b in field {
 		b = 0

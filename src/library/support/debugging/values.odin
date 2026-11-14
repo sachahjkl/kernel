@@ -1,7 +1,7 @@
 package debugging
 
-import debug_object "contract:debug_object"
-import "support:sentence"
+import debug_object "modus:contract/debug_object"
+import "modus:support/sentence"
 
 // The bounds of the text of one value.
 VALUE_DEPTH_LIMIT :: 3 // A record in a record in a record: a deeper one is written "{...}". A type can name itself.

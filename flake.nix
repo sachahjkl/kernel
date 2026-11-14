@@ -141,11 +141,11 @@
       };
     };
 
-    # The command "kerneltool": it compiles tools/kerneltool with the two source
-    # libraries of the project, and runs it in the folder of the project.
+    # The command "kerneltool": it compiles tools/kerneltool with the source
+    # library of the project, and runs it in the folder of the project.
     kerneltool = pkgs.writeShellScriptBin "kerneltool" ''
       mkdir -p build
-      exec odin run tools/kerneltool -vet -collection:contract=src/library/contract -collection:support=src/library/support -out:build/kerneltool -- "$@"
+      exec odin run tools/kerneltool -vet -collection:modus=src/library -out:build/kerneltool -- "$@"
     '';
 
     # kerneltool check: the host code passes -vet and its tests, the system builds,

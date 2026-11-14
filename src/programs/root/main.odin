@@ -59,30 +59,30 @@
 // The design: (docs/ARCHITECTURE.md, "U2. Root service").
 package root
 
-import "support:bootscreen"
-import "support:bootscreen/collect"
-import "support:display"
-import "support:graphics"
-import info "contract:boot_info"
-import "contract:isolated"
-import module "contract:module"
-import op "contract:operation"
-import "contract:ring"
-import "support:random"
-import "support:system"
-import terminal "support:terminal"
-import "contract:block"
-import "contract:datagram"
-import "contract:date"
-import "contract:errors"
-import "contract:fixed_addresses"
-import "contract:frame"
-import "support:pci"
-import "support:principals"
-import "support:storage"
-import "contract:settings"
-import "contract:palette_table"
-import "contract:start_grant"
+import "modus:support/bootscreen"
+import "modus:support/bootscreen/collect"
+import "modus:support/display"
+import "modus:support/graphics"
+import info "modus:contract/boot_info"
+import "modus:contract/isolated"
+import module "modus:contract/module"
+import op "modus:contract/operation"
+import "modus:contract/ring"
+import "modus:support/random"
+import "modus:support/system"
+import terminal "modus:support/terminal"
+import "modus:contract/block"
+import "modus:contract/datagram"
+import "modus:contract/date"
+import "modus:contract/errors"
+import "modus:contract/fixed_addresses"
+import "modus:contract/frame"
+import "modus:support/pci"
+import "modus:support/principals"
+import "modus:support/storage"
+import "modus:contract/settings"
+import "modus:contract/palette_table"
+import "modus:contract/start_grant"
 
 ROOT_MARK :: "root: ok"
 
@@ -262,7 +262,7 @@ COMPOSITOR_VALUE_POINTER_THEME_ADDRESS :: 6
 COMPOSITOR_VALUE_POINTER_THEME_SIZE :: 7
 POINTER_THEME_ADDRESS :: fixed_addresses.POINTER_THEMES_ADDRESS
 // The values of the context of the compositor for each pointer theme: the
-// second at the values that contract:operation names for it.
+// second at the values that modus:contract/operation names for it.
 COMPOSITOR_POINTER_THEME_VALUES := [2][2]int{{COMPOSITOR_VALUE_POINTER_THEME_ADDRESS, COMPOSITOR_VALUE_POINTER_THEME_SIZE}, {op.CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS, op.CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE}}
 POINTER_THEME_SPACING :: fixed_addresses.RANGE_SPAN / 2 // The second theme is this far after the first.
 
@@ -790,7 +790,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		// The pointer themes: resources of the boot image, read-only, each
 		// at its place in the list of pointer_theme_choice (the values 6 and
-		// 7, then the two values of contract:operation). The setting
+		// 7, then the two values of modus:contract/operation). The setting
 		// "pointer_theme" chooses one in the compositor.
 		for name, index in pointer_theme_choice() {
 			address := POINTER_THEME_ADDRESS + u64(index) * POINTER_THEME_SPACING

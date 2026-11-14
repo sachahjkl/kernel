@@ -12,8 +12,8 @@ See:
 - https://www.hyperelliptic.org/EFD/g1p/auto-twisted-extended-1.html
 */
 
-import crypto "support:cryptography/compatibility_crypto"
-import field "support:cryptography/_fiat/field_curve25519"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import field "modus:support/cryptography/_fiat/field_curve25519"
 
 zero_explicit :: crypto.zero_explicit
 

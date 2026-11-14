@@ -12,8 +12,8 @@ package _blake2
 */
 
 import "base:intrinsics"
-import crypto "support:cryptography/compatibility_crypto"
-import endian "support:cryptography/compatibility_endian"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import endian "modus:support/cryptography/compatibility_endian"
 
 BLAKE2S_BLOCK_SIZE :: 64
 BLAKE2S_SIZE :: 32

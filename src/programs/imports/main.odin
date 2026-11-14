@@ -42,13 +42,13 @@
 package imports
 
 import "base:intrinsics"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import module "contract:module"
-import op "contract:operation"
-import "support:random"
-import "support:system"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import module "modus:contract/module"
+import op "modus:contract/operation"
+import "modus:support/random"
+import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [512]interface.Draw_Record

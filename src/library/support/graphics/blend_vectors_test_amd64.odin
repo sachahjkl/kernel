@@ -1,12 +1,12 @@
 #+build !freestanding
 package graphics
 
-import "contract:glyph_cache"
+import "modus:contract/glyph_cache"
 import "core:fmt"
 import "core:testing"
 import "core:time"
-import "support:text_shaping"
-import "support:vector_font"
+import "modus:support/text_shaping"
+import "modus:support/vector_font"
 
 // The SSE2 forms of the blends against their scalar forms (docs/SIMD.md):
 // the same bytes for every input. The inputs come from a generator with a

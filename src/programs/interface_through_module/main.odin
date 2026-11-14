@@ -32,12 +32,12 @@
 // `interface_module` in the boot image.
 package interface_through_module
 
-import "contract:errors"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import module "contract:module"
-import "support:system"
+import "modus:contract/errors"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import module "modus:contract/module"
+import "modus:support/system"
 
 // The records of the module, as this program declares them: the layout is
 // the description.

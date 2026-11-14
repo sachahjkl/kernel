@@ -1,16 +1,16 @@
 #+build !freestanding
 package drawing
 
-import "contract:errors"
-import "contract:glyph_cache"
+import "modus:contract/errors"
+import "modus:contract/glyph_cache"
 import "core:log"
 import "core:sync"
 import "core:testing"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:system"
-import "support:vector_font"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/system"
+import "modus:support/vector_font"
 
 // The text state of the graphics package and the text of the module are
 // one for the test program, and the tests run on several threads: each

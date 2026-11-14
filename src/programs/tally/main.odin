@@ -29,11 +29,11 @@
 // The design: (docs/MODULE_CONTRACT.md, "3. Static is dynamic").
 package tally
 
-import "contract:errors"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:system"
+import "modus:contract/errors"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [512]interface.Draw_Record

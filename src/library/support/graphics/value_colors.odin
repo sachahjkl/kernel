@@ -1,6 +1,6 @@
 package graphics
 
-import "contract:value_kinds"
+import "modus:contract/value_kinds"
 
 // The colors of the value kinds (docs/DESIGN.md, section 4, "The colors of
 // values"): the one table that the site of the system and the programs

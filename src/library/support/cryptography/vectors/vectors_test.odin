@@ -6,14 +6,14 @@ package vectors
 
 import "core:encoding/hex"
 import "core:testing"
-import "support:cryptography/aes"
-import "support:cryptography/chacha20poly1305"
-import "support:cryptography/ed25519"
-import "support:cryptography/hkdf"
-import "support:cryptography/hmac"
-import "support:cryptography/poly1305"
-import "support:cryptography/sha2"
-import "support:cryptography/x25519"
+import "modus:support/cryptography/aes"
+import "modus:support/cryptography/chacha20poly1305"
+import "modus:support/cryptography/ed25519"
+import "modus:support/cryptography/hkdf"
+import "modus:support/cryptography/hmac"
+import "modus:support/cryptography/poly1305"
+import "modus:support/cryptography/sha2"
+import "modus:support/cryptography/x25519"
 
 bytes_of :: proc(text: string) -> []byte {
 	bytes, ok := hex.decode(transmute([]byte)text, context.temp_allocator)

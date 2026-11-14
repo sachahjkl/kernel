@@ -46,14 +46,14 @@
 package locks
 
 import "base:intrinsics"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:lockers"
-import op "contract:operation"
-import "contract:ring"
-import "support:random"
-import "support:system"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/lockers"
+import op "modus:contract/operation"
+import "modus:contract/ring"
+import "modus:support/random"
+import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [1024]interface.Draw_Record

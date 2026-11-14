@@ -1,9 +1,9 @@
 #+build !freestanding
 package isolated
 
-import "contract:errors"
-import module "contract:module"
-import op "contract:operation"
+import "modus:contract/errors"
+import module "modus:contract/module"
+import op "modus:contract/operation"
 import "core:math/rand"
 import "core:testing"
 

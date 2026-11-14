@@ -1,13 +1,13 @@
 package console
 
-import "contract:errors"
-import module "contract:module"
-import "contract:ring"
-import "contract:value_kinds"
-import "support:console_results"
-import "support:graphics"
-import "support:system"
-import terminal "support:terminal"
+import "modus:contract/errors"
+import module "modus:contract/module"
+import "modus:contract/ring"
+import "modus:contract/value_kinds"
+import "modus:support/console_results"
+import "modus:support/graphics"
+import "modus:support/system"
+import terminal "modus:support/terminal"
 
 // The result of a line, and how the console draws it.
 //

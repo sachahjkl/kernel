@@ -1,11 +1,11 @@
 #+build !freestanding
 package interface
 
-import "contract:glyph_cache"
+import "modus:contract/glyph_cache"
 import "core:testing"
-import "support:display"
-import "support:graphics"
-import "support:vector_font"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/vector_font"
 
 // The interface font of the tests: B612 Regular (three positions at scale
 // 1, one at the scales 2 and 3) and B612 Bold (scale 1, three positions),

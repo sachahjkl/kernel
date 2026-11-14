@@ -38,12 +38,12 @@
 // The design: `docs/POINTERS.md`.
 package pointers
 
-import "contract:blake3"
-import "contract:pointer_pictures"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:system"
+import "modus:contract/blake3"
+import "modus:contract/pointer_pictures"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/system"
 
 WIDTH :: 976
 HEIGHT :: 704

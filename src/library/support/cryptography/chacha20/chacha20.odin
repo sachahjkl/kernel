@@ -8,9 +8,9 @@ See:
 */
 package chacha20
 
-import bytes "support:cryptography/compatibility_bytes"
-import crypto "support:cryptography/compatibility_crypto"
-import "support:cryptography/_chacha20"
+import bytes "modus:support/cryptography/compatibility_bytes"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import "modus:support/cryptography/_chacha20"
 
 // KEY_SIZE is the (X)ChaCha20 key size in bytes.
 KEY_SIZE :: _chacha20.KEY_SIZE

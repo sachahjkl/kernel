@@ -7,7 +7,7 @@
 // after the change has the hash of the build before.
 package kerneltool
 
-import "contract:blake3"
+import "modus:contract/blake3"
 import "core:fmt"
 import "core:os"
 import "core:strings"

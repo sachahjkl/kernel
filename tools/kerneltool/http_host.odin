@@ -4,7 +4,7 @@ import "core:fmt"
 import "core:net"
 import "core:strings"
 import "core:time"
-import "support:web"
+import "modus:support/web"
 
 // The tests of the HTTP/1.1 server of the system, from the host: the TCP of
 // the host connects through hostfwd and libslirp (web_host.odin), and the

@@ -33,8 +33,8 @@ package field_scalar25519
 // While the base implementation is provably correct, this implementation
 // makes no such claims as the port and optimizations were done by hand.
 
-import fiat "support:cryptography/_fiat"
-import bits "support:cryptography/compatibility_bits"
+import fiat "modus:support/cryptography/_fiat"
+import bits "modus:support/cryptography/compatibility_bits"
 
 // ELL is the saturated representation of the field order, least-significant
 // limb first.

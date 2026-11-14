@@ -2,7 +2,7 @@ package kerneltool
 
 import "core:strings"
 import "core:testing"
-import "support:graphics"
+import "modus:support/graphics"
 
 // site_graph_test_names gives a list of names in the memory of the test: a
 // slice literal would live in the frame of the procedure that returns it.

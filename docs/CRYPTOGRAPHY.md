@@ -56,9 +56,9 @@ A reader must be able to trust that the cryptography is the code of its origin, 
 
 The listed changes, all in `tools/kerneltool/cryptography_origin.odin` (`cryptography_import_changes`, applied in this order):
 1. The first line: "// Altered source: Odin dev-2026-11a, <origin path>; only its imports changed (...)".
-2. `"core:crypto"` becomes `crypto "support:cryptography/compatibility_crypto"`.
-3. `"core:crypto/hash"` becomes `hash "support:cryptography/compatibility_hash"` (before the next rule, which would send it to a copy of the origin package).
-4. `"core:crypto/` becomes `"support:cryptography/`.
+2. `"core:crypto"` becomes `crypto "modus:support/cryptography/compatibility_crypto"`.
+3. `"core:crypto/hash"` becomes `hash "modus:support/cryptography/compatibility_hash"` (before the next rule, which would send it to a copy of the origin package).
+4. `"core:crypto/` becomes `"modus:support/cryptography/`.
 5. `"core:encoding/endian"`, `"core:math/bits"` and `"core:bytes"` become the compatibility packages, with the name of the origin as their alias.
 
 The check also covers the folders, not only the listed files: Odin compiles each `.odin` file of a package folder, so a new file in a folder of a copy would change the code with no line of a manifest.

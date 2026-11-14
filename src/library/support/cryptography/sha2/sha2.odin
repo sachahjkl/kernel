@@ -16,9 +16,9 @@ package sha2
         zhibog, dotbmp:  Initial implementation.
 */
 
-@(require) import crypto "support:cryptography/compatibility_crypto"
-@(require) import endian "support:cryptography/compatibility_endian"
-import bits "support:cryptography/compatibility_bits"
+@(require) import crypto "modus:support/cryptography/compatibility_crypto"
+@(require) import endian "modus:support/cryptography/compatibility_endian"
+import bits "modus:support/cryptography/compatibility_bits"
 
 // DIGEST_SIZE_224 is the SHA-224 digest size in bytes.
 DIGEST_SIZE_224 :: 28

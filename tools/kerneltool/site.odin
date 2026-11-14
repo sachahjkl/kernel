@@ -8,7 +8,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
-import "support:graphics"
+import "modus:support/graphics"
 
 SITE_FOLDER :: BUILD_FOLDER + "/site"
 SITE_PAGE :: "index.html"

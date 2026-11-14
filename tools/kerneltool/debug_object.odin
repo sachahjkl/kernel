@@ -1,8 +1,8 @@
 package kerneltool
 
 import "base:runtime"
-import "contract:blake3"
-import debug_object "contract:debug_object"
+import "modus:contract/blake3"
+import debug_object "modus:contract/debug_object"
 import "core:fmt"
 import "core:mem"
 import "core:os"
@@ -14,7 +14,7 @@ import "core:strings"
 // procedure table comes from its symbol table, the line table from the line
 // program of DWARF that the compiler wrote with its debug information, the types and the
 // variables from the entries of .debug_info (debug_information.odin). The
-// tool writes the tables of contract:debug_object, which a program reads
+// tool writes the tables of modus:contract/debug_object, which a program reads
 // with no parser of DWARF. The DWARF stays in the linked file, for a
 // debugger of the host.
 

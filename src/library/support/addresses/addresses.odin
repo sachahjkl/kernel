@@ -5,8 +5,8 @@
 // tests it on the host.
 package addresses
 
-import module "contract:module"
-import op "contract:operation"
+import module "modus:contract/module"
+import op "modus:contract/operation"
 
 // What a mapping is, from the facts of the kernel: its flags, and the
 // module record that holds its address.

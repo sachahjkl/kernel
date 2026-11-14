@@ -1,7 +1,7 @@
 #+build !freestanding
 package line_editor
 
-import "contract:blake3"
+import "modus:contract/blake3"
 import "core:testing"
 
 // ---- The keys of a line.

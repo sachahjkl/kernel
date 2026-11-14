@@ -1,9 +1,9 @@
 package random
 
 import "base:intrinsics"
-import "contract:blake3"
-import op "contract:operation"
-import crypto "support:cryptography/compatibility_crypto"
+import "modus:contract/blake3"
+import op "modus:contract/operation"
+import crypto "modus:support/cryptography/compatibility_crypto"
 
 // The sources of entropy of the root service (docs/RANDOMNESS.md). The
 // claim is no more than the sources: the processor's rdseed (an entropy

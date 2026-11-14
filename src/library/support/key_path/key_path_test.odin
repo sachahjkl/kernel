@@ -1,7 +1,7 @@
 #+build !freestanding
 package key_path
 
-import "contract:ring"
+import "modus:contract/ring"
 import "core:testing"
 
 // The memory of the smallest ring: 32 records in each queue.

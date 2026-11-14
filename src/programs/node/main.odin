@@ -25,9 +25,9 @@
 // It writes nothing on the log and has no window.
 package node
 
-import "support:relay"
-import "contract:ring"
-import "support:system"
+import "modus:support/relay"
+import "modus:contract/ring"
+import "modus:support/system"
 
 // The entry of a node: it maps its four memory objects, then passes records
 // for ever.

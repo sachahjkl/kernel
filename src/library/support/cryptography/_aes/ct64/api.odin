@@ -1,7 +1,7 @@
 // Altered source: Odin dev-2026-11a, core/crypto/_aes/ct64/api.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package aes_ct64
 
-import crypto "support:cryptography/compatibility_crypto"
+import crypto "modus:support/cryptography/compatibility_crypto"
 
 STRIDE :: 4
 

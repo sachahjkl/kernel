@@ -1,9 +1,9 @@
 package kernel
 
-import "contract:ring"
+import "modus:contract/ring"
 import "base:intrinsics"
-import op "contract:operation"
-import "contract:value_kinds"
+import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 
 // The kernel entry (docs/ARCHITECTURE.md, "Rings and wait"). It executes the
 // command records of the kernel ring

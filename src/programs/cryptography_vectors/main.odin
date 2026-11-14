@@ -32,12 +32,12 @@
 // host of the run.
 package cryptography_vectors
 
-import "contract:blake3"
-import "contract:errors"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:system"
+import "modus:contract/blake3"
+import "modus:contract/errors"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/system"
 
 foreign _ {
 	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---

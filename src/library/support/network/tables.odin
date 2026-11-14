@@ -1,6 +1,6 @@
 package network
 
-import "contract:datagram"
+import "modus:contract/datagram"
 
 // The two tables that the network service keeps, as functions with no
 // input or output, so that the host runs their tests (tables_test.odin).

@@ -1,9 +1,9 @@
 package sentence
 
-import "contract:errors"
-import module "contract:module"
-import op "contract:operation"
-import "contract:start_grant"
+import "modus:contract/errors"
+import module "modus:contract/module"
+import op "modus:contract/operation"
+import "modus:contract/start_grant"
 
 // The sentence of an error record (docs/MODULE_CONTRACT.md, section 8). The
 // record holds values only: the names come from the operation table of the

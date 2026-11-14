@@ -2,8 +2,8 @@ package kerneltool
 
 import "core:strings"
 import "core:testing"
-import "support:mark"
-import "support:vector_font"
+import "modus:support/mark"
+import "modus:support/vector_font"
 
 // A license for the tests: the font of a test does not depend on the text
 // of the license of the repository.

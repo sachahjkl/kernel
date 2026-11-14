@@ -1,7 +1,7 @@
 package kernel
 
 import "base:intrinsics"
-import op "contract:operation"
+import op "modus:contract/operation"
 
 // The breakpoints of a thread, and the read of the memory of a program
 // (docs/ARCHITECTURE.md, "The debugger of a program").

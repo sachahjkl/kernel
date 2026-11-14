@@ -10,7 +10,7 @@ package kerneltool
 import "core:fmt"
 import "core:odin/tokenizer"
 import "core:strings"
-import "support:graphics"
+import "modus:support/graphics"
 
 // The classes of the code. Each one has a short class name, because a page
 // of declarations holds thousands of them:

@@ -1,9 +1,9 @@
 // Altered source: Odin dev-2026-11a, core/crypto/_chacha20/chacha20.odin; its imports changed, and the adjustments that tools/kerneltool/cryptography_origin.odin lists (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package _chacha20
 
-import crypto "support:cryptography/compatibility_crypto"
-import endian "support:cryptography/compatibility_endian"
-import bits "support:cryptography/compatibility_bits"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import endian "modus:support/cryptography/compatibility_endian"
+import bits "modus:support/cryptography/compatibility_bits"
 
 // KEY_SIZE is the (X)ChaCha20 key size in bytes.
 KEY_SIZE :: 32

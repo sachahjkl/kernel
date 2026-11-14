@@ -1,8 +1,8 @@
 // Altered source: Odin dev-2026-11a, core/crypto/_aes/ct64/helpers.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package aes_ct64
 
-import "support:cryptography/_aes"
-import endian "support:cryptography/compatibility_endian"
+import "modus:support/cryptography/_aes"
+import endian "modus:support/cryptography/compatibility_endian"
 
 @(require_results)
 load_interleaved :: proc "contextless" (src: []byte) -> (u64, u64) #no_bounds_check {

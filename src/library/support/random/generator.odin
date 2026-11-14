@@ -37,11 +37,11 @@
 package random
 
 import "base:intrinsics"
-import "contract:errors"
-import op "contract:operation"
-import "support:system"
-import "support:cryptography/chacha20"
-import crypto "support:cryptography/compatibility_crypto"
+import "modus:contract/errors"
+import op "modus:contract/operation"
+import "modus:support/system"
+import "modus:support/cryptography/chacha20"
+import crypto "modus:support/cryptography/compatibility_crypto"
 
 SEED_SIZE :: 32 // The bytes of a seed and of a key of ChaCha20.
 REFILL_BLOCKS :: 13 // The blocks of 64 bytes of ChaCha20 of one refill: 832 bytes.

@@ -2,10 +2,10 @@
 package sample
 
 import "base:intrinsics"
-import "contract:errors"
+import "modus:contract/errors"
 import "core:testing"
 import "core:thread"
-import "support:system"
+import "modus:support/system"
 
 // Another thread of the caller changes a record of the shared call region
 // while sum_words reads it: a hostile caller can do this. The export

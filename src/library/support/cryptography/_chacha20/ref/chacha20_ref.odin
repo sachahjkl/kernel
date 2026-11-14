@@ -1,9 +1,9 @@
 // Altered source: Odin dev-2026-11a, core/crypto/_chacha20/ref/chacha20_ref.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package chacha20_ref
 
-import "support:cryptography/_chacha20"
-import endian "support:cryptography/compatibility_endian"
-import bits "support:cryptography/compatibility_bits"
+import "modus:support/cryptography/_chacha20"
+import endian "modus:support/cryptography/compatibility_endian"
+import bits "modus:support/cryptography/compatibility_bits"
 
 // At least with LLVM21 force_inline produces identical perf to
 // manual inlining, yay.

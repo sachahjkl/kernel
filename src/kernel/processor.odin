@@ -1,8 +1,8 @@
 package kernel
 
 import "base:intrinsics"
-import op "contract:operation"
-import "contract:value_kinds"
+import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 
 // The processor: segments, the interrupt table, the interrupt controller and
 // the timer. The frame layout is the one of src/kernel/processor.asm.

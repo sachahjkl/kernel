@@ -52,13 +52,13 @@
 package debugger
 
 import "base:intrinsics"
-import debug_object "contract:debug_object"
-import "contract:errors"
-import "contract:isolated"
-import op "contract:operation"
-import "contract:ring"
-import "support:debugging"
-import "support:system"
+import debug_object "modus:contract/debug_object"
+import "modus:contract/errors"
+import "modus:contract/isolated"
+import op "modus:contract/operation"
+import "modus:contract/ring"
+import "modus:support/debugging"
+import "modus:support/system"
 
 // The results of an export that fails: a negative number, with an error
 // record.

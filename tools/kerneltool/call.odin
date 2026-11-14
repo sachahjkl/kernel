@@ -1,10 +1,10 @@
 package kerneltool
 
-import "contract:blake3"
-import "contract:errors"
-import "contract:isolated"
-import module "contract:module"
-import "contract:remote"
+import "modus:contract/blake3"
+import "modus:contract/errors"
+import "modus:contract/isolated"
+import module "modus:contract/module"
+import "modus:contract/remote"
 import "core:encoding/hex"
 import "core:fmt"
 import "core:os"
@@ -12,7 +12,7 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
-import "support:sentence"
+import "modus:support/sentence"
 
 // The call from the host (docs/MODULE_CONTRACT.md, section 4, "A call from
 // the host"): `kerneltool call "monitor.programs()"` calls an export of a

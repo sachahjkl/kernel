@@ -81,13 +81,13 @@
 package scheduler
 
 import "base:intrinsics"
-import "contract:errors"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import op "contract:operation"
-import "contract:ring"
-import "support:system"
+import "modus:contract/errors"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import op "modus:contract/operation"
+import "modus:contract/ring"
+import "modus:support/system"
 
 STRATEGY_COUNT :: 3
 @(rodata)

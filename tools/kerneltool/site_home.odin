@@ -5,7 +5,7 @@
 // width is a number of the record, and each number is also text.
 package kerneltool
 
-import "contract:value_kinds"
+import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:strings"
 

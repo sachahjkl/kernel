@@ -1,7 +1,7 @@
 #+build !freestanding
 package graphics
 
-import "contract:value_kinds"
+import "modus:contract/value_kinds"
 import "core:math"
 import "core:testing"
 

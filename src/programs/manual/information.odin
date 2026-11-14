@@ -1,11 +1,11 @@
 package manual
 
-import "contract:errors"
-import "contract:isolated"
-import "support:graphics"
-import "support:information"
-import "support:sentence"
-import "support:system"
+import "modus:contract/errors"
+import "modus:contract/isolated"
+import "modus:support/graphics"
+import "modus:support/information"
+import "modus:support/sentence"
+import "modus:support/system"
 
 // The manual is also the service of the information of the modules,
 // through functions and with no query language: each export below gives a
@@ -275,7 +275,7 @@ overview_build :: proc "contextless" () -> int {
 	count := min(information.modules(catalog(), module_rows[:]), len(module_rows))
 	run_count, _ := information.running(machine, catalog(), running_rows[:])
 	put_built(0, COLOR_TITLE, "ALL MODULES (", u64(count), ")")
-	put("The flat tables of each module of the boot image, read by support/information.", 0, graphics.COLOR_DIM)
+	put("The flat tables of each module of the boot image, read by modus:support/information.", 0, graphics.COLOR_DIM)
 	put("Sizes in bytes of memory. Tab: this table; up, down: the page of a module.", 0, graphics.COLOR_DIM)
 	put("", 0, 0)
 	put("name             code   const    data    zero  exports imports  by  runs", 0, COLOR_HEADING)

@@ -21,7 +21,7 @@ package kerneltool
 import "core:fmt"
 import "core:image/png"
 import "core:strings"
-import "support:mark"
+import "modus:support/mark"
 
 // One picture of the mark: how it is drawn. The heron is in a variant that
 // the request names (docs/DESIGN.md, "The variants of the mark"), at a

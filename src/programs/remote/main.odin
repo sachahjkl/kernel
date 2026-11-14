@@ -60,17 +60,17 @@
 package remote_service
 
 import "base:intrinsics"
-import "contract:datagram"
-import "contract:errors"
-import "contract:isolated"
-import "contract:remote"
-import "contract:ring"
-import "support:display"
-import "support:interface"
-import "support:network"
-import "support:quic"
-import "support:random"
-import "support:system"
+import "modus:contract/datagram"
+import "modus:contract/errors"
+import "modus:contract/isolated"
+import "modus:contract/remote"
+import "modus:contract/ring"
+import "modus:support/display"
+import "modus:support/interface"
+import "modus:support/network"
+import "modus:support/quic"
+import "modus:support/random"
+import "modus:support/system"
 
 foreign _ {
 	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---

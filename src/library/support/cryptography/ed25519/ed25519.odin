@@ -9,9 +9,9 @@ See:
 */
 package ed25519
 
-import crypto "support:cryptography/compatibility_crypto"
-import grp "support:cryptography/_edwards25519"
-import "support:cryptography/sha2"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import grp "modus:support/cryptography/_edwards25519"
+import "modus:support/cryptography/sha2"
 
 // PRIVATE_KEY_SIZE is the byte-encoded private key size.
 PRIVATE_KEY_SIZE :: 32

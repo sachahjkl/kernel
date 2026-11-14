@@ -11,7 +11,7 @@
 // language does not take is one token of the kind Unknown.
 package console_language
 
-import terminal "support:terminal"
+import terminal "modus:support/terminal"
 
 // The kinds of tokens. The parser reads the operators one byte at a time;
 // the arrow '->' is a token of the signatures, not of an expression.

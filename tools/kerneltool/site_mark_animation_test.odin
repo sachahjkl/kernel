@@ -4,7 +4,7 @@ import "core:encoding/json"
 import "core:image/png"
 import "core:strings"
 import "core:testing"
-import "support:mark"
+import "modus:support/mark"
 
 // The files of the animations read back as the frames of src/library/support/mark, and
 // the first sprite of each sheet is the still picture that the site shows

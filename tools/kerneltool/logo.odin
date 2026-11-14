@@ -3,7 +3,7 @@ package kerneltool
 import "core:fmt"
 import "core:image/png"
 import "core:os"
-import "support:mark"
+import "modus:support/mark"
 
 // The files of the mark of the system in the repository (docs/DESIGN.md,
 // section "The mark"). src/library/support/mark holds the mark as data. The command

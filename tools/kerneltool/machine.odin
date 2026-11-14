@@ -1,9 +1,9 @@
 package kerneltool
 
-import "contract:glyph_cache"
-import "contract:store"
-import tree "support:storage_tree"
-import "support:bar"
+import "modus:contract/glyph_cache"
+import "modus:contract/store"
+import tree "modus:support/storage_tree"
+import "modus:support/bar"
 import "core:fmt"
 import "core:math/rand"
 import "core:os"

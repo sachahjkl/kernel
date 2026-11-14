@@ -1,8 +1,8 @@
 package heron
 
-import "support:graphics"
-import "support:interface"
-import "support:mark"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/mark"
 
 // The free way of a move: what the grid way is compared with. The rule of
 // the system is the grid way (docs/DESIGN.md, "The moves"): the heron takes

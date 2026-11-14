@@ -1,11 +1,11 @@
 package system
 
 import "base:intrinsics"
-import "contract:blake3"
-import info "contract:boot_info"
-import "contract:fixed_addresses"
-import op "contract:operation"
-import module "contract:module"
+import "modus:contract/blake3"
+import info "modus:contract/boot_info"
+import "modus:contract/fixed_addresses"
+import op "modus:contract/operation"
+import module "modus:contract/module"
 
 // The loader (docs/ARCHITECTURE.md, U3): it builds a program from a module
 // and its imports. It runs in user space. The kernel only creates the empty

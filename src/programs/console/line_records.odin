@@ -1,11 +1,11 @@
 package console
 
-import "contract:isolated"
-import module "contract:module"
-import "contract:ring"
-import "contract:value_kinds"
-import "support:system"
-import terminal "support:terminal"
+import "modus:contract/isolated"
+import module "modus:contract/module"
+import "modus:contract/ring"
+import "modus:contract/value_kinds"
+import "modus:support/system"
+import terminal "modus:support/terminal"
 
 // The log records of a line.
 //

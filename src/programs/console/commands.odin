@@ -1,14 +1,14 @@
 package console
 
-import "contract:blake3"
-import "contract:errors"
-import info "contract:boot_info"
-import "contract:isolated"
-import op "contract:operation"
-import module "contract:module"
-import "contract:ring"
-import "support:random"
-import "support:system"
+import "modus:contract/blake3"
+import "modus:contract/errors"
+import info "modus:contract/boot_info"
+import "modus:contract/isolated"
+import op "modus:contract/operation"
+import module "modus:contract/module"
+import "modus:contract/ring"
+import "modus:support/random"
+import "modus:support/system"
 import "base:intrinsics"
 
 // A command: a function with typed parameters and a typed result.

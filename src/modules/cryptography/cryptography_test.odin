@@ -4,7 +4,7 @@
 package cryptography
 
 import "base:intrinsics"
-import "contract:errors"
+import "modus:contract/errors"
 import "core:encoding/hex"
 import "core:testing"
 import "core:thread"

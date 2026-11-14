@@ -5,7 +5,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 ## Now
 
 - **Every program that draws imports the drawing module.** The programs that draw a picture, the terminal and the compositor use the drawing module, as 23 programs do today. The code of the drawing is then loaded one time, and one correction reaches every program. [Design](src/md/api/library_modules.md)
-- **One source library for a program of a third party.** Everything that becomes the system is now in the folder `src`. What is left: the code that the programs share becomes one source library, `modus`, so that a developer names the system by one name in each import and gives the compiler one folder. [Design](src/md/infrastructure/repository_layout.md)
 
 ## Next
 
@@ -14,6 +13,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **A window for the debugger.** The debugger gets a window over the exports that the console uses today: the threads, the stack, the variables and the source lines. A step over a call stops after the call returns, not inside it.
 - **The palette sets the scheduling strategy.** The scheduling strategy is an entry of the palette, as each setting is. A click in a field of the palette puts the input there. [Design](src/md/features/palette.md)
 - **Kind icons in the completion list of the console.** Each row of the completion list shows the kind icon of its name, as each row of the palette does. A reader tells a command from a module or a variable before reading the name.
+- **A module from a source outside the repository.** The tool builds a module whose source is in the folder of another project, with the source library and the memory procedures of the system. A developer then writes a program for the system with no copy of its sources and no change of its module table. [Design](src/md/infrastructure/repository_layout.md)
 - **Programs from a disk.** The root service loads a program from a tree of the storage service, by its hash, and not only from the boot image. A developer adds a program to a machine with no new boot image.
 - **A key sealed by the TPM, and a recovery key.** The TPM releases the key of a principal only to the system whose measure it holds, so an older or a changed system opens no store. A principal who loses the passphrase opens the stores again with a recovery key.
 - **A send with no copy in the network service.** A frame to send holds its headers in the memory of the network service and its data in the memory of the program, which the device reads. The network service then reads no byte of the data that a program sends. [Design](src/md/infrastructure/network_data_path.md)

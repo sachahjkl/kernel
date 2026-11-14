@@ -1,9 +1,9 @@
 // Altered source: Odin dev-2026-11a, core/crypto/_edwards25519/edwards25519_scalar_mul.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package _edwards25519
 
-import crypto "support:cryptography/compatibility_crypto"
-import field "support:cryptography/_fiat/field_scalar25519"
-import subtle "support:cryptography/_subtle"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import field "modus:support/cryptography/_fiat/field_scalar25519"
+import subtle "modus:support/cryptography/_subtle"
 
 ge_scalarmult :: proc "contextless" (ge, p: ^Group_Element, sc: ^Scalar) {
 	tmp: field.Non_Montgomery_Domain_Field_Element

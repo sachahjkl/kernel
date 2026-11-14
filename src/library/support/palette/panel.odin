@@ -1,10 +1,10 @@
 package palette
 
-import "contract:palette_table"
-import "contract:value_kinds"
-import "support:graphics"
-import "support:interface"
-import "support:kind_icons"
+import "modus:contract/palette_table"
+import "modus:contract/value_kinds"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/kind_icons"
 
 // The geometry of the panel (docs/DESIGN.md, "Palette"), on the grid of 8
 // pixels. From the top: the input band, the list, a gap, the detail line,

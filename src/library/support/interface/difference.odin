@@ -1,7 +1,7 @@
 package interface
 
 import "base:intrinsics"
-import "support:graphics"
+import "modus:support/graphics"
 
 DAMAGE_CAPACITY :: 8 // The rectangles that one frame keeps, as the compositor does.
 

@@ -14,11 +14,11 @@
 //   6. starts the entry of the kernel with a Boot_Info record.
 package boot
 
-import info "contract:boot_info"
-import "support:bootscreen"
-import "support:graphics"
-import op "contract:operation"
-import module "contract:module"
+import info "modus:contract/boot_info"
+import "modus:support/bootscreen"
+import "modus:support/graphics"
+import op "modus:contract/operation"
+import module "modus:contract/module"
 import "base:intrinsics"
 
 kernel_file := #load(#config(KERNEL_MODULE, "../../build/modules/kernel.module"))

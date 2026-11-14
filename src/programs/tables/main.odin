@@ -38,15 +38,15 @@
 package tables
 
 import "base:intrinsics"
-import "contract:errors"
-import "contract:isolated"
-import module "contract:module"
-import op "contract:operation"
-import "contract:ring"
-import "support:display"
-import "support:graphics"
-import "support:random"
-import "support:system"
+import "modus:contract/errors"
+import "modus:contract/isolated"
+import module "modus:contract/module"
+import op "modus:contract/operation"
+import "modus:contract/ring"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/random"
+import "modus:support/system"
 
 // The records of sample, as this program declares them: the layout is the
 // description (a program in C declares the same struct).

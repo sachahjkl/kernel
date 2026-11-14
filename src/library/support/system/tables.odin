@@ -1,6 +1,6 @@
 package system
 
-import module "contract:module"
+import module "modus:contract/module"
 
 // Tables and bytes as parameters of an export, in Odin
 // (docs/MODULE_CONTRACT.md, "Tables and bytes as parameters").

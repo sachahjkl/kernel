@@ -1,11 +1,11 @@
 package manual
 
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import markdown "support:source_comment_markdown"
-import module "contract:module"
-import "support:system"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import markdown "modus:support/source_comment_markdown"
+import module "modus:contract/module"
+import "modus:support/system"
 
 // The text of a page: rows of parts. A part of a row is a run of text with
 // one font and one color. The facts of a module (its sizes, its imports, the

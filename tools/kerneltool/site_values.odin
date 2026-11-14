@@ -8,12 +8,12 @@
 // writer already stated what it holds.
 package kerneltool
 
-import "contract:value_kinds"
+import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:math"
 import "core:strings"
-import "support:graphics"
-import "support:kind_icons"
+import "modus:support/graphics"
+import "modus:support/kind_icons"
 
 // The icons are the kind icons of the system (src/library/support/kind_icons): pixel
 // forms on a grid of 12 by 12 cells, as the heron of the mark is. Each cell

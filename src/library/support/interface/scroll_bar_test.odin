@@ -1,8 +1,8 @@
 #+build !freestanding
 package interface
 
-import "support:display"
-import "support:graphics"
+import "modus:support/display"
+import "modus:support/graphics"
 import "core:testing"
 
 // The tests of the scroll bar: its geometry, the part under a point, what

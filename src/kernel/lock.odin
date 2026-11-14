@@ -1,7 +1,7 @@
 package kernel
 
 import "base:intrinsics"
-import op "contract:operation"
+import op "modus:contract/operation"
 
 // The locks of the kernel (docs/ARCHITECTURE.md, "Locks of the kernel").
 //

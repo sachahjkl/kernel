@@ -3,9 +3,9 @@
 // Inspect.
 package collect
 
-import "support:bootscreen"
-import op "contract:operation"
-import "support:system"
+import "modus:support/bootscreen"
+import op "modus:contract/operation"
+import "modus:support/system"
 
 // data fills a Data with the boot report, the system report, the report of
 // each processor, the report of each program, and the name of the

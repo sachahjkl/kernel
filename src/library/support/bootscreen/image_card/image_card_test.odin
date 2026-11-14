@@ -1,8 +1,8 @@
 #+build !freestanding
 package image_card
 
-import info "contract:boot_info"
-import module "contract:module"
+import info "modus:contract/boot_info"
+import module "modus:contract/module"
 import "core:testing"
 
 // The width of the content of the card on the boot display, and the width

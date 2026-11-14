@@ -35,11 +35,11 @@
 // run: no test compares them to a bound.
 package clock
 
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import op "contract:operation"
-import "support:system"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import op "modus:contract/operation"
+import "modus:support/system"
 
 DURATION :: 1000 // Milliseconds of one measure, in a measure run.
 // The reads of the check of each way. A read with a kernel entry costs

@@ -1280,7 +1280,7 @@ The owner asked for it on 2026-11-12: "et on a de quoi faire du déboggage de mo
 
 - A node is a module of `module_builds`: each module and each program, the kernel and its test build too. A resource of the boot image is not a module: it imports nothing and no module imports it, so it is not a node.
 - An edge is an import of `module_builds`: the build writes the hash of the imported module into the import table of the importer, and a loader puts the imported module in the program of the importer. The direction is "A imports B".
-- An edge is not a library of `contract` or `support`: the build compiles it into each module, and no import names it. It is not a module that a program loads by its name (the console with `load`, the program `imports` with its own loader), not a connection to a service, and not a replacement: the machine decides a replacement when a program starts, and the build does not know it.
+- An edge is not a package of the source library (`src/library`): the build compiles it into each module, and no import names it. It is not a module that a program loads by its name (the console with `load`, the program `imports` with its own loader), not a connection to a service, and not a replacement: the machine decides a replacement when a program starts, and the build does not know it.
 - Imports are hashes, so the files of a build cannot hold a cycle, and `module_builds` lists each module after its imports. The layout still refuses a cycle, an import that names no module of the build, a module that imports itself and an import named twice: the command stops before any page with the reason (`site_reference_read`).
 
 ### The layout

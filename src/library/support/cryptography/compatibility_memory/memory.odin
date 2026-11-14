@@ -7,7 +7,7 @@
 // listed adjustment of argon2id.odin), so the code allocates nothing.
 package compatibility_memory
 
-import crypto "support:cryptography/compatibility_crypto"
+import crypto "modus:support/cryptography/compatibility_crypto"
 
 // The result of Argon2id. Out_Of_Memory: the blocks that the caller
 // supplied are fewer than the parameters ask, or not aligned on 8 bytes.

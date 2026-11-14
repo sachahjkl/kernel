@@ -1,7 +1,7 @@
 #+build !freestanding
 package sentence
 
-import "contract:errors"
+import "modus:contract/errors"
 import "core:strings"
 import "core:testing"
 

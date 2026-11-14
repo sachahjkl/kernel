@@ -6,12 +6,12 @@
 // file that it was read from, at the commit of the build.
 package kerneltool
 
-import "contract:value_kinds"
+import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:strings"
-import "contract:fixed_addresses"
-import module "contract:module"
-import op "contract:operation"
+import "modus:contract/fixed_addresses"
+import module "modus:contract/module"
+import op "modus:contract/operation"
 
 SITE_OPERATION_FILE :: SOURCE_FOLDER_CONTRACT + "/operation/operation.odin"
 SITE_ERRORS_FILE :: SOURCE_FOLDER_CONTRACT + "/errors/errors.odin"

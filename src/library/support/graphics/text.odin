@@ -1,7 +1,7 @@
 package graphics
 
-import "contract:glyph_cache"
-import "support:text_shaping"
+import "modus:contract/glyph_cache"
+import "modus:support/text_shaping"
 
 // The text of the system (docs/FONTS.md). Two fonts draw on one grid of
 // cells of 8 x 16 pixels at scale 1 (16 x 32, 24 x 48 at the scales 2 and

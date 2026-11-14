@@ -12,9 +12,9 @@ package console
 // batch that an interrupt or another program cut is longer, and the least
 // one is the time of the work.
 
-import "support:line_editor"
-import "support:system"
-import terminal "support:terminal"
+import "modus:support/line_editor"
+import "modus:support/system"
+import terminal "modus:support/terminal"
 
 COMPLETION_MEASURE_BATCHES :: 20
 COMPLETION_MEASURE_KEYS :: 10

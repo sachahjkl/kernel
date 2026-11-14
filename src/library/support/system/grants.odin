@@ -1,7 +1,7 @@
 package system
 
 import "base:intrinsics"
-import module "contract:module"
+import module "modus:contract/module"
 
 // The roles of the context of a program that the root service starts.
 // A handle that the program was not granted is 0.
@@ -158,7 +158,7 @@ Root_Command :: enum u32 {
 	Debug = 14,
 	// Palette_Provide makes the caller the palette provider of the desktop
 	// (docs/CONSOLE.md, "8. The palette provider"). The root service makes the
-	// entry table (contract:palette_table) and one ring, and gives both to
+	// entry table (modus:contract/palette_table) and one ring, and gives both to
 	// the caller and to the compositor: the caller writes the table, the
 	// compositor maps it read-only. The name of the command is not read.
 	// The completion: values[0] the handle of the table, values[1] the
@@ -301,7 +301,7 @@ root_argument_name :: proc "contextless" (command: i64, argument: i64) -> string
 // handle of the context, or a connection that the root service made; a
 // revocation ends each handle and each mapping that came from it.
 //
-// A recorded grant is not a start grant (contract:start_grant). A start
+// A recorded grant is not a start grant (modus:contract/start_grant). A start
 // grant says what the role of a program gives, and its name has capital
 // letters (`Inspect`). A recorded grant says which handle the root service
 // gave, and its name is in lower case (`machine`): the console types it.

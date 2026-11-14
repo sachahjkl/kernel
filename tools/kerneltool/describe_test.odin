@@ -1,7 +1,7 @@
 package kerneltool
 
-import module "contract:module"
-import op "contract:operation"
+import module "modus:contract/module"
+import op "modus:contract/operation"
 import "base:runtime"
 import "core:odin/tokenizer"
 import "core:testing"
@@ -199,7 +199,7 @@ describe_reads_tables :: proc(t: ^testing.T) {
 TABLE_PARAMETER_SOURCE :: `// Tables as parameters.
 package sample
 
-import "support:system"
+import "modus:support/system"
 
 Kind :: enum u8 {
 	None = 0,

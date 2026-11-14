@@ -1,6 +1,6 @@
 package kerneltool
 
-import module "contract:module"
+import module "modus:contract/module"
 import "core:testing"
 
 // The rebase table that encode_rebases writes must make module.rebase add

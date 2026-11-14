@@ -5,7 +5,7 @@ package _edwards25519
 	------ GENERATED ------ DO NOT EDIT ------ GENERATED ------ DO NOT EDIT ------ GENERATED ------
 */
 
-import crypto "support:cryptography/compatibility_crypto"
+import crypto "modus:support/cryptography/compatibility_crypto"
 
 when crypto.COMPACT_IMPLS == false {
 	@(private,rodata)

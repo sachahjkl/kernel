@@ -22,13 +22,13 @@
 // - `value_write`, `value_part` (`values.odin`): the text of a value by the
 //   kind of its type, and its fields or its elements one by one.
 //
-// It reads a debug object only through `contract:debug_object`, and it
+// It reads a debug object only through `modus:contract/debug_object`, and it
 // computes no location that the tables do not give.
 //
 // See [debugger](term:debugger) and [debug object](term:debug-object).
 package debugging
 
-import debug_object "contract:debug_object"
+import debug_object "modus:contract/debug_object"
 
 // The memory of the debugged program, as its reader gives it. `read` fills
 // `into` whole from `address` and gives true, or gives false and the bytes

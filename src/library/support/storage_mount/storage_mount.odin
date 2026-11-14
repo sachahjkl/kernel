@@ -7,9 +7,9 @@
 package storage_mount
 
 import "base:intrinsics"
-import format "contract:store"
-import block_tree "support:storage_object"
-import tree "support:storage_tree"
+import format "modus:contract/store"
+import block_tree "modus:support/storage_object"
+import tree "modus:support/storage_tree"
 
 BLOCK_SIZE :: format.BLOCK_SIZE // The bytes of one block of the disk.
 SCRATCH_BLOCKS :: format.OBJECT_FANOUT + 2 // The blocks of data of one object node, read in one request.

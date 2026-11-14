@@ -7,8 +7,8 @@ See:
 */
 package hmac
 
-import crypto "support:cryptography/compatibility_crypto"
-import hash "support:cryptography/compatibility_hash"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import hash "modus:support/cryptography/compatibility_hash"
 
 // sum will compute the HMAC with the specified algorithm and key
 // over msg, and write the computed tag to dst.  It requires that

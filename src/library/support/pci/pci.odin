@@ -9,7 +9,7 @@
 // sets its message interrupt (MSI-X) before the start of the service.
 package pci
 
-import "support:system"
+import "modus:support/system"
 
 // The roles of the context of a device service of a PCI device.
 GRANT_INTERRUPT :: 1 // A message interrupt (operation.Device_Kind.Message).

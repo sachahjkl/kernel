@@ -1,7 +1,7 @@
 #+build !freestanding
 package system
 
-import "contract:errors"
+import "modus:contract/errors"
 import "core:testing"
 
 // A nil table: the caller asked for no details. Nothing is written, and the

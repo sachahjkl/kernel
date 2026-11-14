@@ -1,7 +1,7 @@
 // Altered source: Odin dev-2026-11a, core/crypto/aes/aes_ecb.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package aes
 
-import "support:cryptography/_aes/ct64"
+import "modus:support/cryptography/_aes/ct64"
 
 // Context_ECB is a keyed AES-ECB instance.
 //

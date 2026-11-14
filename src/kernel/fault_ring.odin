@@ -1,7 +1,7 @@
 package kernel
 
 import "base:intrinsics"
-import op "contract:operation"
+import op "modus:contract/operation"
 
 // The fault ring (docs/ARCHITECTURE.md, "The fault ring"). A program names
 // one of its threads as its fault handler (Fault_Handler_Set), with the

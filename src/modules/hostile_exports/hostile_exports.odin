@@ -19,8 +19,8 @@
 // the module.
 package hostile_exports
 
-import op "contract:operation"
-import "support:system"
+import op "modus:contract/operation"
+import "modus:support/system"
 
 // bytes_of maps a memory object for the time of one export. count is 0 when
 // the kernel refuses; then status says why.

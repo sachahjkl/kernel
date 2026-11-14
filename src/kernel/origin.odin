@@ -1,8 +1,8 @@
 package kernel
 
 import "base:intrinsics"
-import "contract:errors"
-import op "contract:operation"
+import "modus:contract/errors"
+import op "modus:contract/operation"
 
 // The origin tree: what came from which handle. Kernel state is flat tables
 // with no pointer tree, so the tree is one table of links below

@@ -29,9 +29,9 @@
 // (docs/ARCHITECTURE.md, "U9. Base library").
 package system
 
-import "contract:errors"
-import op "contract:operation"
-import "contract:ring"
+import "modus:contract/errors"
+import op "modus:contract/operation"
+import "modus:contract/ring"
 import "base:intrinsics"
 
 // The names of the contract that a program uses most, so that it writes

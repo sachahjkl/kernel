@@ -5,7 +5,7 @@
 // it counted, and waits again.
 package lockers
 
-import "contract:fixed_addresses"
+import "modus:contract/fixed_addresses"
 
 // The roles of the context of a locker.
 GRANT_BOARD :: 0 // Memory, with Read and Write: the board, one page that `locks` also maps.

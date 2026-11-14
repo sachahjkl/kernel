@@ -36,11 +36,11 @@
 // the processor (docs/RANDOMNESS.md, section 3).
 package randomness
 
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:random"
-import "support:system"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/random"
+import "modus:support/system"
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 896

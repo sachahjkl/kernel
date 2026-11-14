@@ -29,19 +29,19 @@
 package cryptography
 
 import "base:runtime"
-import "contract:errors"
-import "support:cryptography/aes"
-import "support:cryptography/argon2id"
-import "support:cryptography/chacha20"
-import "support:cryptography/chacha20poly1305"
-import bytes "support:cryptography/compatibility_bytes"
-import crypto "support:cryptography/compatibility_crypto"
-import "support:cryptography/ed25519"
-import "support:cryptography/hkdf"
-import "support:cryptography/hmac"
-import "support:cryptography/sha2"
-import "support:cryptography/x25519"
-import "support:system"
+import "modus:contract/errors"
+import "modus:support/cryptography/aes"
+import "modus:support/cryptography/argon2id"
+import "modus:support/cryptography/chacha20"
+import "modus:support/cryptography/chacha20poly1305"
+import bytes "modus:support/cryptography/compatibility_bytes"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import "modus:support/cryptography/ed25519"
+import "modus:support/cryptography/hkdf"
+import "modus:support/cryptography/hmac"
+import "modus:support/cryptography/sha2"
+import "modus:support/cryptography/x25519"
+import "modus:support/system"
 
 TAG_SIZE :: 16
 NONCE_SIZE :: 12

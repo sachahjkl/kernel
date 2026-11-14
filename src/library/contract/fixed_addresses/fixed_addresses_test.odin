@@ -1,7 +1,7 @@
 #+build !freestanding
 package fixed_addresses
 
-import op "contract:operation"
+import op "modus:contract/operation"
 import "core:testing"
 
 // Each pair of ranges: no two overlap, and each is inside the band on a

@@ -24,13 +24,13 @@
 // See [boot display](term:boot-display).
 package bootscreen
 
-import info "contract:boot_info"
-import "support:bootscreen/image_card"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:mark"
-import op "contract:operation"
+import info "modus:contract/boot_info"
+import "modus:support/bootscreen/image_card"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/mark"
+import op "modus:contract/operation"
 import "base:intrinsics"
 
 WIDTH :: 976 // The size that the display needs.

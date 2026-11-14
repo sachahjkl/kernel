@@ -1,12 +1,12 @@
 #+build !freestanding
 package graphics
 
-import "contract:glyph_cache"
+import "modus:contract/glyph_cache"
 import "core:fmt"
 import "core:math"
 import "core:testing"
 import "core:time"
-import "support:vector_font"
+import "modus:support/vector_font"
 
 // The blend in linear light with a gamma of 2 (blend_coverage_row) against
 // the curve of sRGB, for the text of the rules on a card: light text on a

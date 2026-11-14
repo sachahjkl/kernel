@@ -6,7 +6,7 @@
 // two, one and entry (program `errors`).
 package fault
 
-import "support:system"
+import "modus:support/system"
 import "base:intrinsics"
 
 depth: u64 // Each function writes it after its call: no call is the last instruction of a function.

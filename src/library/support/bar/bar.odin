@@ -5,9 +5,9 @@
 // The palette (src/library/support/palette) lists the same names.
 package bar
 
-import "contract:glyph_cache"
-import "support:mark"
-import "support:text_shaping"
+import "modus:contract/glyph_cache"
+import "modus:support/mark"
+import "modus:support/text_shaping"
 
 // The programs that the menu of the programs offers, in its order.
 @(rodata)

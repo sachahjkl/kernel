@@ -1,7 +1,7 @@
 package kernel
 
 import "base:intrinsics"
-import op "contract:operation"
+import op "modus:contract/operation"
 
 // The virtual memory of a program (docs/ARCHITECTURE.md, "The virtual
 // memory of a program"): commit and decommit the pages of an uncommitted

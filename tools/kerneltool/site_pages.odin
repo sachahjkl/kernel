@@ -4,7 +4,7 @@
 // documentation: a guide (a document of docs/) or a reference table.
 package kerneltool
 
-import "contract:value_kinds"
+import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:os"
 import "core:slice"

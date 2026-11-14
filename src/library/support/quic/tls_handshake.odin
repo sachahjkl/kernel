@@ -24,8 +24,8 @@ package quic
 // CONNECTION_CLOSE of QUIC, 0x100 + alert, RFC 9001 section 4.8) and an
 // error record whose found field is the alert.
 
-import "contract:errors"
-import "support:random"
+import "modus:contract/errors"
+import "modus:support/random"
 
 // The value of the `legacy_version` field of a ClientHello and a ServerHello of TLS 1.3: 0x0303, the number of TLS 1.2.
 //

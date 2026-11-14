@@ -27,7 +27,7 @@
 package palette_table
 
 import "base:intrinsics"
-import "contract:settings"
+import "modus:contract/settings"
 
 MAGIC :: 0x544C4150 // "PALT", little-endian.
 VERSION :: 2 // A new field or a new meaning of a field is a new version.
@@ -50,7 +50,7 @@ SNAPSHOT_TRIES :: 4 // The times that a reader copies a table that changes while
 Entry_Kind :: enum u8 {
 	Command = 0, // A command of the provider itself.
 	Export  = 1, // An export of a module or of a service, which the provider calls.
-	Setting = 2, // One value of one setting of the machine (contract:settings): the provider sets it.
+	Setting = 2, // One value of one setting of the machine (modus:contract/settings): the provider sets it.
 }
 
 // The facts of an entry that are true or false.

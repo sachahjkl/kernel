@@ -23,8 +23,8 @@
 
 package aes_ct64
 
-import "support:cryptography/_aes"
-import endian "support:cryptography/compatibility_endian"
+import "modus:support/cryptography/_aes"
+import endian "modus:support/cryptography/compatibility_endian"
 
 @(private = "file")
 bmul64 :: proc "contextless" (x, y: u64) -> u64 {

@@ -3,7 +3,7 @@ package kerneltool
 import "core:log"
 import "core:strings"
 import "core:testing"
-import "support:graphics"
+import "modus:support/graphics"
 
 // A text with each kind of token: a file tag, a comment of each form, a
 // string, a raw string, a rune, numbers, a directive, an attribute, a

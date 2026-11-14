@@ -197,8 +197,8 @@ grep "root: the resource glyph_cache" build/test_output.txt
 On the host, with the optimisation of a module. Each test prints the time of each form, and fails only when the forms give different bytes:
 
 ```
-nix develop -c odin test src/library/support/graphics -o:speed -vet -collection:contract=src/library/contract -collection:support=src/library/support -define:ODIN_TEST_NAMES=graphics.glyph_draw_cost_of_each_form
-nix develop -c odin test src/library/contract/blake3 -o:speed -vet -collection:contract=src/library/contract -collection:support=src/library/support -define:ODIN_TEST_NAMES=blake3.hash_cost_of_each_form
+nix develop -c odin test src/library/support/graphics -o:speed -vet -collection:modus=src/library -define:ODIN_TEST_NAMES=graphics.glyph_draw_cost_of_each_form
+nix develop -c odin test src/library/contract/blake3 -o:speed -vet -collection:modus=src/library -define:ODIN_TEST_NAMES=blake3.hash_cost_of_each_form
 ```
 
 `graphics.text_speed_of_each_blend` gives the time of one glyph with the blend table, with the SSE2 form alone and with the scalar form alone, in the same way.

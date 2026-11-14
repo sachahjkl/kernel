@@ -34,16 +34,16 @@
 // network is in docs/NETWORK.md.
 package fetch
 
-import "contract:datagram"
-import "contract:errors"
-import "contract:ring"
-import "support:display"
-import "support:graphics"
-import "support:network"
-import "support:random"
-import "support:system"
-import "support:tcp"
-import "support:web"
+import "modus:contract/datagram"
+import "modus:contract/errors"
+import "modus:contract/ring"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/network"
+import "modus:support/random"
+import "modus:support/system"
+import "modus:support/tcp"
+import "modus:support/web"
 
 REMOTE :: 0x0A000264 // 10.0.2.100
 REMOTE_PORT :: 80

@@ -2,7 +2,7 @@
 package storage_tree
 
 import "base:runtime"
-import format "contract:store"
+import format "modus:contract/store"
 import "core:fmt"
 import "core:math/rand"
 import "core:strconv"

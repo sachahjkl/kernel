@@ -1,8 +1,8 @@
 #+build !freestanding
 package isolated
 
-import "contract:errors"
-import module "contract:module"
+import "modus:contract/errors"
+import module "modus:contract/module"
 import "core:testing"
 
 // The tests of the table of error details (docs/MODULE_CONTRACT.md, section

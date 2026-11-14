@@ -48,15 +48,15 @@
 // the window.
 package server
 
-import "contract:date"
-import "contract:datagram"
-import "contract:ring"
-import "support:display"
-import "support:network"
-import "support:storage"
-import "support:random"
-import "support:system"
-import "support:tcp"
+import "modus:contract/date"
+import "modus:contract/datagram"
+import "modus:contract/ring"
+import "modus:support/display"
+import "modus:support/network"
+import "modus:support/storage"
+import "modus:support/random"
+import "modus:support/system"
+import "modus:support/tcp"
 
 CAPACITY :: 48 // Connections at one time, with the ones in TIME-WAIT.
 REMOTE_LIMIT :: 24 // The open connections of one remote address: half the table (tcp.Table.remote_limit).

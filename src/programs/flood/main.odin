@@ -26,8 +26,8 @@
 // it shares with its terminal. Nothing else.
 package flood
 
-import "support:system"
-import terminal "support:terminal"
+import "modus:support/system"
+import terminal "modus:support/terminal"
 
 STATUS_LINES :: 1 << 16 // The lines between two statuses.
 KEY_LINES :: 256 // The lines between two looks at the keys.

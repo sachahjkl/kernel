@@ -48,12 +48,12 @@
 // docs/NETWORK.md.
 package frame_service
 
-import "contract:errors"
-import "contract:frame"
-import "contract:ring"
-import "support:pci"
-import "support:system"
-import "support:virtio"
+import "modus:contract/errors"
+import "modus:contract/frame"
+import "modus:contract/ring"
+import "modus:support/pci"
+import "modus:support/system"
+import "modus:support/virtio"
 
 // The features of a virtio network device that this service takes.
 FEATURE_MAC :: 5 // The configuration has the hardware address.

@@ -22,9 +22,9 @@
 // [commit](storage.commit) of the storage service.
 package ranges
 
-import "contract:errors"
-import "support:storage"
-import "support:system"
+import "modus:contract/errors"
+import "modus:support/storage"
+import "modus:support/system"
 
 GIB :: u64(1) << 30
 BLOCK :: 4096

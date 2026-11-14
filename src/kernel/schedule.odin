@@ -1,7 +1,7 @@
 package kernel
 
 import "base:intrinsics"
-import op "contract:operation"
+import op "modus:contract/operation"
 
 // The scheduler (docs/ARCHITECTURE.md, "Scheduler"; docs/ARCHITECTURE.md,
 // "Locks of the kernel", "The scheduler"). Each processor has a run queue:

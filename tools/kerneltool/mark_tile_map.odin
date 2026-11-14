@@ -14,8 +14,8 @@ package kerneltool
 
 import "core:fmt"
 import "core:strings"
-import "support:graphics"
-import "support:mark"
+import "modus:support/graphics"
+import "modus:support/mark"
 
 // One step of the play of an animation on the home: one picture for a
 // time. The picture is the sprite of a frame, or a drawn form of that

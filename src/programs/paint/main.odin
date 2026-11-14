@@ -24,11 +24,11 @@
 // yellow, violet. The paper is not kept: a new start gives a clean paper.
 package paint
 
-import "contract:errors"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:system"
+import "modus:contract/errors"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/system"
 
 WIDTH :: 480
 HEIGHT :: 320

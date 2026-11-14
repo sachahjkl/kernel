@@ -1,7 +1,7 @@
 #+build !freestanding
 package vector_font
 
-import "contract:glyph_cache"
+import "modus:contract/glyph_cache"
 import "core:fmt"
 import "core:testing"
 

@@ -1,10 +1,10 @@
 #+build !freestanding
 package information
 
-import "contract:blake3"
-import info "contract:boot_info"
-import module "contract:module"
-import op "contract:operation"
+import "modus:contract/blake3"
+import info "modus:contract/boot_info"
+import module "modus:contract/module"
+import op "modus:contract/operation"
 import "core:math/rand"
 import "core:testing"
 

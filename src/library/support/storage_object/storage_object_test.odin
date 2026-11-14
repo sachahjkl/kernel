@@ -2,8 +2,8 @@
 package storage_object
 
 import "base:runtime"
-import "contract:blake3"
-import format "contract:store"
+import "modus:contract/blake3"
+import format "modus:contract/store"
 import "core:encoding/hex"
 import "core:slice"
 import "core:testing"

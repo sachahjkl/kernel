@@ -5,7 +5,7 @@ package quic
 // HKDF-Expand-Label, the Initial keys from a connection identifier, and the
 // integrity tag of a Retry packet.
 
-import "contract:errors"
+import "modus:contract/errors"
 
 // Cryptography holds the procedures of the module `cryptography` that QUIC calls.
 //

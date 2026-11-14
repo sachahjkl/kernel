@@ -17,7 +17,7 @@ package quic
 // Each field is read with its length checked first (`Frame_Reader`): no read
 // goes past the end of a packet.
 
-import "contract:errors"
+import "modus:contract/errors"
 
 // connection_datagram_receive takes one datagram from the peer, and processes
 // each packet in it.

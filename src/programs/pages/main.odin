@@ -36,11 +36,11 @@
 // change of a mapping.
 package pages
 
-import info "contract:boot_info"
-import "support:display"
-import "support:graphics"
-import op "contract:operation"
-import "support:system"
+import info "modus:contract/boot_info"
+import "modus:support/display"
+import "modus:support/graphics"
+import op "modus:contract/operation"
+import "modus:support/system"
 
 WIDTH :: 688
 HEIGHT :: 668
