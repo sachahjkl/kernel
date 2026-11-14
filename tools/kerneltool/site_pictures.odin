@@ -1,9 +1,11 @@
 // The pictures of the mark that the site draws itself from support/mark
 // (docs/SITE.md, "The mark on the site"). On the pages the mark is drawn on
 // nothing: a transparent picture over the page, one for each color scheme.
-// Each picture is drawn at a whole cell size, and the page shows it at its
-// own size, so that each cell keeps its pixels. The picture for other sites
-// (the card) keeps the dark background: those sites show it on white.
+// The heron of a page has one pixel for each cell, and the style sheet of
+// the page gives a cell its size, a whole count of page pixels, with no
+// smoothing. The picture for other sites (the card) has its real pixels and
+// keeps the dark background: those sites show it on white, with no style
+// sheet of this site.
 package kerneltool
 
 import "core:fmt"
@@ -21,22 +23,28 @@ Site_Mark_Picture :: struct {
 	height:     int,
 }
 
-SITE_MARK_HOME :: "mark_home.png"
-SITE_MARK_HOME_LIGHT :: "mark_home_light.png"
-SITE_MARK_BAR :: "mark_bar.png"
-SITE_MARK_BAR_LIGHT :: "mark_bar_light.png"
+SITE_MARK_HERON :: "mark_heron.png"
+SITE_MARK_HERON_LIGHT :: "mark_heron_light.png"
 SITE_MARK_CARD :: "mark_card.png"
 
-// The home head: the heron alone, cells of 8 (192 pixels). The bar: the
-// heron alone, cells of 1 (24 pixels). On a page the name is text in the
-// font of the name of the mark (site_mark_name.odin). The card for other
-// sites, 1200 by 630, holds the name: it is one picture that another site
-// shows with no page and no font of this site around it.
+// The heron of a page is one picture with one pixel for each cell, 24 by
+// 24 pixels: a cell of the heron has one color, so more pixels for a cell
+// say nothing more. The page gives the cell its size: the style sheet
+// shows the picture at a whole count of page pixels for each cell, with no
+// smoothing. The bar shows it at 1 pixel for a cell, the head of the home
+// at this many.
+SITE_MARK_HOME_FACTOR :: 8
+SITE_MARK_HOME_SIZE :: SITE_MARK_HOME_FACTOR * mark.HERON_GRID_SIZE
+
+// The heron alone, cells of 1 pixel, in its two color schemes: the bar and
+// the head of the home show it. On a page the name is text in the font of
+// the name of the mark (site_mark_name.odin). The card for other sites,
+// 1200 by 630, holds the name: it is one picture that another site shows
+// with no page, no font and no style sheet of this site around it, so it
+// has its real pixels.
 site_mark_pictures := [?]Site_Mark_Picture {
-	{file_name = SITE_MARK_HOME, heron_cell = 8},
-	{file_name = SITE_MARK_HOME_LIGHT, heron_cell = 8, on_light = true},
-	{file_name = SITE_MARK_BAR, heron_cell = 1},
-	{file_name = SITE_MARK_BAR_LIGHT, heron_cell = 1, on_light = true},
+	{file_name = SITE_MARK_HERON, heron_cell = 1},
+	{file_name = SITE_MARK_HERON_LIGHT, heron_cell = 1, on_light = true},
 	{file_name = SITE_MARK_CARD, heron_cell = 16, name_cell = 12, gap = 32, opaque = true, width = 1200, height = 630},
 }
 
@@ -151,4 +159,34 @@ site_pixels_encode :: proc(name: string, width, height, channels: int, pixels: [
 		return nil, false
 	}
 	return output[:], true
+}
+
+// site_pixels_encode_smallest gives the smallest PNG file that the encoder
+// of the standard library writes for pixels of 3 or 4 bytes: the highest
+// level of its deflate, and each of its row filters in turn (none, sub,
+// up, average, Paeth, and the one chosen row by row), the smallest file
+// kept. The pixels are the same in each: nothing is lost. It is for a
+// small picture that each reader of the site loads: it compresses the
+// pixels six times. Which filter wins depends on the pixels only, so the
+// same pixels give the same bytes.
+site_pixels_encode_smallest :: proc(name: string, width, height, channels: int, pixels: []u8) -> (file: []u8, ok: bool) {
+	image := png.Image {
+		width    = width,
+		height   = height,
+		channels = channels,
+		depth    = 8,
+	}
+	image.pixels = make([dynamic]u8, len(pixels), len(pixels), context.temp_allocator)
+	copy(image.pixels[:], pixels)
+	for strategy in png.Filter_Strategy {
+		output := make([dynamic]u8, context.temp_allocator)
+		if err := png.save_to_buffer(&output, &image, level = .Best, filter = strategy, allocator = context.temp_allocator); err != nil {
+			fmt.eprintfln("kerneltool: site: cannot encode %s: %v", name, err)
+			return nil, false
+		}
+		if file == nil || len(output) < len(file) {
+			file = output[:]
+		}
+	}
+	return file, true
 }

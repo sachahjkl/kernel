@@ -8,16 +8,19 @@
 //
 // What the site gets:
 //   pictures/mark_animation_home.png and mark_animation_home_light.png: one
-//     sprite sheet for each color scheme. Each sprite is the whole picture of
-//     the head of the home (the heron alone) for one distinct frame, in rows
-//     of SITE_MARK_SHEET_COLUMNS sprites; the first sprite is the still
-//     heron, the same pixels as mark_home.png.
-//   pictures/mark_animation_icon.png: the same sprites at the size of the
-//     icon of the tab (32 pixels, the drawing of the 32 of favicon.ico).
-//     One sheet is one request; the script cuts it on a canvas.
+//     sprite sheet for each color scheme, with one pixel for each cell of
+//     the heron. Each sprite is the heron alone for one distinct frame, 24
+//     by 24 pixels, in rows of SITE_MARK_SHEET_COLUMNS sprites; the first
+//     sprite is the still heron, the same pixels as mark_heron.png. Under
+//     the sprites are the drawn forms of the moves. One sheet is one
+//     request; the script cuts it on a canvas that has one pixel for a
+//     cell too, and the style sheet gives a cell its size on the page.
 //   mark_animation.js: the script, with the table of the sprites, of the
 //     frames, of the moves and of the rule of the choice written into it: no
 //     other request.
+// The icon of the tab has no sheet of its own: the icon of 32 pixels of
+// favicon.ico is the heron at one pixel for a cell in the colors of the
+// light scheme, so the script cuts it from the sheet of that scheme.
 // The home loads the script; no other page does.
 package kerneltool
 
@@ -31,8 +34,11 @@ import "support:mark"
 SITE_MARK_ANIMATION_SCRIPT :: "mark_animation.js"
 SITE_MARK_ANIMATION_HOME :: "mark_animation_home.png"
 SITE_MARK_ANIMATION_HOME_LIGHT :: "mark_animation_home_light.png"
-SITE_MARK_ANIMATION_ICON :: "mark_animation_icon.png"
+// The icon of the tab that the script draws during an animation: the size
+// of the icon of favicon.ico whose cells are one pixel, and the empty
+// pixels around the heron in it, at each side.
 SITE_MARK_ANIMATION_ICON_SIZE :: 32
+SITE_MARK_ANIMATION_ICON_MARGIN :: (SITE_MARK_ANIMATION_ICON_SIZE - mark.HERON_GRID_SIZE) / 2
 
 // The sprites of a sheet are in rows of this many: one row of all the
 // sprites of the home is wider than a browser decodes in a picture.
@@ -88,28 +94,35 @@ site_mark_sprites :: proc() -> (sprites: Site_Mark_Sprites, ok: bool) {
 	return sprites, true
 }
 
-// The pictures of the mark that the sheets repeat: the head of the home in
-// its two color schemes, and the 32 of favicon.ico.
-site_mark_animation_pictures :: proc() -> (home_dark, home_light, icon: Site_Mark_Picture, ok: bool) {
-	found_dark, found_light, found_icon := false, false, false
+// The pictures of the mark that the sheets repeat: the heron of a page, one
+// pixel for a cell, in its two color schemes.
+site_mark_animation_pictures :: proc() -> (heron_dark, heron_light: Site_Mark_Picture, ok: bool) {
+	found_dark, found_light := false, false
 	for picture in site_mark_pictures {
 		switch picture.file_name {
-		case SITE_MARK_HOME:
-			home_dark, found_dark = picture, true
-		case SITE_MARK_HOME_LIGHT:
-			home_light, found_light = picture, true
+		case SITE_MARK_HERON:
+			heron_dark, found_dark = picture, true
+		case SITE_MARK_HERON_LIGHT:
+			heron_light, found_light = picture, true
 		}
 	}
+	if !found_dark || !found_light || heron_dark.heron_cell != 1 || heron_light.heron_cell != 1 {
+		fmt.eprintln("kerneltool: site: the heron of a page, one pixel for a cell, is not in the table of the pictures of the mark in its two color schemes")
+		return {}, {}, false
+	}
+	return heron_dark, heron_light, true
+}
+
+// site_mark_tab_icon_picture gives the picture of the icon of favicon.ico
+// that the script draws again from the sheet of the light scheme during an
+// animation: the icon of SITE_MARK_ANIMATION_ICON_SIZE pixels.
+site_mark_tab_icon_picture :: proc() -> (icon: Site_Mark_Picture, ok: bool) {
 	for candidate in site_icons {
 		if candidate.in_favicon && candidate.size == SITE_MARK_ANIMATION_ICON_SIZE {
-			icon, found_icon = site_icon_picture(candidate), true
+			return site_icon_picture(candidate), true
 		}
 	}
-	if !found_dark || !found_light || !found_icon {
-		fmt.eprintln("kerneltool: site: the pictures of the home or the icon of 32 pixels are not in the tables of the mark")
-		return {}, {}, {}, false
-	}
-	return home_dark, home_light, icon, true
+	return {}, false
 }
 
 // site_mark_sheet_shape gives the count of the columns and of the rows of
@@ -157,18 +170,19 @@ site_mark_sheet_pixels :: proc(picture: Site_Mark_Picture, sprites: ^Site_Mark_S
 	return
 }
 
-// The sheets, each with the picture of the mark that its sprites repeat.
-// The sheets of the home hold the drawn forms of the moves; the icon of
-// the tab does not move, so its sheet holds the frames only.
+// The sheets, each with the picture of the mark that its sprites repeat:
+// one for each color scheme. Each holds the drawn forms of the moves.
 Site_Mark_Sheet :: struct {
 	file_name:  string,
 	picture:    Site_Mark_Picture,
 	with_forms: bool,
 }
 
-site_mark_sheets :: proc() -> (sheets: [3]Site_Mark_Sheet, ok: bool) {
-	home_dark, home_light, icon := site_mark_animation_pictures() or_return
-	sheets = [3]Site_Mark_Sheet{{SITE_MARK_ANIMATION_HOME, home_dark, true}, {SITE_MARK_ANIMATION_HOME_LIGHT, home_light, true}, {SITE_MARK_ANIMATION_ICON, icon, false}}
+SITE_MARK_SHEET_COUNT :: 2
+
+site_mark_sheets :: proc() -> (sheets: [SITE_MARK_SHEET_COUNT]Site_Mark_Sheet, ok: bool) {
+	heron_dark, heron_light := site_mark_animation_pictures() or_return
+	sheets = [SITE_MARK_SHEET_COUNT]Site_Mark_Sheet{{SITE_MARK_ANIMATION_HOME, heron_dark, true}, {SITE_MARK_ANIMATION_HOME_LIGHT, heron_light, true}}
 	return sheets, true
 }
 
@@ -177,23 +191,24 @@ site_mark_sheet_path :: proc(file_name: string) -> string {
 }
 
 // site_mark_animation_files gives the files of the animations, by their
-// path in the site: the three sheets and the script. The script names each
+// path in the site: the two sheets and the script. The script names each
 // sheet with the version of its bytes: a sheet changes when a frame of an
 // animation changes, and a script must never cut the sheet of another
-// build that a cache kept.
+// build that a cache kept. A sheet is the smallest file that the encoder
+// writes for its pixels: each reader of the home loads it.
 site_mark_animation_files :: proc() -> (files: map[string][]u8, ok: bool) {
 	sprites := site_mark_sprites() or_return
 	sheets := site_mark_sheets() or_return
 	forms := site_mark_forms(&sprites) or_return
 	files = make(map[string][]u8, context.temp_allocator)
-	addresses: [3]string
+	addresses: [SITE_MARK_SHEET_COUNT]string
 	for sheet, index in sheets {
 		sheet_forms: ^Site_Mark_Forms
 		if sheet.with_forms {
 			sheet_forms = &forms
 		}
 		pixels, width, height, channels := site_mark_sheet_pixels(sheet.picture, &sprites, sheet_forms)
-		data := site_pixels_encode(sheet.file_name, width, height, channels, pixels) or_return
+		data := site_pixels_encode_smallest(sheet.file_name, width, height, channels, pixels) or_return
 		path := site_mark_sheet_path(sheet.file_name)
 		files[path] = data
 		addresses[index] = strings.concatenate({path, "?v=", site_bytes_version(data)}, context.temp_allocator)
@@ -220,7 +235,7 @@ site_mark_animation_write :: proc(site: ^Site) -> bool {
 	sprites, _ := site_mark_sprites()
 	still_least, still_most := site_mark_still_bounds()
 	fmt.printfln(
-		"kerneltool: site: the animations of the mark: %d animations, %d ms in all, %d sprites; a still time of %d to %d ms; %s %d bytes, %s %d bytes, %s %d bytes, %s %d bytes",
+		"kerneltool: site: the animations of the mark: %d animations, %d ms in all, %d sprites, one pixel for a cell; a still time of %d to %d ms; %s %d bytes, %s %d bytes, %s %d bytes",
 		len(mark.Animation),
 		site_mark_animations_duration(),
 		len(sprites.cells),
@@ -230,8 +245,6 @@ site_mark_animation_write :: proc(site: ^Site) -> bool {
 		len(files[site_mark_sheet_path(SITE_MARK_ANIMATION_HOME)]),
 		SITE_MARK_ANIMATION_HOME_LIGHT,
 		len(files[site_mark_sheet_path(SITE_MARK_ANIMATION_HOME_LIGHT)]),
-		SITE_MARK_ANIMATION_ICON,
-		len(files[site_mark_sheet_path(SITE_MARK_ANIMATION_ICON)]),
 		SITE_MARK_ANIMATION_SCRIPT,
 		len(files[SITE_MARK_ANIMATION_SCRIPT]),
 	)
@@ -298,8 +311,10 @@ site_mark_animation_problems :: proc(files: map[string][]u8) -> []string {
 //     in one row;
 //   cells: the count of the cells of a side of the heron;
 //   home: the two sheets of the head of the home, the size of a sprite, and
-//     the height of the rows of the water at its bottom;
-//   icon: the sheet of the icon and the size of a sprite;
+//     the height of the rows of the water at its bottom, in pixels of the
+//     sheet: one pixel is one cell;
+//   icon: the size of the icon of the tab and the empty pixels around the
+//     heron in it;
 //   forms: where the drawn forms of the moves are in a sheet of the home
 //     (site_mark_forms_table_write);
 //   animations: for each animation its name, its time, its frames, each
@@ -310,7 +325,7 @@ site_mark_animation_problems :: proc(files: map[string][]u8) -> []string {
 //     [still milliseconds, animation], which the self test compares;
 //   limits: the bounds of support/mark for a frame.
 // The paths are relative to the folder of the script: the root of the site.
-site_mark_animation_table_json :: proc(sprites: ^Site_Mark_Sprites, forms: ^Site_Mark_Forms, home: Site_Mark_Picture, sheet_addresses: [3]string) -> string {
+site_mark_animation_table_json :: proc(sprites: ^Site_Mark_Sprites, forms: ^Site_Mark_Forms, home: Site_Mark_Picture, sheet_addresses: [SITE_MARK_SHEET_COUNT]string) -> string {
 	// The braces are written as text, never through a format of fmt.
 	b := strings.builder_make(context.temp_allocator)
 	write :: proc(b: ^strings.Builder, text: string) {
@@ -338,10 +353,10 @@ site_mark_animation_table_json :: proc(sprites: ^Site_Mark_Sprites, forms: ^Site
 	number(&b, height)
 	write(&b, ",\"water\":")
 	number(&b, mark.WATER_ROWS * home.heron_cell)
-	write(&b, "},\"icon\":{\"sheet\":")
-	site_json_string(&b, sheet_addresses[2])
-	write(&b, ",\"size\":")
+	write(&b, "},\"icon\":{\"size\":")
 	number(&b, SITE_MARK_ANIMATION_ICON_SIZE)
+	write(&b, ",\"margin\":")
+	number(&b, SITE_MARK_ANIMATION_ICON_MARGIN)
 	write(&b, "},\"animations\":[")
 	first_animation := true
 	frame_least := mark.FRAME_DURATION_LEAST
@@ -392,39 +407,68 @@ site_mark_animation_table_json :: proc(sprites: ^Site_Mark_Sprites, forms: ^Site
 
 // site_mark_animation_script gives mark_animation.js: the source below with
 // the table in its place.
-site_mark_animation_script :: proc(sprites: ^Site_Mark_Sprites, forms: ^Site_Mark_Forms, home: Site_Mark_Picture, sheet_addresses: [3]string) -> string {
+site_mark_animation_script :: proc(sprites: ^Site_Mark_Sprites, forms: ^Site_Mark_Forms, home: Site_Mark_Picture, sheet_addresses: [SITE_MARK_SHEET_COUNT]string) -> string {
 	script, _ := strings.replace_all(SITE_MARK_ANIMATION_SCRIPT_SOURCE, "/*TABLE*/null", site_mark_animation_table_json(sprites, forms, home, sheet_addresses), context.temp_allocator)
 	return script
 }
 
+// The two declarations that keep each pixel of a picture a sharp square
+// when the page shows it larger. The second is the one of the standard;
+// the first is for a browser that knows only the older word, and a
+// browser that knows both takes the second.
+SITE_MARK_NO_SMOOTHING :: "image-rendering: crisp-edges; image-rendering: pixelated; "
+
 // site_mark_animation_rules gives the rules of the style sheet for the
-// heron of the home while its script plays. The stage has the box of the
-// still picture, so nothing beside it moves when it takes its place. No
-// rule changes the size of a picture of the heron: a cell of the heron is
-// a square of one size, and a squashed heron is another drawing. The
-// two canvases take no pointer: a heron that crosses the page never takes
-// a click from a link under it. While the heron crosses the window, the
-// page is cut at the sides of the window, so no scroll bar appears for a
-// heron that is outside. For a reader who asks for reduced motion the
-// stage is never shown, also when a script puts it in the page.
+// heron of the home: the still picture, and the stage while the script
+// plays.
+//
+// Each picture of the heron has one pixel for a cell. These rules give a
+// cell its size on the page: SITE_MARK_HOME_FACTOR page pixels, a whole
+// number, at every width of the window. Each size is written in pixels,
+// as a count of cells times that factor: never a part of the width of the
+// page, which gives a part of a pixel for a cell. A layout that needs
+// another size of the heron takes another whole factor in a rule of its
+// own. Each picture is shown with no smoothing: a cell is a sharp square.
+// No other rule changes the size of a picture of the heron: a squashed
+// heron is another drawing.
+//
+// The stage has the box of the still picture, so nothing beside it moves
+// when it takes its place. The two canvases take no pointer: a heron that
+// crosses the page never takes a click from a link under it. While the
+// heron crosses the window, the page is cut at the sides of the window, so
+// no scroll bar appears for a heron that is outside. For a reader who asks
+// for reduced motion the stage is never shown, also when a script puts it
+// in the page.
 site_mark_animation_rules :: proc() -> string {
-	home, _, _, _ := site_mark_animation_pictures()
-	width, height := site_mark_size(home)
+	factor := SITE_MARK_HOME_FACTOR
 	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, "/* The heron of the home while its script plays. */\n")
 	// The braces are written as text, never through a format of fmt.
+	strings.write_string(&b, "/* The heron of the home: one pixel of its pictures is one cell, and a cell is ")
+	fmt.sbprintf(&b, "%d", factor)
+	strings.write_string(&b, " pixels of the page. */\n")
+	strings.write_string(&b, ".home-head img.mark { ")
+	fmt.sbprintf(&b, "width: %dpx; height: %dpx; ", mark.HERON_GRID_SIZE * factor, mark.HERON_GRID_SIZE * factor)
+	strings.write_string(&b, SITE_MARK_NO_SMOOTHING + "}\n")
 	strings.write_string(&b, "." + SITE_MARK_STAGE_CLASS + " { display: block; position: relative; ")
-	fmt.sbprintf(&b, "width: %dpx; height: %dpx; ", width, height)
+	fmt.sbprintf(&b, "width: %dpx; height: %dpx; ", mark.HERON_GRID_SIZE * factor, mark.HERON_GRID_SIZE * factor)
 	strings.write_string(&b, "}\n")
-	strings.write_string(&b, "." + SITE_MARK_STAGE_CLASS + " canvas { display: block; position: absolute; left: 0; image-rendering: pixelated; pointer-events: none; }\n")
+	strings.write_string(&b, "." + SITE_MARK_STAGE_CLASS + " canvas { display: block; position: absolute; left: 0; " + SITE_MARK_NO_SMOOTHING + "pointer-events: none; }\n")
 	// The canvas of the heron is the box of a form: it passes the stage at
 	// its left, at its right and above it by the room of the widest and
-	// of the highest form, and its bottom is on the line of the water. It
-	// has the pixels of its pictures: no rule changes its size.
+	// of the highest form, and its bottom is on the line of the water.
 	strings.write_string(&b, "." + SITE_MARK_STAGE_CLASS + " ." + SITE_MARK_HERON_CLASS + " { ")
-	fmt.sbprintf(&b, "left: -%dpx; bottom: %dpx; ", mark.FORM_REACH_LEFT * home.heron_cell, mark.WATER_ROWS * home.heron_cell)
+	fmt.sbprintf(
+		&b,
+		"left: -%dpx; bottom: %dpx; width: %dpx; height: %dpx; ",
+		mark.FORM_REACH_LEFT * factor,
+		mark.WATER_ROWS * factor,
+		SITE_MARK_FORM_BOX_COLUMNS * factor,
+		SITE_MARK_FORM_BOX_ROWS * factor,
+	)
 	strings.write_string(&b, "}\n")
-	strings.write_string(&b, "." + SITE_MARK_STAGE_CLASS + " ." + SITE_MARK_WATER_CLASS + " { bottom: 0; }\n")
+	strings.write_string(&b, "." + SITE_MARK_STAGE_CLASS + " ." + SITE_MARK_WATER_CLASS + " { bottom: 0; ")
+	fmt.sbprintf(&b, "width: %dpx; height: %dpx; ", mark.HERON_GRID_SIZE * factor, mark.WATER_ROWS * factor)
+	strings.write_string(&b, "}\n")
 	strings.write_string(&b, ".home-head picture." + SITE_MARK_REPLACED_CLASS + " { display: none; }\n")
 	strings.write_string(&b, "html." + SITE_MARK_TRAVEL_CLASS + " { overflow-x: clip; }\n")
 	strings.write_string(&b, "@media (prefers-reduced-motion: reduce) {\n  ." + SITE_MARK_STAGE_CLASS + " { display: none; }\n  .home-head picture." + SITE_MARK_REPLACED_CLASS + " { display: block; }\n}\n")
@@ -584,7 +628,8 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
     const limits = TABLE.limits, schedule = TABLE.schedule;
     check("a sheet has sprites in rows", TABLE.sprites >= 1 && TABLE.columns >= 1);
     check("a sprite of the home has a size and its water", TABLE.home.width > 0 && TABLE.home.height > TABLE.home.water && TABLE.home.water > 0);
-    check("a sprite of the icon has a size", TABLE.icon.size > 0);
+    check("the icon of the tab holds a sprite and its margins", TABLE.icon.size === TABLE.home.width + 2 * TABLE.icon.margin && TABLE.icon.margin >= 0);
+    check("a pixel of a sheet is a cell", TABLE.home.width === TABLE.cells && TABLE.home.height === TABLE.cells);
     const forms = TABLE.forms, whole = Number.isInteger;
     check("the box of a drawn form holds the heron above the water", forms.count >= 1 && forms.columns >= 1 && forms.top > 0 &&
       forms.width >= forms.left + TABLE.home.width && forms.height === forms.up + TABLE.home.height - TABLE.home.water);
@@ -695,10 +740,10 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
 
   function load() {
     if (!loading) {
-      const paths = [TABLE.home.dark, TABLE.home.light, TABLE.icon.sheet];
+      const paths = [TABLE.home.dark, TABLE.home.light];
       const images = paths.map(path => { const image = new Image(); image.src = new URL(path, root).href; return image; });
       loading = Promise.all(images.map(image => image.decode())).then(() => {
-        sheets = { dark: images[0], light: images[1], icon: images[2] };
+        sheets = { dark: images[0], light: images[1] };
       }).catch(() => { sheets = null; });
     }
     return loading;
@@ -707,8 +752,10 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
   // The stage: the water at the bottom, which stays, and the heron above
   // it, which a move takes with it. The stage is the box of the still
   // picture. The canvas of the heron is the box of a drawn form: it passes
-  // the stage by the room of the widest and of the highest form, and each
-  // of its pixels is a pixel of the sheet.
+  // the stage by the room of the widest and of the highest form. A canvas
+  // has one pixel for each cell, as the sheet has: each of its pixels is a
+  // pixel of the sheet. The style sheet gives a cell its size on the page,
+  // a whole count of pixels, with no smoothing.
   function build() {
     const width = TABLE.home.width;
     stage = document.createElement("span");
@@ -750,15 +797,19 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
     shownForm = form;
   }
 
-  // The icon of the tab: one sprite at 32 pixels, as a data address. Each
+  // The icon of the tab: one sprite, as a data address. The icon of 32
+  // pixels of the site is the heron at one pixel for a cell in the colors
+  // of the light scheme, with empty pixels around it: so the sprite is
+  // copied from the sheet of the light scheme, pixel for pixel. Each
   // address is made once. The link is in the head only during an animation.
   function iconAddress(sprite) {
     if (!iconAddresses[sprite]) {
-      const size = TABLE.icon.size;
+      const size = TABLE.icon.size, margin = TABLE.icon.margin;
+      const width = TABLE.home.width, height = TABLE.home.height;
       const icon = document.createElement("canvas");
       icon.width = size;
       icon.height = size;
-      icon.getContext("2d").drawImage(sheets.icon, (sprite % TABLE.columns) * size, Math.floor(sprite / TABLE.columns) * size, size, size, 0, 0, size, size);
+      icon.getContext("2d").drawImage(sheets.light, (sprite % TABLE.columns) * width, Math.floor(sprite / TABLE.columns) * height, width, height, margin, margin, width, height);
       iconAddresses[sprite] = icon.toDataURL("image/png");
     }
     return iconAddresses[sprite];

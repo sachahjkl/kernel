@@ -276,13 +276,12 @@ site_size_of_the_pictures_of_the_mark :: proc(t: ^testing.T) {
 		width, height := site_mark_size(picture)
 		drawing_width, drawing_height := site_mark_drawing_size(picture)
 		testing.expectf(t, drawing_width <= width && drawing_height <= height, "%s: the drawing does not fit", picture.file_name)
-		if picture.file_name == SITE_MARK_BAR {
+		// The heron of a page has one pixel for each cell: the bar shows
+		// it as it is, and the head of the home at 8 pixels for a cell.
+		if picture.file_name == SITE_MARK_HERON || picture.file_name == SITE_MARK_HERON_LIGHT {
 			testing.expect_value(t, width, 24)
 			testing.expect_value(t, height, 24)
-		}
-		if picture.file_name == SITE_MARK_HOME || picture.file_name == SITE_MARK_HOME_LIGHT {
-			testing.expect_value(t, width, 192)
-			testing.expect_value(t, height, 192)
+			testing.expect_value(t, picture.heron_cell, 1)
 		}
 		// A picture of a page is the heron alone: the name is text in the
 		// font of the name of the mark. Only the picture for other sites

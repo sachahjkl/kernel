@@ -1024,8 +1024,8 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	// The picture is the heron alone; the name is text in the font of the
 	// name of the mark.
 	write(&b, "<header class=\"bar\">\n<div class=\"bar-inner\">\n")
-	fmt.sbprintf(&b, "<a class=\"bar-home\" href=\"%s\"><picture><source media=\"(prefers-color-scheme: light)\" srcset=\"%s\">", site_page_link(site, page.path, site_section_page(.Home)), link(page, SITE_PICTURE_FOLDER + "/" + SITE_MARK_BAR_LIGHT))
-	fmt.sbprintf(&b, "<img src=\"%s\" width=\"24\" height=\"24\" alt=\"\"></picture>%s</a>\n", link(page, SITE_PICTURE_FOLDER + "/" + SITE_MARK_BAR), SITE_MARK_NAME_HTML)
+	fmt.sbprintf(&b, "<a class=\"bar-home\" href=\"%s\"><picture><source media=\"(prefers-color-scheme: light)\" srcset=\"%s\">", site_page_link(site, page.path, site_section_page(.Home)), link(page, SITE_PICTURE_FOLDER + "/" + SITE_MARK_HERON_LIGHT))
+	fmt.sbprintf(&b, "<img src=\"%s\" width=\"24\" height=\"24\" alt=\"\"></picture>%s</a>\n", link(page, SITE_PICTURE_FOLDER + "/" + SITE_MARK_HERON), SITE_MARK_NAME_HTML)
 	// The sections and the search are in one menu: one list of links for
 	// every width. Under 720 pixels the menu is a square button; on a wide
 	// screen the style sheet and the script show it open, as a bar

@@ -5612,7 +5612,7 @@ Do not use: scaled frame, deformation, sampled frame.
 
 The sprite sheet is one PNG file of the site that holds each distinct frame of the animations of the mark, in rows of 16 from the top left, with the still heron first.
 
-The script of the mark shows one sprite at a time by its place in the file, so the page loads one picture for all the animations. A frame that two animations share is in the file once.
+The script of the mark shows one sprite at a time by its place in the file, so the page loads one picture for all the animations. A frame that two animations share is in the file once. The sheet has one pixel for each cell of the heron, so a sprite is 24 by 24 pixels; the style sheet of the page gives a cell its size, a whole count of pixels, with no smoothing. Under the sprites the sheet holds the drawn forms of the moves of the heron. The site has one sheet for each color scheme.
 
 The design: `docs/SITE.md`, "The mark on the site".
 
