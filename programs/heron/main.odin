@@ -7,9 +7,9 @@
 // the system: the heron stands in its water, drawn large from the cells of
 // `support/mark`, and plays its 15 animations in an order of chance. Four
 // animations move the whole heron: in the dash it leaves the window by the
-// right and comes back by the left, squashed and stretched. The program
-// draws again only the part of its window that changed, and its log says
-// how long a picture takes and how many pixels it damages.
+// right and comes back by the left, in the forms of the crouch and of the
+// run. The program draws again only the part of its window that changed,
+// and its log says how long a picture takes and how many pixels it damages.
 //
 // **What a reader sees.** Start it from the menu of the programs, or with
 // `start("heron")` in the console. The heron is still for about 40 % of
@@ -24,23 +24,25 @@
 //   an animation key shows the first frame of its animation.
 // - `s` plays four times slower.
 // - `l` shows the lines between the cells, and a white outline around each
-//   cell that differs from the still heron: an animation changes a few
-//   cells.
+//   cell that the frame changed in the still heron: an animation changes a
+//   few cells.
 // - `z` changes the cell size: 12, 8 or 4 pixels.
-// - `g` chooses the way of a squash, a stretch and a travel. **On the
-//   grid**, the way of the system: each cell is a square of one size at a
-//   place of the grid; a squashed heron has more columns and fewer rows of
-//   whole cells, and it travels by whole cells. **Free**, to compare: the
-//   cells are drawn as rectangles and the heron is at any pixel. The way
-//   on the grid draws cells; it is not a filter over the free picture.
+// - `g` chooses the way of a move. **On the grid**, the way of the system:
+//   the heron takes the forms of `support/mark`, the same drawings as on
+//   the home of the site, each in whole square cells, at places in whole
+//   cells (`mark.move_pose`, `mark.form_cells`). **Free**, to compare: the
+//   frame of the heron is stretched to the box of the form, so its cells
+//   become rectangles, and the box goes from a key to the next one pixel
+//   by pixel. The way on the grid draws cells; it is not a filter over the
+//   free picture.
 //
 // **The log.** `heron: ok` after the first picture. When an animation that
 // a key or a call asked for ends: `heron: dash played: 17 frames, the heron
 // left the window and came back, on the grid`, and once, the measure of
 // its pictures (`heron: a picture of dash took ... us to draw and damaged
 // ... pixels`). When the key `l` or the key `g` changes what the window
-// shows: `heron: shows dash at frame 4 of 17, held, on the grid, ...`. An
-// animation of the order of chance writes no line.
+// shows: `heron: shows dash at frame 3 of 17, held, on the grid: the form
+// run, ...`. An animation of the order of chance writes no line.
 //
 // **Its grant**: **Serve**, its exports. It needs no other.
 //
@@ -83,17 +85,22 @@ BAND_MARGIN :: 16
 WIDTH :: STAGE_WIDTH
 HEIGHT :: STAGE_HEIGHT + BAND_HEIGHT
 
-// The sizes of a cell that the key z gives, the largest first. At the
-// largest the heron is 288 pixels: with the lift of the hop and the
-// stretch, its head stays inside the stage.
+// The sizes of a cell that the key z gives, the largest first.
 @(rodata)
 cell_sizes := [?]int{12, 8, 4}
 CELL_SIZE_MOST :: 12
-HERON_SIZE_MOST :: mark.HERON_GRID_SIZE * CELL_SIZE_MOST
 GROUND_MARGIN :: 16 // Pixels of the stage under the water.
-// The highest heron of a move stays inside the stage. A part of the heron
-// that a lift takes above the stage is not drawn.
-#assert((MOVE_ROWS_MOST + WATER_ROWS) * CELL_SIZE_MOST + GROUND_MARGIN <= STAGE_HEIGHT)
+// The highest form of the heron stays inside the stage. A part of the
+// heron that a lift takes above the stage is not drawn.
+#assert((mark.FORM_ROWS_MOST + mark.WATER_ROWS) * CELL_SIZE_MOST + GROUND_MARGIN <= STAGE_HEIGHT)
+
+// The form picture: the form of the heron that the stage shows, drawn
+// once at the cell size in use, with room for the widest and the highest
+// form around the place of the natural heron.
+FORM_PICTURE_WIDTH :: mark.FORM_COLUMNS_MOST * CELL_SIZE_MOST
+FORM_PICTURE_HEIGHT :: mark.FORM_ROWS_MOST * CELL_SIZE_MOST
+#assert(mark.FORM_REACH_LEFT + mark.BODY_COLUMNS + mark.FORM_REACH_RIGHT <= mark.FORM_COLUMNS_MOST)
+#assert(mark.FORM_REACH_UP + mark.BODY_ROWS <= mark.FORM_ROWS_MOST)
 
 PICTURE_INTERVAL :: 16 // Milliseconds from a picture to the next one while the heron moves: the period of the compositor.
 // The most time that the play goes forward from one picture to the next,
@@ -111,9 +118,9 @@ STILL_STEP_MOST :: 86_400_000_000
 
 COLOR_STAGE :: graphics.COLOR_BACKGROUND
 COLOR_LINES :: graphics.COLOR_POINT // The lines between the cells.
-COLOR_CHANGED :: graphics.COLOR_WHITE // The outline of a cell that differs from the still heron.
+COLOR_CHANGED :: graphics.COLOR_WHITE // The outline of a cell that the frame changed in the still heron.
 
-// The color of a pixel of the heron picture that no cell covers. A color
+// The color of a pixel of the form picture that no cell covers. A color
 // of the mark is 0x00RRGGBB, so no cell has this value.
 PICTURE_EMPTY :: graphics.Color(0xFF000000)
 
@@ -133,7 +140,7 @@ animation_time: int // Microseconds since the start of the animation.
 still_left: int // Microseconds until the next animation.
 paused: bool // The play does not go forward.
 slow: bool // The play is SLOW_FACTOR times slower.
-lines_shown: bool // The stage shows the lines between the cells and the cells that differ.
+lines_shown: bool // The stage shows the lines between the cells and the cells that the frame changed.
 way: Move_Way // How a move is drawn: on the grid, or free.
 cell_size_index: int // The index in cell_sizes of the cell size.
 order_memory: mark.Order_Memory // The animations that were played in this round.
@@ -152,14 +159,14 @@ played_line_waits: bool // The asked animation ended: its line is written after 
 measure_line_written: bool // The measure of the pictures is on the log: the program writes it once.
 shows_line_waits: bool // A key or a call changed the lines or the way: the line of what the window shows is written after the picture.
 
-// The pixels of the stage, and the heron of the frame that plays at the
-// cell size in use: a square of the cells, where a pixel that no cell
-// covers is PICTURE_EMPTY. The stage takes the cells of the heron from
-// this picture.
+// The pixels of the stage, and of the form picture, where a pixel that no
+// cell covers is PICTURE_EMPTY. The stage takes the heron from the form
+// picture: a picture of a travel copies it, and only a new frame or a new
+// form draws it again.
 stage_pixels: [STAGE_WIDTH * STAGE_HEIGHT]graphics.Color
 stage: graphics.Canvas
-heron_pixels: [HERON_SIZE_MOST * HERON_SIZE_MOST]graphics.Color
-heron_cells: mark.Heron_Cells // The cells that the heron picture shows.
+form_pixels: [FORM_PICTURE_WIDTH * FORM_PICTURE_HEIGHT]graphics.Color
+form_drawn: mark.Form_Cells // The cells of the form that the form picture shows.
 frame_cells: mark.Heron_Cells // The cells of the frame on the stage.
 tile_generations: [TILE_COUNT]u32
 pictures: [TILE_COUNT]graphics.Canvas
@@ -167,17 +174,20 @@ pictures: [TILE_COUNT]graphics.Canvas
 // What the stage shows: a picture of the heron draws the stage again only
 // when one of these changed.
 Scene :: struct {
-	drawn:     bool, // The stage was drawn once.
-	cell_size: int,
-	frame_key: int, // The animation and the frame of the cells; 0: the still heron.
-	pose:      Move_Pose, // The size and the place of the part of the heron above the water.
-	way:       Move_Way,
-	lines:     bool,
+	drawn:       bool, // The stage was drawn once.
+	cell_size:   int,
+	frame_key:   int, // The animation and the frame of the cells; 0: the still heron.
+	way:         Move_Way,
+	form:        mark.Form, // The form of the form picture: the form of the move on the grid, the natural heron in the free way.
+	cells_right: int, // On the grid: the place of the heron, in whole cells from its place.
+	cells_up:    int,
+	body:        interface.Rectangle, // The rectangle of the part of the heron above the water, on the stage.
+	lines:       bool,
 }
 FRAME_KEY_STEP :: 64 // More than the frames of an animation.
 
 shown: Scene
-home_pose: Move_Pose // The heron in its place at its size.
+home_body: interface.Rectangle // The rectangle of the natural heron in its place.
 
 // The memory of the interface package for the window (docs/INTERFACE.md):
 // one Picture record for each tile, then the records of the band.
@@ -223,7 +233,7 @@ play :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 
 // animations gives one row for each animation of the heron, in the order of the keys of the window: its name, the count of its frames, its time in milliseconds, and 1 when the whole heron moves during it.
 //
-// The names, the frames and the times are the data of `support/mark`: the same as on the home of the site.
+// The names, the frames, the times and the moves are the data of `support/mark`: the same as on the home of the site.
 //
 // - **result**: a table of `Animation_Row` rows that the call fills. A table shorter than the count gets the
 //   first rows only; the result still counts every animation.
@@ -239,19 +249,19 @@ animations :: proc "c" (result: ^[]Animation_Row) -> i64 {
 		row^ = {
 			frames   = i64(mark.animation_frame_count(candidate)),
 			duration = i64(mark.animation_duration(candidate)),
-			moves    = i64(animation_moves(candidate)),
+			moves    = i64(mark.animation_moves(candidate)),
 		}
 		copy(row.name[:len(row.name) - 1], mark.animation_names[candidate])
 	}
 	return mark.ANIMATION_COUNT
 }
 
-// grid chooses the way of a squash, a stretch and a travel: grid(1) is on the grid, grid(0) is free.
+// grid chooses the way of a move of the heron: grid(1) is on the grid, grid(0) is free.
 //
-// On the grid, each cell of the heron is a square of one size at a place of the grid, and the heron travels by
-// whole cells: the way of the system, and the way of the window at its start. Free, the cells are drawn as
-// rectangles and the heron is at any pixel. The key `g` of the window does the same. The log gets one line that
-// says what the window shows.
+// On the grid, the heron takes the drawn forms of the mark, in whole square cells, at places in whole cells:
+// the way of the system, and the way of the window at its start. Free, the frame of the heron is stretched to
+// the box of the form and is at any pixel: its cells are rectangles. The key `g` of the window does the same.
+// The log gets one line that says what the window shows.
 //
 // - **on**: 0 for the free way; another number for the way on the grid.
 //
@@ -383,28 +393,6 @@ key_take :: proc "contextless" (character: u8) {
 // The keys 1 to 9 and a to f name each animation.
 #assert(mark.ANIMATION_COUNT == 15)
 
-// heron_picture_update draws the cells of a frame into the heron picture
-// at a cell size. heron_cells holds the cells that the picture shows; the
-// procedure draws again only the cells that differ, or each cell with
-// whole (the first picture, or another cell size). A frame changes a few
-// cells, so a frame costs a few cells, not the whole heron.
-heron_picture_update :: proc "contextless" (picture: graphics.Canvas, cells: ^mark.Heron_Cells, cell: int, whole: bool) {
-	for row in 0 ..< mark.HERON_GRID_SIZE {
-		for column in 0 ..< mark.HERON_GRID_SIZE {
-			if !whole && heron_cells[row][column] == cells[row][column] {
-				continue
-			}
-			for y in row * cell ..< (row + 1) * cell {
-				for x in column * cell ..< (column + 1) * cell {
-					color, covered := mark.cells_pixel(cells, cell, x, y, false)
-					picture.pixels[y * picture.stride + x] = covered ? color : PICTURE_EMPTY
-				}
-			}
-		}
-	}
-	heron_cells = cells^
-}
-
 // stage_rectangle_clear paints a rectangle of the stage with its
 // background, and gives a new generation to each tile that it touches: the
 // window draws these tiles again.
@@ -421,177 +409,152 @@ stage_rectangle_clear :: proc "contextless" (rectangle: interface.Rectangle) {
 	}
 }
 
-// pixels_of gives the pixels of a count of parts of a cell, to the nearest
-// pixel. A whole count of cells gives a whole count of cells of pixels.
-pixels_of :: proc "contextless" (parts, cell: int) -> int {
-	return (parts * cell + CELL_PARTS / 2) >> 10
+// form_picture_draw draws a form of a frame into the form picture, at a
+// cell size: the drawing of support/mark, with the top left corner of the
+// natural heron at the reach of the forms from the corner of the picture.
+form_picture_draw :: proc "contextless" (form: mark.Form, frame, cell: int) {
+	picture := graphics.Canvas{pixels = raw_data(form_pixels[:]), width = mark.FORM_COLUMNS_MOST * cell, height = mark.FORM_ROWS_MOST * cell, stride = FORM_PICTURE_WIDTH}
+	graphics.fill(picture, 0, 0, picture.width, picture.height, PICTURE_EMPTY)
+	form_drawn, _ = mark.form_cells(form, animation, frame)
+	mark.form_cells_draw(picture, &form_drawn, mark.FORM_REACH_LEFT * cell, mark.FORM_REACH_UP * cell, cell, false)
 }
 
-// body_rectangle gives the rectangle of the part of the heron above the
-// water on the stage, for a pose: its bottom edge is the line of the water
-// less the lift.
-body_rectangle :: proc "contextless" (pose: Move_Pose, home_left, water_top, cell: int) -> interface.Rectangle {
-	left := home_left + pixels_of(pose.left, cell)
-	bottom := water_top - pixels_of(pose.up, cell)
-	return {left, bottom - pixels_of(pose.rows, cell), left + pixels_of(pose.columns, cell), bottom}
+// form_picture_part gives a rectangle of cells of the form picture as a
+// canvas: column and row are from the corner of the natural heron.
+form_picture_part :: proc "contextless" (column, row, columns, rows, cell: int) -> graphics.Canvas {
+	return {pixels = raw_data(form_pixels[((mark.FORM_REACH_UP + row) * FORM_PICTURE_WIDTH + mark.FORM_REACH_LEFT + column) * cell:]), width = columns * cell, height = rows * cell, stride = FORM_PICTURE_WIDTH}
 }
 
-// scaled_source_pixel gives the pixel of a line of source_size pixels that
-// the pixel number target of a line of target_size pixels shows, when the
-// first line is drawn at the size of the second: the pixel under the
-// middle of the target pixel. No color is mixed.
-scaled_source_pixel :: proc "contextless" (target, target_size, source_size: int) -> int {
-	return (2 * target + 1) * source_size / (2 * target_size)
-}
-
-// scaled_cell_edge gives the first pixel that shows the cell number cell
-// of a line of cell_count cells, when the line is drawn at target_size
-// pixels (scaled_source_pixel). The edge of the cell number cell_count is
-// target_size.
-scaled_cell_edge :: proc "contextless" (cell, cell_count, target_size: int) -> int {
-	return (2 * target_size * cell + cell_count - 1) / (2 * cell_count)
-}
-
-// body_draw_on_the_grid draws the part of the heron above the water as
-// whole cells: the rectangle holds a whole count of columns and of rows of
-// squares of the cell size, and each square is one cell of the heron
-// picture (deformed_source_cell). A squashed heron repeats some columns of
-// cells and leaves out some rows; no cell changes its form.
-body_draw_on_the_grid :: proc "contextless" (picture: graphics.Canvas, body: interface.Rectangle, cell: int) {
-	columns := min((body.right - body.left) / cell, MOVE_COLUMNS_MOST)
-	rows := min((body.bottom - body.top) / cell, MOVE_ROWS_MOST)
-	for row in 0 ..< rows {
-		source_row := deformed_source_cell(row, rows, BODY_ROWS)
-		for column in 0 ..< columns {
-			source_column := deformed_source_cell(column, columns, BODY_COLUMNS)
-			if frame_cells[source_row][source_column] == '.' {
-				continue
-			}
-			graphics.copy(stage, body.left + column * cell, body.top + row * cell, graphics.view(picture, source_column * cell, source_row * cell, cell, cell))
-		}
-	}
-}
-
-// body_draw_free draws the part of the heron above the water at the size
-// of the rectangle, in pixels: each pixel takes the color of one pixel of
-// the heron picture (scaled_source_pixel), so a cell is a rectangle. A
-// pixel that no cell covers is not drawn, and nothing is drawn outside the
-// stage.
-body_draw_free :: proc "contextless" (picture: graphics.Canvas, body: interface.Rectangle, cell: int) {
-	width, height := body.right - body.left, body.bottom - body.top
-	cut := interface.intersection(body, {0, 0, STAGE_WIDTH, STAGE_HEIGHT})
-	if interface.empty(cut) || width > STAGE_WIDTH * 2 {
+// covered_pixels_copy copies the pixels of a picture that a cell covers to
+// a place of the stage. Nothing is written outside the stage.
+covered_pixels_copy :: proc "contextless" (x, y: int, picture: graphics.Canvas) {
+	cut := interface.intersection({x, y, x + picture.width, y + picture.height}, {0, 0, STAGE_WIDTH, STAGE_HEIGHT})
+	if interface.empty(cut) {
 		return
 	}
-	// The column of the picture under each column of the rectangle: one
-	// division for a column, not one for each pixel.
-	source_columns: [STAGE_WIDTH * 2]i32
-	for x in cut.left ..< cut.right {
-		source_columns[x - body.left] = i32(scaled_source_pixel(x - body.left, width, BODY_COLUMNS * cell))
-	}
-	for y in cut.top ..< cut.bottom {
-		source_line := picture.pixels[scaled_source_pixel(y - body.top, height, BODY_ROWS * cell) * picture.stride:]
-		target_line := stage.pixels[y * stage.stride:]
-		for x in cut.left ..< cut.right {
-			if color := source_line[source_columns[x - body.left]]; color != PICTURE_EMPTY {
-				target_line[x] = color
+	for line in cut.top ..< cut.bottom {
+		source_line := picture.pixels[(line - y) * picture.stride:]
+		target_line := stage.pixels[line * stage.stride:]
+		for column in cut.left ..< cut.right {
+			if color := source_line[column - x]; color != PICTURE_EMPTY {
+				target_line[column] = color
 			}
 		}
 	}
 }
 
-// water_draw draws the two rows of the water, which no move takes: the
-// cells of the heron picture under the part above the water, at their
-// place.
-water_draw :: proc "contextless" (picture: graphics.Canvas, water: interface.Rectangle, cell: int) {
-	for row in 0 ..< WATER_ROWS {
-		for column in 0 ..< BODY_COLUMNS {
-			if frame_cells[BODY_ROWS + row][column] != '.' {
-				graphics.copy(stage, water.left + column * cell, water.top + row * cell, graphics.view(picture, column * cell, (BODY_ROWS + row) * cell, cell, cell))
+// water_draw draws the two rows of the water of the frame, which no move
+// takes, at their place.
+water_draw :: proc "contextless" (water: interface.Rectangle, cell: int) {
+	first_line := mark.BODY_ROWS * cell
+	for y in 0 ..< water.bottom - water.top {
+		for x in 0 ..< water.right - water.left {
+			if color, covered := mark.cells_pixel(&frame_cells, cell, x, first_line + y, false); covered {
+				graphics.pixel(stage, water.left + x, water.top + y, color)
 			}
 		}
 	}
 }
 
 // stage_draw draws the heron of this moment on the stage, when the stage
-// does not show it yet. It clears the rectangle where the part above the
-// water was and the rectangle where it is now, and draws that part in the
-// way of the move. The water is drawn again only when a cell changed. A
-// new cell size draws the whole stage.
+// does not show it yet. On the grid it asks support/mark for the form and
+// the place of the heron at this time, and copies the drawing of that
+// form to that place: whole cells at a place in whole cells. In the free
+// way it stretches the natural form of the frame to the box of this time.
+// It clears the rectangle where the part above the water was and the
+// rectangle where it is now. The water is drawn again only when a cell
+// changed. A new cell size draws the whole stage.
 stage_draw :: proc "contextless" () {
 	cell := cell_sizes[cell_size_index]
 	size := mark.heron_size(cell)
 	home_left := (STAGE_WIDTH - size) / 2
-	// The widest heron of a move has this many columns more than the heron
-	// at each side: the dash goes that much farther than the edge.
-	wider := (MOVE_COLUMNS_MOST - BODY_COLUMNS + 1) / 2
-	travel := Move_Travel {
-		cells_to_right_edge = (STAGE_WIDTH - home_left + cell - 1) / cell + wider,
-		cells_to_left_edge  = (home_left + size + cell - 1) / cell + wider,
+	water_height := mark.WATER_ROWS * cell
+	water_top := STAGE_HEIGHT - GROUND_MARGIN - water_height
+	natural_top := water_top - mark.BODY_ROWS * cell
+	home_body = {home_left, natural_top, home_left + size, water_top}
+	// How far the dash goes: until the widest form is outside the stage.
+	travel := mark.Move_Travel {
+		cells_to_right_edge = (STAGE_WIDTH - home_left + cell - 1) / cell + mark.FORM_REACH_LEFT,
+		cells_to_left_edge  = (home_left + cell - 1) / cell + mark.BODY_COLUMNS + mark.FORM_REACH_RIGHT,
 	}
-	home_pose = move_pose_at(animation, -1, travel, way)
-	now := Scene{drawn = true, cell_size = cell, pose = home_pose, way = way, lines = lines_shown}
+	now := Scene{drawn = true, cell_size = cell, way = way, lines = lines_shown}
 	frame := frame_now()
+	// A time before the first key: the natural heron in its place.
+	at := -1
 	if frame > 0 {
+		at = animation_time / 1000
 		now.frame_key = (int(animation) + 1) * FRAME_KEY_STEP + frame
-		now.pose = move_pose_at(animation, animation_time / 1000, travel, way)
+	}
+	if way == .On_The_Grid {
+		pose := mark.move_pose(animation, at, travel)
+		columns, rows := mark.form_size(pose.form)
+		left := home_left + (mark.form_first_column(pose.form) + pose.cells_right) * cell
+		top := natural_top + (mark.form_first_row(pose.form) - pose.cells_up) * cell
+		now.form = pose.form
+		now.cells_right = pose.cells_right
+		now.cells_up = pose.cells_up
+		now.body = {left, top, left + columns * cell, top + rows * cell}
+	} else {
+		box := free_box_at(animation, at, travel, cell)
+		now.form = .Natural
+		now.body = {home_left + box.left, natural_top + box.top, home_left + box.left + box.width, natural_top + box.top + box.height}
 	}
 	if now == shown {
 		return
 	}
 	whole := !shown.drawn || shown.cell_size != cell
 	cells_changed := whole || now.frame_key != shown.frame_key
-	picture := graphics.Canvas{pixels = raw_data(heron_pixels[:]), width = size, height = size, stride = HERON_SIZE_MOST}
 	if cells_changed {
 		frame_cells, _ = mark.animation_frame_cells(animation, frame)
-		heron_picture_update(picture, &frame_cells, cell, whole)
 	}
-	water_height := WATER_ROWS * cell
-	water_top := STAGE_HEIGHT - GROUND_MARGIN - water_height
+	if cells_changed || now.form != shown.form {
+		form_picture_draw(now.form, frame, cell)
+	}
 	water := interface.Rectangle{home_left, water_top, home_left + size, water_top + water_height}
-	body := body_rectangle(now.pose, home_left, water_top, cell)
 	water_drawn := cells_changed || now.lines != shown.lines
 	if whole {
 		stage_rectangle_clear({0, 0, STAGE_WIDTH, STAGE_HEIGHT})
 	} else {
-		stage_rectangle_clear(body_rectangle(shown.pose, home_left, water_top, cell))
-		stage_rectangle_clear(body)
+		stage_rectangle_clear(shown.body)
+		stage_rectangle_clear(now.body)
 		if water_drawn {
 			stage_rectangle_clear(water)
 		}
 	}
 	if now.way == .On_The_Grid {
-		body_draw_on_the_grid(picture, body, cell)
+		covered_pixels_copy(now.body.left, now.body.top, form_picture_part(form_drawn.first_column, form_drawn.first_row, form_drawn.columns, form_drawn.rows, cell))
 	} else {
-		body_draw_free(picture, body, cell)
+		free_draw(stage, form_picture_part(0, 0, mark.BODY_COLUMNS, mark.BODY_ROWS, cell), now.body, PICTURE_EMPTY)
 	}
 	if water_drawn {
-		water_draw(picture, water, cell)
+		water_draw(water, cell)
 	}
 	if now.lines {
-		lines_draw(body, water, cell, now.way, water_drawn)
+		lines_draw(now.body, water, cell, now.way, now.form, water_drawn)
 	}
 	shown = now
 }
 
 // lines_draw draws the lines between the cells over the heron, and a white
-// outline around each cell that differs from the still heron. On the grid
-// the lines are the grid itself: each cell is a square. In the free way
-// the lines follow the edges of the cells as they are drawn
-// (scaled_cell_edge): a squash shows as cells that are wider than high.
-lines_draw :: proc "contextless" (body, water: interface.Rectangle, cell: int, drawn_way: Move_Way, with_water: bool) {
+// outline around each cell that the frame changed in the still heron. On
+// the grid the lines are the grid itself: each cell of the form is a
+// square, and a cell of the form shows a cell of the frame
+// (mark.form_source_column, mark.form_source_row). In the free way the
+// lines follow the edges of the cells of the frame as they are drawn
+// (scaled_cell_edge): the cells are rectangles.
+lines_draw :: proc "contextless" (body, water: interface.Rectangle, cell: int, drawn_way: Move_Way, form: mark.Form, with_water: bool) {
 	width, height := body.right - body.left, body.bottom - body.top
-	columns, rows := BODY_COLUMNS, BODY_ROWS
+	columns, rows := mark.BODY_COLUMNS, mark.BODY_ROWS
 	// The left edge of each column and the top edge of each row, in pixels
-	// from the corner of the rectangle, and the cell of the heron that each
+	// from the corner of the rectangle, and the cell of the frame that each
 	// one shows.
-	column_edges: [MOVE_COLUMNS_MOST + 1]int
-	row_edges: [MOVE_ROWS_MOST + 1]int
-	column_sources: [MOVE_COLUMNS_MOST]int
-	row_sources: [MOVE_ROWS_MOST]int
+	column_edges: [mark.FORM_COLUMNS_MOST + 1]int
+	row_edges: [mark.FORM_ROWS_MOST + 1]int
+	column_sources: [mark.FORM_COLUMNS_MOST]int
+	row_sources: [mark.FORM_ROWS_MOST]int
 	if drawn_way == .On_The_Grid {
-		columns = min(width / cell, MOVE_COLUMNS_MOST)
-		rows = min(height / cell, MOVE_ROWS_MOST)
+		columns = min(width / cell, mark.FORM_COLUMNS_MOST)
+		rows = min(height / cell, mark.FORM_ROWS_MOST)
 	} else if width < columns || height < rows {
 		return
 	}
@@ -602,12 +565,18 @@ lines_draw :: proc "contextless" (body, water: interface.Rectangle, cell: int, d
 		row_edges[row] = drawn_way == .On_The_Grid ? row * cell : scaled_cell_edge(row, rows, height)
 	}
 	for column in 0 ..< columns {
-		column_sources[column] = drawn_way == .On_The_Grid ? deformed_source_cell(column, columns, BODY_COLUMNS) : column
+		column_sources[column] = column
+		if drawn_way == .On_The_Grid {
+			column_sources[column], _ = mark.form_source_column(form, column)
+		}
 		graphics.fill(stage, body.left + column_edges[column], body.top, 1, height, COLOR_LINES)
 	}
 	graphics.fill(stage, body.right - 1, body.top, 1, height, COLOR_LINES)
 	for row in 0 ..< rows {
-		row_sources[row] = drawn_way == .On_The_Grid ? deformed_source_cell(row, rows, BODY_ROWS) : row
+		row_sources[row] = row
+		if drawn_way == .On_The_Grid {
+			row_sources[row], _ = mark.form_source_row(form, row)
+		}
 		graphics.fill(stage, body.left, body.top + row_edges[row], width, 1, COLOR_LINES)
 	}
 	graphics.fill(stage, body.left, body.bottom - 1, width, 1, COLOR_LINES)
@@ -624,17 +593,17 @@ lines_draw :: proc "contextless" (body, water: interface.Rectangle, cell: int, d
 		return
 	}
 	// The rows of the water never move: their cells have the cell size.
-	for column in 0 ..< BODY_COLUMNS {
+	for column in 0 ..< mark.BODY_COLUMNS {
 		graphics.fill(stage, water.left + column * cell, water.top, 1, water.bottom - water.top, COLOR_LINES)
 	}
 	graphics.fill(stage, water.right - 1, water.top, 1, water.bottom - water.top, COLOR_LINES)
-	for row in 0 ..< WATER_ROWS {
+	for row in 0 ..< mark.WATER_ROWS {
 		graphics.fill(stage, water.left, water.top + row * cell, water.right - water.left, 1, COLOR_LINES)
 	}
 	graphics.fill(stage, water.left, water.bottom - 1, water.right - water.left, 1, COLOR_LINES)
-	for row in 0 ..< WATER_ROWS {
-		for column in 0 ..< BODY_COLUMNS {
-			if frame_cells[BODY_ROWS + row][column] != still[BODY_ROWS + row][column] {
+	for row in 0 ..< mark.WATER_ROWS {
+		for column in 0 ..< mark.BODY_COLUMNS {
+			if frame_cells[mark.BODY_ROWS + row][column] != still[mark.BODY_ROWS + row][column] {
 				graphics.outline(stage, water.left + column * cell, water.top + row * cell, cell, cell, 1, COLOR_CHANGED)
 			}
 		}
@@ -666,13 +635,43 @@ way_text :: proc "contextless" (which: Move_Way) -> string {
 	return which == .On_The_Grid ? "on the grid" : "free"
 }
 
+// The band is in the font of the cells, in both settings of the font: 8
+// pixels for each character. Each text of the band has a box that holds
+// its longest value at that width.
+BAND_CHARACTER :: 8
+KEYS_IN_A_LINE :: 8
+KEY_COLUMN :: (WIDTH - 2 * BAND_MARGIN) / KEYS_IN_A_LINE
+NAME_LONGEST :: 7 // "scratch", "stretch": the longest name of an animation.
+FRAME_TEXT_X :: 96
+FRAME_TEXT_LONGEST :: 14 // "frame 17 of 17".
+PROGRESS_X :: 224
+// A key of an animation, a gap, and the longest name fit a column, with a
+// gap before the next key.
+#assert((1 + 1 + NAME_LONGEST) * BAND_CHARACTER + BAND_CHARACTER / 2 <= KEY_COLUMN)
+// The name of the animation ends before the text of the frame, and that
+// text before the bar of the progress.
+#assert(BAND_MARGIN + NAME_LONGEST * BAND_CHARACTER + BAND_CHARACTER <= FRAME_TEXT_X)
+#assert(FRAME_TEXT_X + FRAME_TEXT_LONGEST * BAND_CHARACTER + BAND_CHARACTER <= PROGRESS_X)
+// The keys of the play: the place of each, and the characters of its key,
+// its gap and its longest text. Each ends 8 pixels before the next one,
+// and the last one before the margin.
+CONTROL_PAUSE_X :: 16 // "space pause": 11 characters.
+CONTROL_FRAME_X :: 120 // ". next frame": 12.
+CONTROL_SLOW_X :: 232 // "s slow": 6.
+CONTROL_LINES_X :: 296 // "l lines": 7.
+CONTROL_CELL_X :: 368 // "z cell 12": 9.
+CONTROL_WAY_X :: 456 // "g on the grid": 13.
+#assert(CONTROL_PAUSE_X + 12 * BAND_CHARACTER <= CONTROL_FRAME_X)
+#assert(CONTROL_FRAME_X + 13 * BAND_CHARACTER <= CONTROL_SLOW_X)
+#assert(CONTROL_SLOW_X + 7 * BAND_CHARACTER <= CONTROL_LINES_X)
+#assert(CONTROL_LINES_X + 8 * BAND_CHARACTER <= CONTROL_CELL_X)
+#assert(CONTROL_CELL_X + 10 * BAND_CHARACTER <= CONTROL_WAY_X)
+#assert(CONTROL_WAY_X + 13 * BAND_CHARACTER <= WIDTH - BAND_MARGIN)
+
 // band_draw builds the band under the stage: the animation that plays, its
 // frame and its progress, the key of each animation, and the keys of the
 // play with their states.
 band_draw :: proc "contextless" (frame: ^interface.Frame) {
-	KEYS_IN_A_LINE :: 8
-	KEY_COLUMN :: (WIDTH - 2 * BAND_MARGIN) / KEYS_IN_A_LINE
-	PROGRESS_X :: 224
 	table := frame.table
 	interface.draw_rectangle(table, 0, STAGE_HEIGHT, WIDTH, 1, graphics.COLOR_TRACK)
 	playing := state == .Animation
@@ -685,7 +684,7 @@ band_draw :: proc "contextless" (frame: ^interface.Frame) {
 		interface.text_put_number(&builder, u64(frame_now()))
 		interface.text_put(&builder, " of ")
 		interface.text_put_number(&builder, u64(mark.animation_frame_count(animation)))
-		interface.draw_text(table, 96, y, interface.text_of(&builder), graphics.COLOR_DIM)
+		interface.draw_text(table, FRAME_TEXT_X, y, interface.text_of(&builder), graphics.COLOR_DIM)
 		progress, whole = u64(animation_time / 1000), u64(mark.animation_duration(animation))
 	}
 	interface.bar(frame, {PROGRESS_X, y + 4, WIDTH - PROGRESS_X - BAND_MARGIN, 8}, progress, whole, graphics.COLOR_KERNEL)
@@ -694,18 +693,16 @@ band_draw :: proc "contextless" (frame: ^interface.Frame) {
 		band_key(table, BAND_MARGIN + index % KEYS_IN_A_LINE * KEY_COLUMN, y + index / KEYS_IN_A_LINE * interface.LINE, name, mark.animation_names[mark.Animation(index)], state_color(playing && int(animation) == index))
 	}
 	y += 2 * interface.LINE + 4
-	// The keys of the play, each at its place: the texts have the font of
-	// the cells, 8 pixels for a character.
-	band_key(table, 16, y, "space", "pause", state_color(paused))
-	band_key(table, 120, y, ".", "next frame", graphics.COLOR_DIM)
-	band_key(table, 232, y, "s", "slow", state_color(slow))
-	band_key(table, 296, y, "l", "lines", state_color(lines_shown))
+	band_key(table, CONTROL_PAUSE_X, y, "space", "pause", state_color(paused))
+	band_key(table, CONTROL_FRAME_X, y, ".", "next frame", graphics.COLOR_DIM)
+	band_key(table, CONTROL_SLOW_X, y, "s", "slow", state_color(slow))
+	band_key(table, CONTROL_LINES_X, y, "l", "lines", state_color(lines_shown))
 	builder.count = 0
 	interface.text_put(&builder, "cell ")
 	interface.text_put_number(&builder, u64(cell_sizes[cell_size_index]))
-	band_key(table, 368, y, "z", interface.text_of(&builder), graphics.COLOR_DIM)
+	band_key(table, CONTROL_CELL_X, y, "z", interface.text_of(&builder), graphics.COLOR_DIM)
 	// The way of a move is one of two states, and each has its words.
-	band_key(table, 456, y, "g", way_text(way), graphics.Color(way == .On_The_Grid ? graphics.COLOR_PROGRAM : graphics.COLOR_BOOT_PROGRAM))
+	band_key(table, CONTROL_WAY_X, y, "g", way_text(way), graphics.Color(way == .On_The_Grid ? graphics.COLOR_PROGRAM : graphics.COLOR_BOOT_PROGRAM))
 }
 
 // damage_pixels gives the count of the pixels of the damage rectangles of
@@ -732,8 +729,8 @@ played_line_write :: proc "contextless" () {
 		frames += u64(asked_frames >> uint(bit) & 1)
 	}
 	what := ""
-	if animation_moves(animation) {
-		back := shown.pose == home_pose
+	if mark.animation_moves(animation) {
+		back := shown.body == home_body
 		switch {
 		case asked_left_the_window && back:
 			what = ", the heron left the window and came back"
@@ -759,16 +756,24 @@ played_line_write :: proc "contextless" () {
 }
 
 // shows_line_write writes the line of what the window shows, after a
-// change of the lines or of the way: the animation and its frame, whether
-// the play holds it, the way, the lines, and the cells that differ.
+// change of the lines or of the way. Each value of the line is what the
+// program drew: the animation and its frame, whether the play holds it,
+// the way with the form and the place of support/mark or with the size of
+// the stretched frame, the lines, and the cells that the frame changed.
 shows_line_write :: proc "contextless" () {
 	lines := lines_shown ? "shown" : "hidden"
 	if state != .Animation {
-		system.log("heron: shows the still heron, ", way_text(way), ", the lines of the cells ", lines)
+		system.log("heron: shows the still heron, ", way_text(shown.way), "; the lines of the cells ", lines)
 		return
 	}
 	held := paused ? ", held" : ""
-	system.log("heron: shows ", mark.animation_names[animation], " at frame ", u64(frame_now()), " of ", u64(mark.animation_frame_count(animation)), held, ", ", way_text(way), ", the lines of the cells ", lines, ", ", u64(changed_cells()), " cells differ from the still heron")
+	changed := u64(changed_cells())
+	if shown.way == .On_The_Grid {
+		side := shown.cells_right < 0 ? " cells to the left and " : " cells to the right and "
+		system.log("heron: shows ", mark.animation_names[animation], " at frame ", u64(frame_now()), " of ", u64(mark.animation_frame_count(animation)), held, ", on the grid: the form ", mark.form_names[shown.form], ", ", u64(abs(shown.cells_right)), side, u64(max(shown.cells_up, 0)), " up; the lines of the cells ", lines, "; ", changed, " cells of the frame differ from the still heron")
+		return
+	}
+	system.log("heron: shows ", mark.animation_names[animation], " at frame ", u64(frame_now()), " of ", u64(mark.animation_frame_count(animation)), held, ", free: the frame stretched to ", u64(max(shown.body.right - shown.body.left, 0)), " by ", u64(max(shown.body.bottom - shown.body.top, 0)), " pixels; the lines of the cells ", lines, "; ", changed, " cells of the frame differ from the still heron")
 }
 
 // entry opens the window and plays the animations until the program is
@@ -834,9 +839,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			asked_damage += damage_pixels(damage_count)
 			asked_frames |= u32(1) << uint(frame_now())
 			asked_ways |= u32(1) << u32(shown.way)
-			cell := cell_sizes[cell_size_index]
-			left := (STAGE_WIDTH - mark.heron_size(cell)) / 2 + pixels_of(shown.pose.left, cell)
-			if left >= STAGE_WIDTH || left + pixels_of(shown.pose.columns, cell) <= 0 {
+			if shown.body.left >= STAGE_WIDTH || shown.body.right <= 0 {
 				asked_left_the_window = true
 			}
 		}

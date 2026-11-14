@@ -5590,21 +5590,31 @@ Do not use: idle ratio, duty cycle, pause.
 
 ### Move of the heron
 
-A move of the heron is a change of the place and of the size of the picture of the heron during an animation of the mark, in a place that can move the picture: the home of the site and the program `heron`.
+A move of the heron is the list of the forms and of the places that the heron takes during an animation of the mark, each in whole cells.
 
-An animation of the mark changes cells; a move takes the whole picture above the line of the water: across the window in the dash, up in the hop and the flap, wider and lower in a squash. The two rows of the water stay in their place. A move is a list of keys: a time, a size of the part above the water, a travel in cells or past an edge of the window. On the site the keys are in the tool (`site_mark_motion_keys`). In the program `heron` the keys are in whole cells (`move_keys`), and a move is drawn on the grid: a squashed heron has more columns and fewer rows of square cells, and it travels by whole cells. The program also draws the same keys in a free way, to compare: the cells become rectangles at any pixel. A picture that cannot move, as the icon of a tab, shows the frames alone.
+An animation of the mark changes cells; a move takes the whole heron above the line of the water: across the window in the dash, up in the hop and the flap, wider and lower in a crouch. The two rows of the water stay in their place. A move is a list of keys in `support/mark` (`move_keys`): a time, the form of the heron from that time to the next key, and a place in whole cells or past an edge of the window. The place goes from a key to the next one cell by cell: the heron is never between two cells, and no picture of it changes its size. The home of the site and the program `heron` play the same keys. A picture that cannot move, as the icon of a tab, shows the frames alone.
 
-The design: `docs/SITE.md`, "The moves of the heron"; `docs/DESIGN.md`, "The animations".
+The design: `docs/DESIGN.md`, "The moves".
 
-Do not use: tween, sprite motion.
+Do not use: tween, sprite motion, scale.
+
+### Form of the heron
+
+A form of the heron is one drawing, in whole cells, of the part of the heron above the water: the natural heron, or the heron squashed or stretched.
+
+A cell of the heron is a square of one size, so a squashed heron is not a picture made wider: it is the heron drawn with more columns and fewer rows of the same cells. A form names the columns and the rows of a frame that it draws two times and those that it leaves out, chosen by hand, and then cells that are corrected by hand (`form_lines` and `form_corrections` in `support/mark`). The head, the eye, the beak and the crest are the same in every form, and the column of the standing leg keeps its place. Example: the crouch is 28 by 19 cells; it repeats four columns of the body and leaves out two rows of the neck and one of the legs.
+
+The design: `docs/DESIGN.md`, "The moves".
+
+Do not use: scaled frame, deformation, sampled frame.
 
 ### Move on the grid
 
 A move on the grid is a move of the heron in which each cell stays a square of one size at a place of the grid.
 
-It is the way of the system to draw a squash, a stretch and a travel. A squashed heron has more columns and fewer rows of whole cells; a stretched one has fewer columns and more rows; a travel is a count of whole cells, and a fast run is many cells from one picture to the next. Each cell of the deformed heron shows one cell of the heron, the cell under its middle: the nearest sampling of the cell grid. The program `heron` draws its moves this way (`programs/heron/moves.odin`). It is not a filter over a scaled picture: the program computes cells and draws cells. The other way, the free move, is in the program only to compare: the cells are drawn as rectangles and the heron is at any pixel. Example: the heron is 24 columns by 22 rows above its water; in the run of the dash it is 32 by 18.
+It is the way of the system to draw a squash, a stretch and a travel, and the name of that way in the program `heron`, where a key changes between it and the free way. On the grid the heron takes a form of the heron, a drawing in whole cells, and a travel is a count of whole cells: a fast run is many cells from one picture to the next. It is not a filter over a scaled picture: the forms and the places are cells from the start. The other way, the free move, is in the program `heron` only, to compare: the frame of the heron is stretched to the box of the form, so its cells are rectangles, and it is at any pixel. Example: the heron is 24 columns by 22 rows above its water; in the run of the dash it is 32 by 20, 4 cells to the right at its second step.
 
-The design: `docs/DESIGN.md`, "The animations".
+The design: `docs/DESIGN.md`, "The moves" and "The animations".
 
 Do not use: snap, pixel-perfect scaling, quantized motion.
 

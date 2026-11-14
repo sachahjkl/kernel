@@ -153,7 +153,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
 
-![The program heron: the heron of the mark held at a frame of its dash, squashed in whole square cells, with the lines of the cells and the cells that the frame changed](docs/screenshots/heron.png)
+![The program heron: the heron of the mark held at a frame of its dash, in the form of the run, in whole square cells, with the lines of the cells and the cells that the frame changed](docs/screenshots/heron.png)
 
 `kerneltool screenshots` makes these pictures from the running machine.
 

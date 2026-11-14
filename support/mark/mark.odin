@@ -19,6 +19,9 @@
 // - `name_letters`, `name_pixel`, `name_draw`: the name.
 // - `Animation`, `animation_frames`, `animation_changes` (`animation.odin`):
 //   the idle movements.
+// - `Form`, `form_lines`, `form_cells`, `move_keys`, `move_pose`
+//   (`motion.odin`): the heron squashed and stretched, drawn in whole
+//   cells, and its travel in whole cells.
 //
 // See [mark](term:mark) and (docs/DESIGN.md, "The mark").
 package mark

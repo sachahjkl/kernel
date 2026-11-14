@@ -4,9 +4,9 @@
 // support/mark, drawn by the same code as the still pictures of the mark
 // (site_pictures.odin, site_icons.odin). Which animation plays is the rule
 // of support/mark (play.odin), which the program `heron` of the system
-// follows too; site_mark_schedule.odin ties the script to that rule, and
-// holds how the heron moves on the page (docs/SITE.md, "The rhythm of the
-// animations").
+// follows too; site_mark_schedule.odin ties the script to that rule
+// (docs/SITE.md, "The rhythm of the animations"). How the heron moves on
+// the page is in site_mark_moves.odin.
 //
 // What the site gets:
 //   pictures/mark_animation_home.png and mark_animation_home_light.png: one
@@ -124,13 +124,15 @@ site_mark_sheet_shape :: proc(sprite_count: int) -> (columns, rows: int) {
 
 // site_mark_sheet_pixels gives the sprite sheet of a picture of the mark:
 // each sprite drawn as that picture, from the left, in rows from the top.
-// The places after the last sprite are empty.
-site_mark_sheet_pixels :: proc(picture: Site_Mark_Picture, sprites: ^Site_Mark_Sprites) -> (pixels: []u8, width, height, channels: int) {
-	sprite_width, sprite_height := site_mark_size(picture)
-	columns, rows := site_mark_sheet_shape(len(sprites.cells))
+// The places after the last sprite are empty. With forms, the drawn forms
+// of the moves are under the sprites, each in the box of a form
+// (site_mark_moves.odin); forms is nil for a sheet with no form.
+site_mark_sheet_pixels :: proc(picture: Site_Mark_Picture, sprites: ^Site_Mark_Sprites, forms: ^Site_Mark_Forms) -> (pixels: []u8, width, height, channels: int) {
+	layout := site_mark_sheet_layout(picture, len(sprites.cells), len(forms.drawn) if forms != nil else 0)
+	sprite_width, sprite_height := layout.sprite_width, layout.sprite_height
 	channels = site_mark_channels(picture)
-	width = sprite_width * columns
-	height = sprite_height * rows
+	width = layout.width
+	height = layout.height
 	pixels = make([]u8, width * height * channels, context.temp_allocator)
 	for &cells, index in sprites.cells {
 		sprite := site_mark_pixels(picture, &cells)
@@ -141,18 +143,34 @@ site_mark_sheet_pixels :: proc(picture: Site_Mark_Picture, sprites: ^Site_Mark_S
 			copy(pixels[((top + row) * width + left) * channels:][:row_bytes], sprite[row * row_bytes:][:row_bytes])
 		}
 	}
+	// A drawing of a form has four bytes for each pixel: a sheet with forms
+	// is a sheet of a transparent picture.
+	if forms != nil && channels == 4 {
+		for &drawn, index in forms.drawn {
+			form := site_mark_form_pixels(picture, &drawn)
+			row_bytes := layout.form_width * channels
+			left := (index % layout.form_columns) * layout.form_width
+			top := layout.form_top + (index / layout.form_columns) * layout.form_height
+			for row in 0 ..< layout.form_height {
+				copy(pixels[((top + row) * width + left) * channels:][:row_bytes], form[row * row_bytes:][:row_bytes])
+			}
+		}
+	}
 	return
 }
 
 // The sheets, each with the picture of the mark that its sprites repeat.
+// The sheets of the home hold the drawn forms of the moves; the icon of
+// the tab does not move, so its sheet holds the frames only.
 Site_Mark_Sheet :: struct {
-	file_name: string,
-	picture:   Site_Mark_Picture,
+	file_name:  string,
+	picture:    Site_Mark_Picture,
+	with_forms: bool,
 }
 
 site_mark_sheets :: proc() -> (sheets: [3]Site_Mark_Sheet, ok: bool) {
 	home_dark, home_light, icon := site_mark_animation_pictures() or_return
-	sheets = [3]Site_Mark_Sheet{{SITE_MARK_ANIMATION_HOME, home_dark}, {SITE_MARK_ANIMATION_HOME_LIGHT, home_light}, {SITE_MARK_ANIMATION_ICON, icon}}
+	sheets = [3]Site_Mark_Sheet{{SITE_MARK_ANIMATION_HOME, home_dark, true}, {SITE_MARK_ANIMATION_HOME_LIGHT, home_light, true}, {SITE_MARK_ANIMATION_ICON, icon, false}}
 	return sheets, true
 }
 
@@ -168,16 +186,21 @@ site_mark_sheet_path :: proc(file_name: string) -> string {
 site_mark_animation_files :: proc() -> (files: map[string][]u8, ok: bool) {
 	sprites := site_mark_sprites() or_return
 	sheets := site_mark_sheets() or_return
+	forms := site_mark_forms(&sprites) or_return
 	files = make(map[string][]u8, context.temp_allocator)
 	addresses: [3]string
 	for sheet, index in sheets {
-		pixels, width, height, channels := site_mark_sheet_pixels(sheet.picture, &sprites)
+		sheet_forms: ^Site_Mark_Forms
+		if sheet.with_forms {
+			sheet_forms = &forms
+		}
+		pixels, width, height, channels := site_mark_sheet_pixels(sheet.picture, &sprites, sheet_forms)
 		data := site_pixels_encode(sheet.file_name, width, height, channels, pixels) or_return
 		path := site_mark_sheet_path(sheet.file_name)
 		files[path] = data
 		addresses[index] = strings.concatenate({path, "?v=", site_bytes_version(data)}, context.temp_allocator)
 	}
-	files[SITE_MARK_ANIMATION_SCRIPT] = transmute([]u8)site_mark_animation_script(&sprites, sheets[0].picture, addresses)
+	files[SITE_MARK_ANIMATION_SCRIPT] = transmute([]u8)site_mark_animation_script(&sprites, &forms, sheets[0].picture, addresses)
 	return files, true
 }
 
@@ -229,6 +252,11 @@ site_mark_animation_problems :: proc(files: map[string][]u8) -> []string {
 		append(&problems, "the frames or the pictures of the animations of the mark are not readable")
 		return problems[:]
 	}
+	forms, forms_ok := site_mark_forms(&sprites)
+	if !forms_ok {
+		append(&problems, "a form of a move of the mark is not readable")
+		return problems[:]
+	}
 	for sheet in sheets {
 		path := site_mark_sheet_path(sheet.file_name)
 		data, found := files[path]
@@ -241,7 +269,11 @@ site_mark_animation_problems :: proc(files: map[string][]u8) -> []string {
 			append(&problems, fmt.tprintf("%s does not decode", path))
 			continue
 		}
-		expected, width, height, channels := site_mark_sheet_pixels(sheet.picture, &sprites)
+		sheet_forms: ^Site_Mark_Forms
+		if sheet.with_forms {
+			sheet_forms = &forms
+		}
+		expected, width, height, channels := site_mark_sheet_pixels(sheet.picture, &sprites, sheet_forms)
 		same := image.width == width && image.height == height && image.channels == channels && image.depth == 8 && len(image.pixels) == len(expected)
 		for index := 0; same && index < len(expected); index += 1 {
 			same = image.pixels[index] == expected[index]
@@ -257,8 +289,8 @@ site_mark_animation_problems :: proc(files: map[string][]u8) -> []string {
 	if !has_script || strings.contains(string(script), "/*TABLE*/") {
 		append(&problems, SITE_MARK_ANIMATION_SCRIPT + " has no table of the frames")
 	}
-	for problem in site_mark_motion_problems(site_mark_motion_keys[:]) {
-		append(&problems, problem)
+	if fault := site_mark_move_fault_text(mark.move_keys[:]); fault != "" {
+		append(&problems, fault)
 	}
 	return problems[:]
 }
@@ -270,16 +302,17 @@ site_mark_animation_problems :: proc(files: map[string][]u8) -> []string {
 //   home: the two sheets of the head of the home, the size of a sprite, and
 //     the height of the rows of the water at its bottom;
 //   icon: the sheet of the icon and the size of a sprite;
+//   forms: where the drawn forms of the moves are in a sheet of the home
+//     (site_mark_forms_table_write);
 //   animations: for each animation its name, its time, its frames, each
-//     frame [sprite, milliseconds], and, when it moves, the keys of its
-//     move, each [milliseconds, cells to the right, cells up, edge, width
-//     in percent, height in percent, ease];
+//     frame [sprite, milliseconds], the steps of its play and, when it
+//     moves, the keys of its move (site_mark_animation_play_write);
 //   schedule: the bounds of a still time and the still share, in percent;
 //   check: the seed and the first steps of the model of the choice, each
 //     [still milliseconds, animation], which the self test compares;
 //   limits: the bounds of support/mark for a frame.
 // The paths are relative to the folder of the script: the root of the site.
-site_mark_animation_table_json :: proc(sprites: ^Site_Mark_Sprites, home: Site_Mark_Picture, sheet_addresses: [3]string) -> string {
+site_mark_animation_table_json :: proc(sprites: ^Site_Mark_Sprites, forms: ^Site_Mark_Forms, home: Site_Mark_Picture, sheet_addresses: [3]string) -> string {
 	// The braces are written as text, never through a format of fmt.
 	b := strings.builder_make(context.temp_allocator)
 	write :: proc(b: ^strings.Builder, text: string) {
@@ -295,6 +328,8 @@ site_mark_animation_table_json :: proc(sprites: ^Site_Mark_Sprites, home: Site_M
 	number(&b, SITE_MARK_SHEET_COLUMNS)
 	write(&b, ",\"cells\":")
 	number(&b, mark.HERON_GRID_SIZE)
+	write(&b, ",\"forms\":")
+	site_mark_forms_table_write(&b, home, forms, len(sprites.cells))
 	write(&b, ",\"home\":{\"dark\":")
 	site_json_string(&b, sheet_addresses[0])
 	write(&b, ",\"light\":")
@@ -304,7 +339,7 @@ site_mark_animation_table_json :: proc(sprites: ^Site_Mark_Sprites, home: Site_M
 	write(&b, ",\"height\":")
 	number(&b, height)
 	write(&b, ",\"water\":")
-	number(&b, SITE_MARK_WATER_ROWS * home.heron_cell)
+	number(&b, mark.WATER_ROWS * home.heron_cell)
 	write(&b, "},\"icon\":{\"sheet\":")
 	site_json_string(&b, sheet_addresses[2])
 	write(&b, ",\"size\":")
@@ -329,26 +364,7 @@ site_mark_animation_table_json :: proc(sprites: ^Site_Mark_Sprites, home: Site_M
 			write(&b, "]")
 		}
 		write(&b, "]")
-		if site_mark_animation_moves(animation) {
-			write(&b, ",\"motion\":[")
-			first_key := true
-			for key in site_mark_motion_keys {
-				if key.animation != animation {
-					continue
-				}
-				write(&b, first_key ? "[" : ",[")
-				first_key = false
-				values := [7]int{key.at_milliseconds, key.cells_right, key.cells_up, int(key.edge), key.width_percent, key.height_percent, int(key.ease)}
-				for value, value_index in values {
-					if value_index > 0 {
-						write(&b, ",")
-					}
-					number(&b, value)
-				}
-				write(&b, "]")
-			}
-			write(&b, "]")
-		}
+		site_mark_animation_play_write(&b, animation, forms)
 		write(&b, "}")
 	}
 	still_least, still_most := mark.still_bounds()
@@ -378,14 +394,16 @@ site_mark_animation_table_json :: proc(sprites: ^Site_Mark_Sprites, home: Site_M
 
 // site_mark_animation_script gives mark_animation.js: the source below with
 // the table in its place.
-site_mark_animation_script :: proc(sprites: ^Site_Mark_Sprites, home: Site_Mark_Picture, sheet_addresses: [3]string) -> string {
-	script, _ := strings.replace_all(SITE_MARK_ANIMATION_SCRIPT_SOURCE, "/*TABLE*/null", site_mark_animation_table_json(sprites, home, sheet_addresses), context.temp_allocator)
+site_mark_animation_script :: proc(sprites: ^Site_Mark_Sprites, forms: ^Site_Mark_Forms, home: Site_Mark_Picture, sheet_addresses: [3]string) -> string {
+	script, _ := strings.replace_all(SITE_MARK_ANIMATION_SCRIPT_SOURCE, "/*TABLE*/null", site_mark_animation_table_json(sprites, forms, home, sheet_addresses), context.temp_allocator)
 	return script
 }
 
 // site_mark_animation_rules gives the rules of the style sheet for the
 // heron of the home while its script plays. The stage has the box of the
-// still picture, so nothing beside it moves when it takes its place. The
+// still picture, so nothing beside it moves when it takes its place. No
+// rule changes the size of a picture of the heron: a cell of the heron is
+// a square of one size, and a squashed heron is another drawing. The
 // two canvases take no pointer: a heron that crosses the page never takes
 // a click from a link under it. While the heron crosses the window, the
 // page is cut at the sides of the window, so no scroll bar appears for a
@@ -401,8 +419,14 @@ site_mark_animation_rules :: proc() -> string {
 	fmt.sbprintf(&b, "width: %dpx; height: %dpx; ", width, height)
 	strings.write_string(&b, "}\n")
 	strings.write_string(&b, "." + SITE_MARK_STAGE_CLASS + " canvas { display: block; position: absolute; left: 0; image-rendering: pixelated; pointer-events: none; }\n")
-	strings.write_string(&b, "." + SITE_MARK_HERON_CLASS + " { top: 0; transform-origin: 50% 100%; }\n")
-	strings.write_string(&b, "." + SITE_MARK_WATER_CLASS + " { bottom: 0; }\n")
+	// The canvas of the heron is the box of a form: it passes the stage at
+	// its left, at its right and above it by the room of the widest and
+	// of the highest form, and its bottom is on the line of the water. It
+	// has the pixels of its pictures: no rule changes its size.
+	strings.write_string(&b, "." + SITE_MARK_STAGE_CLASS + " ." + SITE_MARK_HERON_CLASS + " { ")
+	fmt.sbprintf(&b, "left: -%dpx; bottom: %dpx; ", mark.FORM_REACH_LEFT * home.heron_cell, mark.WATER_ROWS * home.heron_cell)
+	strings.write_string(&b, "}\n")
+	strings.write_string(&b, "." + SITE_MARK_STAGE_CLASS + " ." + SITE_MARK_WATER_CLASS + " { bottom: 0; }\n")
 	strings.write_string(&b, ".home-head picture." + SITE_MARK_REPLACED_CLASS + " { display: none; }\n")
 	strings.write_string(&b, "html." + SITE_MARK_TRAVEL_CLASS + " { overflow-x: clip; }\n")
 	strings.write_string(&b, "@media (prefers-reduced-motion: reduce) {\n  ." + SITE_MARK_STAGE_CLASS + " { display: none; }\n  .home-head picture." + SITE_MARK_REPLACED_CLASS + " { display: block; }\n}\n")
@@ -430,6 +454,13 @@ mark_animations_picture_write :: proc() -> bool {
 	row_height := MARK_ANIMATIONS_LINE + heron + MARK_ANIMATIONS_LINE + MARK_ANIMATIONS_GAP
 	width := 2 * MARK_ANIMATIONS_MARGIN + (most_frames + 1) * column_width
 	height := 2 * MARK_ANIMATIONS_MARGIN + MARK_ANIMATIONS_LINE + len(mark.Animation) * row_height + MARK_ANIMATIONS_LINE
+	// Under the frames of an animation that moves, the forms of its move.
+	sprites := site_mark_sprites() or_return
+	forms := site_mark_forms(&sprites) or_return
+	width = max(width, 2 * MARK_ANIMATIONS_MARGIN + mark_animation_forms_width(&forms))
+	for animation in mark.Animation {
+		height += mark_animation_forms_height(animation)
+	}
 	colors := make([]graphics.Color, width * height, context.temp_allocator)
 	canvas := graphics.Canvas{pixels = raw_data(colors), width = width, height = height, stride = width}
 	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
@@ -441,7 +472,7 @@ mark_animations_picture_write :: proc() -> bool {
 	graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, "The animations of the mark (support/mark): frame 0 is the still heron; cells of 8 pixels", graphics.COLOR_TEXT)
 	y += MARK_ANIMATIONS_LINE
 	for animation in mark.Animation {
-		moves := "" if !site_mark_animation_moves(animation) else "; the home of the site and the program heron move the heron"
+		moves := "" if !mark.animation_moves(animation) else "; the home of the site and the program heron move the heron"
 		heading := fmt.tprintf("%s: %d frames, %d ms%s", mark.animation_names[animation], mark.animation_frame_count(animation), mark.animation_duration(animation), moves)
 		graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, heading, graphics.COLOR_KERNEL)
 		count := mark.animation_frame_count(animation)
@@ -456,9 +487,14 @@ mark_animations_picture_write :: proc() -> bool {
 				still := mark.still_cells()
 				caption = fmt.tprintf("%d: %d ms, %d cells", frame, row.duration_milliseconds, mark.cells_differ_count(&cells, &still))
 			}
+			fmt.assertf(len(caption) * MARK_ANIMATIONS_CHARACTER_WIDTH <= heron, "the text %q under a frame is wider than its box", caption)
 			graphics.text(canvas, x, y + MARK_ANIMATIONS_LINE + heron + 4, caption, graphics.COLOR_DIM)
 		}
 		y += row_height
+		if mark.animation_moves(animation) {
+			mark_animation_forms_draw(canvas, MARK_ANIMATIONS_MARGIN, y, animation, &sprites, &forms)
+			y += mark_animation_forms_height(animation)
+		}
 	}
 	still_least, still_most := mark.still_bounds()
 	graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, fmt.tprintf("On the home of the site: each animation once in a round, in an order of chance; still for %d to %d ms between two", still_least, still_most), graphics.COLOR_TEXT)
@@ -487,7 +523,9 @@ mark_animations_picture_write :: proc() -> bool {
 // and the script puts the stage, of the same size, in its place only while
 // it plays. The script sets no style: it sets classes, and it moves the
 // heron through the animations of the browser, which a style rule of the
-// host does not refuse.
+// host does not refuse. It changes the size of no picture: a squashed or a
+// stretched heron is a drawing of the sheet, and a move puts the heron at
+// a whole count of cells from its place.
 SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home, written by kerneltool site
 // (tools/kerneltool/site_mark_animation.odin and site_mark_schedule.odin)
 // from support/mark/animation.odin.
@@ -508,8 +546,6 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
   const COUNT = TABLE.animations.length;
   const EVERY = Math.pow(2, COUNT) - 1;
   const STORE = "modus.mark.played";
-  // The ways from a key of a move to the next one, in the order of the tool.
-  const EASES = ["linear", "ease-out", "ease-in", "steps(1, end)"];
 
   // The rule of the choice, as next_animation of support/mark. The
   // memory holds the animations that were played, one bit each, and the one
@@ -551,6 +587,10 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
     check("a sheet has sprites in rows", TABLE.sprites >= 1 && TABLE.columns >= 1);
     check("a sprite of the home has a size and its water", TABLE.home.width > 0 && TABLE.home.height > TABLE.home.water && TABLE.home.water > 0);
     check("a sprite of the icon has a size", TABLE.icon.size > 0);
+    const forms = TABLE.forms, whole = Number.isInteger;
+    check("the box of a drawn form holds the heron above the water", forms.count >= 1 && forms.columns >= 1 && forms.top > 0 &&
+      forms.width >= forms.left + TABLE.home.width && forms.height === forms.up + TABLE.home.height - TABLE.home.water);
+    check("a cell is a whole count of pixels", whole(TABLE.home.width / TABLE.cells) && whole(forms.left * TABLE.cells / TABLE.home.width) && whole(forms.up * TABLE.cells / TABLE.home.width));
     check("the memory holds each animation in one bit", COUNT >= 2 && COUNT <= 30);
     TABLE.animations.forEach(animation => {
       const name = animation.name;
@@ -559,11 +599,19 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
       check(name + ": each duration is in its range", animation.frames.every(f => f[1] >= limits.frameLeast && f[1] <= limits.frameMost));
       check(name + ": the first frame moves", animation.frames[0][0] !== 0);
       check(name + ": its time is the time of its frames", animation.frames.reduce((sum, f) => sum + f[1], 0) === animation.duration);
+      check(name + ": the time of its steps is its time", animation.steps.reduce((sum, s) => sum + s[0], 0) === animation.duration);
+      check(name + ": each step shows a sprite, and a drawn form or none", animation.steps.every(s => s.length === 3 && whole(s[0]) && s[0] > 0 &&
+        whole(s[1]) && s[1] >= 0 && s[1] < TABLE.sprites && whole(s[2]) && s[2] >= -1 && s[2] < forms.count));
+      check(name + ": the steps show its frames in their order", animation.steps.map(s => s[1]).filter((s, index, all) => index === 0 || s !== all[index - 1]).join() ===
+        animation.frames.map(f => f[0]).filter((s, index, all) => index === 0 || s !== all[index - 1]).join());
+      check(name + ": only a move draws a form", !!animation.motion || animation.steps.every(s => s[2] === -1));
       if (animation.motion) {
         const keys = animation.motion;
         check(name + ": its move goes from its start to its end", keys.length >= 2 && keys[0][0] === 0 && keys[keys.length - 1][0] === animation.duration);
         check(name + ": the keys of its move are in the order of time", keys.every((key, index) => index === 0 || key[0] > keys[index - 1][0]));
-        check(name + ": each key names an edge and a way", keys.every(key => key.length === 7 && key[3] >= 0 && key[3] <= 2 && key[6] >= 0 && key[6] < EASES.length));
+        check(name + ": each key is whole cells, an edge and a pace", keys.every(key => key.length === 5 && key.every(whole) && key[3] >= 0 && key[3] <= 2 && key[4] >= 0 && key[4] <= 1));
+        check(name + ": its move starts and ends in its place", [keys[0], keys[keys.length - 1]].every(key => key[1] === 0 && key[2] === 0 && key[3] === 0));
+        check(name + ": no way goes to the right and upward at once", keys.every((key, index) => index === 0 || key[2] === keys[index - 1][2] || (key[1] === keys[index - 1][1] && key[3] === keys[index - 1][3])));
       }
     });
     check("the still times have a range", schedule.stillLeast >= limits.frameLeast && schedule.stillMost >= schedule.stillLeast);
@@ -638,7 +686,7 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
 
   let sheets = null, loading = null;
   let stage = null, heron = null, heronContext = null, water = null, waterContext = null;
-  let playing = false, shown = -1, timer = 0, current = -1, frame = -1, motion = null;
+  let playing = false, shown = -1, shownForm = -1, timer = 0, current = -1, step = -1, due = 0, motion = null;
   let typing = isField(document.activeElement);
   let iconLink = null, iconSprite = -1;
   const iconAddresses = [];
@@ -659,10 +707,12 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
   }
 
   // The stage: the water at the bottom, which stays, and the heron above
-  // it, which a move takes with it. Together they are the box of the still
-  // picture.
+  // it, which a move takes with it. The stage is the box of the still
+  // picture. The canvas of the heron is the box of a drawn form: it passes
+  // the stage by the room of the widest and of the highest form, and each
+  // of its pixels is a pixel of the sheet.
   function build() {
-    const width = TABLE.home.width, height = TABLE.home.height;
+    const width = TABLE.home.width;
     stage = document.createElement("span");
     stage.className = "mark-stage";
     stage.setAttribute("role", "img");
@@ -673,24 +723,33 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
     water.height = TABLE.home.water;
     heron = document.createElement("canvas");
     heron.className = "mark-heron";
-    heron.width = width;
-    heron.height = height - TABLE.home.water;
+    heron.width = TABLE.forms.width;
+    heron.height = TABLE.forms.height;
     stage.append(water, heron);
     waterContext = water.getContext("2d");
     heronContext = heron.getContext("2d");
   }
 
-  // One sprite of the sheet of the color scheme of now, cut at the line of
-  // the water.
-  function draw(sprite) {
+  // One picture, from the sheet of the color scheme of now: the water of
+  // the sprite of a frame, and above it the heron of that sprite (form -1)
+  // or a drawn form of it. Each picture is copied pixel for pixel: a cell
+  // of the heron has one size.
+  function draw(sprite, form) {
     const sheet = light.matches ? sheets.light : sheets.dark;
+    const forms = TABLE.forms;
     const width = TABLE.home.width, height = TABLE.home.height, above = height - TABLE.home.water;
     const left = (sprite % TABLE.columns) * width, top = Math.floor(sprite / TABLE.columns) * height;
-    heronContext.clearRect(0, 0, width, above);
-    heronContext.drawImage(sheet, left, top, width, above, 0, 0, width, above);
+    heronContext.clearRect(0, 0, forms.width, forms.height);
+    if (form < 0) {
+      heronContext.drawImage(sheet, left, top, width, above, forms.left, forms.up, width, above);
+    } else {
+      heronContext.drawImage(sheet, (form % forms.columns) * forms.width, forms.top + Math.floor(form / forms.columns) * forms.height,
+        forms.width, forms.height, 0, 0, forms.width, forms.height);
+    }
     waterContext.clearRect(0, 0, width, TABLE.home.water);
     waterContext.drawImage(sheet, left, top + above, width, TABLE.home.water, 0, 0, width, TABLE.home.water);
     shown = sprite;
+    shownForm = form;
   }
 
   // The icon of the tab: one sprite at 32 pixels, as a data address. Each
@@ -728,22 +787,31 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
     iconSprite = -1;
   }
 
-  // The move of an animation: the keys of the table as one animation of the
-  // browser on the heron above the water. A key past an edge puts the heron
-  // wholly outside the window, at that side. While the heron crosses the
-  // window, the page is cut at the sides of the window.
+  // The move of an animation: the places of its keys as one animation of
+  // the browser on the heron above the water. A place is a whole count of
+  // cells from the place of the heron. A key past an edge puts the heron,
+  // in its widest form, wholly outside the window at that side, a whole
+  // count of cells away. From a key to the next one the heron goes cell by
+  // cell, in as many even steps as the way has cells (or in one step, at
+  // the end, for a key that holds): it is never between two cells. While
+  // the heron crosses the window, the page is cut at the sides of the
+  // window.
   function startMove(animation) {
     if (!animation.motion || typeof heron.animate !== "function") return;
     const box = stage.getBoundingClientRect();
     const cell = box.width / TABLE.cells;
-    const far = [0, document.documentElement.clientWidth - box.left + box.width, -(box.right + box.width)];
+    const far = [0, Math.ceil((document.documentElement.clientWidth - box.left) / cell) + TABLE.forms.reachLeft,
+      -(Math.ceil(box.right / cell) + TABLE.forms.reachRight)];
+    const places = animation.motion.map(key => [key[1] + far[key[3]], key[2]]);
     let crosses = false;
-    const keys = animation.motion.map(key => {
+    const keys = animation.motion.map((key, index) => {
       if (key[3] !== 0) crosses = true;
+      const place = places[index], next = places[Math.min(index + 1, places.length - 1)];
+      const cells = Math.abs(next[0] - place[0]) + Math.abs(next[1] - place[1]);
       return {
         offset: key[0] / animation.duration,
-        easing: EASES[key[6]],
-        transform: "translate(" + (key[1] * cell + far[key[3]]) + "px, " + (-key[2] * cell) + "px) scale(" + key[4] / 100 + ", " + key[5] / 100 + ")"
+        easing: "steps(" + (key[4] === 1 ? 1 : Math.max(1, cells)) + ", end)",
+        transform: "translate(" + place[0] * cell + "px, " + -place[1] * cell + "px)"
       };
     });
     if (crosses) document.documentElement.classList.add("mark-travel");
@@ -755,13 +823,15 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
     document.documentElement.classList.remove("mark-travel");
   }
 
-  // One step of the play: the still heron for a still time, then one
-  // animation, frame by frame.
+  // The play: the still heron for a still time, then one animation, step
+  // by step. Each step ends at its time from the start of the animation,
+  // so a timer that is late does not make the next ones late: the pictures
+  // stay in step with the move.
   function rest() {
     current = -1;
-    frame = -1;
+    step = -1;
     endMove();
-    if (shown !== 0) draw(0);
+    if (shown !== 0 || shownForm !== -1) draw(0, -1);
     stillIcon();
     timer = window.setTimeout(play, asked() >= 0 ? TABLE.schedule.stillLeast : stillTime(chance));
   }
@@ -773,17 +843,19 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
       current = nextAnimation(memory, chance);
       keep();
     }
-    frame = -1;
+    step = -1;
+    due = window.performance.now();
     startMove(TABLE.animations[current]);
     next();
   }
   function next() {
-    const frames = TABLE.animations[current].frames;
-    frame++;
-    if (frame >= frames.length) { rest(); return; }
-    if (frames[frame][0] !== shown) draw(frames[frame][0]);
-    showIcon(frames[frame][0]);
-    timer = window.setTimeout(next, frames[frame][1]);
+    const steps = TABLE.animations[current].steps;
+    step++;
+    if (step >= steps.length) { rest(); return; }
+    if (steps[step][1] !== shown || steps[step][2] !== shownForm) draw(steps[step][1], steps[step][2]);
+    showIcon(steps[step][1]);
+    due += steps[step][0];
+    timer = window.setTimeout(next, Math.max(0, due - window.performance.now()));
   }
 
   function canPlay() { return !reduce.matches && !document.hidden && !typing; }
@@ -794,7 +866,7 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
       if (!sheets || !canPlay() || playing) return;
       if (!stage) build();
       playing = true;
-      draw(0);
+      draw(0, -1);
       // The style sheet hides the still picture by this class, and shows
       // it again for a reader who asks for reduced motion.
       picture.after(stage);
@@ -820,7 +892,7 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
   document.addEventListener("visibilitychange", fit);
   document.addEventListener("focusin", event => { typing = isField(event.target); fit(); });
   document.addEventListener("focusout", () => { typing = false; fit(); });
-  light.addEventListener("change", () => { if (playing && shown >= 0) draw(shown); });
+  light.addEventListener("change", () => { if (playing && shown >= 0) draw(shown, shownForm); });
   // Another animation asked for in the address: the play starts again.
   window.addEventListener("hashchange", () => { if (playing) { stop(); fit(); } });
   fit();
