@@ -125,6 +125,7 @@ A `Line` record draws a straight line between two points, with a thickness, in o
 - **The cost bound**: one execution walks at most 65 537 points and fills at most 32 x 32 pixels for each point inside the area.
 - **Limits**: no rounded ends, no antialiasing, no dashes. Lines at an angle are allowed, sparingly (`DESIGN.md`, section 2).
 - `draw_outline` appends the border of a rectangle as four rectangles, the same pixels as `graphics.outline`.
+- `draw_kind_icon` appends a kind icon (`support/kind_icons`; `DESIGN.md`, "The icons of the kinds") as rectangles: each cell is a square of the cell size given, 1 pixel in a row of a list, and an icon is at most 20 records. `list_of_rows` draws the icon of each row with it.
 
 ### 2.6 Window places
 

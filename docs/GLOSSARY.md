@@ -3875,15 +3875,27 @@ Do not use: launcher, command palette, everything palette, run dialog.
 
 ### Palette entry
 
-A palette entry is one thing that the palette lists and that the input can choose: a name, a kind, and the fact that its mark says.
+A palette entry is one thing that the palette lists and that the input can choose: a name, a kind, and the fact that its icon says.
 
-The entries are data, and the panel only ranks, draws and dispatches them. An entry has a kind, which the row says in words (`window`, `program`, `close a window`, `command`, `export`, `setting`); a name of at most 64 bytes, which the typed part matches; a mark, which says one fact (a program has a window now, a window has the focus, the entry destroys something); and a number that only the source of the entry reads. The compositor makes the entries of its two sources, the table `bar.names` and its client table, and of the checked copy of the palette table, when one of them changes (`palette.list_collect`, on its second thread). The record is `palette.Entry` in `support/palette`.
+The entries are data, and the panel only ranks, draws and dispatches them. An entry has a kind, which the row says by its kind icon and in words (`window`, `program`, `close a window`, `command`, `export`, `setting`); a name of at most 64 bytes, which the typed part matches; a fact, which the color or the form of the icon says (a program has a window now, a window has the focus, the entry destroys something); and a number that only the source of the entry reads. The compositor makes the entries of its two sources, the table `bar.names` and its client table, and of the checked copy of the palette table, when one of them changes (`palette.list_collect`, on its second thread). The record is `palette.Entry` in `support/palette`.
 
 A palette entry is not a command line: it holds no text that another program parses.
 
 The design: `docs/DESIGN.md`, "Palette".
 
 Do not use: palette item, palette command, action.
+
+### Kind icon
+
+A kind icon is the small picture of one kind of thing, a grid of 12 by 12 square cells, that each display of the system and the site draw from one table.
+
+It lets a reader tell a window from a program, or a handle from a number, before the reader reads a word. `support/kind_icons` holds one icon for each value kind and for each of the four desktop kinds that are not values: a window, a setting, an export, and an act that destroys. The table holds cells only, with no color: the display gives the color of the kind, or the color of one fact of the thing. The system draws a cell as a square of 1, 2 or 3 pixels (`interface.draw_kind_icon`), and the site draws the same cells as the rectangles of an SVG picture, so an icon is never scaled by a filter. The rows of the palette show it.
+
+A kind icon is not the mark of the system, which is the heron. It never stands alone: the row or the column says the kind in words too.
+
+The design: `docs/DESIGN.md`, "The icons of the kinds".
+
+Do not use: glyph (for this), symbol (for this), pictogram, badge.
 
 ### Palette provider
 
@@ -5752,7 +5764,7 @@ Do not use: entry, item, API (for this).
 
 A value kind is what a technical value is for a reader, such as a number, a size, a time, a handle, a status or a module, so that every place that shows the value can give it one look.
 
-The kinds are one enumeration of the system, `value_kinds.Value_Kind` (`contract/value_kinds`): number, size, time, handle, value of the context, grant, status, type, operation, command, module, file, guide, version, yes or no, procedure, constant and global variable. One table gives each kind its color in each color scheme (`support/graphics/value_colors.odin`). The site adds a class `value-<name>`, a title and an icon to each kind; the system uses the same kinds in a log record, where each value run keeps the kind of its part of the text, so the log draws a size and a module name in their colors.
+The kinds are one enumeration of the system, `value_kinds.Value_Kind` (`contract/value_kinds`): number, size, time, handle, value of the context, grant, status, type, operation, command, module, file, guide, version, yes or no, procedure, constant and global variable. One table gives each kind its color in each color scheme (`support/graphics/value_colors.odin`). One table gives each kind its kind icon (`support/kind_icons`). The site adds a class `value-<name>` and a title to each kind; the system uses the same kinds in a log record, where each value run keeps the kind of its part of the text, so the log draws a size and a module name in their colors.
 
 The writer of a table, a symbol or a line of the log states the kind of each value: no text is classified by its look. A value is in the monospace font; a name or an explanation in the reading font.
 

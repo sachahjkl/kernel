@@ -4,6 +4,7 @@ import "contract:palette_table"
 import "contract:value_kinds"
 import "support:graphics"
 import "support:interface"
+import "support:kind_icons"
 
 // The geometry of the panel (docs/DESIGN.md, "Palette"), on the grid of 8
 // pixels. From the top: the input band, the list, a gap, the detail line,
@@ -211,27 +212,68 @@ signature_fit :: proc "contextless" (detail: string, cells: int, buffer: []u8) -
 	return string(buffer[:count])
 }
 
-// mark_color gives the color of the mark of an entry, the color of the
-// concept that its fact names, and its form: a full square, or the outline
-// of a square for a window, so that a reader who does not tell the colors
-// apart still tells a window from a program. shown is false for an entry
-// with no mark.
-mark_color :: proc "contextless" (mark: Entry_Mark) -> (color: graphics.Color, outlined: bool, shown: bool) {
-	switch mark {
-	case .None:
-		return 0, false, false
-	case .Has_Window:
-		return graphics.COLOR_PROGRAM, false, true
-	case .No_Window:
-		return graphics.COLOR_NOT_USABLE, false, true
-	case .Has_Focus:
-		return graphics.COLOR_TITLE, true, true
-	case .Window:
-		return graphics.COLOR_DIM, true, true
-	case .Destroys:
-		return graphics.COLOR_STOP_PROGRAM, false, true
+// The color of the icon of an entry that destroys: the red of "stop a
+// program" in its brighter form, the red of the close button under the
+// pointer. The deep red of the button is too near the surface of a card for
+// the thin parts of an icon.
+ICON_COLOR_OF_STOP :: graphics.COLOR_STOP_PROGRAM_POINTER_OVER
+// The color of the icon of an entry in its quiet state: a program with no
+// window, a window that has not the focus, a value of a setting that the
+// machine does not use, a command that the panel cannot run at once.
+ICON_COLOR_QUIET :: graphics.COLOR_DIM
+
+// entry_icon gives the icon of an entry and its color on a row that is not
+// chosen (docs/DESIGN.md, "The icons of the kinds"). The form says what the
+// entry is, so a reader who does not tell the colors apart still tells a
+// window from a program; an entry that destroys has the icon of that act,
+// whatever its kind. The color says one fact of the entry: the color of
+// its kind when the thing is there or in use, the quiet color when it is
+// not. in_use: the entry is the value of a setting that the machine uses
+// now.
+entry_icon :: proc "contextless" (entry: ^Entry, in_use: bool) -> (icon: ^kind_icons.Cells, color: graphics.Color) {
+	if entry.mark == .Destroys || entry.kind == .Close_Window {
+		return kind_icons.cells_of_desktop_kind(.Stop), ICON_COLOR_OF_STOP
 	}
-	return 0, false, false
+	quiet := .Needs_Arguments in entry.flags
+	switch entry.kind {
+	case .Window:
+		icon = kind_icons.cells_of_desktop_kind(.Window)
+		color = graphics.COLOR_TITLE
+		quiet = entry.mark != .Has_Focus
+	case .Program:
+		icon = kind_icons.cells_of_value_kind(.Module)
+		color = graphics.value_kind_color(value_kinds.Value_Kind.Module, false)
+		quiet = entry.mark != .Has_Window
+	case .Close_Window:
+	case .Command:
+		icon = kind_icons.cells_of_value_kind(.Command)
+		color = graphics.value_kind_color(value_kinds.Value_Kind.Command, false)
+	case .Export:
+		// An export is a part of a module: the color of a module.
+		icon = kind_icons.cells_of_desktop_kind(.Export)
+		color = graphics.value_kind_color(value_kinds.Value_Kind.Module, false)
+	case .Setting:
+		icon = kind_icons.cells_of_desktop_kind(.Setting)
+		color = graphics.COLOR_TEXT
+		quiet = !in_use
+	}
+	if quiet {
+		color = ICON_COLOR_QUIET
+	}
+	return
+}
+
+// candidate_icon gives the icon of the candidates of a field of a form and
+// its color: the kind of what the field takes.
+candidate_icon :: proc "contextless" (kind: palette_table.Candidate_Kind) -> (icon: ^kind_icons.Cells, color: graphics.Color) {
+	switch kind {
+	case .None:
+	case .Program, .Module:
+		return kind_icons.cells_of_value_kind(.Module), graphics.value_kind_color(value_kinds.Value_Kind.Module, false)
+	case .Grant:
+		return kind_icons.cells_of_value_kind(.Grant), graphics.value_kind_color(value_kinds.Value_Kind.Grant, false)
+	}
+	return nil, 0
 }
 
 // part_color gives the color of a run of a result: a value has the color
@@ -339,12 +381,13 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 				rows[index] = {kind = .Heading, name = HEADING_PROGRAMS}
 			case .Entry:
 				entry := &list.entries[min(int(row.entry), ENTRY_CAPACITY - 1)]
-				color, outlined, shown := mark_color(entry.mark)
-				rows[index] = {kind = .Entry, name = entry_name(entry), matched_places = transmute(u128)row.places, mark_shown = shown, mark_outlined = outlined, mark_color = color, right_text = entry_words(entry)}
+				in_use := entry.kind == .Setting && setting_in_use(panel, entry)
+				icon, icon_color := entry_icon(entry, in_use)
+				rows[index] = {kind = .Entry, name = entry_name(entry), matched_places = transmute(u128)row.places, icon = icon, icon_color = icon_color, right_text = entry_words(entry)}
 				if entry.kind == .Setting {
-					// The value in use has a mark, and says so in words.
-					if setting_in_use(panel, entry) {
-						rows[index].mark_shown, rows[index].mark_color = true, graphics.COLOR_TEXT
+					// The value in use has its icon in the text color, and
+					// says so in words.
+					if in_use {
 						rows[index].right_text = "setting, in use"
 					}
 				} else if given := given_of(list, entry); given != nil {
@@ -365,7 +408,7 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 						// The row says the act in full, and no letter is marked:
 						// the text is no longer the name that the input searched.
 						confirm_sentence(&confirm_text, list, entry)
-						rows[index] = {kind = .Entry, name = interface.text_of(&confirm_text), mark_shown = shown, mark_outlined = outlined, mark_color = color, right_text = rows[index].right_text}
+						rows[index] = {kind = .Entry, name = interface.text_of(&confirm_text), icon = icon, icon_color = icon_color, right_text = rows[index].right_text}
 					}
 				}
 			}
@@ -544,7 +587,7 @@ form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x,
 		}
 		interface.text_put(&act, "): ")
 		interface.text_put(&act, string(form.given.about[:form.given.about_length]))
-		rows[0] = {kind = .Entry, name = interface.text_of(&act), mark_shown = true, mark_color = graphics.COLOR_STOP_PROGRAM, right_text = entry_words(&form.entry)}
+		rows[0] = {kind = .Entry, name = interface.text_of(&act), icon = kind_icons.cells_of_desktop_kind(.Stop), icon_color = ICON_COLOR_OF_STOP, right_text = entry_words(&form.entry)}
 		interface.list_of_rows(frame, list_area, rows[:1], {chosen = 0, chosen_color = graphics.COLOR_STOP_PROGRAM, total = 1})
 		return
 	}
@@ -558,11 +601,12 @@ form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x,
 	case .Grant:
 		words = "grant"
 	}
+	candidates_icon, candidates_color := candidate_icon(form.candidate_kind)
 	choice := form.candidate_choice
 	first := choice >= LIST_ROWS ? choice - LIST_ROWS + 1 : 0
 	shown_count := clamp(form.shown_count - first, 0, LIST_ROWS)
 	for index in 0 ..< shown_count {
-		rows[index] = {kind = .Entry, name = candidate_name(form, first + index), right_text = words}
+		rows[index] = {kind = .Entry, name = candidate_name(form, first + index), icon = candidates_icon, icon_color = candidates_color, right_text = words}
 	}
 	interface.list_of_rows(frame, list_area, rows[:shown_count], {chosen = choice - first, first = first, total = form.shown_count})
 	if form.shown_count == 0 {

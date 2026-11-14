@@ -52,9 +52,11 @@ Entry_Flag :: enum u8 {
 }
 Entry_Flags :: bit_set[Entry_Flag;u8]
 
-// The one fact that the mark of an entry says (docs/DESIGN.md, "Palette").
+// The one fact of an entry that its icon says beside its kind, by its
+// color or, for an entry that destroys, by its form (docs/DESIGN.md,
+// "Palette").
 Entry_Mark :: enum u8 {
-	None       = 0, // No mark.
+	None       = 0, // No fact: the icon has the color of the kind.
 	Has_Window = 1, // A program that has a window now.
 	No_Window  = 2, // A program that has no window now.
 	Has_Focus  = 3, // The window that has the focus.
@@ -80,7 +82,7 @@ NO_ROW :: -1 // No row: an empty list has no choice, and a pointer over no row i
 // One entry of the palette: a thing that the input can choose.
 Entry :: struct {
 	kind:        Entry_Kind, // What the entry is.
-	mark:        Entry_Mark, // The fact of its mark.
+	mark:        Entry_Mark, // The fact that its icon says.
 	recent:      u8, // 0: not chosen lately. Else its age among the remembered choices: 1 is the newest.
 	name_length: u8, // The bytes of `name` in use.
 	flags:       Entry_Flags, // Its facts.
@@ -194,7 +196,7 @@ Panel :: struct {
 	recents:       [RECENT_CAPACITY]Recent, // The chosen entries, the newest first.
 	recent_count:  int, // The remembered choices in use.
 	form:          Form, // Arguments: the fields of the chosen entry.
-	settings_in_use: [palette_table.PARAMETER_CAPACITY]u8, // For the owner: the value in use of each setting of the machine, by its number: the mark of a Setting entry.
+	settings_in_use: [palette_table.PARAMETER_CAPACITY]u8, // For the owner: the value in use of each setting of the machine, by its number: the color of the icon of a Setting entry.
 	sent_name:     [NAME_CAPACITY]u8, // Running and Result: the name of the entry that the panel sent.
 	sent_length:   int, // The bytes of `sent_name` in use.
 	result:        Result, // Result: what the entry gave.

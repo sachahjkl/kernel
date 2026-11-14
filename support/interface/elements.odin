@@ -2,6 +2,7 @@ package interface
 
 import "support:display"
 import "support:graphics"
+import "support:kind_icons"
 
 // The elements of the rules (docs/DESIGN.md, section 10). Each one appends
 // draw records to the table of the frame; an element that takes input
@@ -329,7 +330,7 @@ find_without_case :: proc "contextless" (name, part: string) -> int {
 
 // What a row of a list of rows is.
 List_Row_Kind :: enum u8 {
-	Entry, // A thing that the input can choose: a mark, a name, a text at the right.
+	Entry, // A thing that the input can choose: an icon, a name, a text at the right.
 	Heading, // A dim line that names the group of the rows under it. It is never the chosen row.
 }
 
@@ -339,9 +340,8 @@ List_Row :: struct {
 	kind:           List_Row_Kind, // An entry or the heading of a group.
 	name:           string, // The name, in the interface font.
 	matched_places: u128, // Bit n: the byte n of the name matched the search. A line of 2 pixels is under each such character.
-	mark_shown:     bool, // A square of 8 pixels is before the name.
-	mark_outlined:  bool, // The mark is the outline of the square, 2 pixels wide: a second form, for a reader who does not tell two colors apart.
-	mark_color:     graphics.Color, // The color of that square: one fact of the entry.
+	icon:           ^kind_icons.Cells, // The icon of the kind of the entry, before the name: its form says what the entry is. nil: no icon.
+	icon_color:     graphics.Color, // The color of the icon on a row that is not chosen: the color of the kind, or of one fact of the entry.
 	right_text:     string, // A dim text at the right of the row: what the entry is, in words.
 	name_in_cells:  bool, // The name is code: it is in the font of the cells.
 	name_color:     graphics.Color, // The color of the name on a row that is not chosen. 0: the text color.
@@ -357,16 +357,35 @@ List_Rows_Options :: struct {
 	total:        int, // The rows of the whole list. More than the rows of the area: a bar of 2 pixels at the right.
 }
 
-LIST_ROW_MARK_X :: 16 // From the left of a row to its mark.
-LIST_ROW_MARK_SIZE :: 8 // The side of the mark.
-LIST_ROW_NAME_X :: LIST_ROW_MARK_X + LIST_ROW_MARK_SIZE + 8 // From the left of a row to its name.
+LIST_ROW_ICON_X :: 16 // From the left of a row to its icon, and to the text of a heading.
+LIST_ROW_ICON_SIZE :: kind_icons.ICON_SIZE // The side of the icon: one pixel for each cell.
+LIST_ROW_NAME_X :: LIST_ROW_ICON_X + LIST_ROW_ICON_SIZE + 8 // From the left of a row to its name.
 LIST_ROW_RIGHT_MARGIN :: 16 // From the text at the right to the right of a row.
 LIST_ROW_SCROLL_WIDTH :: 2 // The bar at the right of a list that does not show each row.
 
-// list_of_rows draws rows of 24 pixels: for each one a mark (a full square
-// or the outline of one), a name with a line of 2 pixels under each matched
-// character, a quiet detail after a name that is code, and a dim text at
-// the right; the chosen row filled, with its text in white, and at its
+#assert(LIST_ROW_ICON_SIZE <= LINE && (TABLE_LINE - LIST_ROW_ICON_SIZE) % 2 == 0)
+
+// draw_kind_icon appends an icon of a kind (support/kind_icons) whose top
+// left corner is at (x, y): each cell is a square of cell_size pixels, so
+// the icon is sharp at each size, and the records are the rectangles of
+// the icon, at most kind_icons.RECTANGLE_LIMIT. An icon that is nil and a
+// cell size under 1 draw nothing.
+draw_kind_icon :: proc "contextless" (table: ^Draw_Table, x, y: int, icon: ^kind_icons.Cells, cell_size: int, color: graphics.Color, element: u32 = 0) {
+	if icon == nil || cell_size < 1 {
+		return
+	}
+	rectangles: [kind_icons.RECTANGLE_LIMIT]kind_icons.Cell_Rectangle
+	count := kind_icons.rectangles_of(icon, &rectangles)
+	for index in 0 ..< count {
+		part := rectangles[index]
+		draw_rectangle(table, x + int(part.x) * cell_size, y + int(part.y) * cell_size, int(part.width) * cell_size, int(part.height) * cell_size, color, element)
+	}
+}
+
+// list_of_rows draws rows of 24 pixels: for each one the icon of its kind,
+// a name with a line of 2 pixels under each matched character, a quiet
+// detail after a name that is code, and a dim text at the right; the
+// chosen row filled, with its icon and its text in white, and at its
 // right its hint when the caller gives one, else the same text as the
 // other rows. It takes no input: the caller owns the choice and gives only the
 // rows that the area shows, so the work is the rows on the screen, not the
@@ -391,27 +410,17 @@ list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row,
 		row := rows[index]
 		y := area.y + index * TABLE_LINE
 		if row.kind == .Heading {
-			draw_text(table, area.x + LIST_ROW_MARK_X, y + 4, text_fit(table, FONT_INTERFACE, row.name, line_width - 2 * LIST_ROW_MARK_X), graphics.COLOR_DIM, FONT_INTERFACE)
+			draw_text(table, area.x + LIST_ROW_ICON_X, y + 4, text_fit(table, FONT_INTERFACE, row.name, line_width - 2 * LIST_ROW_ICON_X), graphics.COLOR_DIM, FONT_INTERFACE)
 			continue
 		}
 		chosen := index == options.chosen
 		if chosen {
 			draw_rectangle(table, area.x, y, line_width, TABLE_LINE, chosen_color)
 		}
-		if row.mark_shown {
-			mark_color := row.mark_color
-			// A mark in the color of its own row, or in the blue that the
-			// chosen blue is made from, has no contrast there: it is white.
-			if chosen && (mark_color == chosen_color || mark_color == graphics.COLOR_TITLE) {
-				mark_color = graphics.COLOR_WHITE
-			}
-			mark_y := y + (TABLE_LINE - LIST_ROW_MARK_SIZE) / 2
-			if row.mark_outlined {
-				draw_outline(table, area.x + LIST_ROW_MARK_X, mark_y, LIST_ROW_MARK_SIZE, LIST_ROW_MARK_SIZE, 2, mark_color)
-			} else {
-				draw_rectangle(table, area.x + LIST_ROW_MARK_X, mark_y, LIST_ROW_MARK_SIZE, LIST_ROW_MARK_SIZE, mark_color)
-			}
-		}
+		// The icon of a chosen row is white, as its text is: no color of
+		// the rules keeps the contrast of a graphic on each fill of a
+		// chosen row.
+		draw_kind_icon(table, area.x + LIST_ROW_ICON_X, y + (TABLE_LINE - LIST_ROW_ICON_SIZE) / 2, row.icon, 1, chosen ? graphics.COLOR_WHITE : row.icon_color)
 		// The text at the right takes its room first; the name takes the rest.
 		right_text := chosen && options.chosen_hint != "" ? options.chosen_hint : row.right_text
 		name_room := line_width - LIST_ROW_NAME_X - LIST_ROW_RIGHT_MARGIN
