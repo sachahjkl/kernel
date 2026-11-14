@@ -69,11 +69,11 @@ source_path_name_byte :: proc(character: u8) -> bool {
 // or inside a word ("kerneltool") does not start as one.
 //
 // The path ends at the first byte that is not a byte of a name:
-//   - a ":" (a line number: "kernel/enter.odin:34"), a space, a comma, a
+//   - a ":" (a line number: "src/kernel/enter.odin:34"), a space, a comma, a
 //     semicolon, a parenthesis or a quote: the path before it is whole;
 //   - each other byte ("*" of a pattern, "<" of a name that is not written
 //     out): the last name is not whole, and the path is the folder before
-//     it: "programs/*/main.odin" names the folder programs.
+//     it: "src/programs/*/main.odin" names the folder programs.
 source_path_of_span :: proc(span: string, starts: []string) -> (path: string, is_source_path: bool) {
 	for start in starts {
 		if strings.has_prefix(span, start) {
@@ -96,7 +96,7 @@ source_path_of_span :: proc(span: string, starts: []string) -> (path: string, is
 			path = path[:strings.last_index_byte(path, '/') + 1]
 		}
 	}
-	// "kernel/" is the folder, and a period can end a sentence in the span.
+	// "src/kernel/" is the folder, and a period can end a sentence in the span.
 	return strings.trim_right(path, "/."), true
 }
 

@@ -8,11 +8,11 @@ import "contract:errors"
 import "support:quic"
 import "support:random"
 import "support:web"
-import cryptography_module "../../modules/cryptography"
+import cryptography_module "../../src/modules/cryptography"
 
 // The peer as QUIC clients of the program `quic_echo` (docs/QUIC.md,
 // section 6). The tool asks for one case at a time (step Peer_Quic); the
-// thread of the peer runs it with support/quic, the library of the system,
+// thread of the peer runs it with src/library/support/quic, the library of the system,
 // and the module cryptography compiled for the host. The client pins the
 // public key that the machine printed (step Quic_Key).
 //

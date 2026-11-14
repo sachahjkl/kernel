@@ -139,7 +139,7 @@ Site_Type_Row :: struct {
 // whose type is named has the name that the compiler gives it.
 site_contract_type_rows :: proc() -> []Site_Type_Row {
 	rows := [?]Site_Type_Row {
-		// contract/operation
+		// src/library/contract/operation
 		{"operation", "Form", type_info_of(op.Form)},
 		{"operation", "Parameter_Form", type_info_of(op.Parameter_Form)},
 		{"operation", "Operation_Form", type_info_of(op.Operation_Form)},
@@ -212,16 +212,16 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"operation", "Boot_Report", type_info_of(op.Boot_Report)},
 		{"operation", "Program_Report", type_info_of(op.Program_Report)},
 		{"operation", "Context", type_info_of(op.Context)},
-		// contract/errors
+		// src/library/contract/errors
 		{"errors", "Error_Record", type_info_of(errors.Error_Record)},
 		{"errors", "Kind", type_info_of(errors.Kind)},
 		{"errors", "Unit", type_info_of(errors.Unit)},
 		{"errors", "End", type_info_of(errors.End)},
-		// contract/fixed_addresses
+		// src/library/contract/fixed_addresses
 		{"fixed_addresses", "Fixed_Range", type_info_of(fixed_addresses.Fixed_Range)},
 		{"fixed_addresses", "Fixed_Ranges", type_info_of(fixed_addresses.Fixed_Ranges)},
 		{"fixed_addresses", "Address_Range", type_info_of(fixed_addresses.Address_Range)},
-		// contract/module
+		// src/library/contract/module
 		{"module", "Load_Stage", type_info_of(module.Load_Stage)},
 		{"module", "Difference", type_info_of(module.Difference)},
 		{"module", "Described", type_info_of(module.Described)},
@@ -247,7 +247,7 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"module", "Error", type_info_of(module.Error)},
 		{"module", "Bound_Import", type_info_of(module.Bound_Import)},
 		{"module", "Replacement", type_info_of(module.Replacement)},
-		// contract/start_grant
+		// src/library/contract/start_grant
 		{"start_grant", "Grant", type_info_of(start_grant.Grant)},
 	}
 	list := make([]Site_Type_Row, len(rows), context.temp_allocator)
@@ -753,7 +753,7 @@ site_types_read :: proc(site: ^Site) -> bool {
 }
 
 // site_record_field_size gives the size and the alignment of a field of a
-// record of a module (contract/module, Field): an Integer of its size, 8
+// record of a module (src/library/contract/module, Field): an Integer of its size, 8
 // when the detail is 0; a Handle of the size of a handle; a Text of its
 // detail bytes, which hold no number.
 site_record_field_size :: proc(field: Field_Description) -> (size: int, alignment: int) {

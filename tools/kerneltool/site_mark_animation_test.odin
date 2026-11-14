@@ -6,7 +6,7 @@ import "core:strings"
 import "core:testing"
 import "support:mark"
 
-// The files of the animations read back as the frames of support/mark, and
+// The files of the animations read back as the frames of src/library/support/mark, and
 // the first sprite of each sheet is the still picture that the site shows
 // with no script: the heron of a page in the color scheme of the sheet.
 @(test)
@@ -138,7 +138,7 @@ site_mark_sprites_are_distinct :: proc(t: ^testing.T) {
 @(private = "file")
 TEST_SHEET_ADDRESSES :: [SITE_MARK_SHEET_COUNT]string{"pictures/dark.png?v=1", "pictures/light.png?v=2", "pictures/icon.png?v=3"}
 
-// The table in the script is JSON with the counts of support/mark, the
+// The table in the script is JSON with the counts of src/library/support/mark, the
 // moves of the tool, the bounds of the still times and the steps of the
 // model.
 @(test)
@@ -259,7 +259,7 @@ site_mark_animation_table_parses :: proc(t: ^testing.T) {
 		}
 		moving += 1
 		// The keys of the move: each [milliseconds, cells to the right,
-		// cells up, edge, pace], the numbers of support/mark, each whole.
+		// cells up, edge, pace], the numbers of src/library/support/mark, each whole.
 		key_index := 0
 		for key in mark.move_keys {
 			if key.animation != animation {
@@ -493,7 +493,7 @@ sheet_rule_of_pixels :: proc() -> string {
 // The steps of the play of each animation: their times add up to the time
 // of the animation; they show the frames in their order; an animation with
 // no move shows no drawn form; a step of a move shows the form of the key
-// of support/mark at its time, and the sprite of the frame at its time.
+// of src/library/support/mark at its time, and the sprite of the frame at its time.
 @(test)
 site_mark_steps_follow_the_frames_and_the_keys :: proc(t: ^testing.T) {
 	sprites, ok := site_mark_sprites()
@@ -556,7 +556,7 @@ site_mark_steps_follow_the_frames_and_the_keys :: proc(t: ^testing.T) {
 	testing.expect_value(t, dash[3].milliseconds, 70)
 	testing.expect_value(t, forms.forms[dash[3].form], mark.Form.Run)
 	testing.expect_value(t, dash[len(dash) - 1], Site_Mark_Play_Step{milliseconds = 100, sprite = sprites.of_frame[.Dash][16], form = -1})
-	// A fault of the keys has a sentence, and the keys of support/mark
+	// A fault of the keys has a sentence, and the keys of src/library/support/mark
 	// have none.
 	testing.expect_value(t, site_mark_move_fault_text(mark.move_keys[:]), "")
 	faulty := mark.move_keys
@@ -581,7 +581,7 @@ merged_frames :: proc(sprites: ^Site_Mark_Sprites, animation: mark.Animation) ->
 	return merged
 }
 
-// The list that ties the script to the rule of support/mark (the tests of
+// The list that ties the script to the rule of src/library/support/mark (the tests of
 // the rule itself are there: play_test.odin). The steps start with an
 // empty memory, do not change from one call to the next, hold each
 // animation once in each of the two whole rounds, and no animation follows

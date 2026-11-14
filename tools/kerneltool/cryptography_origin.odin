@@ -7,7 +7,7 @@ import "core:strings"
 import "contract:blake3"
 
 // The cryptography of the system is code of Odin's `core:crypto`, taken
-// into support/cryptography and changed in a listed way only
+// into src/library/support/cryptography and changed in a listed way only
 // (docs/CRYPTOGRAPHY.md). This check proves it for each file of the
 // manifest: the origin file in the compiler that the flake pins has the
 // BLAKE3 hash of the manifest, and the origin with the changes below gives
@@ -15,7 +15,7 @@ import "contract:blake3"
 // here, not in a diff of each file.
 
 CRYPTOGRAPHY_MANIFEST :: CRYPTOGRAPHY_FOLDER + "/origin.manifest"
-// The files of support/cryptography that the system wrote itself (the
+// The files of src/library/support/cryptography that the system wrote itself (the
 // compatibility layer, the files in the place of a hardware dispatch, the
 // tests), each with its BLAKE3 hash: a change of one of them shows in the
 // check and in review, as a change of a taken file does.
@@ -28,7 +28,7 @@ HASH_TO_COMPUTE :: "TO_COMPUTE"
 CRYPTOGRAPHY_ORIGIN_RELEASE :: "dev-2026-11a" // The release of Odin that flake.nix pins.
 
 // The only changes of a file that is taken: its imports go to the copies in
-// support/cryptography, and to the compatibility layer for the helpers of
+// src/library/support/cryptography, and to the compatibility layer for the helpers of
 // the origin. Order matters: the base package first, with its quote.
 // The packages of the compatibility layer have their own names
 // (compatibility_crypto, ...), so that a test that also imports a package of
@@ -246,9 +246,9 @@ cryptography_system_files_check :: proc(listed: ^map[string]string) -> bool {
 }
 
 // run_cryptography_system_hashes prints the line of the list of the files of
-// the system for each .odin file of support/cryptography that the manifest of
+// the system for each .odin file of src/library/support/cryptography that the manifest of
 // the origin does not name: the coordinator checks the files, then puts the
-// lines in support/cryptography/system_files.manifest.
+// lines in src/library/support/cryptography/system_files.manifest.
 run_cryptography_system_hashes :: proc(args: []string) -> int {
 	taken := make(map[string]bool, context.temp_allocator)
 	lines, ok := manifest_lines(CRYPTOGRAPHY_MANIFEST)
@@ -283,7 +283,7 @@ run_cryptography_system_hashes :: proc(args: []string) -> int {
 // cryptography_origin_check reads the manifest: one file on each line, as
 // "<file of the repository> <file under the root of Odin> <BLAKE3 of the
 // origin>"; a line that starts with # is a comment. Then it reads the list
-// of the files of the system, and walks the folders of support/cryptography:
+// of the files of the system, and walks the folders of src/library/support/cryptography:
 // each .odin file must be in one list. It gives false at the first file that
 // does not agree.
 cryptography_origin_check :: proc() -> bool {

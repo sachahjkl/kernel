@@ -351,7 +351,7 @@ site_render_paragraph :: proc(renderer: ^Site_Renderer, lines: []string, start: 
 // site_render_example writes the lines of a comment that start with a space
 // as one block of code, as they are, with the indentation that they share
 // taken away: the form that the documentation of a module keeps
-// (contract/module/format.odin, Documentation). Its language is not known,
+// (src/library/contract/module/format.odin, Documentation). Its language is not known,
 // so it is not colored: these lines are often words aligned in columns. It
 // gives the line after the block.
 site_render_example :: proc(renderer: ^Site_Renderer, lines: []string, start: int) -> int {

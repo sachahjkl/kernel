@@ -141,7 +141,7 @@ comment_rule_does_not_read_an_exempt_file :: proc(t: ^testing.T) {
 }
 
 // The exemptions come from the manifest of the files that the system takes
-// from Odin; the system writes the other files of support/cryptography, and
+// from Odin; the system writes the other files of src/library/support/cryptography, and
 // the check reads them.
 @(test)
 comment_rule_exemptions_are_the_copied_cryptography :: proc(t: ^testing.T) {

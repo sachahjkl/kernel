@@ -126,7 +126,7 @@ Do not use: override list, LD_PRELOAD, redirection table.
 
 ### Loader
 
-The loader is the code in user space that builds a program or a module space from a module and its imports (`support/system/load.odin`).
+The loader is the code in user space that builds a program or a module space from a module and its imports (`src/library/support/system/load.odin`).
 
 The kernel loads no module: it only maps memory objects and records what the loader asserts. The loader does five steps: it finds each module by hash in its load source and checks it, maps each segment, rebases the addresses inside the module, binds each slot to the address of an export, and records each module in the kernel (`Program_Module`). On a failure, the module space is as it was before the load, and the caller receives a load error.
 
@@ -276,7 +276,7 @@ Examples of kinds: an empty argument, a handle that was revoked (`Handle_Ended`)
 
 The documentation of an export names the kinds that it gives, and `manual` shows them.
 
-The list: `contract/errors/errors.odin`.
+The list: `src/library/contract/errors/errors.odin`.
 
 Do not use: error code, errno value, exception type.
 
@@ -372,7 +372,7 @@ Do not use: descriptor, span, fat pointer, buffer record (for this).
 
 ### Information function
 
-An information function is a function that reads the flat tables of modules, the module records of the kernel or the replacement table, and fills a table in memory of the caller (`support/information`).
+An information function is a function that reads the flat tables of modules, the module records of the kernel or the replacement table, and fills a table in memory of the caller (`src/library/support/information`).
 
 The information functions replace a database of modules. They allocate nothing and keep no state; each one reads the tables in a line and gives records. The manual service exports them, so the console can combine them: `manual.running()`, `manual.edges()`, `manual.check()`. A new kind of question is a new function, or a combination of functions in the console.
 
@@ -400,7 +400,7 @@ Do not use: exception, errno, error code.
 
 The boot image is the one block of data that the boot program loads with the kernel: the modules of the first programs and the resources, each with its name and its hash.
 
-The boot image starts the system with no file system. Its header has a table of modules, then a table of resources (`contract/boot_info`): a name of 31 bytes at most, the BLAKE3 hash of the bytes, the offset and the size. Each file starts on a page. The boot program checks each entry against the system description before the kernel starts; the root service checks them again before the first program starts.
+The boot image starts the system with no file system. Its header has a table of modules, then a table of resources (`src/library/contract/boot_info`): a name of 31 bytes at most, the BLAKE3 hash of the bytes, the offset and the size. Each file starts on a page. The boot program checks each entry against the system description before the kernel starts; the root service checks them again before the first program starts.
 
 The root service is the load source of the first programs. A program receives the boot image only by a grant (the grant `Image`); the console and the manual have it.
 
@@ -432,7 +432,7 @@ Do not use: plain C version, fallback (for this), slow path.
 
 An instruction template is an `asm` procedure of Odin: instructions of the processor, with parameters and results in registers that it names, that the compiler puts in the code of each caller with no call and no return.
 
-The kernel writes its small instructions this way: ports, model-specific registers and control registers. Code that owns the stack or the frame stays in the assembler file `kernel/processor.asm`.
+The kernel writes its small instructions this way: ports, model-specific registers and control registers. Code that owns the stack or the frame stays in the assembler file `src/kernel/processor.asm`.
 
 The design: `docs/ARCHITECTURE.md`, "The instructions of the kernel".
 
@@ -452,13 +452,13 @@ Do not use: SIMD version, kernel (for this), fast path, intrinsics version.
 
 A debug object is the file that names the procedures, the source lines, the types and the variables of the code of one module, so that a reader can turn an address of the module into a name and a line, and a debugger can show a variable.
 
-A module names only its exports. A stop report with only the module and an offset ("fault + 0x1478") tells a reader little. The debug object fills that gap: with it, the same frame reads "fault::three + 0x8 in fault (programs/fault/main.odin:15)". It is a separate file, `build/modules/<name>.debug`, in the format `contract/debug_object`.
+A module names only its exports. A stop report with only the module and an offset ("fault + 0x1478") tells a reader little. The debug object fills that gap: with it, the same frame reads "fault::three + 0x8 in fault (src/programs/fault/main.odin:15)". It is a separate file, `build/modules/<name>.debug`, in the format `src/library/contract/debug_object`.
 
 The file has ten parts, all numbers little-endian:
 
 - a header of 88 bytes: the magic `DEBUGOBJ`, the version, the BLAKE3 hash of the module file, and the count of each table;
 - the procedure table;
-- the file table: the path of each source file from the root of the repository (`programs/fault/main.odin`), or with the library of the compiler as a prefix (`base:runtime/print.odin`), and the BLAKE3 hash of the content of the file at the build; the file 0 is "no file";
+- the file table: the path of each source file from the root of the repository (`src/programs/fault/main.odin`), or with the library of the compiler as a prefix (`base:runtime/print.odin`), and the BLAKE3 hash of the content of the file at the build; the file 0 is "no file";
 - the line table;
 - the type table, with the field table and the enumeration value table;
 - the global table;
@@ -499,7 +499,7 @@ A row has 8 bytes: an offset in the memory of the module, then one word with the
 
 The tool writes the table from the line program of `.debug_line` (DWARF 2 to 5) of the linked file. The optimizer gives the line 0 to an instruction that it merged from two lines; the tool writes no row for it, and the instruction takes the line of the row before it. Two rows in a row with the same file and line are one row. The rows are most of the bytes of a debug object, which is why the file and the line share one word.
 
-Example: the machine test checks that the stack of `fault` names the lines 15 and 20 of `programs/fault/main.odin`. For a return address, the reader looks up the byte before it, so the line is that of the call.
+Example: the machine test checks that the stack of `fault` names the lines 15 and 20 of `src/programs/fault/main.odin`. For a return address, the reader looks up the byte before it, so the line is that of the call.
 
 The design: `docs/MODULE_CONTRACT.md`, "The debug object".
 
@@ -621,7 +621,7 @@ The word wait is the one way for a thread to wait for something else than a time
 
 `Word_Wait` takes a list of up to 64 words, each with the value that it holds while the thread waits, and a deadline. Another thread changes a word, then calls `Word_Wake` on it. If a word does not hold its value when the thread enters the wait, the wait ends at once, so no wake is lost. The kernel names a word by its physical page frame, so two programs that map one memory object wait on one word.
 
-Every wait of the system uses it: a ring waits on its counters, a lock and an event on their words, a thread on its event word. `support/system/wait.odin` builds a list from these words.
+Every wait of the system uses it: a ring waits on its counters, a lock and an event on their words, a thread on its event word. `src/library/support/system/wait.odin` builds a list from these words.
 
 The design: `docs/ARCHITECTURE.md`, "Rings and wait".
 
@@ -711,7 +711,7 @@ Do not use: FPU area, XSAVE area, save area.
 
 A usable instruction set is a group of instructions of the processor (SSE4.2, AVX2, AVX-512 F, BMI2, ...) that the processor has and whose registers the kernel saves.
 
-A program reads the sets once with `support/instruction_sets`, from `CPUID` and `XCR0`, with no kernel operation. A set that the processor has but whose state the kernel does not save is not usable: an instruction of it stops the program with an invalid opcode.
+A program reads the sets once with `src/library/support/instruction_sets`, from `CPUID` and `XCR0`, with no kernel operation. A set that the processor has but whose state the kernel does not save is not usable: an instruction of it stops the program with an invalid opcode.
 
 Do not use: CPU feature, ISA extension.
 
@@ -1356,7 +1356,7 @@ Do not use: boot loader, bootloader.
 
 A fixed range is an address and a span of the address space of a program where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the files of a module.
 
-Each fixed range is one member of the enumeration `Fixed_Range` of `contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. A mapping that a program places by its own choice is outside the band, from `OWN_CHOICE_START`. `kerneltool check` refuses an address of the band written another way.
+Each fixed range is one member of the enumeration `Fixed_Range` of `src/library/contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. A mapping that a program places by its own choice is outside the band, from `OWN_CHOICE_START`. `kerneltool check` refuses an address of the band written another way.
 
 Do not use: well-known address, fixed mapping.
 
@@ -1709,7 +1709,7 @@ The rights are Give, Read, Write, Execute, Control, Inspect, Devices, Stop, Spen
 
 Narrow rights let a program give exactly what another needs: Commit is the part of Spend that pays pages of an object, and Inspect on a thread holds and reads it without Write. Debug on a program makes its holder the debugger of that one program.
 
-The list: `contract/operation/operation.odin`.
+The list: `src/library/contract/operation/operation.odin`.
 
 Do not use: permission, privilege, mode.
 
@@ -1723,7 +1723,7 @@ The kernel gives one budget to the root service: all the free memory and all the
 
 A budget is not a quota on a user, and not a group of processes: it is a handle like each other, and a program divides it among its children.
 
-The design: `contract/operation/operation.odin` (`Budget_Amounts`), and `docs/PROPERTIES.md`, "No ambient access: the other holes to close".
+The design: `src/library/contract/operation/operation.odin` (`Budget_Amounts`), and `docs/PROPERTIES.md`, "No ambient access: the other holes to close".
 
 Do not use: quota, limit, cgroup, job.
 
@@ -1759,7 +1759,7 @@ Do not use: permission, authorization, consent.
 
 A start grant is one thing of the list of what the root service gives a program by its name: a service, a private store, a right of the machine.
 
-The root service decides the start grants of a program from its name (`grants_of`), and keeps them in the state of the program that runs. The rule of the debug access reads them. The list and the name of each start grant are a contract (`contract/start_grant`): the root service puts the number of a start grant in an error record, and the reader of the record writes its name. The number of a start grant does not change; a new one takes the next number.
+The root service decides the start grants of a program from its name (`grants_of`), and keeps them in the state of the program that runs. The rule of the debug access reads them. The list and the name of each start grant are a contract (`src/library/contract/start_grant`): the root service puts the number of a start grant in an error record, and the reader of the record writes its name. The number of a start grant does not change; a new one takes the next number.
 
 The name of a start grant is the name of its member, with its capital letters: `Store`, `Serve`, `System_Part`. The log of the root service, the sentence of an error record, the site and the guides write it so.
 
@@ -1775,7 +1775,7 @@ Do not use: capability set, permission, privilege.
 
 A recorded grant is a handle, or a connection, that the root service gave a program and can end while the program runs.
 
-The root service records it by the program and by one of ten names in lower case (`Root_Grant` and `root_grant_names` in `support/system/grants.odin`): `log`, `machine`, `image`, `store`, `debug`. `grants("notes")` in the console shows the recorded grants of a program, and `revoke("notes", "store")` ends one: the kernel ends each handle and each mapping that came from it.
+The root service records it by the program and by one of ten names in lower case (`Root_Grant` and `root_grant_names` in `src/library/support/system/grants.odin`): `log`, `machine`, `image`, `store`, `debug`. `grants("notes")` in the console shows the recorded grants of a program, and `revoke("notes", "store")` ends one: the kernel ends each handle and each mapping that came from it.
 
 A recorded grant is not a start grant, which says what the root service gives a program by its name, and whose name has capital letters (`Store`).
 
@@ -1947,7 +1947,7 @@ A ring is a pair of queues of fixed records in shared memory, between two progra
 
 A ring is the one way that two programs communicate, and the base interface of the kernel. One side writes commands and reads completions; the other side does the opposite. Each queue has one writer and one reader, so no queue operation takes a lock or enters the kernel: the writer advances a counter, the reader advances another, and each counter is in its own cache line. Data does not pass through the kernel. A side that must wait (an empty queue, a full queue) waits on the counter with the word wait, and the other side enters the kernel to wake it only when a flag says that it waits.
 
-A ring is one memory object: page 0 holds the counters, then come the command records, then the completion records (`contract/ring`). A record is 64 bytes: a kind, a tag and seven values. All-zero memory is an empty ring. A side never trusts the numbers of the other side: it computes the capacity from the size that the kernel gives, and a place is a count modulo the capacity.
+A ring is one memory object: page 0 holds the counters, then come the command records, then the completion records (`src/library/contract/ring`). A record is 64 bytes: a kind, a tag and seven values. All-zero memory is an empty ring. A side never trusts the numbers of the other side: it computes the capacity from the size that the kernel gives, and a place is a count modulo the capacity.
 
 A program gets a ring from the program that made it, as a memory handle; the root service makes the rings between a program and a service. Examples: the kernel ring of each thread, the call ring of a call host, the terminal ring, the block ring of the disk service.
 
@@ -1973,7 +1973,7 @@ The root service starts a program and its terminal, and gives the two a terminal
 
 A terminal is not a TTY: no escape sequence and no line discipline exist. The program edits its own line and sends records with a kind and typed fields.
 
-The contract: `support/terminal/terminal.odin`.
+The contract: `src/library/support/terminal/terminal.odin`.
 
 Do not use: TTY, pty, terminal emulator, standard output, standard input.
 
@@ -1983,7 +1983,7 @@ A shared queue is one queue of records in shared memory that several threads wri
 
 Each record has a turn word that says whose turn it is on it. A writer takes a count with one compare-and-exchange, writes the record, then changes the turn word; a reader does the same. So two writers never have the same count, and a reader never reads a record before its writer completed it. Use a shared queue when several threads take work from one place; use a ring for one writer and one reader.
 
-The contract: `contract/ring/shared.odin`.
+The contract: `src/library/contract/ring/shared.odin`.
 
 Do not use: MPMC queue, channel, work queue, mailbox.
 
@@ -2057,7 +2057,7 @@ Do not use: writer stall, push back.
 
 A loss period is the time from the first record that a full queue refuses to the moment when the queue takes a record again.
 
-A writer that cannot wait counts each record that it loses, and writes two lines in the log for one period: one when the loss begins, one with the count when it ends. It writes no line for each record: a queue that refuses 1000 keys must not fill the log. The compositor has one for each window, the terminal one for its program, the console one for the keys that wait during a line. The code: `key_path.Loss_Period` (`support/key_path`). The design: `ARCHITECTURE.md`, "The path of a key".
+A writer that cannot wait counts each record that it loses, and writes two lines in the log for one period: one when the loss begins, one with the count when it ends. It writes no line for each record: a queue that refuses 1000 keys must not fill the log. The compositor has one for each window, the terminal one for its program, the console one for the keys that wait during a line. The code: `key_path.Loss_Period` (`src/library/support/key_path`). The design: `ARCHITECTURE.md`, "The path of a key".
 
 Do not use: drop window, loss burst.
 
@@ -2067,7 +2067,7 @@ The terminal ring is the ring between a program and its terminal.
 
 In the command queue, a record from the program has a kind (text, status, clear, edit line, hint line, completion list, runs of code), a count of bytes in the text region and a style; it has no place on the screen. In the completion queue, a record from the terminal is a key record. The queue of keys holds 4096 keys: the keys typed ahead. The terminal never waits for a program: when the queue is full, a new key is lost, the terminal counts it, and the log has a line when the loss begins and a line with the count when it ends (a loss period).
 
-The contract: `support/terminal/terminal.odin`.
+The contract: `src/library/support/terminal/terminal.odin`.
 
 Do not use: escape sequence, control character, stream.
 
@@ -2089,7 +2089,7 @@ Do not use: line discipline, readline, cursor addressing, prompt.
 
 ### Line editor
 
-The line editor is the procedures of `support/line_editor` that change an edit line with keys: the caret, a character at the caret, Backspace, Delete.
+The line editor is the procedures of `src/library/support/line_editor` that change an edit line with keys: the caret, a character at the caret, Backspace, Delete.
 
 They have no state of their own: the line is a record of the program.
 
@@ -2155,7 +2155,7 @@ Do not use: history (alone), scrollback, command log.
 
 ### Line history file
 
-The line history file is the line history as bytes, kept in the history store: a version, the lines, and a BLAKE3 hash (`support/line_editor/history_file.odin`).
+The line history file is the line history as bytes, kept in the history store: a version, the lines, and a BLAKE3 hash (`src/library/support/line_editor/history_file.odin`).
 
 A file that fails a check gives an empty history: a damaged file never stops the console.
 
@@ -2207,7 +2207,7 @@ Do not use: color code, severity (for text).
 
 A token is the smallest part of a line of the console: a name, a number, a text, an operator, the arrow `->`, or one byte of no other token.
 
-One scanner (`support/console_language`) gives them to the parser of the console and to its colors, so the colors never disagree with the parser.
+One scanner (`src/library/support/console_language`) gives them to the parser of the console and to its colors, so the colors never disagree with the parser.
 
 Do not use: lexeme, word (for this).
 
@@ -2215,7 +2215,7 @@ Do not use: lexeme, word (for this).
 
 A code kind is what a part of a line of the console or of a row of its list is: a function, a module, a type, a parameter, a variable, a number, a text, an unfinished text, an operator, the arrow, words that are not code, or unknown.
 
-A program sends kinds, not colors; the terminal maps each kind to a code class (`support/terminal/code_runs.odin`).
+A program sends kinds, not colors; the terminal maps each kind to a code class (`src/library/support/terminal/code_runs.odin`).
 
 The design: `docs/CONSOLE.md`, "The colors of the code".
 
@@ -2281,7 +2281,7 @@ Do not use: struct type, schema, class.
 
 ### Call host
 
-A call host is the program that loads one module and executes the isolated calls of its exports (`programs/host`).
+A call host is the program that loads one module and executes the isolated calls of its exports (`src/programs/host`).
 
 The caller starts one call host for each module. The call host has no handle but its call ring, its call region, its budget and the log. It checks the file of the module, loads it, and answers a first completion: Ok, or `Load_Failed` with its load error. A call has no time limit: the caller ends it by closing the program handle, and the next call starts a new call host. Example: `isolate("sample")` in the console.
 
@@ -2391,7 +2391,7 @@ Do not use: default constructor.
 
 A result drawer is the one procedure of the console that draws the results of one kind: an Integer, a Text, a Record, a Table, a Handle, Bytes or an error.
 
-A command of the console gives a result and never writes to the terminal; the console draws the one result of a line with the drawer of its kind. A drawer knows no command: for a record or a table it reads the description of the record, so one drawer serves each table of each service and of each built-in command. It writes parts of a line with what each part is (a number, a type, a label), and the console gives a value the color of its value kind. The drawers have no state and make no kernel call (`support/console_results`). It is not a formatter of one command, and it is not the terminal: the terminal draws the cells that the console sends.
+A command of the console gives a result and never writes to the terminal; the console draws the one result of a line with the drawer of its kind. A drawer knows no command: for a record or a table it reads the description of the record, so one drawer serves each table of each service and of each built-in command. It writes parts of a line with what each part is (a number, a type, a label), and the console gives a value the color of its value kind. The drawers have no state and make no kernel call (`src/library/support/console_results`). It is not a formatter of one command, and it is not the terminal: the terminal draws the cells that the console sends.
 
 The design: `docs/CONSOLE.md`, "Results and their drawers".
 
@@ -2429,7 +2429,7 @@ Device memory is a memory object over the registers of a device, at physical add
 
 A device service drives its device by reads and writes of its registers. Device memory gives it these registers as an ordinary memory object, with a handle and the rights of a handle, so a device service needs no special access and can reach only the registers of its own device.
 
-The root service makes it with `Device_Create`, the kind `Memory`, a physical address (a multiple of 4096) and a count of pages. This needs the machine handle with the right **Devices**, which only the root service holds. The kernel refuses a range that meets memory that the firmware gave as free or as loaded, so device memory never reaches the memory of a program or of the kernel. The result is a memory handle with **Give**, **Read** and **Write**. The root service reads the base address registers of the device on the bus, makes one device memory object for each of them, and gives each to the device service in its context (the roles `GRANT_BAR + n` of `support/pci`). A mapping of it uses no cache, because a read of a register has an effect and must reach the device each time.
+The root service makes it with `Device_Create`, the kind `Memory`, a physical address (a multiple of 4096) and a count of pages. This needs the machine handle with the right **Devices**, which only the root service holds. The kernel refuses a range that meets memory that the firmware gave as free or as loaded, so device memory never reaches the memory of a program or of the kernel. The result is a memory handle with **Give**, **Read** and **Write**. The root service reads the base address registers of the device on the bus, makes one device memory object for each of them, and gives each to the device service in its context (the roles `GRANT_BAR + n` of `src/library/support/pci`). A mapping of it uses no cache, because a read of a register has an effect and must reach the device each time.
 
 Device memory is not the memory that a device reads and writes for data: that is ordinary memory made `Contiguous`, such as the data region or the memory of the queues. It pays nothing from a budget, because it is not memory.
 
@@ -2461,7 +2461,7 @@ The configuration of a device says what it is (its vendor and its device numbers
 
 The root service reads the configuration at a fixed place, checks that the device there is the expected virtio device, enables it, gives it the right to use memory (bus master), sets its message interrupt, and starts its device service. The service gets a copy of the first 256 bytes of the configuration, read only (`GRANT_CONFIGURATION`), the device memory of its registers and one message interrupt. On the first machine the places are fixed: the data disk at device 16 (`0x10`), the disk of the measures at 17, the network device at 18. If no device of the right kind is at the place, the root service logs "root: no virtio device for block at the place 16 of the bus" and starts no service.
 
-The bus is not a tree that the kernel walks: the kernel does not read it at all. The code of the bus is `support/pci`.
+The bus is not a tree that the kernel walks: the kernel does not read it at all. The code of the bus is `src/library/support/pci`.
 
 The design: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts", and `docs/ARCHITECTURE.md`, "U4. Device services".
 
@@ -2489,11 +2489,11 @@ Do not use: drive, volume (except the boot volume), LUN.
 
 A block is 4096 bytes of a disk at a number from 0: the unit of each read and write of the block contract.
 
-A block is the unit that a block service reads and writes (`BLOCK_SIZE` in `contract/block`). A request names its first block, a count of blocks and a place in the data region; a device that has smaller sectors still serves whole blocks. The storage service builds everything that it writes from blocks: a node, an object node, a block of data, a root block.
+A block is the unit that a block service reads and writes (`BLOCK_SIZE` in `src/library/contract/block`). A request names its first block, a count of blocks and a place in the data region; a device that has smaller sectors still serves whole blocks. The storage service builds everything that it writes from blocks: a node, an object node, a block of data, a root block.
 
 A block is the same size as a page of memory, so one block fits one page of the data region, but a block is on the disk and a page is in memory: the two words are not exchangeable.
 
-The design: `contract/block`, and `docs/STORAGE.md`, "3.1 The blocks".
+The design: `src/library/contract/block`, and `docs/STORAGE.md`, "3.1 The blocks".
 
 Do not use: sector, page (for a disk).
 
@@ -2501,7 +2501,7 @@ Do not use: sector, page (for a disk).
 
 A block service is the device service of one disk: it serves read, write and flush of blocks to one client through a block ring.
 
-A block service keeps the code that knows a disk device out of the kernel and out of the storage service. The first one is the program `block`, for a virtio block device; a service for another class of device (NVMe) can serve the same contract, `contract/block`, and its client does not change.
+A block service keeps the code that knows a disk device out of the kernel and out of the storage service. The first one is the program `block`, for a virtio block device; a service for another class of device (NVMe) can serve the same contract, `src/library/contract/block`, and its client does not change.
 
 The root service starts one block service for each disk that a program needs, with exactly one device: the device memory of its registers, one message interrupt, memory for its queues, the machine handle with the right **Physical** only, and a copy of its configuration. It makes the block ring, and gives it to the service and to its one client. The client sends `Attach` with its data region, then `Info`, `Read`, `Write`, `Flush` and `Statistics`. The service turns each request into a request of the device, and the device moves the bytes to and from the data region with no copy and no kernel entry. The service enters the kernel only to wait and to wake its client; one entry serves many requests.
 
@@ -2511,7 +2511,7 @@ Example: on the disk of the measures, its first line is "block: ok, 8192 blocks 
 
 A block service is not a block layer: it has no cache, no scheduler of requests and no partition. It does not know what a block holds.
 
-The design: `docs/ARCHITECTURE.md`, "U4. Device services", and `contract/block`.
+The design: `docs/ARCHITECTURE.md`, "U4. Device services", and `src/library/contract/block`.
 
 Do not use: disk driver, block layer.
 
@@ -2519,7 +2519,7 @@ Do not use: disk driver, block layer.
 
 The block ring is the ring between a block service and its one client: one command record is one request on blocks, and its completion record has the tag of the command and a status.
 
-The block ring carries each request of a client to its disk with no kernel entry for each request. It has a capacity of 256 records (`RING_CAPACITY` of `contract/block`). The root service makes it; it is the role 0 in the context of the block service and the role 6 in the context of the client.
+The block ring carries each request of a client to its disk with no kernel entry for each request. It has a capacity of 256 records (`RING_CAPACITY` of `src/library/contract/block`). The root service makes it; it is the role 0 in the context of the block service and the role 6 in the context of the client.
 
 A command record has a kind (`Attach`, `Info`, `Read`, `Write`, `Flush`, `Statistics`), a tag of the client and values. For `Read` and `Write`: the first block, the count of blocks, and the place in the data region in bytes, a multiple of 4096. Many requests are in flight at once, and the device does them in any order: a client that needs an order waits for the completion of the first request. The status of a completion is `Ok`, `Bad_Command`, `Out_Of_Range`, `No_Region`, `Device_Error` or `Unsupported`; when it is not `Ok`, the values are an error record, so the client can say which value was wrong.
 
@@ -2527,7 +2527,7 @@ The handle of the data region goes through the ring with `Handle_Give` in the co
 
 A block ring is not a queue of the device: the device has its own queues, which only the block service sees.
 
-The design: `contract/block`, and `docs/ARCHITECTURE.md`, "Rings and wait".
+The design: `src/library/contract/block`, and `docs/ARCHITECTURE.md`, "Rings and wait".
 
 Do not use: I/O queue, submission queue.
 
@@ -2541,7 +2541,7 @@ The client gives the region to the block service with the command `Attach`. A re
 
 The data region is not a cache: the client decides what it holds and when, and it must not change a place while a request on that place is in flight. The frame region is the same idea for a frame service.
 
-The design: `contract/block`.
+The design: `src/library/contract/block`.
 
 Do not use: DMA buffer, bounce buffer.
 
@@ -2567,7 +2567,7 @@ The program reads and writes the first 4096 blocks (16 MiB) for one second in ea
 
 The disk of the measures is not a disk for tests of the storage service: the storage service never uses it.
 
-The design: `programs/disk`.
+The design: `src/programs/disk`.
 
 Do not use: scratch disk, test disk.
 
@@ -2589,13 +2589,13 @@ Do not use: NIC, network card, network adapter.
 
 In the group Devices, a frame is one Ethernet frame: the bytes from the destination hardware address to the end of the data, with no check sequence, 1514 bytes at most.
 
-A frame is the unit that a network device sends and receives, and the unit of the frame contract (`FRAME_LIMIT` in `contract/frame`): 14 bytes of header and 1500 bytes of data. The device adds the check sequence when it sends and removes it when it receives. The device pads a frame shorter than 60 bytes with zero bytes.
+A frame is the unit that a network device sends and receives, and the unit of the frame contract (`FRAME_LIMIT` in `src/library/contract/frame`): 14 bytes of header and 1500 bytes of data. The device adds the check sequence when it sends and removes it when it receives. The device pads a frame shorter than 60 bytes with zero bytes.
 
-The network service builds each frame that it sends and reads each frame that it receives, with `support/network`. A datagram of 1472 bytes or a segment of 1480 bytes fits one frame, so the system never fragments.
+The network service builds each frame that it sends and reads each frame that it receives, with `src/library/support/network`. A datagram of 1472 bytes or a segment of 1480 bytes fits one frame, so the system never fragments.
 
 A frame is not a datagram and not a packet of IPv4: those are the content of a frame. It is also not the frame of QUIC, the unit inside a packet of QUIC, which has its own entry in the group QUIC.
 
-The design: `contract/frame`.
+The design: `src/library/contract/frame`.
 
 Do not use: packet (for this), datagram (for this), message.
 
@@ -2607,7 +2607,7 @@ A frame names its destination and its source by hardware addresses. The network 
 
 A hardware address has meaning on one link only: it is not an address of IPv4 and it does not cross the gateway.
 
-The design: `contract/frame`.
+The design: `src/library/contract/frame`.
 
 Do not use: MAC address, physical address (for this).
 
@@ -2615,7 +2615,7 @@ Do not use: MAC address, physical address (for this).
 
 A frame service is the device service of one network device: it sends and receives frames for one client through a frame ring, and it does not read a frame.
 
-The frame service keeps the code that knows a network device out of the kernel and out of the network service. The first one is the program `frame`, for a virtio network device; a service for another class of device can serve the same contract, `contract/frame`.
+The frame service keeps the code that knows a network device out of the kernel and out of the network service. The first one is the program `frame`, for a virtio network device; a service for another class of device can serve the same contract, `src/library/contract/frame`.
 
 The root service starts it with exactly one device, as for a block service: device memory of its registers, one message interrupt, memory for its queues, the machine handle with the right **Physical** only, and a copy of the configuration. Its one client is the network service. The client sends `Attach` with its frame region, then `Send` for each frame to send and `Receive` for each place where a frame can arrive. The device reads and writes the frames in the frame region with no copy.
 
@@ -2623,7 +2623,7 @@ The service checks no address and computes no check: the client builds and check
 
 A frame service is not a network stack: it knows no protocol.
 
-The design: `docs/ARCHITECTURE.md`, "U4. Device services", and `contract/frame`.
+The design: `docs/ARCHITECTURE.md`, "U4. Device services", and `src/library/contract/frame`.
 
 Do not use: NIC driver, network driver.
 
@@ -2631,7 +2631,7 @@ Do not use: NIC driver, network driver.
 
 The frame ring is the ring between a frame service and its one client: one command record is the send of one frame, or a place for one frame that arrives.
 
-The frame ring has a capacity of 256 records (`RING_CAPACITY` of `contract/frame`); it is role 0 of the frame service and role 6 of its client. Its commands:
+The frame ring has a capacity of 256 records (`RING_CAPACITY` of `src/library/contract/frame`); it is role 0 of the frame service and role 6 of its client. Its commands:
 
 - `Attach`: the handle of the frame region.
 - `Info`: the hardware address, whether the link is up, the most bytes of a frame, the most `Receive` and `Send` in flight.
@@ -2643,7 +2643,7 @@ Many requests are in flight. A `Receive` can stay in flight for a long time: the
 
 A frame ring is not one queue for each direction: one ring carries both, and the tag of the command says which request completed.
 
-The design: `contract/frame`.
+The design: `src/library/contract/frame`.
 
 Do not use: TX queue, RX queue, descriptor ring (for this).
 
@@ -2657,7 +2657,7 @@ The network service owns the frame region. It copies the data of each datagram o
 
 A frame region is not a socket buffer: a program with an endpoint never sees it.
 
-The design: `contract/frame`.
+The design: `src/library/contract/frame`.
 
 Do not use: DMA buffer, skb, mbuf.
 
@@ -2667,7 +2667,7 @@ Virtio is the standard of devices that work through queues in shared memory, whi
 
 Virtio makes the first device services short: a virtio device is already a set of queues in memory, so a device service translates between these queues and a ring with little code. The system uses virtio 1 over PCI, the "modern" interface, with no older interface (`disable-legacy=on` in the command of QEMU).
 
-`support/virtio` holds what each virtio device service does the same way: it reads the virtio capabilities in the copy of the configuration, agrees on the features with the device, and drives split queues. A queue takes three pages of the memory of the queues: the descriptors, what the driver gives, what the device used. The block service and the frame service use it. A start asks the device for a reset and reads its status until it is 0, at most 1 000 000 times: a device that does not finish its reset makes the device service write "the device did not finish its reset" on the log and stop.
+`src/library/support/virtio` holds what each virtio device service does the same way: it reads the virtio capabilities in the copy of the configuration, agrees on the features with the device, and drives split queues. A queue takes three pages of the memory of the queues: the descriptors, what the driver gives, what the device used. The block service and the frame service use it. A start asks the device for a reset and reads its status until it is 0, at most 1 000 000 times: a device that does not finish its reset makes the device service write "the device did not finish its reset" on the log and stop.
 
 Virtio is not a part of the kernel: the kernel has no code for any device. Virtio is the first class of devices because the system starts on fixed hardware; a device of another class gets its own device service with the same contract.
 
@@ -2683,7 +2683,7 @@ The network service is the one client of the frame service: it gives each progra
 
 Only one program can read the frames of the device of the first machine, because the device has one pair of queues. The network service is that program. It is also the place where the grant of each program is enforced: a program reaches only the remote that its grant names, so no program has ambient access to the network.
 
-The network service speaks Ethernet, ARP, IPv4 and ICMP echo with the protocol library `support/network`. It has one static address, 10.0.2.15/24, and the gateway 10.0.2.2. For UDP and TCP it checks the lengths and the ports of the header of each datagram and each segment, writes the IPv4 header, and keeps no state of a connection: the protocol of TCP is a library in the program (`support/tcp`), and the program writes and checks the header and the checksum of UDP (`support/network`). It copies each datagram or segment one time, between the datagram region of the program and its own frame region, and computes no checksum of it: it is on the control path of each one, and on the data path for that one copy. It has one thread, which waits on the frame ring, on the control ring of the root service and on the command queue of each endpoint.
+The network service speaks Ethernet, ARP, IPv4 and ICMP echo with the protocol library `src/library/support/network`. It has one static address, 10.0.2.15/24, and the gateway 10.0.2.2. For UDP and TCP it checks the lengths and the ports of the header of each datagram and each segment, writes the IPv4 header, and keeps no state of a connection: the protocol of TCP is a library in the program (`src/library/support/tcp`), and the program writes and checks the header and the checksum of UDP (`src/library/support/network`). It copies each datagram or segment one time, between the datagram region of the program and its own frame region, and computes no checksum of it: it is on the control path of each one, and on the data path for that one copy. It has one thread, which waits on the frame ring, on the control ring of the root service and on the command queue of each endpoint.
 
 The root service starts it when the first program with a network grant starts, and adds each endpoint with the command `Endpoint_Add` of its control ring. Example of its first line: "network: ok, the address 10.0.2.15/24 52:54:00:12:34:56, the gateway 10.0.2.2, the link is up, ..."; then, for each endpoint, a line such as "network: an endpoint for server: TCP, the listen port 80, the remotes that send to it".
 
@@ -2737,7 +2737,7 @@ A program gets its endpoint at its start: the root service makes the datagram ri
 
 An endpoint is not a connection: a segment endpoint carries the segments of all the TCP connections of its program.
 
-The design: `contract/datagram`, and `docs/PROPERTIES.md`, "No ambient access: the other holes to close".
+The design: `src/library/contract/datagram`, and `docs/PROPERTIES.md`, "No ambient access: the other holes to close".
 
 Do not use: socket, port (for this), connection (for this).
 
@@ -2745,13 +2745,13 @@ Do not use: socket, port (for this), connection (for this).
 
 A datagram is one UDP datagram: its header of 8 bytes and its data, 1472 bytes of data at most, what a program sends and receives through a datagram endpoint.
 
-1472 bytes is the data of one Ethernet frame after the IPv4 header (20 bytes) and the UDP header (8 bytes): the system never fragments, so a datagram is one frame (`DATA_LIMIT` of `contract/datagram`; `DATAGRAM_LIMIT`, 1480 bytes, counts the header). A larger `Send` fails with `Too_Large`.
+1472 bytes is the data of one Ethernet frame after the IPv4 header (20 bytes) and the UDP header (8 bytes): the system never fragments, so a datagram is one frame (`DATA_LIMIT` of `src/library/contract/datagram`; `DATAGRAM_LIMIT`, 1480 bytes, counts the header). A larger `Send` fails with `Too_Large`.
 
 The program writes the whole datagram in a place of the datagram region: the data, then the header and its checksum with `network.udp_header_write`. It sends it with the command `Send` of its datagram ring: the place, the count of bytes with the header, and the remote address. The network service copies the datagram, reads the ports in its copy and checks them against the endpoint and the grant, and computes no checksum. The completion comes when the network service has copied the datagram: the place is then free again. A program gives a place for a datagram that arrives with `Receive`; its completion carries the place, the count of bytes and the remote. The program reads the data with `network.udp_data_read`, which checks the checksum when the program asks for it. Example: QUIC is a library in the program over datagrams; `quic_echo` and `remote` send and receive each datagram of QUIC through their datagram endpoint.
 
 A datagram is not a frame and not a segment: the frame is the whole Ethernet unit, and a segment is the unit of a segment endpoint, with its TCP header.
 
-The design: `contract/datagram`.
+The design: `src/library/contract/datagram`.
 
 Do not use: packet, message.
 
@@ -2763,7 +2763,7 @@ A grant names remotes: a client grant names one, and a listen grant admits the r
 
 A remote is not a host: the host is the computer that runs QEMU, and a remote is any address and port. It is not a peer either: the peer is one part of the kernel tool.
 
-The design: `contract/datagram`.
+The design: `src/library/contract/datagram`.
 
 Do not use: peer (for this), destination, host.
 
@@ -2775,7 +2775,7 @@ A datagram has a source UDP port and a destination UDP port. The network service
 
 A UDP port is not the Ports object of the kernel (a handle to ports of input and output of the processor), and not a TCP port: the same number is two different ports in UDP and in TCP.
 
-The design: `contract/datagram`.
+The design: `src/library/contract/datagram`.
 
 Do not use: port (alone), socket number.
 
@@ -2795,7 +2795,7 @@ Do not use: port (alone), socket number.
 
 A segment is one TCP segment: its header, its options and its data, 1480 bytes at most, what a program sends and receives through a segment endpoint.
 
-1480 bytes is the room of one Ethernet frame after the IPv4 header, so a segment is one frame and never a fragment (`SEGMENT_LIMIT` of `contract/datagram`). A segment has 20 bytes at least, a TCP header with no option (`SEGMENT_LEAST`); a shorter one fails with `Bad_Command`.
+1480 bytes is the room of one Ethernet frame after the IPv4 header, so a segment is one frame and never a fragment (`SEGMENT_LIMIT` of `src/library/contract/datagram`). A segment has 20 bytes at least, a TCP header with no option (`SEGMENT_LEAST`); a shorter one fails with `Bad_Command`.
 
 The TCP library of the program writes each segment directly in a place of the datagram region, with its checksum, and the program sends it with `Send`. The network service copies it to a frame, reads its ports from the copy, checks them against the grant, and writes the IPv4 header. For a segment that arrives, the network service checks the lengths and the ports of the header; the TCP library of the program checks the TCP checksum, and drops a segment with a wrong one.
 
@@ -2909,7 +2909,7 @@ The access records let the principal see the traffic of the server with no text 
 
 An access record is not a line of an access log in a common format: it is a record of fixed size (`Access_Record`), and its log line has value runs for its numbers.
 
-The design: `programs/server`.
+The design: `src/programs/server`.
 
 Do not use: access log line, hit.
 
@@ -2931,7 +2931,7 @@ Do not use: socket table, connection pool.
 
 The datagram ring is the ring between a program and the network service for one endpoint.
 
-Its commands, in `contract/datagram`:
+Its commands, in `src/library/contract/datagram`:
 
 - `Send`: a datagram, or a whole segment for a segment endpoint.
 - `Receive`: a place for a datagram or a segment that arrives.
@@ -2946,7 +2946,7 @@ The capacity is 256 records. Many requests are in flight; a `Receive` stays in f
 
 A datagram ring is not a socket: it carries typed requests, and a request names a place in the datagram region, never an address of memory.
 
-The design: `contract/datagram`.
+The design: `src/library/contract/datagram`.
 
 Do not use: socket, channel.
 
@@ -2960,7 +2960,7 @@ The program organizes the region itself. Example: `server` divides it into 256 p
 
 A datagram region is not a socket buffer of a kernel: no data waits in it for a read call, and the program decides which place serves which request.
 
-The design: `contract/datagram`.
+The design: `src/library/contract/datagram`.
 
 Do not use: socket buffer, send buffer, receive buffer.
 
@@ -2968,11 +2968,11 @@ Do not use: socket buffer, send buffer, receive buffer.
 
 A neighbor is an address of the link and its hardware address, which the network service learned from an answer to its own ARP request.
 
-A frame needs the hardware address of the next machine on the link. The network service asks it by ARP and keeps the answer in a table of 16 neighbors (`ARP_CAPACITY` of `support/network`). It learns only an address that one of its own requests asked, so an ARP frame that nobody asked for changes nothing, not even the entry of the gateway. When the table is full, the answer replaces the oldest entry that no waiting request uses. A program asks the network service to resolve an address again with the command `Resolve`.
+A frame needs the hardware address of the next machine on the link. The network service asks it by ARP and keeps the answer in a table of 16 neighbors (`ARP_CAPACITY` of `src/library/support/network`). It learns only an address that one of its own requests asked, so an ARP frame that nobody asked for changes nothing, not even the entry of the gateway. When the table is full, the answer replaces the oldest entry that no waiting request uses. A program asks the network service to resolve an address again with the command `Resolve`.
 
 A neighbor is not an entry of a cache that each ARP frame of the link can change.
 
-The design: `support/network`.
+The design: `src/library/support/network`.
 
 Do not use: ARP cache entry, neighbour entry.
 
@@ -2992,7 +2992,7 @@ Do not use: router, default route.
 
 The peer is the part of the kernel tool that is the gateway and the echo server of the network of the test machine, a TCP client that the tool drives, and the QUIC client of the remote service.
 
-The peer makes the network tests closed and repeatable: no frame leaves the host, and each run has the same answers. QEMU gives it each frame of the network device as one UDP datagram on the loopback of the host (`-netdev dgram`). It reads each frame with its own code, not with `support/network`, so a fault of the network service in a checksum or a length is a fault that the peer sees. It answers ARP, an echo request and a datagram to port 7. It sends frames that the network service must refuse, and can drop, reorder and repeat the frames of TCP with a generator that each case seeds. It carries each call of the tool to the remote service on a call stream, and the call answer back.
+The peer makes the network tests closed and repeatable: no frame leaves the host, and each run has the same answers. QEMU gives it each frame of the network device as one UDP datagram on the loopback of the host (`-netdev dgram`). It reads each frame with its own code, not with `src/library/support/network`, so a fault of the network service in a checksum or a length is a fault that the peer sees. It answers ARP, an echo request and a datagram to port 7. It sends frames that the network service must refuse, and can drop, reorder and repeat the frames of TCP with a generator that each case seeds. It carries each call of the tool to the remote service on a call stream, and the call answer back.
 
 The peer is not a simulator of a network: it speaks the real protocols, with the TCP library and the QUIC library of the system. It is in `tools/kerneltool/peer.odin` and `tools/kerneltool/peer_remote.odin`.
 
@@ -3082,7 +3082,7 @@ The remote service trusts nothing in a request: `remote.request_check` checks ea
 
 A call request is not a message of a protocol of remote procedures with names in text: it names the export by its index and the module by its hash, and has no field whose size depends on a language or a machine.
 
-The design: `contract/remote`, and `docs/MODULE_CONTRACT.md`, "A call from the host".
+The design: `src/library/contract/remote`, and `docs/MODULE_CONTRACT.md`, "A call from the host".
 
 Do not use: RPC request, message, packet.
 
@@ -3096,7 +3096,7 @@ The answers come back in any order; the host matches each one to its call by its
 
 A call answer is not a response of HTTP: it has no headers of text, and its status is a status of the call.
 
-The design: `contract/remote`.
+The design: `src/library/contract/remote`.
 
 Do not use: response, reply.
 
@@ -3151,7 +3151,7 @@ Do not use: ellipsis, break.
 
 A near export is the export of a module with the highest address at or below an address: a reader names the address "module + offset, near name".
 
-A module names its exports only. With no debug image, a frame of a stack trace in a function that is not an export has no name of its own. The near export gives it the name of the export before it, as a hint, with the offset from the module. With a debug image, a frame has the name of its procedure and its source line instead: "fault::three + 0x8 in fault (programs/fault/main.odin:15)".
+A module names its exports only. With no debug image, a frame of a stack trace in a function that is not an export has no name of its own. The near export gives it the name of the export before it, as a hint, with the offset from the module. With a debug image, a frame has the name of its procedure and its source line instead: "fault::three + 0x8 in fault (src/programs/fault/main.odin:15)".
 
 A near export is not a symbol: it is an export, the only name that a module carries, and it can be far from the real function.
 
@@ -3175,7 +3175,7 @@ Do not use: pointer sync, warp.
 
 A request number was the number that the host gave to a call request in the protocol of datagrams of the remote service, before QUIC; no part of the system uses it now.
 
-With that protocol, each datagram of a call answer carried the number of its request, and a request with the number of the last call answer got that answer again, so a call did not run two times. The remote service now runs over QUIC: a call stream names the call, a header of `contract/remote` has no request number, and QUIC sends a lost datagram again.
+With that protocol, each datagram of a call answer carried the number of its request, and a request with the number of the last call answer got that answer again, so a call did not run two times. The remote service now runs over QUIC: a call stream names the call, a header of `src/library/contract/remote` has no request number, and QUIC sends a lost datagram again.
 
 The design: `docs/QUIC.md`, "7. `remote` over QUIC (built)".
 
@@ -3215,7 +3215,7 @@ Do not use: directory, folder, list (for this), manifest, catalog (for this).
 
 An entry is one name of a tree and what it names: an object or a tree.
 
-An entry is the only link between a name and data. It holds, in 104 bytes (`Entry` of `contract/store`): the kind, the size (the bytes of an object, the entries of a tree), the generation, the time and the date of its last change, the hash of an object, the pointer of the root of its block tree or of the root node of its tree, and the version index of an object.
+An entry is the only link between a name and data. It holds, in 104 bytes (`Entry` of `src/library/contract/store`): the kind, the size (the bytes of an object, the entries of a tree), the generation, the time and the date of its last change, the hash of an object, the pointer of the root of its block tree or of the root node of its tree, and the version index of an object.
 
 A name has 1 to 64 bytes, no zero byte, no byte `/`, and is not `.` or `..`. So a name is one step down, never up, and a name that a program looks up under a place never reaches a node outside it. The service refuses a bad name with the byte that breaks the rule. A rename moves an entry, with its versions, inside one store.
 
@@ -3235,7 +3235,7 @@ A commit never writes over a node that the root on the disk names: it writes eac
 
 A node is not an object node: an object node is a block of the block tree of one object. It is not a page of memory either.
 
-The design: `docs/STORAGE.md`, "3.1 The blocks", and `contract/store`.
+The design: `docs/STORAGE.md`, "3.1 The blocks", and `src/library/contract/store`.
 
 Do not use: page (for this), bucket, inode.
 
@@ -3334,7 +3334,7 @@ A version index with a wrong check does not lock its object: the next commit of 
 
 A version index is not a journal: it records states, not operations, and nothing replays it.
 
-The design: `docs/ARCHITECTURE.md`, "U5. Storage service", and `contract/store`.
+The design: `docs/ARCHITECTURE.md`, "U5. Storage service", and `src/library/contract/store`.
 
 Do not use: history file, journal, log.
 
@@ -3387,7 +3387,7 @@ Do not use: garbage collection, pruning, cleanup, compaction.
 
 The retention rule is which versions the storage service keeps: each version for 10 minutes, then the newest of each hour until it is one day old, then the newest of each day.
 
-The rule keeps many versions of a recent state and few of an old one, with no setting. Its code is pure and has host tests (`support/storage_retention`). The hours and the days are counted from the format of the disk, so the buckets do not move from one application to the next, and a version that the rule keeps stays kept until it changes zone. The age of a version is the smaller of its age by the date and its age by the time since the format, so a wrong clock on one start never makes a version look older than it is.
+The rule keeps many versions of a recent state and few of an old one, with no setting. Its code is pure and has host tests (`src/library/support/storage_retention`). The hours and the days are counted from the format of the disk, so the buckets do not move from one application to the next, and a version that the rule keeps stays kept until it changes zone. The age of a version is the smaller of its age by the date and its age by the time since the format, so a wrong clock on one start never makes a version look older than it is.
 
 The retention rule is not a policy that a program sets: it is the same for each store. The limit of the store can still thin a version that the rule keeps.
 
@@ -3485,7 +3485,7 @@ Do not use: package store, repository, the Nix store.
 
 The system description is the list of hashes that defines one version of the whole system: the kernel, then each module and each resource of the boot image, with its kind, its size and its BLAKE3 hash.
 
-The system description makes the system reproducible and verifiable: two machines with the same description run the same bytes. Its file (`contract/system_description`) has a header of 16 bytes and one entry of 80 bytes for each part, in the order of the boot image, and no other byte. The signing key of the machine signs its hash (`docs/TRUSTED_BOOT.md`, "5. The signing key"). The boot program verifies the signature and each hash before it starts the kernel, and the root service checks the boot image against it again before it starts the first program. The boot image holds the description and its signature as its last two resources, which the description does not list, because a file cannot hold its own hash.
+The system description makes the system reproducible and verifiable: two machines with the same description run the same bytes. Its file (`src/library/contract/system_description`) has a header of 16 bytes and one entry of 80 bytes for each part, in the order of the boot image, and no other byte. The signing key of the machine signs its hash (`docs/TRUSTED_BOOT.md`, "5. The signing key"). The boot program verifies the signature and each hash before it starts the kernel, and the root service checks the boot image against it again before it starts the first program. The boot image holds the description and its signature as its last two resources, which the description does not list, because a file cannot hold its own hash.
 
 The system description is not the boot image (which carries the bytes) and not a generation of the storage service. In the model it becomes the tree of the system, signed by its publisher.
 
@@ -3509,7 +3509,7 @@ Do not use: variant (except in the names of the kept files), version.
 
 The storage service is the service that keeps the stores, their trees, their objects and their versions on the data disk, through the block service of that disk.
 
-The storage service is the one program that writes the data disk. Each other program reaches its own store through a connection that the root service gives, with a limit of blocks; each change is one commit, on the disk when the call returns. The service writes the format `STORAGE4` of `contract/store`, with copy on write and two places for the root block, so a stop of the machine never shows a part of a commit.
+The storage service is the one program that writes the data disk. Each other program reaches its own store through a connection that the root service gives, with a limit of blocks; each change is one commit, on the disk when the call returns. The service writes the format `STORAGE4` of `src/library/contract/store`, with copy on write and two places for the root block, so a stop of the machine never shows a part of a commit.
 
 At its start, it opens the disk: it reads both root blocks, takes the valid one with the highest generation, walks each node and each block tree once, checks each block, and counts the names of each block. Its line says what it found: "storage: ok, generation 1027: 3 stores, 4 objects, ...", or "storage: ok, a new disk: generation 1, 16384 blocks" on an empty disk. Its exports include `open`, `close`, `add`, `write`, `read`, `read_range`, `write_range`, `set_size`, `commit`, `list`, `rename`, `remove`, `share`, `unshare`, `usage`, `stores`, `open_store`, `versions`, `version`, `restore`, `clone` and `compare`.
 
@@ -3525,11 +3525,11 @@ The root block is the block of the data disk that names each store, with the gen
 
 The root block makes a commit atomic. A commit writes each new block to a free block, asks the disk to keep it (`Flush`), then writes the root block in the place of the older of the two roots. The root has its own check. At the start, the storage service takes the valid root with the highest generation: a root that a stop of the machine cut is not valid, and the root before it names blocks that no commit changed.
 
-The root block (`Root` of `contract/store`) holds the mark `STORAGE4`, the generation, the count of blocks of the disk, the time since the format, the date, and one store entry for each of up to 60 stores. Blocks 0 and 1 are its two places. Example of a log line: "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used".
+The root block (`Root` of `src/library/contract/store`) holds the mark `STORAGE4`, the generation, the count of blocks of the disk, the time since the format, the date, and one store entry for each of up to 60 stores. Blocks 0 and 1 are its two places. Example of a log line: "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used".
 
 The root block is not a superblock that a program can read: only the storage service and the kernel tool read it.
 
-The design: `docs/STORAGE.md`, "3.3 The commit and the open", and `contract/store`.
+The design: `docs/STORAGE.md`, "3.3 The commit and the open", and `src/library/contract/store`.
 
 Do not use: superblock, uberblock, meta page.
 
@@ -3651,7 +3651,7 @@ Do not use: sparse region, gap, zero block (for this).
 
 A value is the BLAKE3 chaining value of a part of an object, as a subtree of the BLAKE3 tree of its bytes, with zero bytes past its size; a hole has the value zero.
 
-Values let the storage service compute the hash of an object from the blocks that a commit changed, not from the whole object. The value of a block of data is the chaining value of its 4 chunks of 1 KiB at its place in the object: its first 8 bytes are the check of the block. The value of an object node is the parent of the values of its children, two by two, and each object node keeps the value of each child. A value is 32 bytes (`Block_Value` of `contract/store`).
+Values let the storage service compute the hash of an object from the blocks that a commit changed, not from the whole object. The value of a block of data is the chaining value of its 4 chunks of 1 KiB at its place in the object: its first 8 bytes are the check of the block. The value of an object node is the parent of the values of its children, two by two, and each object node keeps the value of each child. A value is 32 bytes (`Block_Value` of `src/library/contract/store`).
 
 A value is not a hash of a block alone: BLAKE3 puts the place of each chunk in its compression, so the same bytes at two places have two values.
 
@@ -3721,7 +3721,7 @@ With one picture, the compositor can read the picture while the program draws, a
 
 A picture is not a picture resource or a picture record: a picture record shows pixels of a picture that the program holds in its own memory, inside its surface.
 
-The design: `support/display`, and `docs/INTERFACE.md`, "2.2 Damage by difference".
+The design: `src/library/support/display`, and `docs/INTERFACE.md`, "2.2 Damage by difference".
 
 Do not use: back buffer, front buffer, swap chain.
 
@@ -3755,7 +3755,7 @@ Do not use: dirty region, invalid area.
 
 The boot display is the picture of how the machine started, drawn from the boot record and the other records of the kernel.
 
-The boot display shows each stage of the start and its time, the memory that the firmware gave, the firmware, the framebuffer, the processors, the programs and the modules of the boot image. Three programs draw it with one package, `support/bootscreen`: the boot program before the kernel exists; the root service while it starts the first programs, so that a failure of the start stays on the screen with its cause; and the program `boot`, in a window at any time. A record that is all zero is valid: its card shows that the fact is not known yet.
+The boot display shows each stage of the start and its time, the memory that the firmware gave, the firmware, the framebuffer, the processors, the programs and the modules of the boot image. Three programs draw it with one package, `src/library/support/bootscreen`: the boot program before the kernel exists; the root service while it starts the first programs, so that a failure of the start stays on the screen with its cause; and the program `boot`, in a window at any time. A record that is all zero is valid: its card shows that the fact is not known yet.
 
 The boot display is not a splash screen and not a log of text: it is made of cards with measures, and it follows the design rules.
 
@@ -3817,7 +3817,7 @@ Do not use: header, caption, decoration.
 
 The bar is the line at the top of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the palette, and the time since the start.
 
-The bar is the fixed place of the desktop where the input starts a program or finds a window. It is 32 pixels high. From the left: the mark of the system, the button `programs`, the button `windows`; at the right, "palette: super" and the time since the start of the machine. A press on a button opens its menu under it. `support/bar` holds the places of the buttons and of each line of the menus, and the table of the names of the programs, `bar.names`: the compositor draws from it, and the kernel tool presses the same places in the machine tests.
+The bar is the fixed place of the desktop where the input starts a program or finds a window. It is 32 pixels high. From the left: the mark of the system, the button `programs`, the button `windows`; at the right, "palette: super" and the time since the start of the machine. A press on a button opens its menu under it. `src/library/support/bar` holds the places of the buttons and of each line of the menus, and the table of the names of the programs, `bar.names`: the compositor draws from it, and the kernel tool presses the same places in the machine tests.
 
 The bar is not a task bar with an icon for each program, and not a dock: it holds two menus and no state of a program.
 
@@ -3833,7 +3833,7 @@ The names of the bar are in the interface font, which has proportional widths. I
 
 The bar layout is not a set of constants: it depends on the font in use.
 
-The design: `support/bar`, and `docs/DESIGN.md`, "Background and bar".
+The design: `src/library/support/bar`, and `docs/DESIGN.md`, "Background and bar".
 
 Do not use: bar geometry, bar metrics.
 
@@ -3877,7 +3877,7 @@ Do not use: launcher, command palette, everything palette, run dialog.
 
 A palette entry is one thing that the palette lists and that the input can choose: a name, a kind, and the fact that its icon says.
 
-The entries are data, and the panel only ranks, draws and dispatches them. An entry has a kind, which the row says by its kind icon and in words (`window`, `program`, `close a window`, `command`, `export`, `setting`); a name of at most 64 bytes, which the typed part matches; a fact, which the color or the form of the icon says (a program has a window now, a window has the focus, the entry destroys something); and a number that only the source of the entry reads. The compositor makes the entries of its two sources, the table `bar.names` and its client table, and of the checked copy of the palette table, when one of them changes (`palette.list_collect`, on its second thread). The record is `palette.Entry` in `support/palette`.
+The entries are data, and the panel only ranks, draws and dispatches them. An entry has a kind, which the row says by its kind icon and in words (`window`, `program`, `close a window`, `command`, `export`, `setting`); a name of at most 64 bytes, which the typed part matches; a fact, which the color or the form of the icon says (a program has a window now, a window has the focus, the entry destroys something); and a number that only the source of the entry reads. The compositor makes the entries of its two sources, the table `bar.names` and its client table, and of the checked copy of the palette table, when one of them changes (`palette.list_collect`, on its second thread). The record is `palette.Entry` in `src/library/support/palette`.
 
 A palette entry is not a command line: it holds no text that another program parses.
 
@@ -3889,7 +3889,7 @@ Do not use: palette item, palette command, action.
 
 A kind icon is the small picture of one kind of thing, a grid of 12 by 12 square cells, that each display of the system and the site draw from one table.
 
-It lets a reader tell a window from a program, or a handle from a number, before the reader reads a word. `support/kind_icons` holds one icon for each value kind and for each of the four desktop kinds that are not values: a window, a setting, an export, and an act that destroys. The table holds cells only, with no color: the display gives the color of the kind, or the color of one fact of the thing. The system draws a cell as a square of 1, 2 or 3 pixels (`interface.draw_kind_icon`), and the site draws the same cells as the rectangles of an SVG picture, so an icon is never scaled by a filter. The rows of the palette show it.
+It lets a reader tell a window from a program, or a handle from a number, before the reader reads a word. `src/library/support/kind_icons` holds one icon for each value kind and for each of the four desktop kinds that are not values: a window, a setting, an export, and an act that destroys. The table holds cells only, with no color: the display gives the color of the kind, or the color of one fact of the thing. The system draws a cell as a square of 1, 2 or 3 pixels (`interface.draw_kind_icon`), and the site draws the same cells as the rectangles of an SVG picture, so an icon is never scaled by a filter. The rows of the palette show it.
 
 A kind icon is not the mark of the system, which is the heron. It never stands alone: the row or the column says the kind in words too.
 
@@ -3925,7 +3925,7 @@ Do not use: dialog, prompt, argument box.
 
 The palette table is the memory object where the palette provider writes its entries, and which the compositor maps read-only.
 
-The table carries data and no text of a line. It has a header with a change count, a result area, and at most 256 entries: for each one a kind, the flag "destroys", the names and the kinds of its parameters, the kind of its result, a name, a signature and a help sentence; and a candidate area, where the provider writes the values that one parameter can take. The provider adds 1 to the change count before a change and 1 after it. The compositor copies the table and checks each count, each length, each kind and each byte of the copy before it uses one of them: a table that fails is no table. One ring goes with the table: the compositor names the chosen entry by the change count, its index and the hash of its name, and the provider answers with a result as runs of text in the result area. The arguments of a palette form go on the ring as typed values. The contract is `contract/palette_table`.
+The table carries data and no text of a line. It has a header with a change count, a result area, and at most 256 entries: for each one a kind, the flag "destroys", the names and the kinds of its parameters, the kind of its result, a name, a signature and a help sentence; and a candidate area, where the provider writes the values that one parameter can take. The provider adds 1 to the change count before a change and 1 after it. The compositor copies the table and checks each count, each length, each kind and each byte of the copy before it uses one of them: a table that fails is no table. One ring goes with the table: the compositor names the chosen entry by the change count, its index and the hash of its name, and the provider answers with a result as runs of text in the result area. The arguments of a palette form go on the ring as typed values. The contract is `src/library/contract/palette_table`.
 
 The palette table is not a call region: the compositor calls nothing in the provider, and waits for no answer in its loop.
 
@@ -3935,7 +3935,7 @@ Do not use: command table of the palette, entry file, palette registry.
 
 ### Interface package
 
-The interface package is `support/interface`: the code that builds the window of a program as a draw table at each frame, lays it out on the grid, takes the pointer and the keys, finds the damage, and draws.
+The interface package is `src/library/support/interface`: the code that builds the window of a program as a draw table at each frame, lays it out on the grid, takes the pointer and the keys, finds the damage, and draws.
 
 The interface package gives each program one way to draw its window by the design rules, with no retained tree of widgets. It works in immediate mode: at each frame, the program calls an element procedure for each part of its window (`card`, `label_value_line`, `button`, `list_with_choice`, `text_input`). Each call appends draw records to the draw table and gives back what the input did to that element: pressed, has the focus, changed. Then `damage_by_difference` finds what changed, and `execute_in_rectangles` draws it.
 
@@ -3993,7 +3993,7 @@ Do not use: draw command, display list item, primitive.
 
 A draw table is the draw records of one frame of a window, the bytes of their texts, and the pictures and text grids that they name, in the memory of the program.
 
-The draw table is what a frame produces. The program owns it (`Draw_Table` of `support/interface`) and keeps the table of the frame before, one for each picture of its surface, so that the next frame can find the damage by difference. A table that is full stops taking records and sets `full`; a record that names a picture or a grid that the table does not have sets `refused`. Example: `interface_elements` draws a window of 68 records.
+The draw table is what a frame produces. The program owns it (`Draw_Table` of `src/library/support/interface`) and keeps the table of the frame before, one for each picture of its surface, so that the next frame can find the damage by difference. A table that is full stops taking records and sets `full`; a record that names a picture or a grid that the table does not have sets `refused`. Example: `interface_elements` draws a window of 68 records.
 
 A draw table is not a tree: its order is the order of the drawing, and two tables compare record by record at the same index.
 
@@ -4089,7 +4089,7 @@ Do not use: dirty tracking, invalidation.
 
 A scroll bar is the element beside a view that shows a part of a longer content: it shows where the view is in the content, and the pointer moves the view with it.
 
-Each scroll bar of the system is one element of the interface package, `scroll_bar`, and the scroll bars of the site have the same form: both come from one table of sizes and colors, `support/graphics/scroll_bar.odin`. Its parts are two arrow buttons, the track, and the thumb with its grip. A program gives the units of its content, the units in view and the first unit in view, and takes the new first unit. A scroll bar is vertical or horizontal.
+Each scroll bar of the system is one element of the interface package, `scroll_bar`, and the scroll bars of the site have the same form: both come from one table of sizes and colors, `src/library/support/graphics/scroll_bar.odin`. Its parts are two arrow buttons, the track, and the thumb with its grip. A program gives the units of its content, the units in view and the first unit in view, and takes the new first unit. A scroll bar is vertical or horizontal.
 
 A scroll bar is not a bar (the element that shows a value against a maximum) and not the bar of the desktop. It takes no key: the keys of a view belong to the element that owns the view.
 
@@ -4161,7 +4161,7 @@ Do not use: cursor, mouse cursor, mouse pointer.
 
 A pointer shape is what the pointer shows, as one name of the system: `arrow`, `text`, `pointing_hand`, `move`, `wait`, and ten more.
 
-One list of names lets any theme serve each program: a program asks for a name, and the theme gives the pictures. The 15 shapes are `Pointer_Shape` of `contract/pointer_pictures`; zero is `arrow`, so a zero record asks for the default. The compositor chooses the shape from what is under the pointer: `move` over a title bar, `pointing_hand` over a button, `text` over the input band of the palette. A program asks for a shape over its own surface with `display.pointer_shape_set`; the compositor shows it only while the pointer is over that surface and that surface is in front there, so a program cannot change the pointer over another program, the bar or a frame. A number outside the list is ignored.
+One list of names lets any theme serve each program: a program asks for a name, and the theme gives the pictures. The 15 shapes are `Pointer_Shape` of `src/library/contract/pointer_pictures`; zero is `arrow`, so a zero record asks for the default. The compositor chooses the shape from what is under the pointer: `move` over a title bar, `pointing_hand` over a button, `text` over the input band of the palette. A program asks for a shape over its own surface with `display.pointer_shape_set`; the compositor shows it only while the pointer is over that surface and that surface is in front there, so a program cannot change the pointer over another program, the bar or a frame. A number outside the list is ignored.
 
 A pointer shape is not a file name of a theme: the manifest of a theme maps each shape to its sources.
 
@@ -4226,7 +4226,7 @@ Do not use: cursor theme, icon theme.
 
 A pointer theme file is one pointer theme in the format of the system: a header, a table of shapes, a table of pictures, then the pixels.
 
-One file for a whole theme lets a program map it read-only and read it in place, with no parse at run time. The format is `contract/pointer_pictures`: a header of 512 bytes (the mark "POINTERS", the version, the counts, the name, the license, the attribution), one shape entry of 16 bytes for each shape, one picture entry of 32 bytes for each picture, then the pixels. One function, `pointer_pictures.validate`, checks every field once; the tool and the compositor run it, and the compositor does not trust the file even from the root service. A failure gives a `Problem` with the table, the index, the field, the value and its limit.
+One file for a whole theme lets a program map it read-only and read it in place, with no parse at run time. The format is `src/library/contract/pointer_pictures`: a header of 512 bytes (the mark "POINTERS", the version, the counts, the name, the license, the attribution), one shape entry of 16 bytes for each shape, one picture entry of 32 bytes for each picture, then the pixels. One function, `pointer_pictures.validate`, checks every field once; the tool and the compositor run it, and the compositor does not trust the file even from the root service. A failure gives a `Problem` with the table, the index, the field, the value and its limit.
 
 A pointer theme file is not an Xcursor file or a `.cur` file: the tool reads those formats only to make this one.
 
@@ -4330,7 +4330,7 @@ Do not use: character (for the form), symbol.
 
 An outline is the set of closed contours of line segments and quadratic curves that bound a glyph, in units of its font.
 
-The outline is what a TrueType font stores in its table `glyf`: points in units of the font (1000 to one em for Paper Mono, 2000 for B612), each on or off the curve. The renderer of `support/vector_font` cuts each quadratic curve into 1 to 16 segments, each at most 1/8 of a pixel from the curve, scales the points to the grid, applies the grid fit, and accumulates the coverage of each pixel in fixed point, with no floating point. The sum of the coverage of a closed outline is exactly the area of the polygon of its cut points.
+The outline is what a TrueType font stores in its table `glyf`: points in units of the font (1000 to one em for Paper Mono, 2000 for B612), each on or off the curve. The renderer of `src/library/support/vector_font` cuts each quadratic curve into 1 to 16 segments, each at most 1/8 of a pixel from the curve, scales the points to the grid, applies the grid fit, and accumulates the coverage of each pixel in fixed point, with no floating point. The sum of the coverage of a closed outline is exactly the area of the polygon of its cut points.
 
 Only the kernel tool reads outlines: it draws them once into a glyph cache at the build. A glyph made of glyphs (`i` and `j` in Paper Mono) is made a simple outline in the subset. Outlines of CFF (cubic curves) are not read.
 
@@ -4380,7 +4380,7 @@ A glyph cache is a file that holds the glyphs of one font already drawn, as word
 
 A glyph cache moves all the work of a font out of the programs. The kernel tool builds it at the build (`vector_font.glyph_cache_build`) and puts it in the boot image as a resource. The root service checks its hash once at the start, and maps it read-only at a fixed range in each program with a surface, each terminal and the compositor. A program validates it once (`glyph_cache.validate`: about 7 µs), then each draw reads the words of a glyph with no other check. A glyph from the cache costs about 109 ns at scale 1 over a flat color on the host.
 
-The format is `contract/glyph_cache`, version 2: a header of 128 bytes, an entry for each scale (1, 2, 3), an entry of 12 bytes for each glyph at each position and scale, the advance of each character, the pairs of each scale, then the words. A glyph keeps only its rows with ink. All zero is valid: a program with no cache draws Spleen 8x16.
+The format is `src/library/contract/glyph_cache`, version 2: a header of 128 bytes, an entry for each scale (1, 2, 3), an entry of 12 bytes for each glyph at each position and scale, the advance of each character, the pairs of each scale, then the words. A glyph keeps only its rows with ink. All zero is valid: a program with no cache draws Spleen 8x16.
 
 The cache has a fixed capacity and holds every glyph that the grid can draw, so it never fills on demand and never evicts. It is not an atlas of a GPU and not a cache that a program fills: no program writes it, and its address and its size never come from another program.
 
@@ -4458,7 +4458,7 @@ The interface font is the proportional font of the titles, the labels, the butto
 
 B612 has an em of 2000 units and 19 different advances in ASCII. At scale 1 its cap height is 10 rows of the grid. Its digits are all 1300 units wide, so a column of numbers aligns in it too. Its Bold weight has scale 1 only, for titles.
 
-A program uses it through `support/interface`: an element that names or explains draws an `Interface_Text` record, and the table measures and draws it with text shaping and a proportional cache. The compositor draws the bar, the menus, the title bars and the palette in it, and the root service draws the titles of the boot display in it. If the caches are absent or refused, or if the setting `font` is `spleen`, each element draws in the font of the cells with the same rules.
+A program uses it through `src/library/support/interface`: an element that names or explains draws an `Interface_Text` record, and the table measures and draws it with text shaping and a proportional cache. The compositor draws the bar, the menus, the title bars and the palette in it, and the root service draws the titles of the boot display in it. If the caches are absent or refused, or if the setting `font` is `spleen`, each element draws in the font of the cells with the same rules.
 
 The design: `docs/FONTS.md`, "12. The interface font and the text shaping module".
 
@@ -4472,7 +4472,7 @@ The record came with version 7 of the draw records. Its rectangle is the measure
 
 A text in the font of the cells is the record `Text`. If the table has no interface font, an `Interface_Text` record is drawn in the font of the cells, cut to its rectangle: the font in use decides.
 
-The design: `docs/FONTS.md`, "12.5 What changes in `support/interface`".
+The design: `docs/FONTS.md`, "12.5 What changes in `src/library/support/interface`".
 
 Do not use: proportional text record.
 
@@ -4482,7 +4482,7 @@ The font in use is the font that actually draws a text of a draw table: the inte
 
 A text asks for the interface font, but three things make it fall back: the table has no interface font (an isolated call: the call host maps no glyph cache), the setting `font` is `spleen`, or the text is longer than 256 bytes (`INTERFACE_TEXT_LIMIT`). `interface.font_in_use` decides, and both the measure and the draw call it. So a text is always measured in the font that draws it, and an element never passes its box in either font.
 
-The design: `docs/FONTS.md`, "12.5 What changes in `support/interface`".
+The design: `docs/FONTS.md`, "12.5 What changes in `src/library/support/interface`".
 
 Do not use: effective font.
 
@@ -4516,7 +4516,7 @@ A font feature is a named choice of glyph forms that a font offers in its table 
 
 Examples: `zero` (the slashed zero), `ss01` (a stylistic set), `numr` (numerators). A feature leads to one or more lookups, and each lookup changes glyphs. The system uses one feature today, `zero` of Paper Mono, and it uses it at the build: the tool reads the feature with `vector_font.single_substitution` and draws its glyph for the character `0` in the subset. The subset then holds no `GSUB`, and no program reads features at run time.
 
-The reader of `GSUB` (`support/vector_font/substitution.odin`) reads hostile input with bounds: 16 features of one tag, 64 lookups, 64 subtables.
+The reader of `GSUB` (`src/library/support/vector_font/substitution.odin`) reads hostile input with bounds: 16 features of one tag, 64 lookups, 64 subtables.
 
 The design: `docs/FONTS.md`, "Paper Mono, the font of the system".
 
@@ -4548,7 +4548,7 @@ Do not use: crossed zero, zero with a slash.
 
 Text shaping is the step that turns the characters of a text into placed glyphs, with the advances and the pair adjustments of one font.
 
-A proportional text needs it: the x of each glyph is the sum of the advances and adjustments before it. The package `support/text_shaping` does it for a direct call, and the module `text_shaping` exports the same work:
+A proportional text needs it: the x of each glyph is the sum of the advances and adjustments before it. The package `src/library/support/text_shaping` does it for a direct call, and the module `text_shaping` exports the same work:
 
 - `shape_text`: the advances, the pairs and the text in, the placed glyphs out (an Append table), with the count of placed glyphs as the result;
 - `measure_texts`: many text ranges of one table of bytes in one call, each with its width written in it.
@@ -4650,7 +4650,7 @@ Do not use: lookup table (alone), LUT.
 
 A Markdown block is one unit of the Markdown of a source comment that stands on its own rows: a paragraph, a list item, a fenced block or an example.
 
-The reader of the system (`support/source_comment_markdown`) gives the blocks of a documentation text in the order of the text. A block is a range of bytes of that text, with its kind. A list item has its mark and its depth: 0 for an item of the list, 1 for an item inside it. A fenced block has the word after its opening fence. A block says whether an empty line is before it, so a reader can keep that row. The Markdown spans of a block follow it. Example: the program `manual` starts a row for each block, and draws a band behind the rows of a fenced block and of an example. It is not a block of storage.
+The reader of the system (`src/library/support/source_comment_markdown`) gives the blocks of a documentation text in the order of the text. A block is a range of bytes of that text, with its kind. A list item has its mark and its depth: 0 for an item of the list, 1 for an item inside it. A fenced block has the word after its opening fence. A block says whether an empty line is before it, so a reader can keep that row. The Markdown spans of a block follow it. Example: the program `manual` starts a row for each block, and draws a band behind the rows of a fenced block and of an example. It is not a block of storage.
 
 The design: `docs/SITE.md`, "The reader of the system".
 
@@ -4686,7 +4686,7 @@ Do not use: entropy (for this), salt.
 
 A random generator is a record of fixed size in the memory of a program that gives it random bytes, with no kernel entry and no call.
 
-The generator is `random.Generator` in `support/random`: ChaCha20 with fast key erasure. Each refill runs ChaCha20 with the key of the generator for 13 blocks (832 bytes): the first 32 bytes become the next key, and the other 800 are served in order. The key that made a refill is overwritten at once, and each byte is erased when it is served, so a copy of the state after a draw does not give the bytes before it. The stack below the draw is erased after each refill too.
+The generator is `random.Generator` in `src/library/support/random`: ChaCha20 with fast key erasure. Each refill runs ChaCha20 with the key of the generator for 13 blocks (832 bytes): the first 32 bytes become the next key, and the other 800 are served in order. The key that made a refill is overwritten at once, and each byte is erased when it is served, so a copy of the state after a draw does not give the bytes before it. The stack below the draw is erased after each refill too.
 
 A program uses it in three ways:
 
@@ -4744,7 +4744,7 @@ Do not use: security level.
 
 The cryptography module is the module `cryptography`: the cryptographic primitives that the system took from Odin's `core:crypto`, as exports that use the memory of the caller and give error records.
 
-The system does not write cryptography from nothing: it takes proven code and changes only its shell. The arithmetic and the constant-time code stay as they are; `kerneltool cryptography-origin` proves that each file is its origin with listed changes. The module `modules/cryptography` then gives the system forms:
+The system does not write cryptography from nothing: it takes proven code and changes only its shell. The arithmetic and the constant-time code stay as they are; `kerneltool cryptography-origin` proves that each file is its origin with listed changes. The module `src/modules/cryptography` then gives the system forms:
 
 - AEAD seal and open with ChaCha20-Poly1305 and AES-128-GCM;
 - SHA-256, HMAC-SHA-256, HKDF extract and expand;
@@ -4764,7 +4764,7 @@ Do not use: crypto library, libcrypto.
 
 Not authentic is the error kind of a sealed text whose tag does not verify, or of a message whose signature does not verify.
 
-`Not_Authentic` (`contract/errors`) tells a caller that the bytes are forged, damaged or from another key, and it is the one answer: the call says nothing about which byte was wrong. An open that gives it leaves no byte of the text in the result (it erases what it wrote), and its count is negative, so a caller cannot take a failed open for a success. `ed25519_verify` gives it for a signature that does not verify, and the boot program stops on it for the description signature.
+`Not_Authentic` (`src/library/contract/errors`) tells a caller that the bytes are forged, damaged or from another key, and it is the one answer: the call says nothing about which byte was wrong. An open that gives it leaves no byte of the text in the result (it erases what it wrote), and its count is negative, so a caller cannot take a failed open for a success. `ed25519_verify` gives it for a signature that does not verify, and the boot program stops on it for the description signature.
 
 A point of small order given to `x25519` is `Bad_Value`, not `Not_Authentic`: it is a point that shares no secret, not a forged text.
 
@@ -4774,9 +4774,9 @@ Do not use: MAC failure, bad tag.
 
 ### Compatibility layer
 
-The compatibility layer is the packages of `support/cryptography` that give the code taken from Odin the helpers that it expects from its origin, over the primitives of this system.
+The compatibility layer is the packages of `src/library/support/cryptography` that give the code taken from Odin the helpers that it expects from its origin, over the primitives of this system.
 
-The code of `core:crypto` imports helpers of the library of Odin: `zero_explicit`, `compare_constant_time`, little-endian loads, `rotate_left32`, `add_u64`, the `zero` of `core:mem`. The system does not change that code. It changes only the import lines, so that they name `compatibility_crypto`, `compatibility_endian`, `compatibility_bits`, `compatibility_bytes` and `compatibility_memory`, each imported under the name of its origin as alias. Those packages implement the helpers with the primitives of the system: the compatibility `zero_explicit` calls `erase_secret_bytes` of `runtime/memory.asm`, which the compiler cannot remove.
+The code of `core:crypto` imports helpers of the library of Odin: `zero_explicit`, `compare_constant_time`, little-endian loads, `rotate_left32`, `add_u64`, the `zero` of `core:mem`. The system does not change that code. It changes only the import lines, so that they name `compatibility_crypto`, `compatibility_endian`, `compatibility_bits`, `compatibility_bytes` and `compatibility_memory`, each imported under the name of its origin as alias. Those packages implement the helpers with the primitives of the system: the compatibility `zero_explicit` calls `erase_secret_bytes` of `src/runtime/memory.asm`, which the compiler cannot remove.
 
 The files of the layer are listed in `system_files.manifest` with their hashes, so a change of one of them fails `kerneltool check` until its new hash is written and reviewed.
 
@@ -4802,7 +4802,7 @@ Do not use: connection ID (in prose), CID.
 
 Packet protection is the AEAD that encrypts the payload of a QUIC packet and authenticates its header, with the key and the iv of one direction of one encryption level.
 
-Each QUIC packet is sealed on its own. The nonce is the iv with the packet number in its last 8 bytes; the additional data is the header without header protection. Initial packets use AES-128-GCM, as RFC 9001 asks; after the handshake this system prefers ChaCha20-Poly1305, whose portable code is 4.6 times faster than the portable AES here. The seal and the open are exports of the cryptography module (`packet_seal`, `packet_payload_open` in `support/quic`).
+Each QUIC packet is sealed on its own. The nonce is the iv with the packet number in its last 8 bytes; the additional data is the header without header protection. Initial packets use AES-128-GCM, as RFC 9001 asks; after the handshake this system prefers ChaCha20-Poly1305, whose portable code is 4.6 times faster than the portable AES here. The seal and the open are exports of the cryptography module (`packet_seal`, `packet_payload_open` in `src/library/support/quic`).
 
 `quic.datagram_take` copies each datagram once into private memory of the program; the header reading, the removal of header protection and the open in place work on that copy only. A tag that does not verify gives `Not_Authentic`, and the frames are erased. Reserved bits that are not 0 are checked only after the open, so a packet that is not authentic cannot close a connection.
 
@@ -4816,7 +4816,7 @@ Do not use: encryption (for this), record protection.
 
 Header protection is the mask that hides the low bits of the first byte and the packet number of a QUIC packet, made from a sample of the protected payload.
 
-Without it, an observer reads the packet numbers and the key phase of every packet. The mask is 5 bytes, from AES or ChaCha20 over a 16-byte sample taken 4 bytes after the start of the packet number. The cryptography module exports the two masks (`header_protection_mask_with_aes_128`, `header_protection_mask_with_chacha20`), and `support/quic` applies them: 4 bits of the first byte of a long header, 5 of a short one, and the packet number.
+Without it, an observer reads the packet numbers and the key phase of every packet. The mask is 5 bytes, from AES or ChaCha20 over a 16-byte sample taken 4 bytes after the start of the packet number. The cryptography module exports the two masks (`header_protection_mask_with_aes_128`, `header_protection_mask_with_chacha20`), and `src/library/support/quic` applies them: 4 bits of the first byte of a long header, 5 of a short one, and the packet number.
 
 The receiver removes it first (`header_protection_remove`), with the header protection key only, which does not change at a key update: it then reads the key phase and chooses the keys for the open.
 
@@ -4904,7 +4904,7 @@ Do not use: handshake hash (for the bytes).
 
 The key schedule is the chain of the secrets of TLS 1.3, each one derived from the one before with HKDF and a transcript hash: early, handshake, master, and the traffic secrets of each side.
 
-The X25519 shared secret enters at the handshake secret; the hash of the transcript at each point binds the secrets to the messages. QUIC takes its packet keys from the traffic secrets: `tls_packet_keys` gives the Handshake and the Application keys through `packet_keys_from_secret`, with the labels "quic key", "quic iv" and "quic hp". The code is `support/quic/tls_key_schedule.odin`, tested against the trace "Simple 1-RTT Handshake" of RFC 8448. The secrets of TLS are erased once the 1-RTT keys are installed.
+The X25519 shared secret enters at the handshake secret; the hash of the transcript at each point binds the secrets to the messages. QUIC takes its packet keys from the traffic secrets: `tls_packet_keys` gives the Handshake and the Application keys through `packet_keys_from_secret`, with the labels "quic key", "quic iv" and "quic hp". The code is `src/library/support/quic/tls_key_schedule.odin`, tested against the trace "Simple 1-RTT Handshake" of RFC 8448. The secrets of TLS are erased once the 1-RTT keys are installed.
 
 The design: `docs/QUIC.md`, "4. TLS 1.3 for QUIC (the second layer, built)".
 
@@ -5026,7 +5026,7 @@ The anti-amplification limit is the rule that a server sends at most 3 times the
 
 An attacker can forge the source address of a datagram. Without the limit, one small forged datagram can make a server send a large answer to a victim. The limit is held twice:
 
-- by `support/quic` in the program, until the address validation of the connection; this side counts only the datagrams that it processed;
+- by `src/library/support/quic` in the program, until the address validation of the connection; this side counts only the datagrams that it processed;
 - by the network service, which knows no QUIC: for each admitted remote of a UDP listen grant it counts the bytes in and out and refuses a Send past 3 times (the status `Amplification`), until the program sends the command `Validate`.
 
 A Retry packet (113 bytes at most) answers a datagram of 1200 bytes, so a reflection carries less than a tenth of what the attacker sent.
@@ -5282,7 +5282,7 @@ Do not use: development key, demo key.
 
 The signed message is the 64 bytes that the signing key signs for one system description: a fixed label padded with zero bytes to 32 bytes, then the BLAKE3 hash of the description.
 
-The label `system description signature 1` (`SIGNATURE_LABEL` of `contract/system_description`) binds the signature to this one use: a signature that the key makes for another purpose is never a valid description signature. The number in the label names the version of the form. `system_description.signed_message` builds the bytes. The measure puts the same 64 bytes in the event log of the firmware, so the log names the system by its BLAKE3 identity.
+The label `system description signature 1` (`SIGNATURE_LABEL` of `src/library/contract/system_description`) binds the signature to this one use: a signature that the key makes for another purpose is never a valid description signature. The number in the label names the version of the form. `system_description.signed_message` builds the bytes. The measure puts the same 64 bytes in the event log of the firmware, so the log names the system by its BLAKE3 identity.
 
 The design: `docs/TRUSTED_BOOT.md`, "1. The claims".
 
@@ -5292,7 +5292,7 @@ Do not use: payload, digest (for this).
 
 The description signature is the Ed25519 signature, 64 bytes, of the signed message of a system description.
 
-The boot image holds it as its last resource, `system_description_signature`, after the resource `system_description`. The description does not list these two resources, because a file cannot hold its own hash. At each start, before the kernel starts, the boot program verifies it with the public key that it holds, with the Ed25519 code of `support/cryptography/ed25519` linked into it. A signature that does not verify stops the start with the line:
+The boot image holds it as its last resource, `system_description_signature`, after the resource `system_description`. The description does not list these two resources, because a file cannot hold its own hash. At each start, before the kernel starts, the boot program verifies it with the public key that it holds, with the Ed25519 code of `src/library/support/cryptography/ed25519` linked into it. A signature that does not verify stops the start with the line:
 
 ```
 boot program: the signature of the system description is wrong
@@ -5491,7 +5491,7 @@ Do not use: release notes (for the file), history, news.
 
 A release is one section of the changelog: a release number, a date, and the entries of its changes, in the parts Added, Changed, Deprecated, Removed, Fixed and Security.
 
-A release marks a state of `master` that passed its checks. `kerneltool changelog release` makes it: it moves the fragments of `changelog.d/` into a new section `## [<number>] - <date>`, deletes them, and writes the release number in `contract/release`. Example: `## [0.91.0] - 2026-11-12`. On the site each release has the anchor `release-<number>` and links to each news entry that names it.
+A release marks a state of `master` that passed its checks. `kerneltool changelog release` makes it: it moves the fragments of `changelog.d/` into a new section `## [<number>] - <date>`, deletes them, and writes the release number in `src/library/contract/release`. Example: `## [0.91.0] - 2026-11-12`. On the site each release has the anchor `release-<number>` and links to each news entry that names it.
 
 It is not a version: a stored object of the system has versions. It is not a git tag, and not a build: many builds come between two releases.
 
@@ -5503,7 +5503,7 @@ Do not use: version (a stored object has versions), tag, build.
 
 The release number is the number of a release, in the form `<major>.<minor>.<patch>`.
 
-The project is before its first major release, so a release number is `0.N.0` for a release of new work and `0.N.1` for a correction after it. `RELEASE_NUMBER` in `contract/release` holds the newest one (today `"0.91.0"`); the foot of each page of the site and the page graph name it. The tool writes it; no one edits it by hand.
+The project is before its first major release, so a release number is `0.N.0` for a release of new work and `0.N.1` for a correction after it. `RELEASE_NUMBER` in `src/library/contract/release` holds the newest one (today `"0.91.0"`); the foot of each page of the site and the page graph name it. The tool writes it; no one edits it by hand.
 
 The design: `docs/SITE.md`, "The pages".
 
@@ -5628,7 +5628,7 @@ Do not use: search box, search bar, omnibox.
 
 The mark is the picture that stands for the system: a heron on a grid of 24 by 24 square cells, each part filled with one gradient.
 
-`support/mark` holds it as data: the rows of the still heron, the colors of each part and the animations of the mark. Every picture of the mark comes from that one table. One generator of the tool draws each picture file, in the variant of the mark that its use names: `kerneltool logo` asks it for the files of `resources/logo`, `kerneltool site` for the pictures and the icons of the site, and `kerneltool mark` for one picture. The system draws the mark on the boot display and in the bar. The squares follow the design of the system: rectangular forms, no rounded blob.
+`src/library/support/mark` holds it as data: the rows of the still heron, the colors of each part and the animations of the mark. Every picture of the mark comes from that one table. One generator of the tool draws each picture file, in the variant of the mark that its use names: `kerneltool logo` asks it for the files of `resources/logo`, `kerneltool site` for the pictures and the icons of the site, and `kerneltool mark` for one picture. The system draws the mark on the boot display and in the bar. The squares follow the design of the system: rectangular forms, no rounded blob.
 
 The design: `docs/DESIGN.md`, "11. The mark".
 
@@ -5656,7 +5656,7 @@ Do not use: logo font, wordmark font, pixel font.
 
 ### Still heron
 
-The still heron is the heron of the mark with no animation: the 24 rows of `heron_rows` in `support/mark`.
+The still heron is the heron of the mark with no animation: the 24 rows of `heron_rows` in `src/library/support/mark`.
 
 Each animation starts from it and ends on it, and it is the frame 0 of each one. A picture that does not move (a file of `resources/logo`, an icon, the boot display) shows it.
 
@@ -5668,7 +5668,7 @@ Do not use: rest pose, idle frame, base frame (a base frame is another thing: se
 
 An animation of the mark is a short list of frames in which a few cells of the still heron change.
 
-In a frame a cell takes the letter of another part, or becomes empty. Each frame has a duration in milliseconds, and starts from the still heron or from an earlier frame of the same animation, its base frame. After its last frame the heron is still again. The animations are data in `support/mark/animation.odin`: 15 of them, from the blink of one cell to the dash. The data does not say when one plays: the order of play of the place that shows them chooses which one comes next. On the site, `mark_animation.js` plays them from a tile map, and a move of the heron goes with four of them.
+In a frame a cell takes the letter of another part, or becomes empty. Each frame has a duration in milliseconds, and starts from the still heron or from an earlier frame of the same animation, its base frame. After its last frame the heron is still again. The animations are data in `src/library/support/mark/animation.odin`: 15 of them, from the blink of one cell to the dash. The data does not say when one plays: the order of play of the place that shows them chooses which one comes next. On the site, `mark_animation.js` plays them from a tile map, and a move of the heron goes with four of them.
 
 The design: `docs/DESIGN.md`, "11. The mark".
 
@@ -5678,7 +5678,7 @@ Do not use: idle animation, clip, tween.
 
 The order of play is the rule that chooses the next animation of the mark, on the home of the site and in the program `heron`: each animation plays once in a round, in an order of chance.
 
-The place that plays keeps a memory of the animations that were played. It chooses the next one among those that the memory does not hold, each with the same chance. When the memory holds every animation, it is emptied and a new round starts; the animation played last is left out of the first choice of the round, so no animation follows itself. The rule is one procedure, `mark.next_animation` (`support/mark/play.odin`): the program `heron` calls it, and the kernel tool runs it to check the script of the site. On the site the memory is kept in the storage of the tab for the visit: a reader who comes back to the home does not see the same first animation. Example: with 15 animations, the blink plays once in each 15 animations, at a place of the round that changes.
+The place that plays keeps a memory of the animations that were played. It chooses the next one among those that the memory does not hold, each with the same chance. When the memory holds every animation, it is emptied and a new round starts; the animation played last is left out of the first choice of the round, so no animation follows itself. The rule is one procedure, `mark.next_animation` (`src/library/support/mark/play.odin`): the program `heron` calls it, and the kernel tool runs it to check the script of the site. On the site the memory is kept in the storage of the tab for the visit: a reader who comes back to the home does not see the same first animation. Example: with 15 animations, the blink plays once in each 15 animations, at a place of the round that changes.
 
 The design: `docs/SITE.md`, "The rhythm of the animations"; `docs/DESIGN.md`, "The animations".
 
@@ -5698,7 +5698,7 @@ Do not use: idle ratio, duty cycle, pause.
 
 A move of the heron is the list of the forms and of the places that the heron takes during an animation of the mark, each in whole cells.
 
-An animation of the mark changes cells; a move takes the whole heron above the line of the water: across the window in the dash, up in the hop and the flap, wider and lower in a crouch. The two rows of the water stay in their place. A move is a list of keys in `support/mark` (`move_keys`): a time, the form of the heron from that time to the next key, and a place in whole cells or past an edge of the window. The place goes from a key to the next one cell by cell: the heron is never between two cells, and no picture of it changes its size. The home of the site and the program `heron` play the same keys. A picture that cannot move, as the icon of a tab, shows the frames alone.
+An animation of the mark changes cells; a move takes the whole heron above the line of the water: across the window in the dash, up in the hop and the flap, wider and lower in a crouch. The two rows of the water stay in their place. A move is a list of keys in `src/library/support/mark` (`move_keys`): a time, the form of the heron from that time to the next key, and a place in whole cells or past an edge of the window. The place goes from a key to the next one cell by cell: the heron is never between two cells, and no picture of it changes its size. The home of the site and the program `heron` play the same keys. A picture that cannot move, as the icon of a tab, shows the frames alone.
 
 The design: `docs/DESIGN.md`, "The moves".
 
@@ -5708,7 +5708,7 @@ Do not use: tween, sprite motion, scale.
 
 A form of the heron is one drawing, in whole cells, of the part of the heron above the water: the natural heron, or the heron squashed or stretched.
 
-A cell of the heron is a square of one size, so a squashed heron is not a picture made wider: it is the heron drawn with more columns and fewer rows of the same cells. A form names the columns and the rows of a frame that it draws two times and those that it leaves out, chosen by hand, and then cells that are corrected by hand (`form_lines` and `form_corrections` in `support/mark`). The head, the eye, the beak and the crest are the same in every form, and the column of the standing leg keeps its place. Example: the crouch is 28 by 19 cells; it repeats four columns of the body and leaves out two rows of the neck and one of the legs.
+A cell of the heron is a square of one size, so a squashed heron is not a picture made wider: it is the heron drawn with more columns and fewer rows of the same cells. A form names the columns and the rows of a frame that it draws two times and those that it leaves out, chosen by hand, and then cells that are corrected by hand (`form_lines` and `form_corrections` in `src/library/support/mark`). The head, the eye, the beak and the crest are the same in every form, and the column of the standing leg keeps its place. Example: the crouch is 28 by 19 cells; it repeats four columns of the body and leaves out two rows of the neck and one of the legs.
 
 The design: `docs/DESIGN.md`, "The moves".
 
@@ -5728,7 +5728,7 @@ Do not use: snap, pixel-perfect scaling, quantized motion.
 
 A variant of the mark is one of the two ways to color the pixels of the heron: smooth, where each pixel takes the gradient at its own place, or cells, where each cell is one color.
 
-A request for a picture of the mark names its variant: a procedure of `support/mark` that draws the heron takes it as an argument, and nothing chooses it from the cell size. A picture is the smooth variant: the head of the home of the site, the files of `resources/logo`, the boot display. A small icon, one pixel for a cell, is the cells variant: the bar of the site, the bar of the desktop, the icon of a tab. The smooth variant needs at least 2 pixels for a cell; at one pixel the picture is the cells variant, and a request for the smooth one is refused. Example: at 8 pixels for a cell, a cell of the body holds up to 64 colors in the smooth variant and one in the cells variant.
+A request for a picture of the mark names its variant: a procedure of `src/library/support/mark` that draws the heron takes it as an argument, and nothing chooses it from the cell size. A picture is the smooth variant: the head of the home of the site, the files of `resources/logo`, the boot display. A small icon, one pixel for a cell, is the cells variant: the bar of the site, the bar of the desktop, the icon of a tab. The smooth variant needs at least 2 pixels for a cell; at one pixel the picture is the cells variant, and a request for the smooth one is refused. Example: at 8 pixels for a cell, a cell of the body holds up to 64 colors in the smooth variant and one in the cells variant.
 
 The design: `docs/DESIGN.md`, "The variants of the mark".
 
@@ -6026,7 +6026,7 @@ Do not use: entry, item, API (for this).
 
 A value kind is what a technical value is for a reader, such as a number, a size, a time, a handle, a status or a module, so that every place that shows the value can give it one look.
 
-The kinds are one enumeration of the system, `value_kinds.Value_Kind` (`contract/value_kinds`): number, size, time, handle, value of the context, grant, status, type, operation, command, module, file, guide, version, yes or no, procedure, constant and global variable. One table gives each kind its color in each color scheme (`support/graphics/value_colors.odin`). One table gives each kind its kind icon (`support/kind_icons`). The site adds a class `value-<name>` and a title to each kind; the system uses the same kinds in a log record, where each value run keeps the kind of its part of the text, so the log draws a size and a module name in their colors.
+The kinds are one enumeration of the system, `value_kinds.Value_Kind` (`src/library/contract/value_kinds`): number, size, time, handle, value of the context, grant, status, type, operation, command, module, file, guide, version, yes or no, procedure, constant and global variable. One table gives each kind its color in each color scheme (`src/library/support/graphics/value_colors.odin`). One table gives each kind its kind icon (`src/library/support/kind_icons`). The site adds a class `value-<name>` and a title to each kind; the system uses the same kinds in a log record, where each value run keeps the kind of its part of the text, so the log draws a size and a module name in their colors.
 
 The writer of a table, a symbol or a line of the log states the kind of each value: no text is classified by its look. A value is in the monospace font; a name or an explanation in the reading font.
 
@@ -6040,7 +6040,7 @@ Do not use: value type, badge, chip, tag (for this).
 
 The declaration index is the list of every top-level declaration of the sources of the system, which `kerneltool site` reads with the parser of Odin so that a code span can link to what it names.
 
-It reads each source file of `kernel`, `boot`, `contract`, `support`, `modules` and `programs` (not the tests and not the tool). For each procedure, type, constant and global variable it keeps its package, its file and line, its kind, its one line of Odin and the first sentence of its comment. A code span of a guide, a news entry, the glossary or a source comment whose whole text is a name (`blend_coverage_row`, `graphics.text_proportional`) then becomes a link with a declaration card. When several declarations share the name, the folder that the text around the span names chooses one.
+It reads each source file of `src/kernel`, `src/boot`, `src/library/contract`, `src/library/support`, `src/modules` and `src/programs` (not the tests and not the tool). For each procedure, type, constant and global variable it keeps its package, its file and line, its kind, its one line of Odin and the first sentence of its comment. A code span of a guide, a news entry, the glossary or a source comment whose whole text is a name (`blend_coverage_row`, `graphics.text_proportional`) then becomes a link with a declaration card. When several declarations share the name, the folder that the text around the span names chooses one.
 
 It is not a symbol table of an object file, and its entries are not symbols: a symbol is a documented thing of a reference page.
 
@@ -6110,7 +6110,7 @@ Do not use: tag, badge, cross-reference (for this).
 
 ### Wire form
 
-A wire form is one of the types of the call form of the module contract, a member of `Type` of `contract/module`: Integer, Text, Record, Handle, Table or Bytes.
+A wire form is one of the types of the call form of the module contract, a member of `Type` of `src/library/contract/module`: Integer, Text, Record, Handle, Table or Bytes.
 
 It says how a call carries a parameter or a result: in one register, and what that register holds or points to. An Integer is the value; a Text, a Record, a Table and Bytes are an address of memory of the caller with a header; a Handle is a handle number. Because each parameter has a wire form in the description of an export, one export serves a direct call, an isolated call and the console with no glue code.
 

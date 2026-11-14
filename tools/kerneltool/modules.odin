@@ -69,7 +69,7 @@ Module_Build :: struct {
 }
 
 // The drawing module, and the setting of a program that draws its window
-// through it (support/interface, window_drawing.odin). A module with the
+// through it (src/library/support/interface, window_drawing.odin). A module with the
 // setting imports the module: a host test checks it
 // (import_declarations_test.odin).
 DRAWING_MODULE :: "drawing"

@@ -71,7 +71,7 @@ Network_Block_Device :: struct {
 	reads:    int,
 	failure:  string, // A request that the protocol does not permit.
 	// The loss of power: at the first write of a root (blocks 0 and 1 of
-	// the data disk, contract/store) from the write with this number (from
+	// the data disk, src/library/contract/store) from the write with this number (from
 	// 1) on, the disk answers nothing more, as a disk whose power went off
 	// during that write. The write of a root is the hardest moment: the
 	// blocks of the commit are durable, its root is not. 0: never.

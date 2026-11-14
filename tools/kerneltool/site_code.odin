@@ -42,7 +42,7 @@ Site_Code_Class_Description :: struct {
 }
 
 // The classes of the site and the classes of the colors of code of the
-// system (support/graphics/code_colors.odin): the terminal of the system
+// system (src/library/support/graphics/code_colors.odin): the terminal of the system
 // reads the same table, so a type or a literal has one color on the site
 // and in the console. Each color is at least SITE_VALUE_CONTRAST_LEAST on
 // the background of a block of code (the track color) in both forms.
@@ -380,7 +380,7 @@ site_code_link_place :: proc(links: ^Site_Code_Links, source: string, tokens: []
 
 // site_code_odin writes a text of Odin with the class of each token, and
 // each type of the contract as a reference to its card. package_name is the
-// package of the text ("operation" for a declaration of contract/operation),
+// package of the text ("operation" for a declaration of src/library/contract/operation),
 // or "" when it is not known (a block of a guide): then only "package.Name"
 // of a documented package is a reference. With links, each name that the
 // declaration index resolves is a link to its declaration. It writes

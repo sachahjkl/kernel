@@ -8,7 +8,7 @@ import "support:web"
 
 // The tests of the HTTP/1.1 server of the system, from the host: the TCP of
 // the host connects through hostfwd and libslirp (web_host.odin), and the
-// tool checks each answer with its own reading of HTTP (support/web).
+// tool checks each answer with its own reading of HTTP (src/library/support/web).
 
 HTTP_HOST_WAIT_LIMIT :: HANG_BOUND // It only ends a wait that hangs.
 

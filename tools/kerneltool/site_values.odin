@@ -15,7 +15,7 @@ import "core:strings"
 import "support:graphics"
 import "support:kind_icons"
 
-// The icons are the kind icons of the system (support/kind_icons): pixel
+// The icons are the kind icons of the system (src/library/support/kind_icons): pixel
 // forms on a grid of 12 by 12 cells, as the heron of the mark is. Each cell
 // is one pixel at the size that the site shows.
 SITE_VALUE_ICON_SIZE :: kind_icons.ICON_SIZE
@@ -27,7 +27,7 @@ SITE_VALUE_CONTRAST_LEAST :: 4.5
 SITE_VALUE_GRAPHIC_CONTRAST_LEAST :: 3.0
 
 // The kinds are value_kinds.Value_Kind, the one enumeration of the system
-// (contract/value_kinds): a log record of the system keeps the same kinds.
+// (src/library/contract/value_kinds): a log record of the system keeps the same kinds.
 
 Site_Value_Kind_Description :: struct {
 	title:         string, // In the legend.
@@ -36,8 +36,8 @@ Site_Value_Kind_Description :: struct {
 
 // The one table of the titles and the meanings of the kinds: what only the
 // site shows. The color of each kind and its icon are in the tables of the
-// system, which the programs read too (support/graphics/value_colors.odin,
-// support/kind_icons).
+// system, which the programs read too (src/library/support/graphics/value_colors.odin,
+// src/library/support/kind_icons).
 site_value_kinds := [value_kinds.Value_Kind]Site_Value_Kind_Description {
 	.None = {},
 	.Number = {

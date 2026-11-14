@@ -5,7 +5,7 @@ import "core:os"
 import "core:strings"
 
 // The fixed ranges have one source: the enumeration Fixed_Range of
-// contract/fixed_addresses (its comment says why). A constant of another
+// src/library/contract/fixed_addresses (its comment says why). A constant of another
 // file written as BAND_START + n * SLOT would be a range with no member,
 // which no check of the package sees. So no file of these folders, but the
 // package itself, names BAND_START or SLOT of that package.

@@ -618,7 +618,7 @@ import_declarations_check :: proc(build: Module_Build, imports: []Import_File, s
 // (an import). The loader writes it for one base, so a starter keeps one
 // prepared part of it for each address where an importer has the module:
 // with many importers, its table of prepared modules fills, and the next
-// program does not start (support/system, load.odin).
+// program does not start (src/library/support/system, load.odin).
 //
 // A segment of that range of the linker that the loader writes nowhere is
 // not such a segment: the conversion gives it the flags of a constant

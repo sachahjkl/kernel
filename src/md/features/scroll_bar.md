@@ -16,7 +16,7 @@ The form before was a flat rectangle on a track, drawn again in each program, wi
 
 ## The chosen form
 
-**One table.** `support/graphics/scroll_bar.odin` holds the sizes, the places of the stops of each gradient and the colors of the dark and of the light form. `support/interface/scroll_bar.odin` draws from it. `tools/kerneltool/site_style.odin` writes the variables of the style sheet from it. The rules of the style sheet hold no size and no color: a host test refuses `px`, `#` and `gradient(` in them.
+**One table.** `src/library/support/graphics/scroll_bar.odin` holds the sizes, the places of the stops of each gradient and the colors of the dark and of the light form. `src/library/support/interface/scroll_bar.odin` draws from it. `tools/kerneltool/site_style.odin` writes the variables of the style sheet from it. The rules of the style sheet hold no size and no color: a host test refuses `px`, `#` and `gradient(` in them.
 
 **The parts**, along the bar: an arrow button, the track, an arrow button. The thumb lies on the track.
 

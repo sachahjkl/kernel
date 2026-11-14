@@ -143,7 +143,7 @@ FIRMWARE_TPM_VARIABLES :: BUILD_FOLDER + "/ovmf_tpm_vars.fd"
 TEST_OUTPUT :: BUILD_FOLDER + "/test_output.txt"
 TEST_OUTPUT_FAILS :: BUILD_FOLDER + "/test_output_fails.txt"
 TEST_OUTPUT_SELF_TEST :: BUILD_FOLDER + "/test_output_self_test_%d.txt"
-// The disks beside the boot volume (support/pci has their places on the
+// The disks beside the boot volume (src/library/support/pci has their places on the
 // bus). The data disk keeps the stores of the storage service: `run` uses
 // one that stays from run to run, each test makes a new one. The disk of the
 // measures holds no data that a program keeps.
@@ -335,7 +335,7 @@ COMMANDS :: [?]Command {
 	// - `heron`: the film of the program heron.
 	{name = "film", about = "build, start the machine, film a scenario (" + FILM_NAMES + "; no argument: terminal), and write " + FILM_FOLDER + "/<name>.mp4, " + FILM_FOLDER + "/<name>.webm, a copy of the MP4 file in a new folder of " + DEVELOPMENT_LOG_FOLDER + ", and " + FILM_DOCUMENT_FOLDER + "/<name>.webm when a news entry names the film (needs ffmpeg)", run = run_film},
 	// Converts the BDF file of the font of the terminal (Spleen 8x16, from
-	// `FONT_SOURCE`) to Odin data in `support/graphics/font.odin`. The result
+	// `FONT_SOURCE`) to Odin data in `src/library/support/graphics/font.odin`. The result
 	// is in the repository, so a build does not need the BDF file: run it only
 	// to change the font.
 	{name = "font", about = "convert the BDF file of the font to " + FONT_OUTPUT, run = run_font},
@@ -354,7 +354,7 @@ COMMANDS :: [?]Command {
 	// reads the files of the repository (docs/FONTS.md).
 	{name = "vector_fonts", about = "subset the vector font candidates of " + VECTOR_FONT_SOURCES_VARIABLE + " to " + VECTOR_FONT_FOLDER + " and draw " + CANDIDATES_PICTURE, run = run_vector_fonts},
 	// Draws the files of the mark of the system from its geometry in
-	// `support/mark`: the icons in `resources/logo`, the font of the name of
+	// `src/library/support/mark`: the icons in `resources/logo`, the font of the name of
 	// the mark, the picture of the project, and one picture of every frame
 	// of the animations of the mark.
 	//
@@ -385,7 +385,7 @@ COMMANDS :: [?]Command {
 	// pictures of the mark").
 	{name = "mark", about = "draw one picture of the mark: still | frame | tile_map | table | uses | developer, with --variant smooth|cells, --cell <pixels>, --scheme dark|light, --background none|scheme, --animation <name>, --frame <number>, --forms yes|no, --width <pixels>, --out <file>", run = run_mark},
 	// Converts the JPEG portrait of the program `temple` to the pixels that the
-	// program holds, `programs/temple/portrait.pixels`. The result is in the
+	// program holds, `src/programs/temple/portrait.pixels`. The result is in the
 	// repository, so a build decodes no JPEG.
 	{name = "portrait", about = "convert " + PORTRAIT_SOURCE + " to " + PORTRAIT_OUTPUT, run = run_portrait},
 	// Calls an export of a service of the machine that `kerneltool run`
@@ -420,7 +420,7 @@ COMMANDS :: [?]Command {
 	// - `file`: its path in the repository.
 	{name = "cryptography-take", about = "cryptography-take <file under the root of Odin> <file of the repository>: copy a file of core:crypto with the listed import changes, and print its line of the manifest", run = run_cryptography_take},
 	// Prints the line of the list of the system files for each `.odin` file of
-	// `support/cryptography` that the manifest of the origin does not name:
+	// `src/library/support/cryptography` that the manifest of the origin does not name:
 	// the files that the project wrote, which a reviewer checks before the
 	// lines go into the list.
 	{name = "cryptography-system-hashes", about = "print the line of " + CRYPTOGRAPHY_SYSTEM_FILES + " for each .odin file of " + CRYPTOGRAPHY_FOLDER + " that is not taken from Odin", run = run_cryptography_system_hashes},

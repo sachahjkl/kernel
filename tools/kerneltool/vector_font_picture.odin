@@ -7,7 +7,7 @@ import "support:graphics"
 // The picture of the choice of the font (docs/FONTS.md, "The font file"):
 // the same lines of the system in each candidate and in Spleen, at the
 // scales 1, 2 and 3, then one word of each enlarged 5 times so that the
-// pixels and the color stripes show. support/graphics draws it, as in the
+// pixels and the color stripes show. src/library/support/graphics draws it, as in the
 // system: the same glyph cache, the same blend.
 
 CANDIDATE_LINES := [?]string {

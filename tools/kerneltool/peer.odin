@@ -15,7 +15,7 @@ import "core:time"
 // datagram of the peer to the device as one frame. No frame leaves the host:
 // the test is closed, and it has the same answers at each run.
 //
-// The peer reads each frame with its own code, not with support/network:
+// The peer reads each frame with its own code, not with src/library/support/network:
 // a fault of the network service in a checksum or a length is a fault that
 // the peer sees. It answers ARP, an echo request (ICMP) and a datagram to
 // port 7. Before it answers the first datagram, it sends the frames that the
@@ -459,7 +459,7 @@ peer_header_fix :: proc(frame: []u8) {
 }
 
 // peer_refused sends the frames that the network service must refuse: ten
-// that no endpoint owns (programs/net, expected_machine_rows) and one to the
+// that no endpoint owns (src/programs/net, expected_machine_rows) and one to the
 // endpoint of `net` from a remote that its grant does not name, then one
 // correct echo request to the machine.
 @(private = "file")

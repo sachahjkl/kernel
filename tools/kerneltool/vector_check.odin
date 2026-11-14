@@ -26,7 +26,7 @@ import "core:strings"
 // processor.asm on purpose: its fninit and ldmxcsr run once, at the start of
 // a processor, before it runs any thread, and its first thread is restored.
 
-// The procedures of kernel/processor.asm that save and restore the
+// The procedures of src/kernel/processor.asm that save and restore the
 // extended state: the only code of the kernel that may name these
 // registers. A NASM label inside one of them is "name.label", and each one
 // ends with the label "name_end".

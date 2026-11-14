@@ -6,7 +6,7 @@ This guide describes the line that is typed at the console: the language that th
 
 **The idea in plain words.** The console is the program in which the principal calls the functions of the system directly, with typed values, in place of a shell that passes text to programs. Each name that it can call comes from the description of a module, so the console can complete every name and show the signature of every call while the line is typed, with no code in the called program.
 
-**For whom.** A reader who uses the console, and a reader who changes `programs/console`, `support/line_editor` or `support/terminal`.
+**For whom.** A reader who uses the console, and a reader who changes `src/programs/console`, `src/library/support/line_editor` or `src/library/support/terminal`.
 
 **Read before.** `PROPERTIES.md`, "19. A command is a function: no text between programs". The terms edit line, line editor, hint line, free row, completion list, chosen row, fuzzy match, line history, history search, terminal, result drawer and short name of an export are in `GLOSSARY.md`, group Communication; log record and value run are in the group Running code.
 
@@ -35,13 +35,13 @@ This guide describes the line that is typed at the console: the language that th
 
 ## What the console owns
 
-The console owns the line that the input edits: its bytes, the caret, the line history, and the completion list. The terminal draws them and gives the keys. The procedures that change the line are in `support/line_editor`: they have no state of their own and make no kernel call, so host tests run each key (`support/line_editor/line_editor_test.odin`). The console uses them in `programs/console/main.odin` and `programs/console/completion.odin`.
+The console owns the line that the input edits: its bytes, the caret, the line history, and the completion list. The terminal draws them and gives the keys. The procedures that change the line are in `src/library/support/line_editor`: they have no state of their own and make no kernel call, so host tests run each key (`src/library/support/line_editor/line_editor_test.odin`). The console uses them in `src/programs/console/main.odin` and `src/programs/console/completion.odin`.
 
 ## The language of the console
 
 A line of the console is one expression of a small language, or a variable that takes the value of one. The console reads the line, calls the functions that it names with typed values, and draws the one result that comes back: a value, or an error. No program receives the text of the line: the text stops at the console, and only typed values go to the functions (`PROPERTIES.md`, "19. A command is a function: no text between programs").
 
-The code is `programs/console/language.odin` (the parser and the values), `programs/console/commands.odin` (the commands and the calls), `programs/console/tables.odin` (the commands of tables), `programs/console/results.odin` (the result of a line and its drawing), `programs/console/line_records.odin` (the log records of a line) and `support/console_results` (the drawers).
+The code is `src/programs/console/language.odin` (the parser and the values), `src/programs/console/commands.odin` (the commands and the calls), `src/programs/console/tables.odin` (the commands of tables), `src/programs/console/results.odin` (the result of a line and its drawing), `src/programs/console/line_records.odin` (the log records of a line) and `src/library/support/console_results` (the drawers).
 
 ### The form of a line
 
@@ -53,7 +53,7 @@ factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "("
 ```
 
 - **A name** starts with a letter or `_`, and goes on with letters, digits, `_` and `.`: `monitor.count` and `r.value` are one name each.
-- **An integer** is decimal digits. It has 64 bits with a sign. A number that is larger than 9223372036854775807 is an error of the line. A result of `+`, `-`, `*` or `/` that does not fit is an error of the line too: no result wraps. The checks are `number_value`, `integer_add`, `integer_subtract`, `integer_multiply`, `integer_negate` and `integer_divide` of `support/console_language`. The least integer has no literal: write `-9223372036854775807 - 1`.
+- **An integer** is decimal digits. It has 64 bits with a sign. A number that is larger than 9223372036854775807 is an error of the line. A result of `+`, `-`, `*` or `/` that does not fit is an error of the line too: no result wraps. The checks are `number_value`, `integer_add`, `integer_subtract`, `integer_multiply`, `integer_negate` and `integer_divide` of `src/library/support/console_language`. The least integer has no literal: write `-9223372036854775807 - 1`.
 - **A text** is the bytes between two quotes. A text has no escape, so it cannot hold a quote.
 - **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them. A division by zero is an error. So is the one division whose result does not fit: the least integer by `-1`.
 
@@ -210,7 +210,7 @@ A line has one result, and the console draws it by its kind. No command writes t
 
 ### The drawers
 
-One drawer exists for each kind of result. A drawer knows no command: it reads the value, and for a record or a table the description of its record. The drawers are in `support/console_results`: they have no state, call no allocator and make no kernel call, and host tests draw each kind into a text (`support/console_results/console_results_test.odin`). A drawer writes parts of a line to the console with what each part is; the console chooses the color.
+One drawer exists for each kind of result. A drawer knows no command: it reads the value, and for a record or a table the description of its record. The drawers are in `src/library/support/console_results`: they have no state, call no allocator and make no kernel call, and host tests draw each kind into a text (`src/library/support/console_results/console_results_test.odin`). A drawer writes parts of a line to the console with what each part is; the console chooses the color.
 
 | Kind | What the drawer writes |
 |---|---|
@@ -235,7 +235,7 @@ Memory
   ...
 ```
 
-**The colors.** A value has the color of its value kind, from the one table that the window of the log and the site read (`support/graphics/value_colors.odin`; `docs/DESIGN.md`, "The colors of values"): an Integer is a number, a handle a handle, the name of a record and the kind of an object a type, an error kind a status, the operation of an error an operation. The name of a field, the head of a column and a line about the result (the count of rows) are dim. A text value is plain: the drawer has only the type of a field, and no text is classified by its look.
+**The colors.** A value has the color of its value kind, from the one table that the window of the log and the site read (`src/library/support/graphics/value_colors.odin`; `docs/DESIGN.md`, "The colors of values"): an Integer is a number, a handle a handle, the name of a record and the kind of an object a type, an error kind a status, the operation of an error an operation. The name of a field, the head of a column and a line about the result (the count of rows) are dim. A text value is plain: the drawer has only the type of a field, and no text is classified by its look.
 
 **No value is cut.** The terminal draws no byte past its last column. The console starts a new row when a line reaches the last column of its window (`WINDOW_COLUMNS`, 96), so a long value goes on in the next row, under the start of its column when that column starts in the left half of the window. The log has the line whole. A text that a command writes in a field of a fixed size, and that is longer than the field, ends with the cut mark and the count of the missing bytes (`GLOSSARY.md`, "Cut mark"): the help of a command in `help()`; `describe(name)` gives it whole.
 
@@ -254,7 +254,7 @@ error: add: the argument note has 40 bytes; it can have at most 36 bytes (-1)
   values     value 40, limit 36, found 0, unit bytes
 ```
 
-- `kind`: the error kind, by its name in `contract/errors`. A kind that the contract does not have, from another program: "an unknown kind" and its number.
+- `kind`: the error kind, by its name in `src/library/contract/errors`. A kind that the contract does not have, from another program: "an unknown kind" and its number.
 - `operation`: the export, or `root.` and the command of the root ring.
 - `argument`: the number of the argument that is wrong, from 1, and its name. The line is absent when the record names no argument.
 - `values`: `value`, `limit` and `found` of the record, and its unit when it has one.
@@ -312,7 +312,7 @@ When the export has a table of error details and wrote more than one detail, one
 
 A `hash_head` is the head of a BLAKE3 hash: its first 8 bytes, as 16 hexadecimal digits. `manual.modules()` gives the whole hash of a module.
 
-**How a built-in command makes a table.** It gives the name of its record and its columns (`made_table` in `programs/console/results.odin`), then adds rows. The console writes the description of the record in the format of the module contract (`console_results.description_write`), in the memory of the tables of the line: a table of a command and a table of an export are one kind of value.
+**How a built-in command makes a table.** It gives the name of its record and its columns (`made_table` in `src/programs/console/results.odin`), then adds rows. The console writes the description of the record in the format of the module contract (`console_results.description_write`), in the memory of the tables of the line: a table of a command and a table of an export are one kind of value.
 
 ## The log records of a line
 
@@ -339,7 +339,7 @@ While a line calls an export, the console shows under the line the log records t
 
 ## The built-in commands and the services
 
-A fact that a service holds is an export of that service, and the console calls it as any export. A built-in name can stay as a short name of such an export: the command connects to the service when the console has no connection to it yet, then calls the export through the connection (`bound_call` in `programs/console/commands.odin`).
+A fact that a service holds is an export of that service, and the console calls it as any export. A built-in name can stay as a short name of such an export: the command connects to the service when the console has no connection to it yet, then calls the export through the connection (`bound_call` in `src/programs/console/commands.odin`).
 
 | Built-in command | Where the fact comes from |
 |---|---|
@@ -417,7 +417,7 @@ One state loses a key. While Escape can stop a call of the line, the console mus
 
 Escape has one more meaning, and only in one state: while the line waits in a call of a sandboxed program or of a service, Escape stops that call at once, also when keys wait. While the line is in no such call (a built-in command, a direct call, the drawing of the result), Escape waits as each key, and then closes the list that the keys before it opened. So `clear()`, then `mcnt`, Escape and Tab typed before `clear()` ended, give what they give when typed slowly: the list opens at `m`, Escape closes it, Tab opens it again.
 
-The rules are `line_editor.running_key_action` and `line_editor.running_key_can_be_taken` (`support/line_editor/running_keys.odin`), with their host tests. A direct call that does not return cannot be stopped: the module runs in the thread of the lines; `isolate` such a module.
+The rules are `line_editor.running_key_action` and `line_editor.running_key_can_be_taken` (`src/library/support/line_editor/running_keys.odin`), with their host tests. A direct call that does not return cannot be stopped: the module runs in the thread of the lines; `isolate` such a module.
 
 A chosen name replaces the whole name at the caret, also its part after the caret, up to a dot. A command or an export gets its `(`, unless a `(` follows; a name in quotes gets its closing quote, unless one follows.
 
@@ -464,7 +464,7 @@ The tests pin these orders on real names of the system (the exports of `monitor`
 
 The pass back takes the latest place of each character: `set` in `manual.segments` takes the second `e`, not the `e` beside the `s`. A search of the best window costs more work for each name; the order above is the result of the bounded rule.
 
-The palette of the desktop ranks its entries with the same match and the same order (`support/line_editor`; `DESIGN.md`, "Palette"). Its tie order is: the entries chosen lately, the newest first; then the kind of the entry; then the order of its table.
+The palette of the desktop ranks its entries with the same match and the same order (`src/library/support/line_editor`; `DESIGN.md`, "Palette"). Its tie order is: the entries chosen lately, the newest first; then the kind of the entry; then the order of its table.
 
 ## 4. The bounds, and the cost of one key
 
@@ -533,9 +533,9 @@ Why after each line and not at most one write in a second: a generation counts t
 
 The console colors each part of a line by what it is: a function name, a type, a number or a text. The console decides the kind of each part; the terminal decides its color, so one table sets the colors of every terminal.
 
-The edit line, the line that the console writes back when Enter is pressed, and the rows of the completion list are colored by what each part is in the language of the console. One scanner reads them: `support/console_language`. The parser of the console reads its names, numbers and texts with the same procedures (`space_end`, `name_end`, `number_end`, `text_end`), so the colors and the parser agree on where a token starts and ends. The scanner calls no allocator, keeps no state, and never stops at a fault: a byte that the language does not take is one token of the kind Unknown.
+The edit line, the line that the console writes back when Enter is pressed, and the rows of the completion list are colored by what each part is in the language of the console. One scanner reads them: `src/library/support/console_language`. The parser of the console reads its names, numbers and texts with the same procedures (`space_end`, `name_end`, `number_end`, `text_end`), so the colors and the parser agree on where a token starts and ends. The scanner calls no allocator, keeps no state, and never stops at a fault: a byte that the language does not take is one token of the kind Unknown.
 
-**The kinds.** The console sends kinds, not colors (`terminal.Code_Kind`). The terminal maps each kind to a class of the colors of code (`terminal.code_kind_classes`), and each class to a color of the design rules (`support/graphics/code_colors.odin`, the table that the site reads too: `docs/DESIGN.md`, section 4). One table changes the colors of every terminal.
+**The kinds.** The console sends kinds, not colors (`terminal.Code_Kind`). The terminal maps each kind to a class of the colors of code (`terminal.code_kind_classes`), and each class to a color of the design rules (`src/library/support/graphics/code_colors.odin`, the table that the site reads too: `docs/DESIGN.md`, section 4). One table changes the colors of every terminal.
 
 | Kind | What | Class | Color | On the background `0x0B1018` | On the card `0x17212E` |
 |---|---|---|---|---|---|
@@ -549,7 +549,7 @@ The edit line, the line that the console writes back when Enter is pressed, and 
 | Words | The words of a row that are not code: "export of", "command", "3 lines ago" | Comment | `0x9CA6B2` | 7.73 | 6.58 |
 | Unknown | A name that is no command, module or variable; a byte that the language does not take | Comment | `0x9CA6B2` | 7.73 | 6.58 |
 
-A part with no class has the color of the text around it: the tone of the line, or the text color `0xDCE4EC` in a row of the list (14.84 and 12.64). A host test computes each contrast on the background and on both colors of the card; the bound is 4.5 (`support/terminal/code_runs_test.odin`).
+A part with no class has the color of the text around it: the tone of the line, or the text color `0xDCE4EC` in a row of the list (14.84 and 12.64). A host test computes each contrast on the background and on both colors of the card; the bound is 4.5 (`src/library/support/terminal/code_runs_test.odin`).
 
 **A line that is typed.** The console makes the runs of the edit line at each key that changes it, before it sends the line:
 
@@ -565,7 +565,7 @@ A part with no class has the color of the text around it: the tone of the line, 
 
 **The chosen row.** The chosen row is on `COLOR_CHOSEN` `0x3C76BB` (`docs/DESIGN.md`, section 10). White has 4.67 to 1 there, and no color of a kind keeps 4.5. The chosen row draws each part in white: the kinds show on the other rows. A matched character of the chosen row is the reverse, the chosen blue on a white cell: 4.67 to 1. The host test holds 4.5 for both.
 
-**The records** (`support/terminal`, record version 2):
+**The records** (`src/library/support/terminal`, record version 2):
 
 - `Code_Runs` (kind 8): the runs of the next Edit record, or of the next List_Row record of one row. Its bytes are in the text region: 4 bytes for each run (start, length, kind, a reserved byte), at most `CODE_RUN_LIMIT` (64) runs. The program sends it just before the record that it colors, so the terminal never shows a new text with the runs of the text before it. A record with no `Code_Runs` before it is plain.
 - `Style.code`: the kind of a Text record, in the byte that was the first byte of `Style.reserved`. The echoed line is runs of text with a kind each: the lines that the terminal keeps have a style for each run, and each cell of its grid has its own color, so the echo needs no new form of the grid.
@@ -581,7 +581,7 @@ The console is the palette provider of the desktop: each of its commands is an e
 
 **The grant.** The console has the grant `Palette`. At its start it sends `Palette_Provide` to the root service, which makes two memory objects and gives them to the console and to the compositor: the entry table, which the console writes and the compositor maps read-only, and one ring. `grants("console")` shows the grant as `palette`. `revoke("console", "palette")` ends the table and the ring in the console, and the compositor unmaps its side: the palette then lists the programs and the windows only, and its footer says "the console gives no commands". The console stops its use of the two objects before it asks for the revocation. No kernel operation is new.
 
-**The entry table** (`contract/palette_table`). A header (a magic number, a version, the change count, the count of entries), a result area of 2048 bytes, a candidate area of 96 names, then at most 256 entries of 440 bytes. One entry is one command of the command table of now: a built-in command, a short name bound to an export, or an export of a module or of a service. A command that makes a record from its fields is not listed, and of two commands with one name the table has the one that a call runs.
+**The entry table** (`src/library/contract/palette_table`). A header (a magic number, a version, the change count, the count of entries), a result area of 2048 bytes, a candidate area of 96 names, then at most 256 entries of 440 bytes. One entry is one command of the command table of now: a built-in command, a short name bound to an export, or an export of a module or of a service. A command that makes a record from its fields is not listed, and of two commands with one name the table has the one that a call runs.
 
 | Field of an entry | Content |
 |---|---|
@@ -612,9 +612,9 @@ The console writes the table again after each line, when the command table chang
 | `Refused` | The choice names no entry that the console can run | Shows the sentence |
 | `Edit_Opened` | An entry with parameters | The window of the console comes to the front |
 
-The result area holds what the drawer of the kind of the result wrote (`support/console_results`), as runs: a byte that says what the run is (a label, a number, the name of a record, a failure), a byte of length, then the bytes. The panel draws each run in the color of what it is, the colors of the same parts in the console. It parses no text.
+The result area holds what the drawer of the kind of the result wrote (`src/library/support/console_results`), as runs: a byte that says what the run is (a label, a number, the name of a record, a failure), a byte of length, then the bytes. The panel draws each run in the color of what it is, the colors of the same parts in the console. It parses no text.
 
-**What the compositor checks.** The console is another program for the compositor: its table and its answers are hostile input. The compositor copies the table, then checks the copy, and reads only the copy after that: the magic number and the version; a count of entries of at most 256; a change count that is even and the same before and after the copy, in at most 4 tries; for each entry, each kind and each flag in its range, each reserved byte 0, each length inside its field, a name of 1 byte at least, each byte of a text from 32 to 126, a signature that starts with the name, and for a `Setting` entry a setting and a value that `contract/settings` has. A table that fails gives a palette with the programs and the windows only, one line of the log with the problem and its entry, and "the commands of the console were refused" in the footer. An answer is checked the same way: the count of bytes inside the result area, each run inside the count, each part in its range, each byte from 32 to 126, at most 12 lines.
+**What the compositor checks.** The console is another program for the compositor: its table and its answers are hostile input. The compositor copies the table, then checks the copy, and reads only the copy after that: the magic number and the version; a count of entries of at most 256; a change count that is even and the same before and after the copy, in at most 4 tries; for each entry, each kind and each flag in its range, each reserved byte 0, each length inside its field, a name of 1 byte at least, each byte of a text from 32 to 126, a signature that starts with the name, and for a `Setting` entry a setting and a value that `src/library/contract/settings` has. A table that fails gives a palette with the programs and the windows only, one line of the log with the problem and its entry, and "the commands of the console were refused" in the footer. An answer is checked the same way: the count of bytes inside the result area, each run inside the count, each part in its range, each byte from 32 to 126, at most 12 lines.
 
 **The log.** The console writes "console: the palette table has N entries, generation G" at each change of the table, "console: the palette runs memory()" or "console: the palette opens stop() in the edit line" for a choice, then "console: the palette gets Record, N lines" or "console: the result of the palette choice is in the console: Table".
 
@@ -623,7 +623,7 @@ The result area holds what the drawer of the kind of the result wrote (`support/
 - **Candidates.** The compositor sends `Candidates` with the entry (generation, index, hash) and the number of a parameter. The console writes at most 96 names of at most 31 bytes in the candidate area of the table, and answers `Candidates_Ready` with what they are and their count: the programs that run (`stop`, `grants`, `connect`, `debug`, the first parameter of `revoke`), the modules of the boot image (`start`, `load`, `isolate`, `replace`, `manual_page`), the grants (the second parameter of `revoke`). For each other parameter the count is 0. The compositor copies the area and checks the copy: the count, each length from 1 to 31, each byte from 32 to 126.
 - **Typed values.** The compositor sends one `Argument` record for each field, then `Choose` with the mode `Run_With_Arguments` and their count, all with one tag. An Integer is a number in one value of the record; a Text is its bytes, 48 at most, in six values. The console checks each one: the number of the parameter, the kind, the length, each byte from 32 to 126, and no quote, which a line cannot hold in a text. It then checks that the count is the count of the parameters of the command and that each value has the kind of its parameter, as it checks a typed line, and builds the line itself: `revoke("plasma", "log")`. A choice whose values do not fit is refused: "the arguments do not fit the command: type the line in the console".
 
-**The settings.** The table has one entry of the kind `Setting` for each value of each setting of `contract/settings`: "set font to spleen", with the number of the setting and of the value. The compositor checks both against the same contract. A choice runs the line `setting("font", "spleen")`: `setting(name, value)` is a built-in command, the export `settings.set` under a short name, so the console connects to `settings` at the first use. The program `settings` must run.
+**The settings.** The table has one entry of the kind `Setting` for each value of each setting of `src/library/contract/settings`: "set font to spleen", with the number of the setting and of the value. The compositor checks both against the same contract. A choice runs the line `setting("font", "spleen")`: `setting(name, value)` is a built-in command, the export `settings.set` under a short name, so the console connects to `settings` at the first use. The program `settings` must run.
 
 **The manual.** With the prefix `?` the compositor sends `Manual` with the name of a program, as a typed value. The console checks the name and runs `manual_page("plasma")`: the export `manual.show` under a short name, which makes the window of the manual show the page of that module. The answer is `Manual_Opened`, and the compositor brings the window of the manual to the front. The program `manual` must run: the command starts no program, and its error shows in the panel.
 

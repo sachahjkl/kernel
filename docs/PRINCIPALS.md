@@ -76,7 +76,7 @@ The program `unlock` makes the two secret keys from its random generator, which 
 
 ### The file of the principal
 
-The program `unlock` keeps the record in its private store (a store of principal 0), as the object `principal`. Its format is in `support/principals`. Each number is little-endian.
+The program `unlock` keeps the record in its private store (a store of principal 0), as the object `principal`. Its format is in `src/library/support/principals`. Each number is little-endian.
 
 | Offset | Bytes | Field |
 |---|---|---|
@@ -142,7 +142,7 @@ The root service records, for each program that it starts, the principal whose s
 
 So a program that the console starts belongs to principal 0, and a program that the desktop starts during a session belongs to the named principal. The log says it: "root: started notes, in the session of principal 1 "alice"".
 
-**The grant of a connection.** The root service gives each caller of a service a grant, in the Connect and Grant commands of the service ring (`contract/isolated`, values[6]):
+**The grant of a connection.** The root service gives each caller of a service a grant, in the Connect and Grant commands of the service ring (`src/library/contract/isolated`, values[6]):
 
 | Bits | Field |
 |---|---|
@@ -177,7 +177,7 @@ So two principals that run one program have two stores, and the stores of the sy
 
 ## 7. The commands
 
-**The root ring** (`support/system`, `Root_Command`):
+**The root ring** (`src/library/support/system`, `Root_Command`):
 
 | Command | Who sends it | What it does |
 |---|---|---|
@@ -194,8 +194,8 @@ A refusal is an error record with the unit `Principals`: a second named principa
 
 ## 8. The tests
 
-- `odin test support/principals`: the names of the stores, a name that does not fit, the names and the passphrases, a round trip of the file, and ten hostile files.
-- `odin test support/cryptography/vectors`: BLAKE2b of RFC 7693 and Argon2id of RFC 9106, section 5.3; the blocks are erased after the derivation, and a supply of blocks that is too small gives `Out_Of_Memory`.
+- `odin test src/library/support/principals`: the names of the stores, a name that does not fit, the names and the passphrases, a round trip of the file, and ten hostile files.
+- `odin test src/library/support/cryptography/vectors`: BLAKE2b of RFC 7693 and Argon2id of RFC 9106, section 5.3; the blocks are erased after the derivation, and a supply of blocks that is too small gives `Out_Of_Memory`.
 - `kerneltool test principals`: two machines on one data disk. The first one: no named principal; a note of `notes` started by the console belongs to principal 0; the creation of `alice` in the window of `unlock`; `notes` from the menu has a new store, `notes.principal.1`; the grants name the principal; the console connects acting for principal 0: `storage.open_store("notes.principal.1")` is refused with `No_Grant`, and `storage.stores()` does not list that store; the lock stops `notes`; a wrong passphrase opens nothing; the right one starts the session again and `notes` finds the note and the count of alice; a revocation of the store of `notes`. The second machine, on the same disk: the passphrase starts the session, and the note of alice is there. Picture: `principals_unlock`.
 
 ## 9. Not built

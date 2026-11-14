@@ -5,11 +5,11 @@ import "core:os"
 import "core:strings"
 
 // A text is never cut in silence (docs/ARCHITECTURE.md): the writer of
-// support/sentence counts the bytes that its buffer does not hold, and its
+// src/library/support/sentence counts the bytes that its buffer does not hold, and its
 // text (written) ends with the cut mark. A source that sets the count of a
 // writer by hand keeps the count of the dropped bytes of the text before;
 // a source that reads the buffer of a writer by hand reads a text with no
-// mark. This check refuses both, outside support/sentence, for a variable
+// mark. This check refuses both, outside src/library/support/sentence, for a variable
 // named `writer`: the name that each source of the system gives to its
 // writer today. It cannot see a writer of another name: it reads text, not
 // types.

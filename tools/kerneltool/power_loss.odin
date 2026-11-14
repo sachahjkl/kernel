@@ -26,7 +26,7 @@ import tree "support:storage_tree"
 // writes, and the last of them can be torn (some of its sectors new, the
 // others old). The tool builds many such images and checks each one on the
 // host with the code that the storage service runs at its start
-// (support/storage_mount): no machine for each image.
+// (src/library/support/storage_mount): no machine for each image.
 //
 // What each image must give:
 //   - the disk opens, with no wrong block, no block named two times, and the

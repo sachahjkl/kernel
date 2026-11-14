@@ -8,7 +8,7 @@ import "core:strings"
 
 // The names of the procedures of a stack trace. A program that has the
 // debug image names each frame itself: "fault::three + 0x8 in fault
-// (programs/fault/main.odin:15)". The kernel gives a frame as "module +
+// (src/programs/fault/main.odin:15)". The kernel gives a frame as "module +
 // offset" (docs/MODULE_CONTRACT.md, section 8); the tool names such a
 // frame from the debug object of the module, which the build wrote.
 

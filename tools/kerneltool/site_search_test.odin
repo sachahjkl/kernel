@@ -8,7 +8,7 @@ import "core:testing"
 import "support:line_editor"
 
 // The matcher of the console over the table that the script also carries:
-// a change of the score or of the order in support/line_editor fails here
+// a change of the score or of the order in src/library/support/line_editor fails here
 // first. Then the table gets the new scores, and the self test of the
 // script (?selftest=1) fails until the script has the new rule.
 @(test)

@@ -4,7 +4,7 @@
 
 - Your branch adds one fragment for each change that a reader of the system notices.
 - Write it with `nix develop -c kerneltool changelog new <type> <subject> - < text.md`: the text comes from the standard input. If the text has no `` ` ``, no `$` and no quote, `"<text>"` in place of `-` also works. The command `kerneltool` runs through `odin run`, which gives the arguments to a shell: the shell runs a `` `...` `` of an argument.
-- Never edit `CHANGELOG.md` or `contract/release/release.odin`. `kerneltool changelog release` writes them when the coordinator releases a step.
+- Never edit `CHANGELOG.md` or `src/library/contract/release/release.odin`. `kerneltool changelog release` writes them when the coordinator releases a step.
 - If a change has no effect that a reader notices (a document, a comment, a rename inside one file), it has no fragment.
 
 ## The fragments

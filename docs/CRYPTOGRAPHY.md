@@ -26,8 +26,8 @@ What it means here:
 ## 2. The origin, and its license
 
 - **Origin**: Odin's `core:crypto`, from the compiler that the flake pins: the release `dev-2026-11a` of Odin, in the fork that `flake.nix` fetches by its commit and its hash. The fork changes the compiler only, not `core:crypto`. When the compiler changes, `kerneltool cryptography-take` takes the files again.
-- **License of Odin, and of `core:crypto`** (its README: "This library is made available under the zlib license"): the zlib license, in `support/cryptography/LICENSE.odin.txt`. Its second clause, "Altered source versions must be plainly marked as such", is met by the first line of each file that is taken.
-- **fiat-crypto**: the field arithmetic of `core:crypto/_fiat` is a port of fiat-crypto, which gives three licenses. Odin chose BSD-1-Clause; its text is in `support/cryptography/LICENSE.fiat-crypto.txt`, with the first part that is taken.
+- **License of Odin, and of `core:crypto`** (its README: "This library is made available under the zlib license"): the zlib license, in `src/library/support/cryptography/LICENSE.odin.txt`. Its second clause, "Altered source versions must be plainly marked as such", is met by the first line of each file that is taken.
+- **fiat-crypto**: the field arithmetic of `core:crypto/_fiat` is a port of fiat-crypto, which gives three licenses. Odin chose BSD-1-Clause; its text is in `src/library/support/cryptography/LICENSE.fiat-crypto.txt`, with the first part that is taken.
 - **Review**: the README of `core:crypto` says that the packages "have not received independent third party review". The system relies on the RFC test vectors (section 5) and on the timing rules of the origin. It does not claim more.
 
 ## 3. The layout
@@ -36,12 +36,12 @@ The taken code keeps the folders and the names of its origin, so that its import
 
 | Path | What it is |
 |---|---|
-| `support/cryptography/<name>/` | The files that are taken, with the folder names of the origin (`_chacha20`, `chacha20`, `_subtle`, ...), so that the import paths of the origin need one rule only |
-| `support/cryptography/compatibility_crypto`, `compatibility_endian`, `compatibility_bits`, `compatibility_bytes`, `compatibility_memory` | The compatibility layer: the helpers of the origin (`zero_explicit`, `compare_constant_time`, the little-endian loads, `rotate_left32`, `add_u64`, `alias_inexactly`, and the `zero` and `zero_explicit` of `core:mem`) over the primitives of this system. The packages have their own names; the import keeps the name of the origin as its alias |
-| `support/cryptography/chacha20/chacha20_implementation_portable.odin` | A file of this system in the place of `chacha20_impl.odin` of the origin: that file chooses among three implementations with `core:sys/info`, which a module does not have. The one implementation here is the portable one of the origin, unchanged |
-| `support/cryptography/origin.manifest` | One line for each file that is taken: the file, the file of the origin, the BLAKE3 hash of the origin file |
+| `src/library/support/cryptography/<name>/` | The files that are taken, with the folder names of the origin (`_chacha20`, `chacha20`, `_subtle`, ...), so that the import paths of the origin need one rule only |
+| `src/library/support/cryptography/compatibility_crypto`, `compatibility_endian`, `compatibility_bits`, `compatibility_bytes`, `compatibility_memory` | The compatibility layer: the helpers of the origin (`zero_explicit`, `compare_constant_time`, the little-endian loads, `rotate_left32`, `add_u64`, `alias_inexactly`, and the `zero` and `zero_explicit` of `core:mem`) over the primitives of this system. The packages have their own names; the import keeps the name of the origin as its alias |
+| `src/library/support/cryptography/chacha20/chacha20_implementation_portable.odin` | A file of this system in the place of `chacha20_impl.odin` of the origin: that file chooses among three implementations with `core:sys/info`, which a module does not have. The one implementation here is the portable one of the origin, unchanged |
+| `src/library/support/cryptography/origin.manifest` | One line for each file that is taken: the file, the file of the origin, the BLAKE3 hash of the origin file |
 
-**`erase_secret_bytes`** (`runtime/memory.asm`): the compatibility `zero_explicit` calls it.
+**`erase_secret_bytes`** (`src/runtime/memory.asm`): the compatibility `zero_explicit` calls it.
 - **Why the compiler cannot remove it**: the code of a module calls it by its symbol, in an object that nasm made. The modules link with no link-time optimization, so LLVM does not see its body and must take the call as a read and a write of the memory that the pointer reaches. A store of zeros that the compiler emits itself (to a variable that is dead after it) can be removed; this one cannot.
 - The origin used a volatile `memset` and a fence: that is also not removable, but it depends on how the compiler treats volatile stores.
 
@@ -62,10 +62,10 @@ The listed changes, all in `tools/kerneltool/cryptography_origin.odin` (`cryptog
 5. `"core:encoding/endian"`, `"core:math/bits"` and `"core:bytes"` become the compatibility packages, with the name of the origin as their alias.
 
 The check also covers the folders, not only the listed files: Odin compiles each `.odin` file of a package folder, so a new file in a folder of a copy would change the code with no line of a manifest.
-- It walks each folder of `support/cryptography`. Each `.odin` file must be a line of `origin.manifest` or a line of `system_files.manifest`, and no file is in both or two times.
+- It walks each folder of `src/library/support/cryptography`. Each `.odin` file must be a line of `origin.manifest` or a line of `system_files.manifest`, and no file is in both or two times.
 - `system_files.manifest` lists the files that the system wrote (the compatibility layer, the files in the place of a hardware dispatch, the tests), each with its BLAKE3 hash. A change of one of them fails the check until its new hash is written: `kerneltool cryptography-system-hashes` prints the lines.
-- An origin path starts with `core/crypto/` and holds no `..`; a file of the repository starts with `support/cryptography/` and holds no `..`. A line cannot take a file from another part of Odin or of the host.
-- A symbolic link anywhere under `support/cryptography` fails the check: a folder of a copy that points elsewhere would bring `.odin` files that no list names.
+- An origin path starts with `core/crypto/` and holds no `..`; a file of the repository starts with `src/library/support/cryptography/` and holds no `..`. A line cannot take a file from another part of Odin or of the host.
+- A symbolic link anywhere under `src/library/support/cryptography` fails the check: a folder of a copy that points elsewhere would bring `.odin` files that no list names.
 - A file that is not a `.odin` file, a `LICENSE.*` file of the top folder or one of the two manifests fails the check: a `#load` or a `foreign import` could read it, and no list has its hash.
 - The system list is a tripwire, not a proof of review: whoever changes a file of the system also writes its new hash. The review of the change reads it.
 
@@ -85,7 +85,7 @@ There are two groups of adjustments.
 
 Each primitive passes the published vectors of its standard, on the host and on the machine. The table names each primitive, the packages of the origin that hold it, and its vectors.
 
-40 files are taken, in 22 package folders (`support/cryptography/origin.manifest`). Each line of the table has a host test with its published vectors (`support/cryptography/vectors`), and the module runs the same vectors on the machine (section 6).
+40 files are taken, in 22 package folders (`src/library/support/cryptography/origin.manifest`). Each line of the table has a host test with its published vectors (`src/library/support/cryptography/vectors`), and the module runs the same vectors on the machine (section 6).
 
 | Primitive | Origin packages | Vectors |
 |---|---|---|
@@ -113,15 +113,15 @@ So the code that runs is the portable code of the origin: the bitsliced, constan
 
 **`core:reflect`** stays an import of the compiler collection: `aes_impl.odin` sets the variant of a union with it. It is not cryptography, and its code is in the hash of the module.
 
-**`HAS_RAND_BYTES` is false.** `ed25519.private_key_generate` of the origin draws from the operating system; here a key comes from the generator of the program (`support/random`), through `private_key_set_bytes`.
+**`HAS_RAND_BYTES` is false.** `ed25519.private_key_generate` of the origin draws from the operating system; here a key comes from the generator of the program (`src/library/support/random`), through `private_key_set_bytes`.
 
 ## 6. The module `cryptography`
 
 Programs reach the primitives through one module, `cryptography`, so the code is shared by hash and a key never leaves the program that holds it: the module runs in that program. Its exports take only bytes of the caller, read each byte once, and erase every secret that they leave behind.
 
-A call from `support/quic`, through its procedure table `quic.Cryptography`: the seal of a 1-RTT packet is one call of `seal_with_chacha20_poly1305` with the key, the nonce, the header as additional data, the frames, and the place of the result.
+A call from `src/library/support/quic`, through its procedure table `quic.Cryptography`: the seal of a 1-RTT packet is one call of `seal_with_chacha20_poly1305` with the key, the nonce, the header as additional data, the frames, and the place of the result.
 
-`modules/cryptography` is one module of code with exports, a description and a hash. A program imports it through its import slots, as `agenda` imports `calendar`; the console can call it.
+`src/modules/cryptography` is one module of code with exports, a description and a hash. A program imports it through its import slots, as `agenda` imports `calendar`; the console can call it.
 
 | Export | Parameters | Result |
 |---|---|---|
@@ -150,8 +150,8 @@ A call from `support/quic`, through its procedure table `quic.Cryptography`: the
 - **Which arguments must be private memory of the caller**: the result of each export. A seal computes the tag over the bytes that it wrote in the result, and an open decrypts in place in the result after it copied the sealed text there; a result that another party writes during the call gets a tag over its bytes, or a text that was not checked. The text of a seal and the input of a hash are read once and can be in shared memory; the hash is then of the bytes that the call read.
 - **A result that overlaps an argument** with an offset is the error `Bad_Value` for argument 5 (the code of the origin would stop the program); a result at the same address as the text (in place) is right.
 - **A nonce never comes two times with one key**: that is the duty of the caller. With ChaCha20-Poly1305, a repeated nonce gives the XOR of the two texts and the key of Poly1305; with AES-GCM, it gives the key of GHASH, and with it forgeries.
-- **A failure is an error record.** A key or a nonce of another size gives `Too_Small`, `Too_Long` or `Empty`, with the number of the argument and the size that it must have. A tag or a signature that does not verify gives the new kind `Not_Authentic` (`contract/errors`, with its sentence in `support/sentence`). An open leaves no byte of a text that is not authentic in the result: it erases what it wrote. A caller cannot take a failed open for a success, because the count is negative. X25519 gives `Bad_Value` for argument 2 for a point of small order, whose shared secret is 32 zero bytes: it is a point that shares no secret, not a text that is not authentic.
-- **Secrets are erased, and so is the stack below each export.** Each export copies a key into its own frame and erases the copy. The frames of the code of the origin under it also hold secrets: the SHA-512 of an Ed25519 private key (its scalar and its nonce prefix), the expanded AES key, the words of the ChaCha20 key, the states of SHA-2 and HMAC. So each export, after its work, calls `erase_stack_below_the_caller` (`runtime/memory.asm`): it writes 0 in the 16 KiB below the stack pointer. The largest frames under an export are its own copies (8160 bytes of HKDF output and 1024 bytes of info, or 4096 bytes of a message, or 2048 bytes of additional data) and the frames of the origin under them (states of some hundred bytes, points of 160 bytes, the bitsliced AES state), together under 12 KiB. This is a reasoned size, not a measure (`llc -stack-size-section` can measure the frames). What stays: the registers after the return, the copies that the caller makes, and the memory of the caller. The cost is 2048 stores of 8 bytes in each call, some hundred nanoseconds; a QUIC packet makes two calls (the AEAD and the header protection mask).
+- **A failure is an error record.** A key or a nonce of another size gives `Too_Small`, `Too_Long` or `Empty`, with the number of the argument and the size that it must have. A tag or a signature that does not verify gives the new kind `Not_Authentic` (`src/library/contract/errors`, with its sentence in `src/library/support/sentence`). An open leaves no byte of a text that is not authentic in the result: it erases what it wrote. A caller cannot take a failed open for a success, because the count is negative. X25519 gives `Bad_Value` for argument 2 for a point of small order, whose shared secret is 32 zero bytes: it is a point that shares no secret, not a text that is not authentic.
+- **Secrets are erased, and so is the stack below each export.** Each export copies a key into its own frame and erases the copy. The frames of the code of the origin under it also hold secrets: the SHA-512 of an Ed25519 private key (its scalar and its nonce prefix), the expanded AES key, the words of the ChaCha20 key, the states of SHA-2 and HMAC. So each export, after its work, calls `erase_stack_below_the_caller` (`src/runtime/memory.asm`): it writes 0 in the 16 KiB below the stack pointer. The largest frames under an export are its own copies (8160 bytes of HKDF output and 1024 bytes of info, or 4096 bytes of a message, or 2048 bytes of additional data) and the frames of the origin under them (states of some hundred bytes, points of 160 bytes, the bitsliced AES state), together under 12 KiB. This is a reasoned size, not a measure (`llc -stack-size-section` can measure the frames). What stays: the registers after the return, the copies that the caller makes, and the memory of the caller. The cost is 2048 stores of 8 bytes in each call, some hundred nanoseconds; a QUIC packet makes two calls (the AEAD and the header protection mask).
 - **The erasure goes from the top down, and a thread needs 24 KiB of stack.** `erase_stack_below_the_caller` writes from just below the stack pointer down to 16 KiB below it, 8 bytes at a time. If the stack of the thread is shorter, the first store past its bottom hits the unmapped page under the stack, and the program stops there: no byte of the mapping under that page (a ring, a region that another program shares) is written. So a thread that calls the module or draws random bytes needs 16 KiB below its frame at the call, and its own frames: 24 KiB in all. The threads of `system.thread_start` have 64 KiB by default (`THREAD_STACK_PAGES`) and the main thread 256 KiB; a thread started with fewer than 6 pages, or one that has used more than 40 KiB of its 64 KiB at the call, stops at its guard page.
 - **One call at a time per thread, no hidden state, no allocation.** The code of the origin runs with a zero `context`. `runtime.default_context()` stores the default random generator of the runtime, whose state is thread-local, and a module has no thread-local data (the convert step of the tool refuses it).
 - **A key of zeros is valid** for the AEADs and HKDF, as their standards say. X25519 refuses the result of zeros, not the key.
@@ -170,15 +170,15 @@ A call from `support/quic`, through its procedure table `quic.Cryptography`: the
 
 So the module form costs nothing that matters next to the primitives.
 
-**The seam for batches.** The module contract describes a table as a parameter (`docs/MODULE_CONTRACT.md`, "Tables and bytes as parameters"). The module has no batch export yet: seal or open a table of packet records in one call. QUIC calls the exports one packet at a time, through one procedure table of its own (`support/quic`), so that a batch export later changes that one table only.
+**The seam for batches.** The module contract describes a table as a parameter (`docs/MODULE_CONTRACT.md`, "Tables and bytes as parameters"). The module has no batch export yet: seal or open a table of packet records in one call. QUIC calls the exports one packet at a time, through one procedure table of its own (`src/library/support/quic`), so that a batch export later changes that one table only.
 
 ## 6a. Ed25519 in the boot program
 
-The boot program verifies the description signature (`docs/TRUSTED_BOOT.md`) with `support/cryptography/ed25519`, linked into the boot program. It is the code that the module `cryptography` runs; the boot program calls it directly, because no loader runs before the kernel.
+The boot program verifies the description signature (`docs/TRUSTED_BOOT.md`) with `src/library/support/cryptography/ed25519`, linked into the boot program. It is the code that the module `cryptography` runs; the boot program calls it directly, because no loader runs before the kernel.
 
 - **What it links**: `ed25519`, `_edwards25519`, the fields of `_fiat`, `sha2` (SHA-512), `_subtle` and the compatibility layer. No allocator: the code of the origin runs with a zero `context`, as in the module. No system entropy: a verification draws nothing.
-- **The stack**: the stack of the firmware. The largest frame is the table of the double scalar multiplication, under 2 KiB. A frame larger than one page calls `__chkstk` (`boot/jump.asm`).
-- **The calling convention**: the boot program is built for the Microsoft x64 convention, and the compatibility layer calls `erase_secret_bytes` and `erase_stack_below_the_caller` of `runtime/memory.asm` as `"c"` procedures, which is that convention on this target. The form `WIN64` of `runtime/memory.asm` has a wrapper for each of the two: it keeps `rdi` and `rsi`, which belong to the caller in that convention, and passes `rcx` and `rdx` to the body of the System V form. With no wrapper, the erase writes at the address of a stale `rdi`.
+- **The stack**: the stack of the firmware. The largest frame is the table of the double scalar multiplication, under 2 KiB. A frame larger than one page calls `__chkstk` (`src/boot/jump.asm`).
+- **The calling convention**: the boot program is built for the Microsoft x64 convention, and the compatibility layer calls `erase_secret_bytes` and `erase_stack_below_the_caller` of `src/runtime/memory.asm` as `"c"` procedures, which is that convention on this target. The form `WIN64` of `src/runtime/memory.asm` has a wrapper for each of the two: it keeps `rdi` and `rsi`, which belong to the caller in that convention, and passes `rcx` and `rdx` to the body of the System V form. With no wrapper, the erase writes at the address of a stale `rdi`.
 - **Vector registers**: the boot program is not the kernel. It runs before the kernel, with the state of the firmware, and its copies use `xmm0` to `xmm4` (`docs/ARCHITECTURE.md`, "The kernel has no vector code"). The portable code of the origin needs no vector instruction.
 - **No secret**: a verification uses a public key, a message and a signature. The boot program does not call `erase_stack_below_the_caller`.
 

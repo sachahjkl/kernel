@@ -3,7 +3,7 @@
 // Markdown: paragraphs, bold, italics, code, lists, examples and links. The
 // site renders it with the renderer of the guides. A module carries the
 // same text with its marks, and `manual` reads them in the system
-// (support/source_comment_markdown). The line of help of a module and of an
+// (src/library/support/source_comment_markdown). The line of help of a module and of an
 // export has no mark: the console prints it as one plain line. This file
 // makes that plain text, and the plain text of a summary.
 package kerneltool
@@ -143,7 +143,7 @@ Documentation_Block :: struct {
 
 // documentation_text_of_markdown gives the plain text of the Markdown of a
 // comment, from which the build takes the line of help that a module
-// carries (contract/module/format.odin, Documentation; the documentation
+// carries (src/library/contract/module/format.odin, Documentation; the documentation
 // text itself keeps its marks): a paragraph is one line; a list item is one line that
 // starts with its marker ("- ", "1. "), its nested items with their
 // indentation; a line of an example keeps its form, behind four spaces,

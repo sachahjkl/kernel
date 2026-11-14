@@ -115,7 +115,7 @@ DEBUG_TARGET_TEXT_OF_THE_STORE :: "\tintrinsics.volatile_store(sum, before + ste
 
 DEBUG_TARGET_RUNS :: "debug_target: 64 more rounds ran, so the program is not held: as it must"
 // The sentence of a refused debug access names the start grant that
-// refuses, by its name (contract/start_grant): the name goes between the
+// refuses, by its name (src/library/contract/start_grant): the name goes between the
 // two parts.
 DEBUG_ACCESS_REFUSED_BY_THE_GRANT :: "debugger.attach: the caller has no grant for this: the debug access to this program: the grant "
 REFUSES_THE_DEBUG_ACCESS :: " of the program refuses it (-4)"

@@ -479,7 +479,7 @@ site_icons_of_the_site :: proc(t: ^testing.T) {
 			testing.expect(t, 200 * drawing * drawing <= 64 * icon.size * icon.size)
 		}
 	}
-	// The ends of the gradient of support/mark: 0.7 * c + 76.5 and 0.7 * c.
+	// The ends of the gradient of src/library/support/mark: 0.7 * c + 76.5 and 0.7 * c.
 	black_start, black_end := site_gradient_end_colors(0x000000)
 	testing.expect_value(t, black_start, 0x4D4D4D)
 	testing.expect_value(t, black_end, 0x000000)

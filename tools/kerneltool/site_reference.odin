@@ -38,7 +38,7 @@ SITE_CONTEXT_SIZES :: [?]string{"CONTEXT_HANDLES", "CONTEXT_VALUES"}
 // One module of module_builds, with what its source says of it.
 Site_Module :: struct {
 	build:       Module_Build,
-	kind:        string, // "program" for a source in programs/, else "module".
+	kind:        string, // "program" for a source in src/programs/, else "module".
 	page:        string,
 	description: Module_Description,
 }
@@ -53,8 +53,8 @@ Site_Reference :: struct {
 	error_kinds:      []Site_Enumeration_Member,
 	error_units:      []Site_Enumeration_Member,
 	unit_names:       map[string]string,
-	start_grants:     []Site_Enumeration_Member, // Grant of contract/start_grant: what a program receives at its start.
-	root_grants:      []Site_Enumeration_Member, // Root_Grant of support/system: what the root service records and can revoke.
+	start_grants:     []Site_Enumeration_Member, // Grant of src/library/contract/start_grant: what a program receives at its start.
+	root_grants:      []Site_Enumeration_Member, // Root_Grant of src/library/support/system: what the root service records and can revoke.
 	root_grant_names: map[string]string,
 	program_grants:   []Site_Name_Case,
 	grants_otherwise: Site_Name_Case,
@@ -341,7 +341,7 @@ site_code_link :: proc(site: ^Site, code: string) -> (target: string, found: boo
 }
 
 // site_type_text gives a type as the console prints it
-// (support/sentence, write_type and write_parameter_type).
+// (src/library/support/sentence, write_type and write_parameter_type).
 site_type_text :: proc(description: Module_Description, type: module.Type, detail: u32, direction: module.Direction, parameter: bool) -> string {
 	record_name := "Record"
 	if detail >= 1 && int(detail) <= len(description.records) {

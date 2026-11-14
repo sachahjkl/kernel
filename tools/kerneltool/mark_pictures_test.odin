@@ -14,7 +14,7 @@ home_request :: proc(what: Mark_What) -> Mark_Request {
 }
 
 // Each kind of request gives its file: the still mark and a frame are PNG
-// pictures of the size of the request with the pixels of support/mark; a
+// pictures of the size of the request with the pixels of src/library/support/mark; a
 // tile map is a PNG picture of the size of its layout; a table is JSON.
 @(test)
 mark_generator_serves_each_kind_of_request :: proc(t: ^testing.T) {
@@ -351,7 +351,7 @@ mark_command_reads_a_request :: proc(t: ^testing.T) {
 @(private = "file")
 MARK_DRAWING_FILES :: [?]string{"tools/kerneltool/mark_pictures.odin", "tools/kerneltool/mark_tile_map.odin", "tools/kerneltool/mark_developer_picture.odin"}
 
-// No other file of the tool calls a drawing procedure of support/mark:
+// No other file of the tool calls a drawing procedure of src/library/support/mark:
 // each picture file of the mark comes from the generator. The search is by
 // the names of the procedures.
 @(test)

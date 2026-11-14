@@ -1,6 +1,6 @@
 // The font of the name of the mark (docs/DESIGN.md, "The font of the name"):
 // a TrueType file whose glyphs are the cells of the letters of
-// support/mark. A page that writes the name of the system as text in this
+// src/library/support/mark. A page that writes the name of the system as text in this
 // font shows the letters of the files of the mark, and the text stays text.
 //
 // The file is written here, table by table, with no other program: the
@@ -318,7 +318,7 @@ mark_font_copyright :: proc(license_text: string) -> string {
 }
 
 // mark_font_build gives the bytes of the font file, from the cells of
-// support/mark and the text of the license of the repository. The same
+// src/library/support/mark and the text of the license of the repository. The same
 // inputs give the same bytes: the file holds no date and no random value.
 mark_font_build :: proc(license_text: string) -> (file: []u8, ok: bool) {
 	// The outlines, and what the tables say about all of them.
@@ -659,7 +659,7 @@ mark_font_write :: proc() -> bool {
 }
 
 // mark_font_check verifies that the font of the repository has the bytes
-// that the letters of support/mark and the license give now. The writer is
+// that the letters of src/library/support/mark and the license give now. The writer is
 // this file, so the bytes are compared, not the outlines.
 mark_font_check :: proc() -> bool {
 	expected := mark_font_of_the_repository() or_return

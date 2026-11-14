@@ -398,7 +398,7 @@ site_home_card_rules_and_graphic_colors :: proc(t: ^testing.T) {
 }
 
 // A press on the heron of the home: the page holds the box, the table of
-// the script names the animation of the first press from support/mark,
+// the script names the animation of the first press from src/library/support/mark,
 // and the script makes the box a control only where it can play.
 @(test)
 site_home_heron_press :: proc(t: ^testing.T) {

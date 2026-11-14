@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The mark is data in `support/mark`: the cells of the heron, the colors of its parts, the animations and the moves. Many files show it: the files of the repository, the pictures and the icons of the site, the tile maps of the animations, a picture for a developer. One generator of the tool turns a request into the bytes of a file, so that a change of the mark changes each picture, and no two places compute the same picture.
+The mark is data in `src/library/support/mark`: the cells of the heron, the colors of its parts, the animations and the moves. Many files show it: the files of the repository, the pictures and the icons of the site, the tile maps of the animations, a picture for a developer. One generator of the tool turns a request into the bytes of a file, so that a change of the mark changes each picture, and no two places compute the same picture.
 
 The command and its options are in [`docs/TOOLS.md`](../../../docs/TOOLS.md), "The pictures of the mark". The variants and the table of the uses are in [`docs/DESIGN.md`](../../../docs/DESIGN.md), "The variants of the mark".
 
@@ -17,11 +17,11 @@ The command and its options are in [`docs/TOOLS.md`](../../../docs/TOOLS.md), "T
 
 ## The chosen form
 
-**Two variants, named by the request** (`docs/DECISIONS.md`, D-245). In the smooth variant a pixel takes the gradient of its part at the centre of the pixel. In the cells variant a pixel takes the gradient at the centre of its cell, so a cell is one color at every cell size. Each drawing procedure of `support/mark` takes the variant as a required argument: the choice is which mark a place wants, not an option of a renderer, and a caller that does not think about it does not compile.
+**Two variants, named by the request** (`docs/DECISIONS.md`, D-245). In the smooth variant a pixel takes the gradient of its part at the centre of the pixel. In the cells variant a pixel takes the gradient at the centre of its cell, so a cell is one color at every cell size. Each drawing procedure of `src/library/support/mark` takes the variant as a required argument: the choice is which mark a place wants, not an option of a renderer, and a caller that does not think about it does not compile.
 
 **The rule of the choice.** A picture is smooth. A small icon is cells. The program `heron` and the boot display are pictures; the bar of the desktop and the bar of the site are small icons.
 
-**The smooth variant needs two pixels for a cell.** At one pixel the centre of the pixel is the centre of the cell, so the picture is the cells variant. The request must say so: `support/mark` draws nothing for the smooth variant at one pixel, and the generator refuses it.
+**The smooth variant needs two pixels for a cell.** At one pixel the centre of the pixel is the centre of the cell, so the picture is the cells variant. The request must say so: `src/library/support/mark` draws nothing for the smooth variant at one pixel, and the generator refuses it.
 
 **A request says what and how.** What: the still mark, a frame of an animation, a tile map, the table of a tile map, the picture for a developer. How: the variant, the cell size, the color scheme, the background, the size of the picture, the name under the heron, the rows of a tile map. The generator gives the bytes of the file, or the sentence of a refusal.
 
@@ -48,11 +48,11 @@ The command and its options are in [`docs/TOOLS.md`](../../../docs/TOOLS.md), "T
 - **A tile map holds the heron alone, on nothing, each tile at the size of the heron.** A script lays a tile over a page. A request for a tile map with a name, a background or a size is refused.
 - **The check of the files of the repository compares pixels, not bytes.** The bytes of the compressed stream depend on the compressor of the compiler release.
 - **The cells variant is allowed at each cell size.** It gives one color for a cell in a large picture; the rule of the choice does not use it there, and the generator does not refuse it.
-- **A host test reads the sources of the tool.** It fails when a file outside the generator calls a drawing procedure of `support/mark`. It runs from the root of the repository.
+- **A host test reads the sources of the tool.** It fails when a file outside the generator calls a drawing procedure of `src/library/support/mark`. It runs from the root of the repository.
 - **The picture for a developer keeps the rule on texts.** The text under a frame or a form is inside its box, on two lines where one is too long, and the tool stops on a text that is wider than its box.
 
 ## State
 
-Built: the two variants in `support/mark`; the generator for the still mark, a frame, a tile map, its table and the picture for a developer; the command; the table of the uses; the two commands that write the files as callers; the host tests of each kind of request and of each refusal.
+Built: the two variants in `src/library/support/mark`; the generator for the still mark, a frame, a tile map, its table and the picture for a developer; the command; the table of the uses; the two commands that write the files as callers; the host tests of each kind of request and of each refusal.
 
 Left: the icon file with several sizes and the vector icon of the site are written outside the generator, from its pictures and from the cells. The icons of the site have a table of their own. Some names in the files of the generator still say that they belong to the site.
