@@ -224,6 +224,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `docs/DECISIONS.md` | The record of the decisions of the project, the open questions and the rules of work |
 | `docs/REVIEWS.md` | The reviews: each concession found, and what removes it |
 | `docs/research/` | Research notes with sources, and video transcripts |
+| `src/md/README.md` | The intent of each part of the system, by the standard of [srcmd.org](https://srcmd.org): why a part has its form, the forms that were refused, the subtle points. An overview of the system and a file index. Read it before a change of the code |
 
 ## Code
 
@@ -256,7 +257,7 @@ kerneltool run
 | `run` | Build, then start the machine under QEMU, with the log of the kernel on the terminal of the host |
 | `test` | Build, start the machine, act as the input (keys, pointer), check the log, save pictures |
 | `screenshots` | `test`, then copy the pictures to `docs/screenshots/`. The pictures are compressed PNG files; `screenshots compress` compresses, with no machine, each PNG file of `docs/screenshots/` and `resources/` that is not compressed yet |
-| `film [terminal \| palette]` | Build, start the machine, film a scenario while it types, write `build/films/<name>.mp4` and `build/films/<name>.webm`, and `docs/films/<name>.webm` when a news entry names the film (not a test; no argument: the terminal) |
+| `film [terminal \| palette \| heron]` | Build, start the machine, film a scenario while it types, write `build/films/<name>.mp4` and `build/films/<name>.webm`, and `docs/films/<name>.webm` when a news entry names the film (not a test; no argument: the terminal) |
 | `font` | Convert the BDF file of the font to `support/graphics/font.odin` |
 | `pointers` | Convert the pointer manifests of `resources/pointers/` to pointer theme files in `build/pointers/`, and print a table of each theme (`build` does it too) |
 | `vector_fonts` | Subset the candidate vector fonts to `resources/fonts/`, and draw the picture of the choice `build/fonts/candidates.png` |

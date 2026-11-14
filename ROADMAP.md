@@ -4,30 +4,31 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
-- **Every program that draws imports the drawing module.** The programs that draw a picture, the terminal and the compositor use the drawing module, as 23 programs do today. The code of the drawing is then loaded one time, and one correction reaches every program.
-- **The same module with and without debug information.** The compiler gives the same bytes of a module when the build asks for debug information and when it does not. A developer can then make the debug object of a module later, from the same sources.
+- **Every program that draws imports the drawing module.** The programs that draw a picture, the terminal and the compositor use the drawing module, as 23 programs do today. The code of the drawing is then loaded one time, and one correction reaches every program. [Design](src/md/api/library_modules.md)
+- **The same module with and without debug information.** The compiler gives the same bytes of a module when the build asks for debug information and when it does not. A developer can then make the debug object of a module later, from the same sources. [Design](src/md/infrastructure/debug_information_and_code.md)
 - **One generator for the pictures of the mark.** One command of the tool draws every picture of the mark from one description of the heron. A change of the mark then changes each picture, and no picture is drawn by hand.
-- **A gallery of the pictures on the site.** The site shows every picture of the machine tests on one page, and the home shows them one after the other. A reader sees what the system looks like before reading a guide.
-- **The sources in one folder.** Everything that becomes the system moves into the folder `src`, and the code that the programs share becomes the source library `modus`. A developer then finds each part of the system by one rule.
+- **The sources in one folder.** Everything that becomes the system moves into the folder `src`, and the code that the programs share becomes the source library `modus`. A developer then finds each part of the system by one rule. [Design](src/md/infrastructure/repository_layout.md)
 
 ## Next
 
-- **A share of the processor for each program.** The program `scheduler` sets the weight of each thread, so that a program with many threads takes no more of the processor than a program with one. A measure run prints the share that each program gets.
+- **A share of the processor for each program.** The program `scheduler` sets the weight of each thread, so that a program with many threads takes no more of the processor than a program with one. A measure run prints the share that each program gets. [Design](src/md/features/scheduling_policy.md)
 - **A window for the debugger.** The debugger gets a window over the exports that the console uses today: the threads, the stack, the variables and the source lines. A step over a call stops after the call returns, not inside it.
-- **The palette sets the scheduling strategy.** The scheduling strategy is an entry of the palette, as each setting is. A click in a field of the palette puts the input there.
+- **The palette sets the scheduling strategy.** The scheduling strategy is an entry of the palette, as each setting is. A click in a field of the palette puts the input there. [Design](src/md/features/palette.md)
 - **Kind icons in the completion list of the console.** Each row of the completion list shows the kind icon of its name, as each row of the palette does. A reader tells a command from a module or a variable before reading the name.
 - **Programs from a disk.** The root service loads a program from a tree of the storage service, by its hash, and not only from the boot image. A developer adds a program to a machine with no new boot image.
 - **A key sealed by the TPM, and a recovery key.** The TPM releases the key of a principal only to the system whose measure it holds, so an older or a changed system opens no store. A principal who loses the passphrase opens the stores again with a recovery key.
-- **A send with no copy in the network service.** A frame to send holds its headers in the memory of the network service and its data in the memory of the program, which the device reads. The network service then reads no byte of the data that a program sends.
+- **A send with no copy in the network service.** A frame to send holds its headers in the memory of the network service and its data in the memory of the program, which the device reads. The network service then reads no byte of the data that a program sends. [Design](src/md/infrastructure/network_data_path.md)
 - **The IOMMU.** A device reaches only the memory that its service was granted. A device service that has a fault then damages no other program.
-- **A guest.** A program runs another system in a guest, with the virtualization support of the processor. The first guest writes to a port, and the write arrives as a record in the program that runs it.
+- **A guest.** A program runs another system in a guest, with the virtualization support of the processor. The first guest writes to a port, and the write arrives as a record in the program that runs it. [Design](src/md/features/foreign_systems.md)
+- **A window never shows a picture that is being drawn.** Each program draws its next picture apart, and the compositor shows it only when it is complete, as `terminal`, `manual` and `heron` do today. A window then shows no frame that mixes two pictures. [Design](src/md/features/heron_program.md)
+- **No text over a text, and no cut text, in three windows.** The two pages of the program `manual` that show a module and its tables draw each text in its own box, and the window of `notes` draws its note whole. A reader then reads every line of these windows.
 
 ## Later
 
-- **Linux in a guest.** A principal runs Linux, and the programs of Linux, in a guest beside the programs of the system.
-- **Programs of NT.** A program of NT runs through Wine inside the Linux guest, with no work of its own in the system.
-- **Acceleration by a GPU.** The one graphics interface of the system runs in software first, then on the virtual GPU of the test machine, then on a real GPU through a driver domain. The GPU then draws the windows and the pictures, and not the processor.
-- **A receive queue for each endpoint.** On a device that has several queues, the frames of an endpoint arrive in the memory of its program. The network service then leaves the path of the data that a program receives.
+- **Linux in a guest.** A principal runs Linux, and the programs of Linux, in a guest beside the programs of the system. [Design](src/md/features/foreign_systems.md)
+- **Programs of NT.** A program of NT runs through Wine inside the Linux guest, with no work of its own in the system. [Design](src/md/features/foreign_systems.md)
+- **Acceleration by a GPU.** The one graphics interface of the system runs in software first, then on the virtual GPU of the test machine, then on a real GPU through a driver domain. The GPU then draws the windows and the pictures, and not the processor. [Design](src/md/features/gpu_access.md)
+- **A receive queue for each endpoint.** On a device that has several queues, the frames of an endpoint arrive in the memory of its program. The network service then leaves the path of the data that a program receives. [Design](src/md/infrastructure/network_data_path.md)
 - **The stores of a principal are encrypted.** The storage service encrypts the stores of a principal with the key of that principal. A reader of the disk who has no key reads no object.
 - **Several principals, and one identity on several machines.** More than one named principal uses a machine, each with its own session and its own stores. A principal has the same identity on another machine, and a grant can be signed for a principal of another machine.
 - **A grant for the key of a client of `remote`.** The principal gives the public key of a client to the program `remote` as a grant that can be revoked. A call from another machine then acts only for a principal who allowed that client.

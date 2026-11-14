@@ -970,6 +970,33 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
     });
   }
 
+  // The menu of the bar that holds the sections that are not buttons. On
+  // a wide screen it is closed until its button opens it, and Escape, a
+  // click outside or a focus that leaves it closes it. On a narrow screen
+  // its sections are lines of the site menu: it is open, and its button is
+  // a word. With no script the button still opens and closes it.
+  const projectMenu = document.querySelector("details.project-menu");
+  if (projectMenu) {
+    const projectButton = projectMenu.querySelector("summary");
+    function fitProjectMenu() { projectMenu.open = !wide.matches; }
+    fitProjectMenu();
+    wide.addEventListener("change", fitProjectMenu);
+    projectButton.addEventListener("click", event => {
+      if (!wide.matches) event.preventDefault();
+    });
+    document.addEventListener("click", event => {
+      if (wide.matches && projectMenu.open && !projectMenu.contains(event.target)) projectMenu.open = false;
+    });
+    projectMenu.addEventListener("keydown", event => {
+      if (event.key !== "Escape" || event.defaultPrevented || !wide.matches || !projectMenu.open) return;
+      projectMenu.open = false;
+      projectButton.focus();
+    });
+    projectMenu.addEventListener("focusout", event => {
+      if (wide.matches && projectMenu.open && event.relatedTarget && !projectMenu.contains(event.relatedTarget)) projectMenu.open = false;
+    });
+  }
+
   // "On this page" of a documentation page: open beside the text on a wide
   // screen, closed above the text on a narrower one. The link of the part
   // of the page in view is marked as the page scrolls: an observer of the

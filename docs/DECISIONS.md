@@ -1592,6 +1592,20 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done. The main machine test plays the dash and takes the pictures `heron` and `heron_free`.
 - Where: `DESIGN.md`, "The animations" and "The moves"; `INTERFACE.md`, section 2.1, "A picture in tiles"; `FIRST_MILESTONE.md`, choice 733.
 
+### D-243 The planned work is one file, `ROADMAP.md`, with a check and a page of the site
+- 2026-11-14. Decided by: the owner (the rule "Roadmap" of the global rules; the page); the coordinator and an agent (the form).
+- Decision: the planned work has one place, `ROADMAP.md` at the root, next to `CHANGELOG.md`: the title, the sections Now, Next and Later, each a list; an entry is a short bold summary, then one or two sentences on what the work gives the user; no date. A work that is done loses its entry in the commit of its changelog fragment. `kerneltool roadmap check` checks the form. The site shows the file on the page Roadmap, beside the page Releases. `docs/FIRST_MILESTONE.md` no longer holds plans: its section "Next steps" points to the roadmap.
+- Words: "j'aimerais [...] qu'on [la] rende visible sur le site, la roadmap, joliment, tout simplement, parallèle au changelog"
+- State: done.
+- Where: `AGENTS.md`, "Roadmap"; `TOOLS.md`, "The roadmap"; `SITE.md`, "The roadmap"; `src/md/features/roadmap.md`; `FIRST_MILESTONE.md`, choice 741.
+
+### D-244 The site has a gallery and a carousel, and its bar groups three sections in one menu
+- 2026-11-14. Decided by: the owner (the gallery, the carousel, a menu that opens under its button); the coordinator and two agents (which sections, the form).
+- Decision: every picture of the screen that the tests take is on a page Gallery, from one table that also gives the home its few pictures, in a carousel; a picture that the table does not name stops the build of the site. This widens the rule that only the home shows the system (D-169): the gallery shows it too, with a caption that states a fact and a link to a guide for each picture. Six sections do not fit the one line of the bar on a window of 720 pixels. Docs, Gallery and News are buttons: what a first reader looks for. Status, Releases and Roadmap are the lines of the project menu, under a button "Project". The menu works with no script; under 720 pixels its sections are lines of the site menu.
+- Words: "faudra évidemment le rendre visible dans les captures du site parce que c'est super sympa. D'ailleurs je veux pas mettre trop de captures sur la page d'accueil [...] idéalement avoir [un] carrousel et une page galerie"; "Regrouper certains trucs dans un dropdown et voilà"
+- State: done.
+- Where: `SITE.md`, "The gallery", "The buttons and the menu of the bar"; `GLOSSARY.md`, "Project menu"; `src/md/features/site_gallery.md`; `src/md/features/site_bar.md`; `FIRST_MILESTONE.md`, choices 740 and 742.
+
 ### D-182 A documentation in the form of the Odin site
 - 2026-11-12. Decided by: the owner.
 - Decision: the documentation has a sidebar of the pages, the technical text in the center, and the symbols of the page at the right, in the manner of the Odin documentation.

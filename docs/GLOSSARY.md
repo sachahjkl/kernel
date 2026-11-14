@@ -5397,11 +5397,23 @@ Do not use: issue, bug (for this), todo, known limitation.
 
 A working record is a document of `docs/` that records the work, not the system: `HANDOFF.md`, `REVIEWS.md`, `SITE.md` and `FIRST_MILESTONE.md`.
 
-A guide explains how a part of the system is designed and why; a working record holds steps, choices, gaps, reviews and the state of the work. So the site publishes the guides and not the working records (`SITE_WORKING_RECORDS`): a link of a page to a working record names the file in the repository, and says so. `docs/DECISIONS.md` is the record of the decisions.
+A guide explains how a part of the system is designed and why; a working record holds steps, choices, gaps, reviews and the state of the work. So the site publishes the guides and not the working records (`SITE_WORKING_RECORDS`): a link of a page to a working record names the file in the repository, and says so. `docs/DECISIONS.md` is the record of the decisions. An intent file is a working record for the site too, by its path under `src/md`.
 
 The design: `docs/SITE.md`, "The pages".
 
 Do not use: internal document, notes.
+
+### Intent file
+
+An intent file is a Markdown file of the folder `src/md` that records why a part of the system has its form.
+
+It holds the purpose of the part, its constraints, the chosen form with its reasons, each form that was refused with its reason, the subtle points, and what is built and what is left. A design is written there before its code, and a change of a design changes its intent file in the same commit as the code. `src/md/README.md` is the entry point of the folder: an overview of the system, and a file index that lists each other file once; `kerneltool check` refuses an index and a folder that are not the same set. The folder follows the standard of [srcmd.org](https://srcmd.org).
+
+An intent file is not a guide: a guide says what the system does and how to use it, and the site publishes it. It is not the record of a decision (`docs/DECISIONS.md`), a review, a log or a plan. It is a working record for the site: a pointer to one links to the file in the repository. Example: `src/md/features/palette.md` says why the palette is a panel of the compositor with the console as its provider, and which forms were refused.
+
+The design: `src/md/README.md`, "The rules of this folder"; `docs/TOOLS.md`, "The intent folder".
+
+Do not use: design document, specification, RFC, architecture decision record.
 
 ### Changelog
 
@@ -5512,7 +5524,7 @@ Do not use: news item, post, announcement, blog post, changelog entry.
 
 A film is the pictures of the screen of a test machine, taken 30 times in one second while a scenario of the tool sends its keys, as one file that a player shows at the speed of the machine.
 
-`kerneltool film <name>` makes a film: `terminal` or `palette`. It writes an MP4 file with H.264 and a WebM file with AV1 from the same pictures, in the build folder. A film is not a test: only its scenario has steps with a fixed time, the period between two typed keys and the hold of a state for its viewer.
+`kerneltool film <name>` makes a film: `terminal`, `palette` or `heron`. It writes an MP4 file with H.264 and a WebM file with AV1 from the same pictures, in the build folder. A film is not a test: only its scenario has steps with a fixed time, the period between two typed keys and the hold of a state for its viewer.
 
 A news entry can name a film, `film: docs/films/<name>.webm`. The command then writes the WebM file in the repository too, which holds it as it holds a screen picture: at most 4 MiB. The site shows it on the page of the news in a `video` element that plays only when the reader starts it, with the picture of the entry in its place before that. A card of the home, the feed and a browser that does not play AV1 show the picture.
 
@@ -5694,6 +5706,52 @@ The design: `docs/SITE.md`, "The docs home".
 
 Do not use: docs landing page, portal, hub.
 
+### Gallery
+
+The gallery is the page of the site, at `/gallery/`, that shows every picture of the screen of the gallery table, in groups, each with its caption and the link to its guide.
+
+A reader who wants to see the system finds each picture there: the desktop and the palette, the console, the programs that show rights and faults, the developer tools, the fonts, the network, the storage and the boot. A picture on the page is a thumbnail, and its link opens the picture at its full size, one pixel of the picture for one pixel of the screen of the system. It is a button of the bar, one click from each page; the home has a door to it, and the link under its carousel. It has the presentation layout.
+
+It is not a list that a developer keeps by hand beside the pictures: the page is generated from the gallery table, which is checked against the folder of the pictures.
+
+The design: `docs/SITE.md`, "The page of the gallery".
+
+Do not use: screenshots page, album, lightbox.
+
+### Gallery table
+
+The gallery table is the one table of the tool that names each picture of the screen that the site shows: its file, its group, a caption of one sentence, its guide, and whether the home shows it.
+
+It is `site_gallery_rows` in `tools/kerneltool/site_gallery.odin`. The gallery and the carousel of the home take their pictures and their captions from it, so a caption is written once. Each PNG file of `docs/screenshots` is in one row of it, or in the short list of the excluded files with its reason: `kerneltool site` stops, and a host test fails, on a picture that neither names. So a step that adds a picture to a machine test writes its row, and the picture is on the site.
+
+Example: the row of `heron.png` has the group of the mark, the caption "The program heron: the heron of the mark held at a frame of its dash, in whole square cells, with the lines of the cells.", the guide of the design rules, and the mark of the home.
+
+The design: `docs/SITE.md`, "The gallery table".
+
+Do not use: picture list, screenshot manifest.
+
+### Carousel
+
+The carousel is the part of the home of the site that shows a few pictures of the gallery table in one row, one picture in view, with a numbered link to each picture.
+
+The home shows at most 8 pictures, so that it stays short; the gallery shows them all. The row scrolls sideways and stops at each picture, and every picture is in the page: a reader with no script reaches each one by its numbered link, by the scroll bar of the row or by a swipe. A small script adds the keys Left and Right and the mark of the picture in view. The carousel never changes its picture by itself. Each picture has its width and its height, so nothing on the page moves when a picture comes.
+
+It is not a film and not an animation: a picture changes only when the reader asks, at once.
+
+The design: `docs/SITE.md`, "The carousel of the home".
+
+Do not use: slideshow, banner, rotator.
+
+### Thumbnail
+
+A thumbnail is the picture that the gallery shows in the place of a picture of the screen: the same picture at one half of its width and of its height, which the tool writes when it writes the site.
+
+It exists for the bytes of the page: the gallery has more than 100 pictures, and a thumbnail is about 60 000 bytes where the picture is about 157 000. Each pixel of a thumbnail is the mean of a square of 2 by 2 pixels of the picture, so a line of 1 pixel stays a line and a letter keeps its form. The text of a thumbnail is not meant to be read: the link of the thumbnail opens the picture at its full size. The repository holds no thumbnail.
+
+The design: `docs/SITE.md`, "The thumbnails".
+
+Do not use: miniature, low-resolution copy.
+
 ### Guide
 
 A guide is a page of the site made from a document of `docs/`: how a part of the system is designed, and why.
@@ -5728,7 +5786,7 @@ Do not use: API page, package page.
 
 The status page is the page of the site that gives the state of each property, with its evidence items and its gaps, then all the gaps.
 
-It writes no sentence of its own: each cell is a part of `docs/PROPERTIES.md` or of `docs/FIRST_MILESTONE.md`. An evidence item or a gap belongs to a property when its text names it. What is not done is on it as plainly as what is done. It is a section of the bar of its own, outside the docs. It is not the roadmap: the status page says what is built and what is missing, the roadmap says what work is planned, and one line of the status page leads to it.
+It writes no sentence of its own: each cell is a part of `docs/PROPERTIES.md` or of `docs/FIRST_MILESTONE.md`. An evidence item or a gap belongs to a property when its text names it. What is not done is on it as plainly as what is done. It is a section of its own, outside the docs, and a line of the project menu of the bar. It is not the roadmap: the status page says what is built and what is missing, the roadmap says what work is planned, and one line of the status page leads to it.
 
 The design: `docs/SITE.md`, "The status page".
 
@@ -5793,6 +5851,18 @@ One list of links serves every width, so a screen reader reads each section once
 The design: `docs/SITE.md`, "The site menu".
 
 Do not use: burger menu, hamburger, drawer.
+
+### Project menu
+
+The project menu is the menu of the bar of the site that holds the sections that are not buttons: Status, Releases and Roadmap.
+
+The bar is one line, and six buttons with the search field do not fit it on a window of 720 pixels. So three sections are buttons, the ones that a first reader looks for: Docs, Gallery and News. The three pages that report how the project goes are the lines of one menu, under a button with the word "Project". The menu is a `details` element: its button opens and closes its panel with no script, and the panel lies over the page under the bar. On a page of one of its sections, its button has the mark of the current section.
+
+Under 720 pixels it is not a menu: its three sections are lines of the site menu, under the word "Project". It is not the site menu, which holds every section and the search field on a narrow screen.
+
+The design: `docs/SITE.md`, "The buttons and the menu of the bar".
+
+Do not use: dropdown, more menu, submenu, overflow menu.
 
 ### Documentation layout
 

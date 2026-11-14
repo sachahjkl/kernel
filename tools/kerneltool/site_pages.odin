@@ -844,8 +844,10 @@ site_home_head :: proc(site: ^Site, b: ^strings.Builder) {
 	strings.write_string(b, "\"></picture>\n<div>\n<h1>" + SITE_MARK_NAME_HTML + "</h1>\n<p class=\"lead\">")
 	site_inline(b, site.readme.tagline)
 	strings.write_string(b, "</p>\n<ul class=\"doors\">\n")
+	// A door for each section under the home: the home has the room for
+	// each one, with no menu.
 	for section in Site_Section {
-		if !site_section_in_bar(section) || !site_page_exists(site, site_section_page(section)) {
+		if !site_section_under_home(section) || !site_page_exists(site, site_section_page(section)) {
 			continue
 		}
 		fmt.sbprintf(b, "<li><a href=\"%s\">%s</a></li>\n", site_page_link(site, site_section_page(.Home), site_section_page(section)), site_section_titles[section])
@@ -919,32 +921,9 @@ site_home_add :: proc(site: ^Site) {
 	}
 	fmt.sbprintf(&b, "</div>\n<p><a href=\"%s\">Every measured number, with its log and its conditions</a></p>\n", site_page_link(site, home, site_page_file(SITE_NUMBERS_FOLDER)))
 
-	// The pictures of the machine, in their groups.
-	strings.write_string(&b, "<h2 id=\"pictures\">The machine</h2>\n<p class=\"source\">Pictures of the screen that the machine test takes under QEMU; the captions are those of <code>README.md</code>. A picture opens at full size.</p>\n")
-	group_start := 0
-	for group_start < len(site.figures) {
-		group_end := group_start + 1
-		for group_end < len(site.figures) && site.figures[group_end].group == site.figures[group_start].group {
-			group_end += 1
-		}
-		group := site.figures[group_start:group_end]
-		strings.write_string(&b, "<h3>")
-		site_escape(&b, group[0].group)
-		strings.write_string(&b, "</h3>\n<div class=\"pictures\">\n")
-		for figure, index in group {
-			wide := index == 0 && len(group) % 2 == 1
-			site_path := strings.concatenate({SITE_PICTURE_FOLDER, "/", figure.file_name}, context.temp_allocator)
-			strings.write_string(&b, wide ? "<figure class=\"wide\">" : "<figure>")
-			fmt.sbprintf(&b, "<a href=\"%s\"><img src=\"%s\" width=\"%d\" height=\"%d\" loading=\"lazy\" decoding=\"async\" alt=\"", site_path, site_path, figure.width, figure.height)
-			site_plain(&b, figure.caption)
-			// The caption is the alt text: a screen reader reads it there once.
-			strings.write_string(&b, "\"></a>\n<figcaption aria-hidden=\"true\">")
-			site_inline(&b, figure.caption)
-			strings.write_string(&b, "</figcaption></figure>\n")
-		}
-		strings.write_string(&b, "</div>\n")
-		group_start = group_end
-	}
+	// The pictures of the machine: a few of the table of the gallery, one
+	// in view, and the link to the gallery, which shows them all.
+	site_carousel_write(site, &b, home)
 
 	// The newest release.
 	newest := site.changelog.releases[0]
@@ -952,7 +931,7 @@ site_home_add :: proc(site: ^Site) {
 	fmt.sbprintf(&b, "%d steps so far; each step is one tested commit on <code>master</code>.</p>\n", site.step_count)
 	// One line, not a section: the home shows what runs.
 	site_roadmap_link_line(site, &b, home)
-	site_page_add(site, Site_Page{path = home, is_index = true, title = SITE_SYSTEM_NAME, description = site_description_cut(site.readme.lead), section = .Home, body = strings.to_string(b), sources = site_sources(SITE_README_FILE, CHANGELOG_FILE)})
+	site_page_add(site, Site_Page{path = home, is_index = true, title = SITE_SYSTEM_NAME, description = site_description_cut(site.readme.lead), section = .Home, body = strings.to_string(b), sources = site_sources(SITE_README_FILE, CHANGELOG_FILE, SITE_GALLERY_SOURCE_FILE), script = SITE_CAROUSEL_SCRIPT})
 }
 
 // site_read_quiet reads a file that can be absent, with no message.

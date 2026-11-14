@@ -62,6 +62,7 @@ Site_Section :: enum {
 	News,
 	Releases,
 	Roadmap,
+	Gallery,
 }
 
 site_section_titles := [Site_Section]string {
@@ -73,6 +74,7 @@ site_section_titles := [Site_Section]string {
 	.News      = "News",
 	.Releases  = "Releases",
 	.Roadmap   = "Roadmap",
+	.Gallery   = "Gallery",
 }
 
 // The folder of the page of each section; "" is the root of the site.
@@ -85,6 +87,7 @@ site_section_folders := [Site_Section]string {
 	.News      = SITE_NEWS_FOLDER,
 	.Releases  = SITE_RELEASES_FOLDER,
 	.Roadmap   = SITE_ROADMAP_FOLDER,
+	.Gallery   = SITE_GALLERY_FOLDER,
 }
 
 // The section above each section: the breadcrumbs follow it, and the bar
@@ -100,6 +103,7 @@ site_section_parents := [Site_Section]Site_Section {
 	.News      = .Home,
 	.Releases  = .Home,
 	.Roadmap   = .Home,
+	.Gallery   = .Home,
 }
 
 // site_section_page gives the file of the page of a section.
@@ -107,10 +111,20 @@ site_section_page :: proc(section: Site_Section) -> string {
 	return site_page_file(site_section_folders[section])
 }
 
-// site_section_in_bar tells whether the bar and the doors of the home name
-// a section: a section right under the home.
-site_section_in_bar :: proc(section: Site_Section) -> bool {
+// site_section_under_home tells whether the doors of the home name a
+// section: a section right under the home.
+site_section_under_home :: proc(section: Site_Section) -> bool {
 	return section != .Home && site_section_parents[section] == .Home
+}
+
+// site_section_in_bar tells whether the bar names a section: as a button,
+// or as a line of its menu (site_bar.odin). The bar has one line of a
+// fixed height, and the parts under it are placed by that height: a
+// button for each section under the home, with the search field, passes
+// one line on a window of 720 pixels
+// (docs/SITE.md, "The buttons and the menu of the bar").
+site_section_in_bar :: proc(section: Site_Section) -> bool {
+	return site_section_is_bar_button(section) || site_section_in_project_menu(section)
 }
 
 // site_bar_section gives the section of the bar that holds a section: the
@@ -179,7 +193,7 @@ Site :: struct {
 	measure_record: Site_Measure_Record, // The measure record of the work tree.
 	boot_stages:  []Site_Boot_Stage, // The stages of the start that the home shows.
 	boot_source:  Site_Measure_Source,
-	figures:      []Site_Figure,
+	gallery:      []Site_Gallery_Picture, // The pictures of the table of the gallery (site_gallery.odin); the home shows a few of them.
 	boot_image:   []Site_Image_Entry,
 	licenses:     Site_Licenses,
 	reference:    Site_Reference,
@@ -665,25 +679,10 @@ site_build :: proc(address: string) -> bool {
 	mark_font := mark_font_of_the_repository() or_return
 	site_write_file(&site, SITE_MARK_FONT, mark_font) or_return
 
-	// The pictures of the machine, with the captions of README.md.
-	figures := make([dynamic]Site_Figure, context.temp_allocator)
-	for picture in site_pictures {
-		caption, has_caption := site.readme.captions[picture.path]
-		if !has_caption || caption == "" {
-			fmt.eprintfln("kerneltool: site: the picture %s has no caption in %s (a line \"![<caption>](<path>)\")", picture.path, SITE_README_FILE)
-			return false
-		}
-		data := read_file(picture.path) or_return
-		width, height, is_png := site_png_size(data)
-		if !is_png {
-			fmt.eprintfln("kerneltool: site: %s is not a PNG file", picture.path)
-			return false
-		}
-		file_name := site_file_name(picture.path)
-		site.copies[strings.concatenate({SITE_PICTURE_FOLDER, "/", file_name}, context.temp_allocator)] = picture.path
-		append(&figures, Site_Figure{group = picture.group, file_name = file_name, caption = caption, width = width, height = height})
-	}
-	site.figures = figures[:]
+	// The pictures of the screen: the table of the gallery, checked against
+	// the folder of the pictures. A picture that no row and no line of the
+	// excluded files names stops the command.
+	site_gallery_read(&site) or_return
 
 	// The measured numbers and the stages of the start: from the logs of
 	// build/ when they are newer than the measure record, else from the
@@ -726,6 +725,9 @@ site_build :: proc(address: string) -> bool {
 	site_news_add(&site)
 	site_releases_add(&site)
 	site_roadmap_add(&site)
+	// The gallery after the guides, whose titles its captions link to, and
+	// before the home, which links to it.
+	site_gallery_add(&site)
 	// The home of the docs before the home: the doors of the home name the
 	// sections that exist. Its text needs the index of the search, so it is
 	// written after the index (site_docs_home_fill).
@@ -774,6 +776,11 @@ site_build :: proc(address: string) -> bool {
 		}
 		site_write_file(&site, target, data) or_return
 	}
+	// The thumbnails of the gallery, after the pictures that they come
+	// from: the command prints the bytes of both.
+	site_gallery_thumbnails_write(&site) or_return
+	// The script of the carousel of the home.
+	site_write_file(&site, SITE_CAROUSEL_SCRIPT, transmute([]u8)site_carousel_script()) or_return
 	// The style sheet holds the icons of the kinds of values: a page asks
 	// for no file to draw them.
 	style_sheet := site_style_sheet(site.tile_rules)
@@ -1039,16 +1046,9 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	// screen the style sheet and the script show it open, as a bar
 	// (docs/SITE.md, "The site menu").
 	write(&b, SITE_MENU_OPEN)
-	write(&b, "<nav class=\"bar-sections\" aria-label=\"Sections\">\n<ul>\n")
-	bar_section := site_bar_section(page.section)
-	for section in Site_Section {
-		if !site_section_in_bar(section) || !site_page_exists(site, site_section_page(section)) {
-			continue
-		}
-		current: string = section == bar_section ? " aria-current=\"page\"" : ""
-		fmt.sbprintf(&b, "<li><a href=\"%s\"%s>%s</a></li>\n", site_page_link(site, page.path, site_section_page(section)), current, site_section_titles[section])
-	}
-	write(&b, "</ul>\n</nav>\n")
+	// Three sections are buttons; the others are the lines of one menu
+	// under its button (site_bar.odin).
+	write(&b, site_bar_sections_html(site, page))
 	// One search field on a page: the home of the docs has its own large
 	// field, so its bar has none (docs/SITE.md, "The search").
 	if !page.search_in_page {
