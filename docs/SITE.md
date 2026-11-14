@@ -183,7 +183,7 @@ The documentation tree lists the groups under the glossary, each with the count 
 
 The owner asked for it on 2026-11-12: "\"What runs today\" watch out cause it'll be a nightmare to udate the description. we could have a \"parallel changelog\" (changelog is very technical/list-like) which would be like a \"status report\" or like \"News\"".
 
-A news entry (`GLOSSARY.md`) is one file of `news/`, `news/<yyyy-mm-dd>-<subject>.md`, never moved or merged: a head of six lines `key: value` (`title`, `date`, `release`, `picture`, `kind`, `guide`), an empty line, then the text in the Markdown of this document. `news/README.md` gives the form, the four kinds and when a step writes an entry. The text is at most 1200 bytes (`NEWS_TEXT_LIMIT`): a few sentences for a reader; a longer report belongs in the guide that the entry names.
+A news entry (`GLOSSARY.md`) is one file of `news/`, `news/<yyyy-mm-dd>-<subject>.md`, never moved or merged: a head of six lines `key: value` (`title`, `date`, `release`, `picture`, `kind`, `guide`), one more line `film` in an entry that has a film, an empty line, then the text in the Markdown of this document. `news/README.md` gives the form, the four kinds and when a step writes an entry. The text is at most 1200 bytes (`NEWS_TEXT_LIMIT`): a few sentences for a reader; a longer report belongs in the guide that the entry names.
 
 | Kind | What the entry reports | Its mark |
 |---|---|---|
@@ -192,16 +192,62 @@ A news entry (`GLOSSARY.md`) is one file of `news/`, `news/<yyyy-mm-dd>-<subject
 | Decided | The owner chose a thing that a reader sees: a name, a mark, a font | The color of the kernel |
 | Fixed | A thing that a reader saw fail now works | The color of the machine |
 
-- `kerneltool news new <subject>` writes an entry with the date of the host, `release: next`, and no title and no text, so that the check fails until a person writes them. `kerneltool news check` checks each entry: the head, each key known and present once, the date a date of the calendar and the date of the file name, the picture a PNG file of `docs/screenshots/` or `resources/logo/`, the release a release of `CHANGELOG.md` or `next`, the guide a document of `docs/` that is a page of the site, the text not empty, at most 1200 bytes, with no heading and no line of HTML, and no two titles the same. `kerneltool check` runs it, and `kerneltool site` stops on the same faults.
-- `news/`: each entry, newest first, as a card with the color of its kind, its date, a link to its release and to its guide, its picture, and a link to its file. Its anchor is `news-<the name of its file>`. One renderer renders all the entries of the page, so the ids stay unique and each term of the glossary links once.
-- The home shows the three newest entries: the title, the kind, the date, the picture and the first sentence.
+- `kerneltool news new <subject>` writes an entry with the date of the host, `release: next`, and no title and no text, so that the check fails until a person writes them. `kerneltool news check` checks each entry: the head, each key known and present once, the date a date of the calendar and the date of the file name, the picture a PNG file of `docs/screenshots/` or `resources/logo/`, the release a release of `CHANGELOG.md` or `next`, the guide a document of `docs/` that is a page of the site, the film a WebM file of `docs/films/` under its size bound in an entry that has a picture ("The film of a news entry"), the text not empty, at most 1200 bytes, with no heading and no line of HTML, and no two titles the same. `kerneltool check` runs it, and `kerneltool site` stops on the same faults.
+- `news/`: each entry, newest first, as a card with the color of its kind, its date, a link to its release and to its guide, its picture or its film, and a link to its file. Its anchor is `news-<the name of its file>`. One renderer renders all the entries of the page, so the ids stay unique and each term of the glossary links once.
+- The home shows the three newest entries: the title, the kind, the date, the picture and the first sentence. The picture of an entry with a film has the mark "film" and links to the entry.
 - `releases/`: under each release, a link to each entry that names it. An entry with `release: next` is in no release yet.
-- `news.xml`: the feed, Atom (RFC 4287), newest first; each entry has its title, its date (`published` and `updated`, at 00:00 UTC), its kind as a `category`, its first sentence as its `summary`, and its text and picture as HTML in its `content`. The id of the feed and of each entry is the address of its file in the repository on `master` (`<repository>/blob/master/news/<file>`): a file of `news/` is never moved, so the id stays the same when the site gets an address. Each page names the feed in its head (`<link rel="alternate" type="application/atom+xml">`), so that a browser and a feed reader find it.
+- `news.xml`: the feed, Atom (RFC 4287), newest first; each entry has its title, its date (`published` and `updated`, at 00:00 UTC), its kind as a `category`, its first sentence as its `summary`, and its text and picture as HTML in its `content`. An entry with a film has one more link, `<link rel="enclosure" type="video/webm" href="..." length="<bytes>"/>`, the element of Atom for a file that goes with an entry, and a link to the film at the end of its `content`. The id of the feed and of each entry is the address of its file in the repository on `master` (`<repository>/blob/master/news/<file>`): a file of `news/` is never moved, so the id stays the same when the site gets an address. Each page names the feed in its head (`<link rel="alternate" type="application/atom+xml">`), so that a browser and a feed reader find it.
 
 What a feed reader needs, and what is missing with no address:
 
 - A reader subscribes to the address of the feed and resolves each relative link against it. With no address (`SITE_ADDRESS` is empty), the links of the feed are relative to the root of the site (`news/index.html#news-...`, `pictures/...`): they work for a reader that fetched the feed from the host of the site.
 - Missing with no address: the link `rel="self"` (the feed cannot name its own place), absolute links (a reader that receives the feed as a file, or copies an entry elsewhere, cannot resolve them), and the discovery of the feed from another site. `kerneltool site --address https://...` writes absolute links and the link `self`. The command says so when the site has no address.
+
+### The film of a news entry
+
+An entry can name a film: `film: docs/films/<name>.webm` in its head. The command `kerneltool film <name>` writes the file (`TOOLS.md`, "The film of a document"), and the repository holds it. The site copies it to `films/<name>.webm` as it is: `kerneltool site` runs no encoder.
+
+**The file.** WebM with AV1, 30 pictures in one second, no sound, at most 4 MiB (`FILM_DOCUMENT_SIZE_LIMIT`). Each version of the file stays in the history of the repository, and a reader loads it on a phone. Measured on the film of the palette (36.8 s, 2048 by 1536 pixels): H.264 in MP4 3 169 392 bytes, VP9 in WebM 3 019 142 bytes, AV1 in WebM 1 572 784 bytes, with the text of the screen sharp in the AV1 file. The site holds one file for a film, and no second source in another format.
+
+**The checks.** `kerneltool news check` reads the file: it starts with an EBML header (the bytes `1A 45 DF A3`) of the document type `webm`, it is under the size bound, and its tracks state the width and the height of its pictures. The entry has a picture. `kerneltool site` stops on the same faults.
+
+**The page of the news.** An entry with a film shows it under its text, over the width of the card, at most 1024 pixels wide: the width of the screen of the system. In the column of a picture (384 pixels) the text of a film of the whole screen is not readable. On a screen narrower than 720 pixels the film takes the width of the column.
+
+```
+<figure class="news-film">
+<video controls preload="metadata" playsinline muted loop poster="../pictures/<picture>.png" width="2048" height="1536">
+<source src="../films/<name>.webm" type='video/webm; codecs="av01.0.12M.08"'>
+<a href="../films/<name>.webm"><img src="../pictures/<picture>.png" width="1024" height="768" loading="lazy" decoding="async" alt="..."></a>
+</video>
+<figcaption>Film: <a href="../films/<name>.webm"><name>.webm</a>, WebM with AV1, 1.5 MiB.</figcaption>
+</figure>
+```
+
+| Part | Why |
+|---|---|
+| No `autoplay` | A film starts when the reader starts it. The site has no animation that a reader did not ask for ("The look") |
+| `controls` | The player of the browser: the site adds no script for a film |
+| `preload="metadata"` | Before the reader starts the film, a browser loads its head only, not the whole file |
+| `poster` | The picture of the entry stands in the place of the film until it plays |
+| `width`, `height` | The size of the pictures of the film, read from the file. The style sheet sets the width to that of the column; the two numbers give the ratio, so the page keeps the room of the film before a byte of it came |
+| `playsinline` | On a phone the film plays in the page, not over the whole screen |
+| `muted` | A film has no sound; a browser then shows no control of the sound that does nothing |
+| `loop` | A film shows one act, of about half a minute: it starts again at its end, as the act can be done again |
+| `type` with `codecs` | A browser that does not play AV1 knows it from the page and never asks for the file |
+| The `img` inside `video` | For a browser with no `video` element: the picture, as a link to the file |
+| The caption | The name of the file as a link, its format and its size: a reader chooses whether to load it, and can keep the file |
+
+**The codec text**, `av01.0.12M.08`: AV1 (`av01`), the main profile (`0`), the level 5.0 (`12`), the main tier (`M`), 8 bits a channel (`08`). The level is the one that the encoder writes in the file for this size: a picture of 2048 by 1536 has 3 145 728 pixels and 1536 lines, more than the levels 4.0 and 4.1 hold (2 228 224 pixels, 1152 lines); the level 5.0 is the first that holds it (8 912 896 pixels, 2176 lines). `ffprobe` gives `profile=Main`, `level=12` and `pix_fmt=yuv420p` for a file of the encoder of the tool. The text is a constant (`SITE_FILM_CODEC`): a film of another size of screen, or of 10 bits a channel, needs another text.
+
+**A browser that does not play AV1** (a Safari on a device with no AV1 decoder, an older browser) shows the picture of the entry, the `poster`, in the place of the film, and plays nothing. The caption still links to the file.
+
+**The home** shows no film. A card of the home is a third of the width of the page: a film of the whole screen is not readable there, its controls cover a part of it, and three players on the first page each ask for a part of their file. The card shows the picture of the entry. A mark is in the lower left corner of the picture: a rectangle of 24 pixels with the one word "film", on the surface of a card, with a line of 1 pixel at its top and at its right. The picture links to the entry on the page of the news, where the film is. The word is not cut at any width: the mark takes the width of its word.
+
+**The feed** names the film as an enclosure, with its type and its count of bytes, and its `content` ends with a link to the file. The `content` has no `video` element: many feed readers remove one.
+
+**The host of the site** must allow the film: `media-src 'self'` in the header `Content-Security-Policy` ("How the site is published"). With `default-src 'none'` and no `media-src`, a browser refuses the film and shows the picture.
+
+Not done: the page graph of the news names no `VideoObject` for a film.
 
 ## The search
 
@@ -336,7 +382,7 @@ Not verified against a validator of schema.org or the documents of a search engi
 
 ### The pictures
 
-Each `img` has `width`, `height` and an alt text (a check of the pages). The pictures below the first screen have `loading="lazy"` and `decoding="async"`: the pictures of the machine, of the news and of the guides. The mark of the home and the heron of the bar are on the first screen and load at once.
+Each `img` has `width`, `height` and an alt text (a check of the pages). The pictures below the first screen have `loading="lazy"` and `decoding="async"`: the pictures of the machine, of the news and of the guides. The mark of the home and the heron of the bar are on the first screen and load at once. A film of a news entry is a `video` element with its `width`, its `height` and a `poster` ("The film of a news entry"); the check of the links of a page reads `poster` as it reads `href`, `src` and `srcset`.
 
 Each PNG file that the site copies from the repository (the screen pictures, the pictures of the news and of the guides, the icons) is written again through `site_png_compress` (`tools/kerneltool/site_pictures.odin`): it decodes the file and encodes the same pixels with the encoder of the standard library, `core:image/png` (a row filter chosen for each row, then the deflate of `core:compress/deflate` at its default level 5). The screen pictures of `docs/screenshots` are stored with no compression (`png_encode` of `tools/kerneltool/machine.odin`): 2 360 312 bytes for 1024 by 768. The command prints the count of the pictures and their bytes before and after. The output is the same bytes at each build: the encoder reads no clock, no random number and no thread, and its buffers start at zero; a host test encodes each picture twice and compares the bytes, and compares the pixels of the two files byte for byte. A picture of 16 bits a channel stops the command: the repository has none.
 
@@ -1303,7 +1349,7 @@ What a clean checkout gives to `kerneltool site`:
 
 | What the site reads | Made by | In the workflow |
 |---|---|---|
-| The documents, the news, the changelog, the code that the reference tables read, `flake.nix`, `flake.lock`, `LICENSE`, the pictures of `docs/screenshots` and `resources/logo` | Committed | Read |
+| The documents, the news, the changelog, the code that the reference tables read, `flake.nix`, `flake.lock`, `LICENSE`, the pictures of `docs/screenshots` and `resources/logo`, the films of `docs/films` | Committed | Read |
 | The pictures of the mark, the module pages and their signatures | The code of the tool (`support/mark`, `describe_package`); no module is built | Written |
 | The commit | `.git` | Read |
 | `build/boot.image` | `kerneltool build` | Written by the step before: the tiles of the home with their sizes and colors, the size of each module in its page, and the column "in the boot image" of the licenses. With no image these show the modules with no size, and "not recorded" |
@@ -1323,7 +1369,7 @@ The headers: GitHub Pages sends no header that a site chooses. The proxy of Clou
 
 | Header | Value | Why |
 |---|---|---|
-| `Content-Security-Policy` | `default-src 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; script-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` | The style sheet, the pictures and the grid of points (`data:`), the font of the name of the mark (`font-src`), `search.js` and its fetch of `search.json`, the manifest; nothing else. The page graph is data that a browser does not run: `script-src` does not apply to it |
+| `Content-Security-Policy` | `default-src 'none'; style-src 'self'; img-src 'self' data:; media-src 'self'; font-src 'self'; script-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` | The style sheet, the pictures and the grid of points (`data:`), the films of the news (`media-src`), the font of the name of the mark (`font-src`), `search.js` and its fetch of `search.json`, the manifest; nothing else. The page graph is data that a browser does not run: `script-src` does not apply to it |
 | `X-Content-Type-Options` | `nosniff` | A file is read as its type only |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` | Another host sees the host of the site, not the page |
 | `X-Frame-Options` | `DENY` | `frame-ancestors` for a browser that does not read it |

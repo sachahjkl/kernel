@@ -5447,7 +5447,7 @@ Do not use: changeset, news file, entry (for the file).
 
 A news entry is a dated report in prose, for a reader who is not a developer of the system, of one thing that the reader can see or use, with its picture.
 
-Each entry is one file of `news/`, `news/<yyyy-mm-dd>-<subject>.md`, never moved or merged: a head of six lines (`title`, `date`, `release`, `picture`, `kind`, `guide`), an empty line, then at most 1200 bytes of text. Its kind is one of four:
+Each entry is one file of `news/`, `news/<yyyy-mm-dd>-<subject>.md`, never moved or merged: a head of six lines (`title`, `date`, `release`, `picture`, `kind`, `guide`), one more line `film` when the entry has a film, an empty line, then at most 1200 bytes of text. Its kind is one of four:
 
 - **Shown**: a new thing can now be seen or used in the running system;
 - **Measured**: a number about a thing that exists, with its conditions;
@@ -5461,6 +5461,18 @@ The changelog lists every change for a developer; a news entry reports one thing
 The design: `docs/SITE.md`, "The news".
 
 Do not use: news item, post, announcement, blog post, changelog entry.
+
+### Film
+
+A film is the pictures of the screen of a test machine, taken 30 times in one second while a scenario of the tool sends its keys, as one file that a player shows at the speed of the machine.
+
+`kerneltool film <name>` makes a film: `terminal` or `palette`. It writes an MP4 file with H.264 and a WebM file with AV1 from the same pictures, in the build folder. A film is not a test: only its scenario has steps with a fixed time, the period between two typed keys and the hold of a state for its viewer.
+
+A news entry can name a film, `film: docs/films/<name>.webm`. The command then writes the WebM file in the repository too, which holds it as it holds a screen picture: at most 4 MiB. The site shows it on the page of the news in a `video` element that plays only when the reader starts it, with the picture of the entry in its place before that. A card of the home, the feed and a browser that does not play AV1 show the picture.
+
+The design: `docs/TOOLS.md`, "The film" and "The film of a document"; `docs/SITE.md`, "The film of a news entry".
+
+Do not use: video (for the file), clip, movie, recording, screencast.
 
 ### Feed
 
