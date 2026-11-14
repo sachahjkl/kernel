@@ -139,23 +139,56 @@ intent_link_paths :: proc(t: ^testing.T) {
 
 // A link of an intent file to a guide, with the heading of a place after
 // it, is a pointer: a heading that the guide does not have is a fault, a
-// heading that it has is none, and a link with no label is not read.
+// heading that it has is none, and a link with no label is not read. A
+// file of a folder of the intent is three folders under the root.
 @(test)
 intent_pointers_to_a_guide :: proc(t: ^testing.T) {
 	site := reference_test_site()
 	good := Intent_File {
 		path    = "features/kernel.md",
-		content = "# The kernel\n\nSee [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md), \"Kernel systems\".\nAnd [the guide](../../docs/ARCHITECTURE.md) alone.\n",
+		content = "# The kernel\n\nSee [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), \"Kernel systems\".\nAnd [the guide](../../../docs/ARCHITECTURE.md) alone.\nAnd [the guide](../../../docs/ARCHITECTURE.md), which has no heading after it.\n",
 	}
 	testing.expectf(t, len(intent_pointer_problems(&site, good)) == 0, "%v", intent_pointer_problems(&site, good))
+	// The entry point is two folders under the root.
+	from_the_entry_point := Intent_File {
+		path    = "README.md",
+		content = "# The intent\n\nSee [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md), \"Kernel systems\".\n",
+	}
+	testing.expectf(t, len(intent_pointer_problems(&site, from_the_entry_point)) == 0, "%v", intent_pointer_problems(&site, from_the_entry_point))
 	stale := Intent_File {
 		path    = "features/kernel.md",
-		content = "# The kernel\n\nText.\n\nSee [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md), \"No such heading\".\n",
+		content = "# The kernel\n\nText.\n\nSee [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), \"No such heading\".\n",
 	}
 	problems := intent_pointer_problems(&site, stale)
 	testing.expectf(t, len(problems) == 1, "%v", problems)
 	if len(problems) == 1 {
 		testing.expect(t, strings.has_prefix(problems[0], "src/md/features/kernel.md, line 5: "), problems[0])
+		testing.expect(t, strings.contains(problems[0], "names no heading"), problems[0])
+	}
+	// Two pointers on one line: each has its own labels, and only the
+	// stale one is a fault.
+	two := Intent_File {
+		path    = "features/kernel.md",
+		content = "# The kernel\n\nSee [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), \"Kernel systems\"; [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), \"No such heading\".\n",
+	}
+	two_problems := intent_pointer_problems(&site, two)
+	testing.expectf(t, len(two_problems) == 1, "%v", two_problems)
+	if len(two_problems) == 1 {
+		testing.expect(t, strings.has_prefix(two_problems[0], "src/md/features/kernel.md, line 3: "), two_problems[0])
+		testing.expect(t, strings.contains(two_problems[0], "No such heading") && !strings.contains(two_problems[0], "Kernel systems"), two_problems[0])
+	}
+	// A link with a wrong count of "..": the path that it names is not a
+	// document, so the heading after it cannot be checked. It is a fault,
+	// not a link that passes unread.
+	wrong_depth := Intent_File {
+		path    = "features/kernel.md",
+		content = "# The kernel\n\nSee [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md), \"Kernel systems\".\n",
+	}
+	depth_problems := intent_pointer_problems(&site, wrong_depth)
+	testing.expectf(t, len(depth_problems) == 1, "%v", depth_problems)
+	if len(depth_problems) == 1 {
+		testing.expect(t, strings.has_prefix(depth_problems[0], "src/md/features/kernel.md, line 3: "), depth_problems[0])
+		testing.expect(t, strings.contains(depth_problems[0], "names no document"), depth_problems[0])
 	}
 }
 

@@ -317,15 +317,23 @@ intent_pointer_problems :: proc(site: ^Site, file: Intent_File) -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
 	from := strings.concatenate({INTENT_PREFIX, file.path}, context.temp_allocator)
 	for link in intent_links(file.content) {
-		path, inside_repository := intent_link_path(from, link.target)
-		if !inside_repository {
-			continue
-		}
-		if _, is_document := site_document_path_end(path, 0); !is_document {
-			continue
-		}
 		labels, _ := site_pointer_labels(link.text, link.after)
 		if len(labels) == 0 {
+			continue
+		}
+		path, inside_repository := intent_link_path(from, link.target)
+		is_document := false
+		if inside_repository {
+			document_end, has_document_form := site_document_path_end(path, 0)
+			is_document = has_document_form && document_end == len(path)
+		}
+		if !is_document {
+			// A Markdown file that is not a document, with the heading of
+			// a place after it, is most often a link with a wrong count of
+			// "..": it must not pass as a link that nobody checks.
+			if strings.has_suffix(link.target, ".md") {
+				append(&problems, fmt.tprintf("%s, line %d: the link to %s has the heading of a place after it, %s, and names no document of docs/ and no intent file", from, link.line, link.target, strings.join(labels, ", ", context.temp_allocator)))
+			}
 			continue
 		}
 		if problem := site_pointer_problem(site, from, link.line, path, labels); problem != "" {
