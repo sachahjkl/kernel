@@ -10,7 +10,7 @@ The form before was a flat rectangle on a track, drawn again in each program, wi
 
 - **One standard.** The form is the scroll bar of the desktop shell that the design of the system comes from (the project `shojiwm-desktop`: `crates/shell/src/ui/scroll.rs`, and the same colors in `gtk-theme/_scroll-bar-colours.scss`). Its geometry, its colors and its states are taken as they are. The site had a form of its own before (`docs/DECISIONS.md`, D-222).
 - **One description for two drawers.** The system draws rectangles and gradients into a draw table. The site writes a style sheet. Both must show the same numbers, and a change of one number must change both.
-- **No blend.** A draw of the system is opaque ([`docs/DESIGN.md`](../../docs/DESIGN.md), "2. Forms"). The standard has one translucent line.
+- **No blend.** A draw of the system is opaque ([`docs/DESIGN.md`](../../../docs/DESIGN.md), "2. Forms"). The standard has one translucent line.
 - **No state in a program.** A program must get the pointer on its scroll bar with one call, and keep nothing between two frames.
 - **No wait in a test.** A held arrow button repeats in time. A test of it must not wait.
 
@@ -53,7 +53,7 @@ The form before was a flat rectangle on a track, drawn again in each program, wi
 
 ## What it changes in the design rules
 
-The scroll bar is a decoration that the design rules did not have, and it has three exceptions to them. Each is stated in [`docs/DESIGN.md`](../../docs/DESIGN.md), "The scroll bar".
+The scroll bar is a decoration that the design rules did not have, and it has three exceptions to them. Each is stated in [`docs/DESIGN.md`](../../../docs/DESIGN.md), "The scroll bar".
 
 - Its gradients go across, where the sign of depth of a surface goes from the top down.
 - Its thickness is 17 pixels, which is not on the grid of 8. It is odd so that the grip and the point of a triangle are on its middle line. A caller places it so that the bar and the gap before it are a multiple of 8.

@@ -866,7 +866,7 @@ pointer_leaves_front :: proc "contextless" () {
 	client := &clients[order[order_count - 1]]
 	if client.pointer_over {
 		client.pointer_over = false
-		send(client, ring.Record{kind = u32(display.Event_Kind.Pointer), values = {0 = u64(i64(-1)), 1 = u64(i64(-1)), 2 = 0}})
+		send(client, ring.Record{kind = u32(display.Event_Kind.Pointer), values = {0 = ~u64(0), 1 = ~u64(0), 2 = 0}})
 	}
 }
 
