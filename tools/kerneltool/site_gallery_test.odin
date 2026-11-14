@@ -1,6 +1,7 @@
 package kerneltool
 
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 
@@ -60,7 +61,15 @@ site_gallery_table_names_every_picture :: proc(t: ^testing.T) {
 	for problem in problems {
 		testing.expectf(t, false, "%s", problem)
 	}
-	testing.expect_value(t, len(site_gallery_rows) + len(site_gallery_excluded), len(folder_files))
+	// Each file of the folder is named one time. An excluded file that
+	// git ignores is in the folder of a developer and not in a clean copy.
+	named_files := len(site_gallery_rows)
+	for line in site_gallery_excluded {
+		if !line.not_in_the_repository || slice.contains(folder_files, line.file) {
+			named_files += 1
+		}
+	}
+	testing.expect_value(t, named_files, len(folder_files))
 
 	// A new picture of the folder that no row names is a problem.
 	with_new := make([dynamic]string, context.temp_allocator)
@@ -86,7 +95,7 @@ site_gallery_table_of_a_damaged_table :: proc(t: ^testing.T) {
 		{file = "one.png", group = .Desktop, caption = "The first picture.", guide = "docs/NETWORK.md", home = true},
 		{file = "two.png", group = .Console, caption = "The second picture.", guide = "docs/NETWORK.md"},
 	}
-	excluded := []Site_Gallery_Excluded{{"three.png", "It shows a text that is cut."}}
+	excluded := []Site_Gallery_Excluded{{file = "three.png", reason = "It shows a text that is cut."}}
 	testing.expect_value(t, len(site_gallery_table_problems(good, excluded, files)), 0)
 
 	damaged := make([]Site_Gallery_Row, len(good), context.temp_allocator)
@@ -111,10 +120,10 @@ site_gallery_table_of_a_damaged_table :: proc(t: ^testing.T) {
 	damaged[0].home = false
 	testing.expect(t, len(site_gallery_table_problems(damaged, excluded, files)) > 0)
 	// A file in the table and in the excluded files.
-	both := []Site_Gallery_Excluded{{"three.png", "It shows a text that is cut."}, {"two.png", "Twice."}}
+	both := []Site_Gallery_Excluded{{file = "three.png", reason = "It shows a text that is cut."}, {file = "two.png", reason = "Twice."}}
 	testing.expect(t, len(site_gallery_table_problems(good, both, files)) > 0)
 	// An excluded file with no reason.
-	no_reason := []Site_Gallery_Excluded{{"three.png", ""}}
+	no_reason := []Site_Gallery_Excluded{{file = "three.png", reason = ""}}
 	testing.expect(t, len(site_gallery_table_problems(good, no_reason, files)) > 0)
 	// A picture that nothing names.
 	testing.expect(t, len(site_gallery_table_problems(good, nil, files)) > 0)
