@@ -28,7 +28,9 @@ kept_key: u32 // A key that the palette took when it was pressed: its release go
 palette_frames, palette_time: u64
 // The panel as draw records: the table of now, the table that the screen
 // shows, the interface state.
-palette_records_now, palette_records_before: [256]interface.Draw_Record
+// The records hold the icons of the 12 rows too: an icon is at most
+// kind_icons.RECTANGLE_LIMIT rectangles, 240 for a full list.
+palette_records_now, palette_records_before: [512]interface.Draw_Record
 palette_text_now, palette_text_before: [4096]u8
 palette_now, palette_before: interface.Draw_Table
 palette_interface_state: interface.Interface_State
@@ -886,7 +888,7 @@ palette_refresh :: proc "contextless" () {
 	if !palette_is_open() {
 		return
 	}
-	// The value in use of each setting: the mark of a Setting entry.
+	// The value in use of each setting: the color of the icon of a Setting entry.
 	if display.settings_page != nil {
 		in_use := settings.read(display.settings_page)
 		for setting in settings.Setting {

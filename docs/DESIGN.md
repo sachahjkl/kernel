@@ -98,7 +98,7 @@ Code has one set of colors wherever it is shown: on the site, and in the console
 
 ### The colors of values
 
-A technical value has one color wherever it is shown: on the site, and in the programs of the system that show values of mixed kinds, as the log does. The kinds are the value kinds (`GLOSSARY.md`, `contract/value_kinds`), one enumeration for the site and the system. The colors are one table, `support/graphics/value_colors.odin` (`value_kind_colors`); the site (`tools/kerneltool/site_values.odin`) and the program `log` read it. The site keeps only what is its own: the title, the meaning and the icon of each kind (`docs/SITE.md`, "The kinds of values"). No kind and no color is new: the log uses the kinds of the site, so no new decoration exists.
+A technical value has one color wherever it is shown: on the site, and in the programs of the system that show values of mixed kinds, as the log does. The kinds are the value kinds (`GLOSSARY.md`, `contract/value_kinds`), one enumeration for the site and the system. The colors are one table, `support/graphics/value_colors.odin` (`value_kind_colors`); the site (`tools/kerneltool/site_values.odin`) and the program `log` read it. The site keeps only what is its own: the title and the meaning of each kind (`docs/SITE.md`, "The kinds of values"). The icon of each kind is one table too ("The icons of the kinds"). No kind and no color is new: the log uses the kinds of the site, so no new decoration exists.
 
 The kinds that the log writes, on a dark surface (contrast on the background `0x0B1018`, the top of a card `0x17212E`, the band of a row of the log `0x131B26`):
 
@@ -114,6 +114,55 @@ The kinds that the log writes, on a dark surface (contrast on the background `0x
 - A part with no kind has the color of the text around it.
 - Each kind has at least 4.5 to 1 on the background, on both colors of a card and on the band of a row of the log (`support/graphics/value_colors_test.odin`), and on both surfaces of a table of the site in both forms (`tools/kerneltool/site_values_test.odin`).
 - A color is never the only sign: the text of the value and its unit say the same fact.
+
+### The icons of the kinds
+
+A kind has one icon wherever it is shown: on the site, and in a list of the desktop whose rows are of several kinds. The kind icons (`GLOSSARY.md`) are one table of cells, `support/kind_icons`, as the heron of the mark is one table of cells (section 11). The site draws the cells as the rectangles of an SVG picture (`docs/SITE.md`, "The kinds of values"); the system draws them as rectangles of whole pixels (`interface.draw_kind_icon`). No second set of icons exists.
+
+- **The grid** is 12 by 12 square cells (`kind_icons.ICON_SIZE`). A cell is one pixel in a row of a list: the icon is 12 pixels, in the middle of the 24 pixels of the row. A larger icon has cells of 2 or 3 pixels: 24 or 36 pixels. No icon is scaled by a filter, so each edge is on a whole pixel.
+- **The form** is cells only: rectangles, and lines at an angle as steps of cells. An icon has no curve, no shade and no second color.
+- **The color** is given by the display that draws the icon: the color of the value kind, or the color of one fact of the thing (the palette, section 9). The table of the icons holds no color.
+- **The contrast** of an icon on its surface is at least 3 to 1, the bound of a graphic that carries a fact. On a chosen row an icon is white, as the text is.
+- **An icon never stands alone**: the row says the kind in words too. A reader who sees an icon for the first time reads the word.
+- **The cost**: an icon is at most 20 rectangles (`kind_icons.RECTANGLE_LIMIT`): a run of cells of a row is one rectangle, and a run that the rows under it repeat exactly is one rectangle with them. The icons of the palette take 3 to 16.
+
+The icon of each value kind:
+
+| Kind | Icon |
+|---|---|
+| Number | A hash sign |
+| Size | Three stacked bars, each wider than the one above |
+| Time | A square with two hands |
+| Handle | A square ring on a stem |
+| Value | One small square |
+| Grant | A check mark in steps |
+| Status | A flag on its pole |
+| Type | Two angle brackets, `< >` |
+| Operation | A line into a box |
+| Command | The prompt of a console, `>_` |
+| Module | A block with a notch in its top |
+| File | A page with a corner of steps |
+| Guide | A page with three lines of text |
+| Term | The capital letter T |
+| Version | A tag with a hole |
+| Yes | A filled square |
+| No | An empty square |
+| Procedure | Two parentheses |
+| Constant | A lock |
+| Variable | A cross of two diagonals |
+
+The desktop lists four kinds of things that are not values (`kind_icons.Desktop_Kind`):
+
+| Kind | Icon |
+|---|---|
+| Window | A frame under a title bar of three rows |
+| Setting | Two sliders: a line with a knob at the left, a line with a knob at the right |
+| Export | An arrow out of a box: the reverse of the icon of an operation |
+| Stop: an act that destroys | A full block with a cross cut out of it, as the close button of a window |
+
+- **Where the icons show**: the site; the rows of the palette and the candidates of a field of its form (section 9).
+- **Where they do not show**: a list whose rows are all of one kind and of one state (a menu of the bar), a heading of a group, a text grid of cells (the console and the completion list of the terminal: an icon is not a character of the font).
+- A host test draws each icon as text in its log, and checks that each icon is 12 by 12 cells, has at least 12 cells, differs from each other icon, and that its rectangles cover each of its cells once (`support/kind_icons/kind_icons_test.odin`).
 
 ## 5. Text
 
@@ -216,23 +265,29 @@ The desktop is the screen of the compositor: the background, the bar, the window
 - **The edge of the rest.** The list, the detail line and the footer have the surface of a card and a border of 1 pixel in the color of the kernel (28 % to 14 %) at the left, the right and the bottom, as a menu of the bar has. They have no border at the top: the line of the band is the edge there. The palette is not a card: it has no title and no caption. Each row says what it is in words, and the footer counts the entries in a plain word: a name of the code is not a word for a reader of the panel.
 - **The typed part.** It is white, in the font of the cells. Left, Right, Home, End, Delete and Backspace edit it at the caret (`support/line_editor`). It holds at most 64 characters. When it is empty, the band says "type a part of a name" in the dim color, at scale 2.
 - **Two kinds of entries** come from the compositor itself and need no other program: the programs (the table `bar.names`, what the menu of the programs lists) and the windows (the client table, what the menu of the windows lists). Each window also gives the entry of its close, named "close" and its title. The palette provider, the console, adds one entry for each of its commands (`CONSOLE.md`, "8. The palette provider").
-- **A row** is 24 pixels: 16 pixels, the mark, 8 pixels, the name, then at the right the kind in words, 16 pixels from the edge.
-  - **The mark** is 8 pixels square. It says one fact by its form and by its color, so a reader who does not tell two colors apart still tells a window from a program:
+- **A row** is 24 pixels: 16 pixels, the icon of 12 pixels, 8 pixels, the name, then at the right the kind in words, 16 pixels from the edge.
+  - **The icon** is the kind icon of the entry (section 4, "The icons of the kinds"), with cells of 1 pixel. Its form says what the entry is, so a reader who does not tell two colors apart still tells a window from a program and a command from a setting. Its color says one fact of the entry: the color of the kind when the thing is there or in use, the dim color when it is not. An entry that destroys has the icon of that act, whatever its kind:
 
-| Entry | Form | Color |
+| Entry | Icon | Color |
 |---|---|---|
-| A program that has a window now | A full square | `COLOR_PROGRAM` |
-| A program that has no window now | A full square | `COLOR_NOT_USABLE` |
-| The window that has the focus | The outline of a square, 2 pixels wide | `COLOR_TITLE` (white on the chosen row) |
-| Another window | The outline of a square, 2 pixels wide | The dim color |
-| An entry that destroys: the close of a window, a command such as `shutdown` | A full square | `COLOR_STOP_PROGRAM` |
-| The value of a setting that the machine uses now | A full square | The text color |
-| Another command, export or setting | No mark | |
+| A program that has a window now | Module | The color of a module, `COLOR_PROGRAM` |
+| A program that has no window now | Module | The dim color |
+| The window that has the focus | Window | `COLOR_TITLE` |
+| Another window | Window | The dim color |
+| A command with no parameter | Command | The color of a command, `COLOR_PROGRAM` |
+| A command with parameters | Command | The dim color, as the whole row |
+| An export | Export | The color of a module; the dim color with parameters |
+| The value of a setting that the machine uses now | Setting | The text color |
+| Another value of a setting | Setting | The dim color |
+| An entry that destroys: the close of a window, a command such as `shutdown` | Stop | The red of the close button under the pointer, `COLOR_STOP_PROGRAM_POINTER_OVER` |
+| A candidate of a field of a form: a program or a module | Module | The color of a module |
+| A candidate of a field of a form: a grant | Grant | The color of a grant |
 
+  - **The colors of the icons**: each one has at least 3 to 1 on both colors of a card (3.66 for the red, 3.78 for the blue of the title bar, 4.60 for the dim color). The deep red `COLOR_STOP_PROGRAM` has 2.56 there: it is the fill of the row that asks for a second Enter, not the color of an icon. `COLOR_NOT_USABLE` has 2.14: a program with no window has the dim color. On the chosen row and on the row that asks, each icon is white: no color of a kind keeps 3 to 1 on `COLOR_CHOSEN`. The fact that the color said is then in the words at the right and in the detail line. A host test computes each pair (`support/graphics/palette_colors_test.odin`).
   - **The kind** is said in words at the right, in the dim color: `window`, `program`, `close a window`, `command`, `export`; `setting`, and `setting, in use` for the value that the machine uses now; a command with parameters says `command, needs arguments`. A color never stands alone for a fact (section 4).
   - **The name** of a program or of a window is in the interface font. A command is code: its name is in the font of the cells, in the color of a name of the colors of code, and its parameters and its result follow it in the dim color. A signature longer than its room is cut at the end of a parameter, with `, ...)`, or shows `(...)`: it is never cut inside a parameter, and it never reaches the words at the right. A command with parameters is dim as a whole.
   - **The matched characters**: a line of 2 pixels in the color of the kernel is under each matched character of a name.
-- **The chosen row** is a chosen row of section 10: `COLOR_CHOSEN`, its name and its kind in white, the line under each matched character in white. The kind stays on the chosen row: "plasma" the window and "plasma" the program are then two things in words, on each row. What Enter does on the chosen entry is in the footer: "enter: to the front", "enter: start", "enter: close", "enter: run", "enter: arguments", "enter: set". A mark in the blue of the title bar is white on the chosen row.
+- **The chosen row** is a chosen row of section 10: `COLOR_CHOSEN`, its name and its kind in white, the line under each matched character in white. The kind stays on the chosen row: "plasma" the window and "plasma" the program are then two things in words, on each row. What Enter does on the chosen entry is in the footer: "enter: to the front", "enter: start", "enter: close", "enter: run", "enter: arguments", "enter: set". The icon of the chosen row is white.
 - **The detail line** says what the choice does, with the facts of now. A window: "The window of the program console. It has the focus.", or "Brings the window of the program life to the front and gives it the focus." A program: "Starts the program plasma. It has no window now.", or "Starts the program plasma one more time. It has 1 window now." A close: "Stops the program plasma: its window closes. Asks for a second Enter." A command: its help sentence.
 - **With a typed part: one list, ranked**, with no group: the best match is the first row. The match is the fuzzy match of the console (`support/line_editor`): the characters of the typed part appear in the name in their order, not always side by side, without the case of the letters ("closepla" matches "close plasma"). Among entries of one score, the order is: the entries chosen lately, the newest first; then the kind (a window, a program, a command, an export, the close of a window); then the order of the table. A better match always comes before a recent choice.
 - **With no typed part: groups**, each under a dim line of text: "recent" (at most 5 entries, the newest first), "windows" (each window, the front one first), "programs" (the order of `bar.names`). A group with no entry is absent. To reach a window is the most frequent act, so the windows show before any letter. The entries that destroy and the commands show only for a typed part, or as a recent choice.
@@ -249,7 +304,7 @@ The desktop is the screen of the compositor: the background, the bar, the window
   - **Before it runs**, each field must hold a value of its kind: the caret goes to the first field that does not, and the detail line says why ("grant: empty"). An entry that destroys then asks for its second Enter, on a row that says the call with its values; another key goes back to the form, with its fields.
   - **What goes to the console** is one typed value for each field, an Integer as a number and a Text as its bytes, then the choice. The console builds the line. The panel sends no text of a line.
   - **A parameter that no field can give** (a Table, a Record, a Handle, Bytes, a value of any kind): the entry has no form. Enter closes the panel; the console writes the call in its edit line, with the caret between the parentheses, and its window comes to the front. Control with Enter does the same for each command.
-- **The settings are entries**: one for each value of each setting of the machine, "set font to spleen". The value in use has a mark and says "setting, in use". Enter sets it through the console, the desktop shows the change behind the panel, and the panel shows its list again, so the next value is one key away. The compositor gets no right for it: it marks the value in use from the settings page that it reads as each program does.
+- **The settings are entries**: one for each value of each setting of the machine, "set font to spleen". The value in use has its icon in the text color and says "setting, in use". Enter sets it through the console, the desktop shows the change behind the panel, and the panel shows its list again, so the next value is one key away. The compositor gets no right for it: it knows the value in use from the settings page that it reads as each program does.
 - **A prefix restricts the kinds.** The first character of the typed part: `>` the commands and the exports; `@` the windows and their closes; `:` the settings; `?` the programs, and Enter then asks the console for the page of the manual of the chosen program (the program `manual` must run; its window comes to the front). The names match the part after the prefix. A prefix alone lists each entry of its kinds. The word of the prefix shows at the right of the input band, in the dim color, and each row keeps its kind in words.
 - **With no provider** (the console does not run, or its grant `palette` ended), the palette lists the programs and the windows, and the footer says "entries, no commands". A table of the console that fails a check gives the same list, and "entries, commands refused". The footer then keeps the hint of Enter in the place of the prefixes, so the words have their room.
 - **The keys**:
@@ -298,7 +353,7 @@ The interface package (`support/interface`, `docs/INTERFACE.md`) draws these ele
 | Bar | The track in `COLOR_TRACK`; the full part from 125 % of its color at the top to 78 % at the bottom; 2 pixels at least for a value above 0 |
 | Button | A rectangle of the track with its label in the text color; blue (`COLOR_TITLE`) at 60 % when it has the focus or the pointer is over it, full blue with a white label when it is open or both |
 | List with a choice | Lines of 24 pixels; the chosen line in `COLOR_CHOSEN` with its name and its hint in white; a line of 2 pixels under a searched part of each name; a bar of 2 pixels at the right when the lines do not fit |
-| List of rows | Rows of 24 pixels: a mark of 8 pixels that says one fact (a full square, or the outline of a square 2 pixels wide), the name (in the font of the cells with a quiet detail after it when it is code), and at the right what the row is, in words, in the dim color; a line of 2 pixels under each matched character of a name; the chosen row filled, with its text in white, and at its right its hint or the same words as the other rows; a dim line of text as the heading of a group; a bar of 2 pixels at the right when the rows do not fit |
+| List of rows | Rows of 24 pixels: the kind icon of the row, 12 pixels, in a color that says one fact (white on the chosen row), the name (in the font of the cells with a quiet detail after it when it is code), and at the right what the row is, in words, in the dim color; a line of 2 pixels under each matched character of a name; the chosen row filled, with its text in white, and at its right its hint or the same words as the other rows; a dim line of text as the heading of a group; a bar of 2 pixels at the right when the rows do not fit |
 | Text input | A field of the track with a line of 2 pixels at its bottom (`COLOR_TITLE` with the focus, `COLOR_NOT_USABLE` without); the text in white, at scale 1 or 2; a caret of 2 x 16 pixels in `COLOR_TITLE` with the focus (4 x 32 at scale 2), at any place of the text; the placeholder in the dim color |
 | Panel with a flush input | The input is the top band of the panel, from edge to edge, with no border on its three outer sides: its fill and the line of 2 pixels under it are its edge. The rest of the panel has a border of 1 pixel at the left, the right and the bottom |
 | Large number | The font at 3 times its size, drawn from its outline at 24 x 48: the one number of a card (section 5) |
@@ -312,7 +367,7 @@ A chosen row is the chosen line of a list, of a menu of the bar, of the palette,
 - A matched character of a chosen row in a grid of cells is the reverse: the chosen blue on a white cell, 4.67 to 1. In a list of the interface font, the line of 2 pixels under the searched part, or under each matched character, is white.
 - A title bar is not a chosen row: it keeps its gradient from `COLOR_TITLE`. An open button draws its white label on `COLOR_CHOSEN` too (4.67).
 - The row of the palette that asks for a second Enter is not in `COLOR_CHOSEN`: its fill is `COLOR_STOP_PROGRAM`, the concept of what it does, and its text is white: 6.3 to 1.
-- A host test computes the contrast of the text and of a matched character on the chosen row (`support/terminal/code_runs_test.odin`). A second host test computes the pairs of the palette: white on the chosen row, white on `COLOR_STOP_PROGRAM`, white and each color of code on the track of the input band, the dim color on the surface of a card, and the dim placeholder of the input band as a large text, at 3 to 1 (`support/graphics/palette_colors_test.odin`).
+- A host test computes the contrast of the text and of a matched character on the chosen row (`support/terminal/code_runs_test.odin`). A second host test computes the pairs of the palette: white on the chosen row, white on `COLOR_STOP_PROGRAM`, white and each color of code on the track of the input band, the dim color on the surface of a card, the dim placeholder of the input band as a large text, at 3 to 1, and each color of an icon of a row on the surface of a card, at 3 to 1 (`support/graphics/palette_colors_test.odin`).
 
 - An element that takes input can take the focus, and the keyboard reaches it: Tab, Enter, Space, the arrows (`docs/INTERFACE.md`, section 4).
 

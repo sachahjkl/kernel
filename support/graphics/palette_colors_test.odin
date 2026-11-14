@@ -44,3 +44,38 @@ palette_colors_keep_their_contrast :: proc(t: ^testing.T) {
 		expect_contrast(t, "a dim text on the card", COLOR_DIM, surface, TEXT_CONTRAST_LEAST)
 	}
 }
+
+// The least contrast of a graphic that carries a fact (WCAG 2.1, 1.4.11).
+@(private = "file")
+GRAPHIC_CONTRAST_LEAST :: 3.0
+
+// The icon of a row of the palette (docs/DESIGN.md, "The icons of the
+// kinds") keeps the contrast of a graphic on each surface under it: each
+// color that an icon takes on the surface of a card, and white on the
+// chosen row and on the row that asks for a second Enter. The deep red of
+// "stop a program" does not keep it on a card, so the icon of an entry
+// that destroys has the brighter red of that concept.
+@(test)
+palette_icon_colors_keep_their_contrast :: proc(t: ^testing.T) {
+	icon_colors := [?]Color {
+		value_kind_color(.Module, false), // A program that has a window, an export.
+		value_kind_color(.Command, false), // A command.
+		value_kind_color(.Grant, false), // A grant, as a candidate of a field.
+		COLOR_TITLE, // The window that has the focus.
+		COLOR_TEXT, // The value of a setting that the machine uses.
+		COLOR_DIM, // The quiet state of each of them.
+		COLOR_STOP_PROGRAM_POINTER_OVER, // An entry that destroys.
+	}
+	for surface in ([2]Color{COLOR_CARD_TOP, COLOR_CARD_BOTTOM}) {
+		for color in icon_colors {
+			expect_contrast(t, "an icon on the card", color, surface, GRAPHIC_CONTRAST_LEAST)
+		}
+	}
+	expect_contrast(t, "a white icon on the chosen row", COLOR_WHITE, COLOR_CHOSEN, GRAPHIC_CONTRAST_LEAST)
+	expect_contrast(t, "a white icon on the row that asks", COLOR_WHITE, COLOR_STOP_PROGRAM, GRAPHIC_CONTRAST_LEAST)
+	// Why the icon of an entry that destroys is not in the deep red, and
+	// why each icon of a chosen row is white: these pairs are under the
+	// bound.
+	testing.expect(t, value_contrast_ratio(COLOR_STOP_PROGRAM, COLOR_CARD_TOP) < GRAPHIC_CONTRAST_LEAST)
+	testing.expect(t, value_contrast_ratio(value_kind_color(.Module, false), COLOR_CHOSEN) < GRAPHIC_CONTRAST_LEAST)
+}

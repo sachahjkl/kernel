@@ -6,6 +6,7 @@ import "core:testing"
 import "contract:palette_table"
 import "support:graphics"
 import "support:interface"
+import "support:kind_icons"
 import "support:line_editor"
 
 @(private = "file")
@@ -478,7 +479,7 @@ OUTSIDE_COLOR :: 0x123456 // A color that no record of the panel draws.
 
 @(private = "file")
 Screen :: struct {
-	records: [256]interface.Draw_Record,
+	records: [512]interface.Draw_Record, // As the compositor has: the rows, and the rectangles of their icons.
 	text:    [4096]u8,
 	table:   interface.Draw_Table,
 	pixels:  []graphics.Color,
@@ -638,7 +639,9 @@ the_caret_follows_the_typed_part :: proc(t: ^testing.T) {
 		caret_x := x + interface.TEXT_INPUT_LINE_MARGIN + count * graphics.CELL_WIDTH * INPUT_SCALE
 		found := false
 		for record in screen.table.records[:screen.table.record_count] {
-			if record.kind == .Rectangle && record.first_color == graphics.COLOR_TITLE && int(record.width) == 2 * INPUT_SCALE {
+			// In the input band only: under it, a part of the icon of a
+			// window can have the same color and the same width.
+			if record.kind == .Rectangle && record.first_color == graphics.COLOR_TITLE && int(record.width) == 2 * INPUT_SCALE && int(record.y) < y + INPUT_BAND_HEIGHT - 2 {
 				found = true
 				testing.expect_value(t, int(record.x), caret_x)
 				testing.expect_value(t, int(record.y), y + (INPUT_BAND_HEIGHT - graphics.CELL_HEIGHT * INPUT_SCALE) / 2)
@@ -647,6 +650,153 @@ the_caret_follows_the_typed_part :: proc(t: ^testing.T) {
 		}
 		testing.expectf(t, found, "typed %q: the panel has a caret", typed)
 	}
+}
+
+// The icon of each entry: its form is the kind of the entry, or the act
+// of an entry that destroys; its color is the color of the kind when the
+// thing is there or in use, and the quiet color when it is not.
+@(test)
+the_icon_of_each_entry :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	table := table_make(GIVEN[:])
+	defer delete(table)
+	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.None)
+	window_icon := kind_icons.cells_of_desktop_kind(.Window)
+	setting_icon := kind_icons.cells_of_desktop_kind(.Setting)
+	export_icon := kind_icons.cells_of_desktop_kind(.Export)
+	stop_icon := kind_icons.cells_of_desktop_kind(.Stop)
+	module_icon := kind_icons.cells_of_value_kind(.Module)
+	command_icon := kind_icons.cells_of_value_kind(.Command)
+	grant_icon := kind_icons.cells_of_value_kind(.Grant)
+	module_color := graphics.value_kind_color(.Module, false)
+	command_color := graphics.value_kind_color(.Command, false)
+	Expected :: struct {
+		kind:  Entry_Kind,
+		name:  string,
+		icon:  ^kind_icons.Cells,
+		color: graphics.Color,
+	}
+	expected := [?]Expected {
+		{.Window, "console", window_icon, graphics.COLOR_TITLE}, // It has the focus.
+		{.Program, "console", module_icon, module_color}, // It has a window.
+		{.Program, "plasma", module_icon, ICON_COLOR_QUIET}, // It has no window.
+		{.Close_Window, "close console", stop_icon, ICON_COLOR_OF_STOP},
+		{.Command, "memory", command_icon, command_color},
+		{.Command, "stop", command_icon, ICON_COLOR_QUIET}, // It needs arguments: the panel asks nothing yet.
+		{.Command, "shutdown", stop_icon, ICON_COLOR_OF_STOP}, // It destroys: the icon of the act, not of the kind.
+	}
+	for item in expected {
+		found := false
+		for &entry in panel.list.entries[:panel.list.entry_count] {
+			if entry.kind != item.kind || entry_name(&entry) != item.name {
+				continue
+			}
+			found = true
+			cells, cells_color := entry_icon(&entry, false)
+			testing.expectf(t, cells == item.icon && cells_color == item.color, "%s (%v): the icon is %p in %06x", item.name, item.kind, cells, cells_color)
+		}
+		testing.expectf(t, found, "the list has %s (%v)", item.name, item.kind)
+	}
+	// Each entry of the list has an icon, in a color of the icons.
+	for &entry in panel.list.entries[:panel.list.entry_count] {
+		cells, cells_color := entry_icon(&entry, false)
+		testing.expectf(t, cells != nil && cells_color != 0, "%s has no icon", entry_name(&entry))
+	}
+	// A window that has not the focus, a setting and an export.
+	other_window := Entry{kind = .Window, mark = .Window}
+	setting := Entry{kind = .Setting}
+	export_entry := Entry{kind = .Export}
+	export_with_parameters := Entry{kind = .Export, flags = {.Needs_Arguments}}
+	icon, color := entry_icon(&other_window, false)
+	testing.expect(t, icon == window_icon && color == ICON_COLOR_QUIET)
+	icon, color = entry_icon(&setting, true)
+	testing.expect(t, icon == setting_icon && color == graphics.COLOR_TEXT)
+	icon, color = entry_icon(&setting, false)
+	testing.expect(t, icon == setting_icon && color == ICON_COLOR_QUIET)
+	icon, color = entry_icon(&export_entry, false)
+	testing.expect(t, icon == export_icon && color == module_color)
+	icon, color = entry_icon(&export_with_parameters, false)
+	testing.expect(t, icon == export_icon && color == ICON_COLOR_QUIET)
+	// The candidates of a field of a form.
+	icon, color = candidate_icon(.Program)
+	testing.expect(t, icon == module_icon && color == module_color)
+	icon, color = candidate_icon(.Module)
+	testing.expect(t, icon == module_icon && color == module_color)
+	icon, color = candidate_icon(.Grant)
+	testing.expect(t, icon == grant_icon && color == graphics.value_kind_color(.Grant, false))
+	icon, _ = candidate_icon(.None)
+	testing.expect(t, icon == nil)
+}
+
+// set_cells_of counts the cells of an icon.
+@(private = "file")
+set_cells_of :: proc(icon: ^kind_icons.Cells) -> (count: int) {
+	for cell_y in 0 ..< kind_icons.ICON_SIZE {
+		for cell_x in 0 ..< kind_icons.ICON_SIZE {
+			count += kind_icons.cell_is_set(icon, cell_x, cell_y) ? 1 : 0
+		}
+	}
+	return
+}
+
+// Each row that the panel shows has the icon of its entry at its left, in
+// the box of 12 pixels before the name: each cell once, in the color of
+// the entry, and in white on the chosen row and on the row that asks for
+// a second Enter. A heading has none.
+@(test)
+each_row_shows_the_icon_of_its_entry :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	panel_of_test(panel)
+	panel_open(panel)
+	screen := screen_make()
+	defer screen_free(screen)
+	x, y := panel_place(SCREEN_WIDTH)
+	rows_checked := 0
+	check :: proc(t: ^testing.T, screen: ^Screen, panel: ^Panel, panel_x, panel_y: int, what: string) -> (entries: int) {
+		panel_build(screen, panel)
+		testing.expectf(t, !screen.table.full, "%s: the draw table holds the panel and its icons", what)
+		for shown in 0 ..< min(panel.list.row_count - panel.first_row, LIST_ROWS) {
+			row := panel.list.rows[panel.first_row + shown]
+			box_left := panel_x + BORDER + interface.LIST_ROW_ICON_X
+			box_top := panel_y + LIST_TOP + shown * ROW_HEIGHT + (ROW_HEIGHT - interface.LIST_ROW_ICON_SIZE) / 2
+			icon: ^kind_icons.Cells
+			color: graphics.Color
+			if row.kind == .Entry {
+				icon, color = entry_icon(&panel.list.entries[row.entry], false)
+				if panel.first_row + shown == panel.choice {
+					color = graphics.COLOR_WHITE
+				}
+				entries += 1
+			}
+			pixels, others := 0, 0
+			for record in screen.table.records[:screen.table.record_count] {
+				if record.kind != .Rectangle || int(record.x) < box_left || int(record.y) < box_top || int(record.x + record.width) > box_left + interface.LIST_ROW_ICON_SIZE || int(record.y + record.height) > box_top + interface.LIST_ROW_ICON_SIZE {
+					continue
+				}
+				if icon != nil && record.first_color == u32(color) {
+					pixels += int(record.width) * int(record.height)
+				} else {
+					others += 1
+				}
+			}
+			testing.expectf(t, pixels == set_cells_of(icon) && others == 0, "%s, row %d: %d pixels of the icon for %d cells, and %d other rectangles in its box", what, shown, pixels, set_cells_of(icon), others)
+		}
+		return
+	}
+	// The groups: windows and programs, with and without a window.
+	rows_checked += check(t, screen, panel, x, y, "no typed part")
+	// One ranked list of windows, programs and the close of a window.
+	type_text(panel, "pla")
+	rows_checked += check(t, screen, panel, x, y, "pla")
+	// The row that asks for a second Enter.
+	line_editor.line_clear(&panel.line)
+	type_text(panel, "closepla")
+	panel.state = state_after(panel.state, key_action(panel.state, .Enter), chosen_of(panel))
+	testing.expect_value(t, panel.state, State.Confirm)
+	rows_checked += check(t, screen, panel, x, y, "the question")
+	testing.expect(t, rows_checked >= 12)
 }
 
 // What the rows say: the chosen row is filled with the chosen blue and

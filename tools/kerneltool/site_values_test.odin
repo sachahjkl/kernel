@@ -7,7 +7,7 @@ import "core:testing"
 import "support:graphics"
 
 // The table of the kinds is complete: each kind has a name of its own, a
-// title, a meaning, an icon of 12 by 12 cells that no other kind has, and
+// title, a meaning, a kind icon of 12 by 12 cells that no other kind has, and
 // a color in each form whose contrast on each surface of a table is at
 // least the bound.
 @(test)
@@ -26,7 +26,8 @@ site_value_kinds_are_complete :: proc(t: ^testing.T) {
 		}
 		names[value_kinds.VALUE_KIND_NAMES[kind]] = kind
 		filled := 0
-		for row in description.cells {
+		cells := site_value_icon_cells(kind)
+		for row in cells {
 			testing.expectf(t, len(row) == SITE_VALUE_ICON_SIZE, "a row of the icon of %v has %d cells", kind, len(row))
 			for cell in transmute([]u8)row {
 				testing.expectf(t, cell == '#' || cell == '.', "the icon of %v has the cell %c", kind, cell)
@@ -34,7 +35,7 @@ site_value_kinds_are_complete :: proc(t: ^testing.T) {
 			}
 		}
 		testing.expectf(t, filled > 0, "the icon of %v is empty", kind)
-		joined := strings.join(description.cells[:], "", context.temp_allocator)
+		joined := strings.join(cells[:], "", context.temp_allocator)
 		if other, found := icons[joined]; found {
 			testing.expectf(t, false, "the kinds %v and %v have the same icon", kind, other)
 		}
@@ -76,7 +77,8 @@ site_value_icons_in_the_style_sheet :: proc(t: ^testing.T) {
 		testing.expect(t, strings.has_prefix(svg, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"12\" height=\"12\" viewBox=\"0 0 12 12\""))
 		testing.expect(t, strings.has_suffix(svg, "</svg>\n"))
 		runs := 0
-		for row in site_value_kinds[kind].cells {
+		icon_cells := site_value_icon_cells(kind)
+		for row in icon_cells {
 			for index in 0 ..< len(row) {
 				if row[index] == '#' && (index == 0 || row[index - 1] != '#') {
 					runs += 1
