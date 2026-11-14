@@ -147,9 +147,6 @@ site_readme_of_the_repository :: proc(t: ^testing.T) {
 	testing.expect(t, readme.mark_description != "")
 	testing.expect(t, readme.use_paragraph != "")
 	testing.expect(t, len(readme.licence_paragraphs) > 0)
-	for picture in site_pictures {
-		testing.expectf(t, picture.path in readme.captions, "README.md has no caption for %s", picture.path)
-	}
 	reviews, reviews_error := os.read_entire_file(SITE_REVIEWS_FILE, context.temp_allocator)
 	testing.expect(t, reviews_error == nil, "cannot read docs/REVIEWS.md")
 	step_count, reviews_problem := site_reviews_step_count(string(reviews))

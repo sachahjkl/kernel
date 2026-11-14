@@ -385,9 +385,10 @@ Film :: struct {
 	output: string, // The log of its machine.
 }
 
-FILM_NAMES :: "terminal | palette"
+FILM_NAMES :: "terminal | palette | heron"
 TEST_OUTPUT_FILM_TERMINAL :: BUILD_FOLDER + "/test_output_film_terminal.txt"
 TEST_OUTPUT_FILM_PALETTE :: BUILD_FOLDER + "/test_output_film_palette.txt"
+TEST_OUTPUT_FILM_HERON :: BUILD_FOLDER + "/test_output_film_heron.txt"
 
 // film_of_name gives the film with a name. The name of a film is the text
 // of the step Film_Start of its scenario.
@@ -397,14 +398,16 @@ film_of_name :: proc(name: string) -> (film: Film, found: bool) {
 		return Film{name = "terminal", steps = scenario_film[:], output = TEST_OUTPUT_FILM_TERMINAL}, true
 	case "palette":
 		return Film{name = "palette", steps = scenario_palette_film[:], output = TEST_OUTPUT_FILM_PALETTE}, true
+	case "heron":
+		return Film{name = "heron", steps = scenario_heron_film[:], output = TEST_OUTPUT_FILM_HERON}, true
 	}
 	return {}, false
 }
 
 // run_film makes one film: `film` and `film terminal` the film of the
-// terminal, `film palette` the film of the palette. The two films differ
-// by their scenario only: the worker, the list of the encoder and the
-// encoder are the same. A film is for the development log, and for the
+// terminal, `film palette` the film of the palette, `film heron` the film
+// of the program heron. The films differ by their scenario only: the
+// worker, the list of the encoder and the encoder are the same. A film is for the development log, and for the
 // news entry that names it: it is not a test, and no check runs it.
 run_film :: proc(args: []string) -> int {
 	name := "terminal"

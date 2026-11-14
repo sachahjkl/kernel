@@ -271,6 +271,7 @@ COMMANDS :: [?]Command {
 	//
 	// - no argument, or `terminal`: the film of the terminal.
 	// - `palette`: the film of the palette.
+	// - `heron`: the film of the program heron.
 	{name = "film", about = "build, start the machine, film a scenario (" + FILM_NAMES + "; no argument: terminal), and write " + FILM_FOLDER + "/<name>.mp4, " + FILM_FOLDER + "/<name>.webm, a copy of the MP4 file in a new folder of " + DEVELOPMENT_LOG_FOLDER + ", and " + FILM_DOCUMENT_FOLDER + "/<name>.webm when a news entry names the film (needs ffmpeg)", run = run_film},
 	// Converts the BDF file of the font of the terminal (Spleen 8x16, from
 	// `FONT_SOURCE`) to Odin data in `support/graphics/font.odin`. The result
@@ -388,9 +389,22 @@ COMMANDS :: [?]Command {
 	// - `check`: checks the head, the date, the picture, the release, the
 	//   guide and the length of each entry. `kerneltool check` runs it.
 	{name = "news", about = "new <subject> | check: the news entries of " + NEWS_FOLDER + ", dated reports in prose of what a reader can now see or use, for the page of the news of the site", run = run_news},
+	// Checks the roadmap, `ROADMAP.md`: the planned work of the system, in
+	// the sections Now, Next and Later.
+	//
+	// - `check`: checks the title, the three sections in their order, the
+	//   form of each entry (a bold summary, then one or two sentences), the
+	//   design link of an entry, and that the file gives no date. It refuses
+	//   an entry whose summary is the summary of an entry of the changelog:
+	//   that work is done. `kerneltool check` runs it.
+	//
+	// The file is written by hand: an entry is added when a work is planned,
+	// and removed in the commit that ends the work
+	// (docs/TOOLS.md, "The roadmap").
+	{name = "roadmap", about = "check: the planned work of `" + ROADMAP_FILE + "`, in the sections Now, Next and Later, for the page of the roadmap of the site", run = run_roadmap},
 	// Writes the site in `build/site/`: the home, the guides, the reference
 	// tables read from the code, the status, the news, the releases, the
-	// index of the search and its script.
+	// roadmap, the index of the search and its script.
 	//
 	// - `--address https://<host>/<path>` (optional): the address of the
 	//   published site, for the canonical addresses, the sitemap and the
@@ -412,9 +426,9 @@ COMMANDS :: [?]Command {
 	// alone, the host tests of each library, the origin of the cryptography,
 	// the mark, the pictures of the README, the fixed addresses, the bounds
 	// of the tests, the rule on comments, the form of the glossary, the
-	// changelog and the news. Then the whole machine test (`test`) and a
-	// second build that must give the same bytes.
-	{name = "check", about = "odin check -vet and odin test of the host code, the checks of the sources (among them the rule on comments and the form of the glossary), changelog check, news check, then test", run = run_check},
+	// changelog, the news and the roadmap. Then the whole machine test
+	// (`test`) and a second build that must give the same bytes.
+	{name = "check", about = "odin check -vet and odin test of the host code, the checks of the sources (among them the rule on comments and the form of the glossary), changelog check, news check, roadmap check, then test", run = run_check},
 	// Makes or shows the key that signs the system description.
 	//
 	// - `new <folder>`: writes a new private key, readable by its owner only,
@@ -871,10 +885,16 @@ run_check :: proc(args: []string) -> int {
 	if !glossary_check() {
 		return EXIT_FAILURE
 	}
+	if !intent_index_check() {
+		return EXIT_FAILURE
+	}
 	if !changelog_check() {
 		return EXIT_FAILURE
 	}
 	if !news_check() {
+		return EXIT_FAILURE
+	}
+	if !roadmap_check() {
 		return EXIT_FAILURE
 	}
 	if run_test(nil) != 0 {

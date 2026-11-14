@@ -49,7 +49,7 @@ mark_animations_picture_write :: proc() -> bool {
 	graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, "The animations of the mark (support/mark): frame 0 is the still heron; cells of 8 pixels", graphics.COLOR_TEXT)
 	y += MARK_ANIMATIONS_LINE
 	for animation in mark.Animation {
-		moves := "" if !mark.animation_moves(animation) else "; the home of the site moves the heron"
+		moves := "" if !mark.animation_moves(animation) else "; the home of the site and the program heron move the heron"
 		heading := fmt.tprintf("%s: %d frames, %d ms%s", mark.animation_names[animation], mark.animation_frame_count(animation), mark.animation_duration(animation), moves)
 		graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, heading, graphics.COLOR_KERNEL)
 		count := mark.animation_frame_count(animation)
@@ -73,7 +73,7 @@ mark_animations_picture_write :: proc() -> bool {
 			y += mark_animation_forms_height(animation)
 		}
 	}
-	still_least, still_most := site_mark_still_bounds()
+	still_least, still_most := mark.still_bounds()
 	graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, fmt.tprintf("On the home of the site: each animation once in a round, in an order of chance; still for %d to %d ms between two", still_least, still_most), graphics.COLOR_TEXT)
 
 	rgb := make([]u8, 3 * len(colors), context.temp_allocator)

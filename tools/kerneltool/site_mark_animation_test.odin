@@ -283,13 +283,13 @@ site_mark_animation_table_parses :: proc(t: ^testing.T) {
 	// The dash, the hop, the stretch and the flap move the heron.
 	testing.expect_value(t, moving, 4)
 	schedule, _ := root["schedule"].(json.Object)
-	still_least, still_most := site_mark_still_bounds()
+	still_least, still_most := mark.still_bounds()
 	written_least, _ := schedule["stillLeast"].(json.Float)
 	written_most, _ := schedule["stillMost"].(json.Float)
 	written_share, _ := schedule["sharePercent"].(json.Float)
 	testing.expect_value(t, int(written_least), still_least)
 	testing.expect_value(t, int(written_most), still_most)
-	testing.expect_value(t, int(written_share), SITE_MARK_STILL_SHARE_PERCENT)
+	testing.expect_value(t, int(written_share), mark.STILL_SHARE_PERCENT)
 	// The steps of the model, which the self test of the script compares
 	// with its own rule.
 	check, _ := root["check"].(json.Object)
@@ -325,8 +325,8 @@ site_mark_animation_table_parses :: proc(t: ^testing.T) {
 		testing.expectf(t, strings.contains(sheet, class), "the style sheet does not name the class %s", class)
 	}
 	testing.expect(t, strings.contains(script, "Math.imul(state, 1664525) + 1013904223"))
-	testing.expect_value(t, SITE_MARK_GENERATOR_MULTIPLIER, 1664525)
-	testing.expect_value(t, SITE_MARK_GENERATOR_INCREMENT, 1013904223)
+	testing.expect_value(t, mark.GENERATOR_MULTIPLIER, 1664525)
+	testing.expect_value(t, mark.GENERATOR_INCREMENT, 1013904223)
 }
 
 // The rules of the style sheet for the heron of the home. The pictures of
@@ -581,129 +581,30 @@ merged_frames :: proc(sprites: ^Site_Mark_Sprites, animation: mark.Animation) ->
 	return merged
 }
 
-// The rule of the choice: in each round of the memory each animation plays
-// once; no animation follows itself, also from the end of a round to the
-// start of the next one; the order is not the same in each round.
+// The list that ties the script to the rule of support/mark (the tests of
+// the rule itself are there: play_test.odin). The steps start with an
+// empty memory, do not change from one call to the next, hold each
+// animation once in each of the two whole rounds, and no animation follows
+// itself, also where the memory is emptied.
 @(test)
-site_mark_choice_plays_each_animation_once_in_a_round :: proc(t: ^testing.T) {
-	seeds := [?]u32{1, 2, 3, 20261114, 0xFFFFFFFF}
-	for seed in seeds {
-		memory := SITE_MARK_MEMORY_EMPTY
-		generator := Site_Mark_Generator{seed}
-		previous := -1
-		first_round: [SITE_MARK_ANIMATION_COUNT]int
-		rounds_as_the_first := 0
-		ROUNDS :: 400
-		for round in 0 ..< ROUNDS {
-			seen: u32
-			as_the_first := true
-			for place in 0 ..< SITE_MARK_ANIMATION_COUNT {
-				animation := site_mark_next_animation(&memory, &generator)
-				testing.expectf(t, animation >= 0 && animation < SITE_MARK_ANIMATION_COUNT, "the seed %d: the animation %d does not exist", seed, animation)
-				testing.expectf(t, animation != previous, "the seed %d, round %d: the animation %d follows itself", seed, round, animation)
-				testing.expectf(t, seen & (u32(1) << uint(animation)) == 0, "the seed %d, round %d: the animation %d plays two times", seed, round, animation)
-				seen |= u32(1) << uint(animation)
-				previous = animation
-				testing.expect_value(t, memory.last, animation)
-				if round == 0 {
-					first_round[place] = animation
-				} else if first_round[place] != animation {
-					as_the_first = false
-				}
-			}
-			testing.expect_value(t, seen, (u32(1) << SITE_MARK_ANIMATION_COUNT) - 1)
-			testing.expect_value(t, memory.played, seen)
-			if round > 0 && as_the_first {
-				rounds_as_the_first += 1
-			}
-		}
-		testing.expectf(t, rounds_as_the_first < ROUNDS / 100, "the seed %d: %d rounds have the order of the first round", seed, rounds_as_the_first)
-	}
-}
-
-// A memory that a page of the visit kept: the play goes on from it. The
-// animations that it holds do not play before the others did.
-@(test)
-site_mark_choice_goes_on_from_a_kept_memory :: proc(t: ^testing.T) {
-	kept := Site_Mark_Memory{played = 0b0000_0000_0010_1101, last = 5}
-	held := kept.played
-	generator := Site_Mark_Generator{7}
-	left := 0
-	for index in 0 ..< SITE_MARK_ANIMATION_COUNT {
-		if held & (u32(1) << uint(index)) == 0 {
-			left += 1
-		}
-	}
-	for _ in 0 ..< left {
-		animation := site_mark_next_animation(&kept, &generator)
-		testing.expectf(t, held & (u32(1) << uint(animation)) == 0, "the animation %d was in the memory", animation)
-	}
-	testing.expect_value(t, kept.played, (u32(1) << SITE_MARK_ANIMATION_COUNT) - 1)
-	// The memory is full: the next choice empties it, and is not the
-	// animation played last.
-	last := kept.last
-	animation := site_mark_next_animation(&kept, &generator)
-	testing.expect(t, animation != last)
-	testing.expect_value(t, kept.played, u32(1) << uint(animation))
-}
-
-// The still share: the bounds of a still time follow from the times of the
-// animations, and over a long play of the model the heron is still for the
-// still share of the time, within one point.
-@(test)
-site_mark_heron_is_still_for_its_share :: proc(t: ^testing.T) {
-	least, most := site_mark_still_bounds()
-	total := site_mark_animations_duration()
-	testing.expect_value(t, total, 19310)
-	testing.expect_value(t, least, 429)
-	testing.expect_value(t, most, 1287)
-	// The mean still time times the moving share is the mean time of an
-	// animation times the still share, within the rounding of one
-	// millisecond for each animation.
-	mean_still := (least + most) / 2
-	difference := mean_still * (100 - SITE_MARK_STILL_SHARE_PERCENT) * SITE_MARK_ANIMATION_COUNT - total * SITE_MARK_STILL_SHARE_PERCENT
-	testing.expectf(t, abs(difference) <= (100 - SITE_MARK_STILL_SHARE_PERCENT) * SITE_MARK_ANIMATION_COUNT, "the mean still time %d ms is not the share of %d ms", mean_still, total)
-	// Two animations never read as one: the shortest still time is several
-	// of the shortest common frames.
-	testing.expect(t, least >= 2 * mark.FRAME_DURATION_LEAST)
-	seeds := [?]u32{1, 2, 3, 20261114}
-	for seed in seeds {
-		memory := SITE_MARK_MEMORY_EMPTY
-		generator := Site_Mark_Generator{seed}
-		still_time, moving_time := 0, 0
-		for _ in 0 ..< 400 * SITE_MARK_ANIMATION_COUNT {
-			step := site_mark_step(&memory, &generator)
-			testing.expectf(t, step.still_milliseconds >= least && step.still_milliseconds <= most, "a still time of %d ms", step.still_milliseconds)
-			still_time += step.still_milliseconds
-			moving_time += mark.animation_duration(mark.Animation(step.animation))
-		}
-		// In thousandths, so that the test has no fraction.
-		share := 1000 * still_time / (still_time + moving_time)
-		testing.expectf(t, share >= 10 * (SITE_MARK_STILL_SHARE_PERCENT - 1) && share <= 10 * (SITE_MARK_STILL_SHARE_PERCENT + 1), "the seed %d: the heron is still for %d thousandths of the time", seed, share)
-	}
-}
-
-// The generator of the model gives the numbers that the script computes
-// with Math.imul: the product wraps at 32 bits, and a number is under its
-// bound.
-@(test)
-site_mark_generator_wraps_at_32_bits :: proc(t: ^testing.T) {
-	generator := Site_Mark_Generator{0}
-	first := site_mark_generator_below(&generator, 1 << 16)
-	// 1013904223 is 0x3C6EF35F: its upper 16 bits are 0x3C6E.
-	testing.expect_value(t, generator.state, u32(1013904223))
-	testing.expect_value(t, first, 0x3C6E)
-	for bound in 1 ..= 40 {
-		value := site_mark_generator_below(&generator, bound)
-		testing.expectf(t, value >= 0 && value < bound, "the number %d is not under %d", value, bound)
-	}
-	// The steps of the check start with an empty memory and do not change
-	// from one call to the next.
+site_mark_check_steps_follow_the_rule :: proc(t: ^testing.T) {
 	once := site_mark_check_steps()
 	again := site_mark_check_steps()
 	testing.expect_value(t, len(once), SITE_MARK_CHECK_STEP_COUNT)
+	testing.expect_value(t, len(once), 2 * mark.ANIMATION_COUNT + 3)
+	least, most := mark.still_bounds()
+	previous := -1
+	seen: u32
 	for step, index in once {
 		testing.expect_value(t, again[index], step)
+		testing.expectf(t, step.still_milliseconds >= least && step.still_milliseconds <= most, "the step %d: a still time of %d ms", index, step.still_milliseconds)
+		testing.expectf(t, step.animation != previous, "the step %d: the animation %d follows itself", index, step.animation)
+		previous = step.animation
+		if index % mark.ANIMATION_COUNT == 0 {
+			seen = 0
+		}
+		testing.expectf(t, seen & (u32(1) << uint(step.animation)) == 0, "the step %d: the animation %d plays two times in its round", index, step.animation)
+		seen |= u32(1) << uint(step.animation)
 	}
 }
 

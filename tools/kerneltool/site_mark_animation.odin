@@ -5,8 +5,10 @@
 // mark_tile_map.odin): it asks for the three tile maps of the site, which
 // the table of the uses of the mark names, and writes the script of the
 // page with the table of the generator in it. It draws no picture of the
-// site. Which animation plays is in site_mark_schedule.odin
-// (docs/SITE.md, "The rhythm of the animations").
+// site. Which animation plays is the rule of support/mark (play.odin),
+// which the program `heron` of the system follows too;
+// site_mark_schedule.odin ties the script to that rule (docs/SITE.md, "The
+// rhythm of the animations").
 //
 // What the site gets:
 //   pictures/mark_animation_home.png and mark_animation_home_light.png: the
@@ -130,11 +132,11 @@ site_mark_animation_write :: proc(site: ^Site) -> bool {
 		site_write_file(site, path, data) or_return
 	}
 	sprites, _ := site_mark_sprites()
-	still_least, still_most := site_mark_still_bounds()
+	still_least, still_most := mark.still_bounds()
 	fmt.printfln(
 		"kerneltool: site: the animations of the mark: %d animations, %d ms in all, %d sprites; a still time of %d to %d ms; %s %d bytes, %s %d bytes, %s %d bytes, %s %d bytes",
 		len(mark.Animation),
-		site_mark_animations_duration(),
+		mark.animations_duration(),
 		len(sprites.cells),
 		still_least,
 		still_most,
@@ -242,13 +244,13 @@ site_mark_animation_table_json :: proc(tile_maps: ^Site_Mark_Tile_Maps, sheet_ad
 	for animation in mark.Animation {
 		frame_least = min(frame_least, mark.animation_frame_duration_least[animation])
 	}
-	still_least, still_most := site_mark_still_bounds()
+	still_least, still_most := mark.still_bounds()
 	write(&b, "},\"schedule\":{\"stillLeast\":")
 	number(&b, still_least)
 	write(&b, ",\"stillMost\":")
 	number(&b, still_most)
 	write(&b, ",\"sharePercent\":")
-	number(&b, SITE_MARK_STILL_SHARE_PERCENT)
+	number(&b, mark.STILL_SHARE_PERCENT)
 	write(&b, "},\"check\":{\"seed\":")
 	number(&b, SITE_MARK_CHECK_SEED)
 	write(&b, ",\"steps\":[")
@@ -365,7 +367,7 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
   const EVERY = Math.pow(2, COUNT) - 1;
   const STORE = "modus.mark.played";
 
-  // The rule of the choice, as site_mark_next_animation of the tool. The
+  // The rule of the choice, as next_animation of support/mark. The
   // memory holds the animations that were played, one bit each, and the one
   // played last. The next one is chosen among those that the memory does
   // not hold. When the memory holds every animation, it is emptied first,

@@ -417,6 +417,40 @@ A module carries the same text, with its marks, and the program `manual` reads t
 
 The documentation of the kernel operations is the model: for each operation, one sentence that says what it does, its arguments as a list, its results, its statuses as a list with when each comes, the rights that it needs in bold, links to its records and to its guide, and an example call through `support/system` when one helps.
 
+## The intent folder
+
+The folder `src/md` holds the intent files (`GLOSSARY.md`, "Intent file"): one Markdown file for the design of each part of the system, by the standard of [srcmd.org](https://srcmd.org). Its entry point is `src/md/README.md`: an overview of the system, the points that a newcomer gets wrong, the rules of the form of a file (`src/md/README.md`, "The rules of this folder"), and the file index.
+
+**Why a check.** A reader who starts work on a part reads the file index first, and opens only the files that it lists. A file that the index does not list is a design that nobody finds. An entry with no file sends a reader nowhere. Both faults come from a change that touched one side only, so a check keeps the two the same set.
+
+`kerneltool check` runs `intent_index_check` (`tools/kerneltool/intent_index.odin`). It reads each `.md` file of `src/md` and of its folders, and refuses:
+
+| Fault | Message |
+|---|---|
+| `src/md/README.md` is absent | "does not exist: the intent folder has no entry point" |
+| The README has no heading `## File Index`, or more than one | "has N headings "## File Index": it has exactly one" |
+| A line under that heading is not one link and a description, `- [path](path): description` | "a line of the file index is one link and a description" |
+| An entry is not a path from `src/md` (it leaves the folder, or it is an address) | "is not a path from the intent folder" |
+| An entry names a file that the folder does not have | "names no file of the intent folder" |
+| An entry names the README | "the file index lists the other files, not itself" |
+| A file of the folder is not in the index, or is there two times | "is not in the file index", "is N times in the file index" |
+| The first heading of a file is not a heading of level 1 | "the first heading of the file is not a heading of level 1" |
+| A relative link of a file names no file of the repository | "the link to ... names no file of the repository" |
+
+The section of the index ends at the next heading. A line inside a fence of code is an example, and a link inside a code span is not a link. A link to an address of another site, and a link to a heading of the same file, are not read.
+
+**The pointers of an intent file.** An intent file names a guide with a link whose text is the path of the guide, then the heading in quotes:
+
+```
+[`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "8. The palette provider"
+```
+
+The link opens the guide for a reader of the repository. The labels after it are those of a document pointer, and the check of the pointers of the site reads them with the same rule (`site_document_pointer_problems`, which `kerneltool site` and the host test `site_document_pointers_of_the_repository` run): a heading that the guide does not have stops the command. A link to a Markdown file that is no document, with a heading after it, stops the command too: it is most often a link with a wrong count of `..` (a file of `src/md/features` is three folders under the root, and `src/md/README.md` is two), and its heading must not pass unread. A code span of an intent file that names a document is checked as a code span of a guide is.
+
+**A pointer to an intent file.** An intent file is a working record: the site does not publish it. A comment of a source and a code span of a guide name one by its whole path, `src/md/features/palette.md`, with the labels of a place after it. On a page, the reference links to the file in the repository, at the line of the heading. A pointer to a file that the folder does not have is a stale pointer, and stops the command. The name of an intent file has letters, digits and `_`, so that a path in a sentence ends where the name ends.
+
+**What the check does not prove.** It reads the form, not the content: a file that is listed and that says what the code no longer does passes. A design that changes with no change of its intent file passes too. That rule is held by the review of a change.
+
 ## The commands of the tool
 
 All the automation of the project is one program of the host, `tools/kerneltool`. Each task (a build, a test, the site, a release) is one of its commands, so the same steps run on each computer and in each check. Run a command with `nix develop -c kerneltool <command>`; `kerneltool help` prints the list with one line for each.
@@ -431,15 +465,16 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "kerneltool: all tests passed", then the times of the test (below) |
 | `measure ...` | A measure run: a machine that measures with no other load. No argument: the locks. `scheduler N`, `clock`, `crowd`, `disk`, `flow`, `limits`: the program alone, and its lines. `windows`, `address_space`, `shortage`. The numbers are measures, never conditions ("A check by count, a measure by time") |
 | `screenshots` | The whole test, then the copy of the pictures to `docs/screenshots` and to the development log: the pictures are a fact of the machines, so they are copied as soon as each machine passed. Then a second build and the measure runs whose numbers the measure record holds (the locks, `clock`, `disk`, `scheduler`), then the measure record. `screenshots compress` compresses the PNG files that are stored with no compression |
-| `check` | `odin check -vet` and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the changelog, the news), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
+| `check` | `odin check -vet` and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the file index of the intent folder, the changelog, the news, the roadmap), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
 | `repeat <module> <count>` | Builds one module again and again, with no machine, and counts the distinct results (`docs/REPRODUCIBLE_BUILD.md`). Each of its builds is a whole build |
 | `site` | Writes the site in `build/site/` |
 | `changelog ...`, `news ...`, `release_number` | The fragments of the changelog and its releases, the news entries, the number of the newest release |
+| `roadmap check` | Checks the form of `ROADMAP.md`, the planned work, and refuses an entry whose work has an entry of the changelog ("The roadmap") |
 | `key new <folder>`, `key show` | The key that signs the system description |
 | `font`, `vector_fonts`, `pointers`, `logo`, `portrait` | Convert a source (a font, a pointer theme, the mark, a picture) into the files of the repository. A build reads the result, never the source |
 | `mark <what> [options]` | Draws one picture of the mark: the still mark, a frame, a tile map, the table of a tile map, the picture for a developer; `mark uses` prints the table of the uses ("The pictures of the mark") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
-| `film [terminal \| palette]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4` and `build/films/<name>.webm` ("The film"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
+| `film [terminal \| palette \| heron]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4` and `build/films/<name>.webm` ("The film"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
 
 ### The parts of the machine test
 
@@ -707,8 +742,11 @@ The hang bound ends a wait for a screen that never settles. The test fails, and 
 |---|---|---|
 | `terminal` (also with no argument) | The program `flood` writes lines in the terminal; the keys move in the lines, stop them and start them again | `scenario_film` (`machine.odin`) |
 | `palette` | The palette: a program, a window, a command and its record, the form of a command with its candidates, a question before an entry that destroys, a setting that changes the font of the desktop | `scenario_palette_film` (`palette_film_scenario.odin`) |
+| `heron` | The program `heron`: the heron plays in its own order; the dash at full speed, then four times slower; the lines of the cells with the hop, the stretch and the flap; the dash frame by frame, with the changed cells outlined; one held frame in the free way and on the grid; the three cell sizes | `scenario_heron_film` (`heron_film_scenario.odin`) |
 
-The two films differ by their scenario only. The worker, the list of the encoder and the encoders are the same code.
+The films differ by their scenario only. The worker, the list of the encoder and the encoders are the same code.
+
+**A key with no line.** The program `heron` writes no line for the dot, for Space, for the keys `s` and `z`, and for an animation of its own order. The film of `heron` sends such a key, holds, and then waits for the next line that the program writes: the line of the key `g` or `l` names the animation, its frame and "held", so it proves the dots and the pause before it. No line names the cell size or the slow play: the film shows them, and no step proves them.
 
 **The worker.** Between the steps `Film_Start` and `Film_Stop`, a thread of the tool asks QEMU for a picture of the screen 30 times in one second (`FILM_RATE`), while the scenario runs its steps. The worker has its own connection to QEMU: each test machine has a second socket of the machine protocol (`build/test_output*.film.qmp`), and a machine with no film leaves it with no connection. The keys of the scenario go on the first socket. So a batch of keys and a picture never share a reply, and the tool needs no lock. QEMU does one command at a time: a batch of keys waits at most for one picture, and a picture at most for one batch.
 
@@ -818,6 +856,55 @@ A PNG file of the generator is the smallest that the encoder of the Odin standar
 The host tests of the generator are in `mark_pictures_test.odin`: each kind of request, each refusal, the table of the uses, the words of the command, and `only_the_generator_draws_the_mark`, which fails when another file of the tool calls a drawing procedure of `support/mark`.
 
 What the generator does not write yet: the ICO file and the SVG icon of the site (`site_icons.odin`). The PNG entries of the ICO file come from the generator; the SVG icon is the cells as rectangles with the gradients of `support/mark`, and calls no drawing procedure.
+
+### The roadmap
+
+`ROADMAP.md`, at the root of the repository, holds the planned work of the system. It is the one place of the plans: a guide says what is built and what is not built, and no other file lists the work to come. The changelog is its other half: `CHANGELOG.md` lists the work that is done, `ROADMAP.md` the work that is planned.
+
+The file is plain Markdown that a reader understands with no tool. It has no front matter, no metadata field and no HTML.
+
+```
+# Roadmap
+
+A few lines that say what the file is.
+
+## Now
+
+- **A short summary.** One or two sentences on what the work gives the user.
+
+## Next
+
+- **Another summary.** One sentence. [Design](src/md/features/the_design.md)
+
+## Later
+```
+
+- The title is `# Roadmap`. A preamble of text can follow it.
+- The sections are `## Now`, `## Next` and `## Later`, in this order, each one time. **Now** is the work that is in progress. **Next** is the work that is decided and comes after. **Later** is the work that is wanted and has no order. The file has no other heading.
+- A section is a list, which can be empty. An entry (`GLOSSARY.md`, "Roadmap entry") is `- **<summary>.** <one or two sentences>`. The summary is plain text of at most 80 bytes (`ROADMAP_SUMMARY_MOST`), with its period inside the bold. A next line of the same entry starts with two spaces.
+- The sentences say what the work gives a user of the system, or a developer who builds on it. They do not say how the code changes.
+- When an intent file holds the design of the work, the entry ends with its design link: `[Design](src/md/<file>.md)`. An entry has no other link.
+- The file gives no date: a planned date that passed is a false sentence that nothing corrects. It names no decision and no person: that record is `DECISIONS.md`.
+
+**Who changes the file, and when.** The file is written by hand. An entry is added when a work is planned, and it moves from one section to another when its state changes. When a work is done, its entry is removed in the commit that adds the changelog fragment of the work. A work that is done in part keeps an entry whose summary names the part that is left.
+
+`kerneltool roadmap check` checks the file; `kerneltool check` runs it, and `kerneltool site` stops on the same faults of form. Each problem is one sentence with the line of its fault. The check refuses:
+
+| Fault | The rule |
+|---|---|
+| The title or a section | Line 1 is `# Roadmap`. The three sections are present, in their order, each one time, and no other heading exists |
+| The lines | One empty line before and after a heading, no two empty lines, one line feed at the end, no tab, no space at the end of a line |
+| The preamble | No front matter (`---`), no field `key: value`, no entry before the first section |
+| The form of an entry | A bold summary with its period, not empty, at most 80 bytes, with none of the characters `*`, `[`, `]`, `<`, `>`; then one space and one or two sentences. A sentence ends at a `.`, a `?` or a `!` outside a code span, before a space or the end of the text |
+| A date | A text `yyyy-mm-dd`, or the name of a month with a year after it. A year alone is not refused: `2048 pixels` is a count |
+| HTML, a decision, a role | A tag of HTML outside a code span; the identifier of a decision (a capital D, a `-`, then digits); the word `owner` |
+| A link | A link in the sentences; a design link that is not the last part of the entry, or that names no file `src/md/<file>.md`, or a file that does not exist |
+| An entry twice | Two summaries that are the same but for the case and the marks: on the site they would have one address |
+| A work that is done | A summary that is the bold summary of a fragment, or of an entry of a release |
+
+**The last rule, and its limit.** The tool cannot know that a work is done. It knows that an entry of the changelog has the summary of an entry of the roadmap. So the fragment that ends a planned work takes the summary of its roadmap entry as its bold summary, and the check then fails until the entry is removed: the removal cannot be forgotten in that commit. A fragment with another summary is not seen: the rule helps the writer who follows it, and proves nothing about the others. Two summaries that are equal by chance name two works with one name; the roadmap entry then takes a more exact summary. Two summaries are compared with no regard to the case and to the marks (`roadmap_summary_key`).
+
+The code is `tools/kerneltool/roadmap.odin`; the host tests are `roadmap_test.odin`. The page of the site: `SITE.md`, "The roadmap".
 
 ## The bounds of the tests
 

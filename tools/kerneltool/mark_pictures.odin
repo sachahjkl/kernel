@@ -251,7 +251,9 @@ SITE_MARK_ANIMATION_ICON :: "mark_animation_icon.png"
 // rule of the variant: a picture is smooth; a small icon, one pixel for a
 // cell, is the cells variant. `kerneltool logo` writes the rows of the
 // repository and `kerneltool site` the rows of the site; neither holds a
-// number of a picture of its own.
+// number of a picture of its own. What the system draws is not a file and
+// has no row; it follows the same rule: the window of the program `heron`
+// and the boot display are smooth, the bar of the desktop is cells.
 //
 // The repository: the mark with the name at cells of 24 and 20 pixels with
 // 44 pixels between them, centred in 1024 by 1024, on the dark background,
