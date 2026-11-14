@@ -89,6 +89,7 @@ The intent of the parts that were built before this folder is in other documents
 - [features/palette.md](features/palette.md): the palette as a panel of the compositor with the console as its provider, and why no program gets a new right
 - [features/roadmap.md](features/roadmap.md): the planned work in one plain file, the check of its form, the rule that removes an entry with its changelog fragment, and its page of the site
 - [features/scheduling_policy.md](features/scheduling_policy.md): the placement of a thread in the kernel, the share for each program outside it, and the hazards that decided both
+- [features/scroll_bar.md](features/scroll_bar.md): the scroll bar of the system and of the site from one table, its states, the pointer in the element, and where it leaves the design rules
 - [features/site_bar.md](features/site_bar.md): why the bar of the site has three buttons and one menu on one line, and the forms that were refused
 - [features/site_gallery.md](features/site_gallery.md): the gallery and the carousel of the site from one table that is checked against the folder of the pictures, and why the carousel needs no script
 - [features/site_home.md](features/site_home.md): the home of the site: a line of time of the start on two stated scales, the rule "a chart or nothing" for a measure, a card that starts at its top, and a press on the heron

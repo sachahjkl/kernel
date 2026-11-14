@@ -67,8 +67,25 @@ LIST_WIDTH :: LIST_COLUMNS * CELL_WIDTH + 16
 MARGIN :: 12
 COLUMNS :: 84 // The width of the text.
 ROWS :: 33
-WIDTH :: LIST_WIDTH + 2 * MARGIN + COLUMNS * CELL_WIDTH
+SCROLL_WIDTH :: interface.SCROLL_BAR_THICKNESS
+SCROLL_GAP :: 11 // From the text to the scroll bar: the band of an example passes the text by 4 pixels.
+WIDTH :: LIST_WIDTH + MARGIN + COLUMNS * CELL_WIDTH + SCROLL_GAP + SCROLL_WIDTH
 HEIGHT :: ROWS * CELL_HEIGHT + 2 * MARGIN + CELL_HEIGHT + 8
+#assert(WIDTH % 8 == 0)
+
+// scroll_area gives the place of the scroll bar of the text: at the right
+// edge of the window, from its top to the line over the keys.
+scroll_area :: proc "contextless" () -> interface.Area {
+	return {WIDTH - SCROLL_WIDTH, 0, SCROLL_WIDTH, HEIGHT - CELL_HEIGHT - 6 - 4}
+}
+
+// scroll_identity gives the identity of the scroll bar of the text.
+scroll_identity :: proc "contextless" () -> interface.Element_Identity {
+	return interface.identity("the scroll bar of the text")
+}
+
+// The scroll bar moved the text in the last frame: the next frame shows it.
+text_moved_by_scroll_bar: bool
 
 COLOR_SELECTED :: 0x2C3A4C
 COLOR_TITLE :: 0xF0C050
@@ -337,7 +354,14 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 	frame := interface.window_frame_begin(&drawing, window)
 	draw_records(frame.table)
+	// The scroll bar of the text: the pointer on it moves the text as Page
+	// Up and Page Down do.
+	moved := interface.scroll_bar(&frame, scroll_area(), scroll_identity(), .Vertical, {total = rows(), visible = ROWS, first = first_line}, {page = ROWS - 2})
 	interface.window_frame_end(&drawing, &frame, window)
+	if moved.changed {
+		first_line = moved.first
+		text_moved_by_scroll_bar = true
+	}
 }
 
 draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
@@ -534,13 +558,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		if changed && display.canvas_free(&window) {
 			draw(&window)
-			changed = false
+			changed = text_moved_by_scroll_bar
+			text_moved_by_scroll_bar = false
 		}
 		wait: system.Wait
 		display.wait_events(&wait, &window)
 		system.service_wait(&wait, &service)
-		// A picture that waits for the compositor: look again soon.
-		system.wait_end(&wait, changed ? system.time() + 2 : system.WAIT_FOREVER)
+		// A picture that waits for the compositor: look again soon. A held
+		// arrow button of the scroll bar takes its next step at a time of
+		// the clock: the wait ends there at the latest.
+		deadline := changed ? system.time() + 2 : system.WAIT_FOREVER
+		step_time, step_due := interface.window_scroll_bar_wake(&drawing)
+		if step_due {
+			deadline = min(deadline, step_time)
+		}
+		system.wait_end(&wait, deadline)
+		changed |= step_due && system.time() >= step_time
 		changed |= system.service_run(&service) > 0
 		for event in display.next_event(&window) {
 			#partial switch event.kind {
@@ -578,6 +611,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					overview_build()
 				}
 			case .Pointer:
+				// The scroll bar of the text takes the pointer from the input
+				// of the next frame.
+				interface.input_add(&drawing.input, event)
+				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area(), scroll_identity()) {
+					changed = true
+				}
 				down := event.buttons & display.BUTTON_LEFT != 0
 				if down && !pressed && event.x >= 0 && event.x < LIST_WIDTH && event.y >= 4 {
 					list_rows := (HEIGHT - 8) / CELL_HEIGHT

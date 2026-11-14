@@ -1620,6 +1620,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done.
 - Where: `SITE.md`, "The home"; `SITE.md`, "The states of a control"; `src/md/features/site_home.md`; `src/md/features/site_bar.md`; `FIRST_MILESTONE.md`, choice 745.
 
+### D-248 The scroll bar of the system is the standard of the desktop of the owner, from one table with the site
+- 2026-11-14. Decided by: the owner.
+- Decision: each scroll bar of the system has arrow buttons, a track, and a thumb with a border, a gradient, an inner line and a grip, and blue tones under the pointer, as the scroll bar of `shojiwm-desktop`: its sizes, its colours and its states, with square corners. The scroll bars of the site come from the same table, with a light form. It is a decoration (D-193) and replaces the colours of D-222.
+- Words: "je t'avais dit de rendre les scroll bars comme on a fait pour le site, les scroll bars [...] de l'OS, de les rendre détaillées avec un cran coloré [...]. Parce que là elles ne le sont pas du tout, elles sont ultra-plates. [...] regarde [...] mon desktop [...] ShojiWM desktop [...]. Tu peux voler le style et faire une variante light si il y a besoin pour le site, mais c'est ça le standard étalon."
+- State: done. Left: the pointer on the scroll bars of the palette and of a completion list; the wheel.
+- Where: `DESIGN.md`, "The scroll bar"; `INTERFACE.md`, "4.1 The scroll bar"; `SITE.md`, "The scroll bars"; `src/md/features/scroll_bar.md`; `FIRST_MILESTONE.md`, choice 743.
+
 ### D-182 A documentation in the form of the Odin site
 - 2026-11-12. Decided by: the owner.
 - Decision: the documentation has a sidebar of the pages, the technical text in the center, and the symbols of the page at the right, in the manner of the Odin documentation.

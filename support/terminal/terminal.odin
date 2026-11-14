@@ -121,7 +121,7 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           values[1]: the row that is chosen, or NO_CHOICE. values[2]: the
 //           place of the first row in all the names of the program, and
 //           values[3] their count: with more names than rows, the list
-//           shows a scroll mark. values[4]: the byte of the edit line where
+//           shows a scroll bar. values[4]: the byte of the edit line where
 //           the name starts: the list starts at its column.
 //   Code_Runs The runs of code of the next record of a target
 //           (code_runs.odin): what each part of its text is, so that the
@@ -394,7 +394,7 @@ List_Shown :: struct {
 	row_count: int, // The rows in use. 0: no list.
 	chosen:    int, // -1: no row is chosen.
 	first:     int, // The place of the first row in all the names.
-	total:     int, // All the names: more than row_count shows a scroll mark.
+	total:     int, // All the names: more than row_count shows a scroll bar.
 	anchor:    int, // The byte of the edit line where the name starts.
 }
 
