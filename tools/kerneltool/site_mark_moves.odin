@@ -260,6 +260,7 @@ site_mark_animation_play_write :: proc(b: ^strings.Builder, animation: mark.Anim
 // `kerneltool logo` writes: under the frames of an animation that moves,
 // each drawing that its move shows, at the cells of the frames, in the box
 // of a form with the water of its frame under it.
+MARK_ANIMATIONS_CHARACTER_WIDTH :: 8 // The font of the picture, 8 by 16.
 MARK_ANIMATIONS_FORM_BOX_WIDTH :: SITE_MARK_FORM_BOX_COLUMNS * MARK_ANIMATIONS_CELL_SIZE
 MARK_ANIMATIONS_FORM_BOX_HEIGHT :: (SITE_MARK_FORM_BOX_ROWS + mark.WATER_ROWS) * MARK_ANIMATIONS_CELL_SIZE
 
@@ -269,7 +270,8 @@ mark_animation_forms_height :: proc(animation: mark.Animation) -> int {
 	if !mark.animation_moves(animation) {
 		return 0
 	}
-	return MARK_ANIMATIONS_LINE + MARK_ANIMATIONS_FORM_BOX_HEIGHT + MARK_ANIMATIONS_LINE + MARK_ANIMATIONS_GAP
+	// A heading, the boxes, two lines of text under each box.
+	return MARK_ANIMATIONS_LINE + MARK_ANIMATIONS_FORM_BOX_HEIGHT + 2 * MARK_ANIMATIONS_LINE + MARK_ANIMATIONS_GAP
 }
 
 // mark_animation_forms_width gives the width of the widest row of forms.
@@ -327,8 +329,16 @@ mark_animation_forms_draw :: proc(canvas: graphics.Canvas, x, y: int, animation:
 		case .Corrected:
 			origin = "lines, corrected"
 		}
-		caption := fmt.tprintf("%d ms: %s, %d by %d, %s", start, mark.form_names[forms.forms[step.form]], drawn.columns, drawn.rows, origin)
-		graphics.text(canvas, box_x, box_y + MARK_ANIMATIONS_FORM_BOX_HEIGHT + 4, caption, graphics.COLOR_DIM)
+		// Two lines under the box: one line of the whole text is wider than
+		// the box, and it would lie over the text of the next box.
+		caption := [2]string {
+			fmt.tprintf("%d ms: %s, %d by %d", start, mark.form_names[forms.forms[step.form]], drawn.columns, drawn.rows),
+			origin,
+		}
+		for line, index in caption {
+			fmt.assertf(len(line) * MARK_ANIMATIONS_CHARACTER_WIDTH <= MARK_ANIMATIONS_FORM_BOX_WIDTH, "the text %q under a form is wider than its box", line)
+			graphics.text(canvas, box_x, box_y + MARK_ANIMATIONS_FORM_BOX_HEIGHT + 4 + index * MARK_ANIMATIONS_LINE, line, graphics.COLOR_DIM)
+		}
 		box_x += MARK_ANIMATIONS_FORM_BOX_WIDTH + MARK_ANIMATIONS_GAP
 	}
 }

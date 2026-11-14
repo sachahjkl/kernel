@@ -485,6 +485,7 @@ mark_animations_picture_write :: proc() -> bool {
 				still := mark.still_cells()
 				caption = fmt.tprintf("%d: %d ms, %d cells", frame, row.duration_milliseconds, mark.cells_differ_count(&cells, &still))
 			}
+			fmt.assertf(len(caption) * MARK_ANIMATIONS_CHARACTER_WIDTH <= heron, "the text %q under a frame is wider than its box", caption)
 			graphics.text(canvas, x, y + MARK_ANIMATIONS_LINE + heron + 4, caption, graphics.COLOR_DIM)
 		}
 		y += row_height
