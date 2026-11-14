@@ -223,6 +223,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `docs/DECISIONS.md` | The record of the decisions of the project, the open questions and the rules of work |
 | `docs/REVIEWS.md` | The reviews: each concession found, and what removes it |
 | `docs/research/` | Research notes with sources, and video transcripts |
+| `src/md/README.md` | The intent of each part of the system, by the standard of [srcmd.org](https://srcmd.org): why a part has its form, the forms that were refused, the subtle points. An overview of the system and a file index. Read it before a change of the code |
 
 ## Code
 
