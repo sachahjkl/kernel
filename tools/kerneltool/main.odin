@@ -267,11 +267,11 @@ COMMANDS :: [?]Command {
 	// Builds, starts a machine that runs the scenario of a film, and films
 	// it: the pictures of the screen, taken while the scenario types, become
 	// a film with ffmpeg, which must be on the path. The film is for the
-	// development log, not a test.
+	// development log and for a news entry that names it, not a test.
 	//
 	// - no argument, or `terminal`: the film of the terminal.
 	// - `palette`: the film of the palette.
-	{name = "film", about = "build, start the machine, film a scenario (" + FILM_NAMES + "; no argument: terminal), and write " + FILM_FOLDER + "/<name>.mp4 and a copy in a new folder of " + DEVELOPMENT_LOG_FOLDER + " (needs ffmpeg)", run = run_film},
+	{name = "film", about = "build, start the machine, film a scenario (" + FILM_NAMES + "; no argument: terminal), and write " + FILM_FOLDER + "/<name>.mp4, " + FILM_FOLDER + "/<name>.webm, a copy of the MP4 file in a new folder of " + DEVELOPMENT_LOG_FOLDER + ", and " + FILM_DOCUMENT_FOLDER + "/<name>.webm when a news entry names the film (needs ffmpeg)", run = run_film},
 	// Converts the BDF file of the font of the terminal (Spleen 8x16, from
 	// `FONT_SOURCE`) to Odin data in `support/graphics/font.odin`. The result
 	// is in the repository, so a build does not need the BDF file: run it only

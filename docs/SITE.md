@@ -183,7 +183,7 @@ The documentation tree lists the groups under the glossary, each with the count 
 
 The owner asked for it on 2026-11-12: "\"What runs today\" watch out cause it'll be a nightmare to udate the description. we could have a \"parallel changelog\" (changelog is very technical/list-like) which would be like a \"status report\" or like \"News\"".
 
-A news entry (`GLOSSARY.md`) is one file of `news/`, `news/<yyyy-mm-dd>-<subject>.md`, never moved or merged: a head of six lines `key: value` (`title`, `date`, `release`, `picture`, `kind`, `guide`), an empty line, then the text in the Markdown of this document. `news/README.md` gives the form, the four kinds and when a step writes an entry. The text is at most 1200 bytes (`NEWS_TEXT_LIMIT`): a few sentences for a reader; a longer report belongs in the guide that the entry names.
+A news entry (`GLOSSARY.md`) is one file of `news/`, `news/<yyyy-mm-dd>-<subject>.md`, never moved or merged: a head of six lines `key: value` (`title`, `date`, `release`, `picture`, `kind`, `guide`), one more line `film` in an entry that has a film, an empty line, then the text in the Markdown of this document. `news/README.md` gives the form, the four kinds and when a step writes an entry. The text is at most 1200 bytes (`NEWS_TEXT_LIMIT`): a few sentences for a reader; a longer report belongs in the guide that the entry names.
 
 | Kind | What the entry reports | Its mark |
 |---|---|---|
@@ -192,16 +192,62 @@ A news entry (`GLOSSARY.md`) is one file of `news/`, `news/<yyyy-mm-dd>-<subject
 | Decided | The owner chose a thing that a reader sees: a name, a mark, a font | The color of the kernel |
 | Fixed | A thing that a reader saw fail now works | The color of the machine |
 
-- `kerneltool news new <subject>` writes an entry with the date of the host, `release: next`, and no title and no text, so that the check fails until a person writes them. `kerneltool news check` checks each entry: the head, each key known and present once, the date a date of the calendar and the date of the file name, the picture a PNG file of `docs/screenshots/` or `resources/logo/`, the release a release of `CHANGELOG.md` or `next`, the guide a document of `docs/` that is a page of the site, the text not empty, at most 1200 bytes, with no heading and no line of HTML, and no two titles the same. `kerneltool check` runs it, and `kerneltool site` stops on the same faults.
-- `news/`: each entry, newest first, as a card with the color of its kind, its date, a link to its release and to its guide, its picture, and a link to its file. Its anchor is `news-<the name of its file>`. One renderer renders all the entries of the page, so the ids stay unique and each term of the glossary links once.
-- The home shows the three newest entries: the title, the kind, the date, the picture and the first sentence.
+- `kerneltool news new <subject>` writes an entry with the date of the host, `release: next`, and no title and no text, so that the check fails until a person writes them. `kerneltool news check` checks each entry: the head, each key known and present once, the date a date of the calendar and the date of the file name, the picture a PNG file of `docs/screenshots/` or `resources/logo/`, the release a release of `CHANGELOG.md` or `next`, the guide a document of `docs/` that is a page of the site, the film a WebM file of `docs/films/` under its size bound in an entry that has a picture ("The film of a news entry"), the text not empty, at most 1200 bytes, with no heading and no line of HTML, and no two titles the same. `kerneltool check` runs it, and `kerneltool site` stops on the same faults.
+- `news/`: each entry, newest first, as a card with the color of its kind, its date, a link to its release and to its guide, its picture or its film, and a link to its file. Its anchor is `news-<the name of its file>`. One renderer renders all the entries of the page, so the ids stay unique and each term of the glossary links once.
+- The home shows the three newest entries: the title, the kind, the date, the picture and the first sentence. The picture of an entry with a film has the mark "film" and links to the entry.
 - `releases/`: under each release, a link to each entry that names it. An entry with `release: next` is in no release yet.
-- `news.xml`: the feed, Atom (RFC 4287), newest first; each entry has its title, its date (`published` and `updated`, at 00:00 UTC), its kind as a `category`, its first sentence as its `summary`, and its text and picture as HTML in its `content`. The id of the feed and of each entry is the address of its file in the repository on `master` (`<repository>/blob/master/news/<file>`): a file of `news/` is never moved, so the id stays the same when the site gets an address. Each page names the feed in its head (`<link rel="alternate" type="application/atom+xml">`), so that a browser and a feed reader find it.
+- `news.xml`: the feed, Atom (RFC 4287), newest first; each entry has its title, its date (`published` and `updated`, at 00:00 UTC), its kind as a `category`, its first sentence as its `summary`, and its text and picture as HTML in its `content`. An entry with a film has one more link, `<link rel="enclosure" type="video/webm" href="..." length="<bytes>"/>`, the element of Atom for a file that goes with an entry, and a link to the film at the end of its `content`. The id of the feed and of each entry is the address of its file in the repository on `master` (`<repository>/blob/master/news/<file>`): a file of `news/` is never moved, so the id stays the same when the site gets an address. Each page names the feed in its head (`<link rel="alternate" type="application/atom+xml">`), so that a browser and a feed reader find it.
 
 What a feed reader needs, and what is missing with no address:
 
 - A reader subscribes to the address of the feed and resolves each relative link against it. With no address (`SITE_ADDRESS` is empty), the links of the feed are relative to the root of the site (`news/index.html#news-...`, `pictures/...`): they work for a reader that fetched the feed from the host of the site.
 - Missing with no address: the link `rel="self"` (the feed cannot name its own place), absolute links (a reader that receives the feed as a file, or copies an entry elsewhere, cannot resolve them), and the discovery of the feed from another site. `kerneltool site --address https://...` writes absolute links and the link `self`. The command says so when the site has no address.
+
+### The film of a news entry
+
+An entry can name a film: `film: docs/films/<name>.webm` in its head. The command `kerneltool film <name>` writes the file (`TOOLS.md`, "The film of a document"), and the repository holds it. The site copies it to `films/<name>.webm` as it is: `kerneltool site` runs no encoder.
+
+**The file.** WebM with AV1, 30 pictures in one second, no sound, at most 4 MiB (`FILM_DOCUMENT_SIZE_LIMIT`). Each version of the file stays in the history of the repository, and a reader loads it on a phone. Measured on the film of the palette (36.8 s, 2048 by 1536 pixels): H.264 in MP4 3 169 392 bytes, VP9 in WebM 3 019 142 bytes, AV1 in WebM 1 572 784 bytes, with the text of the screen sharp in the AV1 file. The site holds one file for a film, and no second source in another format.
+
+**The checks.** `kerneltool news check` reads the file: it starts with an EBML header (the bytes `1A 45 DF A3`) of the document type `webm`, it is under the size bound, and its tracks state the width and the height of its pictures. The entry has a picture. `kerneltool site` stops on the same faults.
+
+**The page of the news.** An entry with a film shows it under its text, over the width of the card, at most 1024 pixels wide: the width of the screen of the system. In the column of a picture (384 pixels) the text of a film of the whole screen is not readable. On a screen narrower than 720 pixels the film takes the width of the column.
+
+```
+<figure class="news-film">
+<video controls preload="metadata" playsinline muted loop poster="../pictures/<picture>.png" width="2048" height="1536">
+<source src="../films/<name>.webm" type='video/webm; codecs="av01.0.12M.08"'>
+<a href="../films/<name>.webm"><img src="../pictures/<picture>.png" width="1024" height="768" loading="lazy" decoding="async" alt="..."></a>
+</video>
+<figcaption>Film: <a href="../films/<name>.webm"><name>.webm</a>, WebM with AV1, 1.5 MiB.</figcaption>
+</figure>
+```
+
+| Part | Why |
+|---|---|
+| No `autoplay` | A film starts when the reader starts it. The site has no animation that a reader did not ask for ("The look") |
+| `controls` | The player of the browser: the site adds no script for a film |
+| `preload="metadata"` | Before the reader starts the film, a browser loads its head only, not the whole file |
+| `poster` | The picture of the entry stands in the place of the film until it plays |
+| `width`, `height` | The size of the pictures of the film, read from the file. The style sheet sets the width to that of the column; the two numbers give the ratio, so the page keeps the room of the film before a byte of it came |
+| `playsinline` | On a phone the film plays in the page, not over the whole screen |
+| `muted` | A film has no sound; a browser then shows no control of the sound that does nothing |
+| `loop` | A film shows one act, of about half a minute: it starts again at its end, as the act can be done again |
+| `type` with `codecs` | A browser that does not play AV1 knows it from the page and never asks for the file |
+| The `img` inside `video` | For a browser with no `video` element: the picture, as a link to the file |
+| The caption | The name of the file as a link, its format and its size: a reader chooses whether to load it, and can keep the file |
+
+**The codec text**, `av01.0.12M.08`: AV1 (`av01`), the main profile (`0`), the level 5.0 (`12`), the main tier (`M`), 8 bits a channel (`08`). The level is the one that the encoder writes in the file for this size: a picture of 2048 by 1536 has 3 145 728 pixels and 1536 lines, more than the levels 4.0 and 4.1 hold (2 228 224 pixels, 1152 lines); the level 5.0 is the first that holds it (8 912 896 pixels, 2176 lines). `ffprobe` gives `profile=Main`, `level=12` and `pix_fmt=yuv420p` for a file of the encoder of the tool. The text is a constant (`SITE_FILM_CODEC`): a film of another size of screen, or of 10 bits a channel, needs another text.
+
+**A browser that does not play AV1** (a Safari on a device with no AV1 decoder, an older browser) shows the picture of the entry, the `poster`, in the place of the film, and plays nothing. The caption still links to the file.
+
+**The home** shows no film. A card of the home is a third of the width of the page: a film of the whole screen is not readable there, its controls cover a part of it, and three players on the first page each ask for a part of their file. The card shows the picture of the entry. A mark is in the lower left corner of the picture: a rectangle of 24 pixels with the one word "film", on the surface of a card, with a line of 1 pixel at its top and at its right. The picture links to the entry on the page of the news, where the film is. The word is not cut at any width: the mark takes the width of its word.
+
+**The feed** names the film as an enclosure, with its type and its count of bytes, and its `content` ends with a link to the file. The `content` has no `video` element: many feed readers remove one.
+
+**The host of the site** must allow the film: `media-src 'self'` in the header `Content-Security-Policy` ("How the site is published"). With `default-src 'none'` and no `media-src`, a browser refuses the film and shows the picture.
+
+Not done: the page graph of the news names no `VideoObject` for a film.
 
 ## The search
 
@@ -336,7 +382,7 @@ Not verified against a validator of schema.org or the documents of a search engi
 
 ### The pictures
 
-Each `img` has `width`, `height` and an alt text (a check of the pages). The pictures below the first screen have `loading="lazy"` and `decoding="async"`: the pictures of the machine, of the news and of the guides. The mark of the home and the heron of the bar are on the first screen and load at once.
+Each `img` has `width`, `height` and an alt text (a check of the pages). The pictures below the first screen have `loading="lazy"` and `decoding="async"`: the pictures of the machine, of the news and of the guides. The mark of the home and the heron of the bar are on the first screen and load at once. A film of a news entry is a `video` element with its `width`, its `height` and a `poster` ("The film of a news entry"); the check of the links of a page reads `poster` as it reads `href`, `src` and `srcset`.
 
 Each PNG file that the site copies from the repository (the screen pictures, the pictures of the news and of the guides, the icons) is written again through `site_png_compress` (`tools/kerneltool/site_pictures.odin`): it decodes the file and encodes the same pixels with the encoder of the standard library, `core:image/png` (a row filter chosen for each row, then the deflate of `core:compress/deflate` at its default level 5). The screen pictures of `docs/screenshots` are stored with no compression (`png_encode` of `tools/kerneltool/machine.odin`): 2 360 312 bytes for 1024 by 768. The command prints the count of the pictures and their bytes before and after. The output is the same bytes at each build: the encoder reads no clock, no random number and no thread, and its buffers start at zero; a host test encodes each picture twice and compares the bytes, and compares the pixels of the two files byte for byte. A picture of 16 bits a channel stops the command: the repository has none.
 
@@ -461,7 +507,7 @@ The site follows `DESIGN.md`, with the colors of `support/graphics/rules.odin` a
 - the tables have the look of the tables of the system: the titles of the columns in the dim color, every second row on a band (`DESIGN.md`, section 10). Each column has the least width of its kind, and a table wider than the page scrolls sideways in its own box (see "The tables");
 - the grid of points of the desktop is on the home only.
 
-Prose is in the reading font of the reader's system, at most 72 characters a line on a presentation page and 80 on a documentation page; code, signatures, numbers and identifiers are in its monospace font. The site holds one font file: the font of the name of the mark, for the name of the system where it stands as the mark (see "The name of the mark"). No animation, no shadow, no round corner; one exception: a segment of the bar of the chart of the docs home changes its place and its width in 150 ms when the search changes its count, never at the load of a page, and at once for a reader who asks for reduced motion (see "The chart of what the search finds"). The light form follows `prefers-color-scheme`. A print form hides the bar and the navigation.
+Prose is in the reading font of the reader's system, at most 72 characters a line on a presentation page and 80 on a documentation page; code, signatures, numbers and identifiers are in its monospace font. The site holds one font file: the font of the name of the mark, for the name of the system where it stands as the mark (see "The name of the mark"). No animation, no shadow, no round corner; two exceptions. A segment of the bar of the chart of the docs home changes its place and its width in 150 ms when the search changes its count, never at the load of a page, and at once for a reader who asks for reduced motion (see "The chart of what the search finds"). The large heron of the home plays the animations of the mark, and not at all for a reader who asks for reduced motion (see "The rhythm of the animations" and "The moves of the heron"). The light form follows `prefers-color-scheme`. A print form hides the bar and the navigation.
 
 The contrast of the text (WCAG 2 ratio), from the colors of the rules:
 
@@ -650,7 +696,7 @@ The legend: the reference index ends with the section "The kinds of values", a t
 
 ### The versions of the files
 
-The site is behind a proxy that keeps a file for hours. Each link to a file whose bytes change between builds carries its file version (`GLOSSARY.md`): `style.css?v=<16 hexadecimal digits>`, the first 8 bytes of the BLAKE3 hash of its bytes (`contract/blake3`). The files: `style.css`, `search.js`, `mark_animation.js`, `module_graph.js`, `glossary.js` and `search.json` (`SITE_VERSIONED_FILES`). The same bytes give the same address. The index of the search is written before the pages, so that each page names its version: `search.js` reads it from the attribute `data-index` of its own `script` element, relative to its folder, with no inline script. The check of the links ignores the query. The icons, the pictures and the font of the name of the mark carry no version: their bytes come from the mark and the repository and change rarely.
+The site is behind a proxy that keeps a file for hours. Each link to a file whose bytes change between builds carries its file version (`GLOSSARY.md`): `style.css?v=<16 hexadecimal digits>`, the first 8 bytes of the BLAKE3 hash of its bytes (`contract/blake3`). The files: `style.css`, `search.js`, `mark_animation.js`, `module_graph.js`, `glossary.js` and `search.json` (`SITE_VERSIONED_FILES`). The same bytes give the same address. The index of the search is written before the pages, so that each page names its version: `search.js` reads it from the attribute `data-index` of its own `script` element, relative to its folder, with no inline script. The check of the links ignores the query. The icons, the pictures and the font of the name of the mark carry no version: their bytes come from the mark and the repository and change rarely. One exception: the sprite sheets of the animations of the mark change with each new frame, and `mark_animation.js` cuts them by the places of its own table, so the script names each sheet with the version of its bytes.
 
 ### A page of an older build
 
@@ -722,21 +768,68 @@ Where the site shows the name of the system as the mark, the name is text in the
 
 ### The rhythm of the animations
 
-The animations of the mark (`DESIGN.md`, "The animations") play on the large heron of the home and on the icon of its tab. `mark_animation.js` holds the order of play of `support/mark`, with the still times of the site: each still time is 40 % of the still time of the table (`SITE_MARK_STILL_PERCENT` in `tools/kerneltool/site_mark_name.odin`), one rule for every step.
+The animations of the mark (`DESIGN.md`, "The animations") play on the large heron of the home and on the icon of its tab. `support/mark` holds the 15 animations as frames of cells. The site holds the rule of the choice and the still times (`tools/kerneltool/site_mark_schedule.odin`), and `mark_animation.js` runs them.
 
-| | The table of `support/mark` | The site |
-|---|---|---|
-| A still time | 2.2 to 5.5 s | 0.88 to 2.2 s |
-| The bounds of a still time | 2 to 6 s | 0.8 to 2.4 s |
-| The mean still time | 3.8 s | 1.5 s |
-| One turn of the order (17 animations) | 79.8 s: 64.1 s still, 15.7 s of animations | 41.4 s: 25.6 s still, 15.7 s of animations |
-| An animation starts, on average | each 4.7 s | each 2.4 s |
-| An animation other than the blink starts, on average | each 7.3 s | each 3.8 s |
+The choice of the next animation:
 
-- The frames of an animation do not change: a frame lasts 150 to 1000 ms, so the picture changes at most about 6 times each second.
-- The heron of the bar does not move, on any page. A page of the documentation is read: a picture that moves each two seconds at the top of a text takes the eye from it. On the home the heron is what the page shows.
-- Nothing moves for a reader who asks for reduced motion, and nothing runs in a hidden tab.
-- The self test of the script (`?selftest=1`) checks each still time against the bounds of the site; the host test `site_mark_still_times_are_a_part_of_those_of_the_mark` checks the rule and the table of the script.
+- The script keeps a memory of the animations that were played: one bit for each, and the animation played last.
+- The next animation is one of those that the memory does not hold. Each of them has the same chance.
+- When the memory holds every animation, the script empties it and starts a new round. In the first choice of a round, the animation played last is left out. So each animation plays once in a round of 15, the order of a round is an order of chance, and no animation follows itself, also from one round to the next.
+- The memory lasts for the visit. The script writes it in the storage of the tab (`sessionStorage`, the key `modus.mark.played`) each time an animation starts, and reads it when the home loads. A reader who leaves the home and comes back sees the animations that the round still has, not the same first one. The browser drops the memory when the tab closes: that is its one rule of expiry. A memory of another count of animations is a memory of another build: the script does not use it. A browser that refuses the storage keeps the memory as long as the page.
+- The site stores nothing else in the browser, and sends the memory nowhere.
+
+The still times:
+
+- The heron is still for 40 % of a long play, and moves for 60 % (`SITE_MARK_STILL_SHARE_PERCENT`).
+- The mean still time follows from the times of the animations: it is the mean time of an animation, times the still share, over the moving share. `mean still = (sum of the times of the animations / count) × 40 / 60`.
+- A still time is a whole number of milliseconds from half the mean to one and a half times the mean. Each number has the same chance, so the mean of the still times is the mean still time.
+
+| | Value |
+|---|---|
+| The animations | 15, each once in a round |
+| The time of the animations of a round | 19.31 s; the mean time of an animation is 1.29 s |
+| The mean still time | 858 ms |
+| A still time | 429 to 1287 ms |
+| A round, on average | 32.2 s: 12.9 s still, 19.3 s of animations |
+
+- A change of an animation changes the still times: the tool computes them from the frames at each build.
+- A frame lasts 150 to 1000 ms. The steps of the run of the dash are the one exception: 70 ms each.
+- The heron of the bar does not move, on any page. A page of the documentation is read: a picture that moves at the top of a text takes the eye from it. On the home the heron is what the page shows. No other page loads the script.
+- Nothing moves for a reader who asks for reduced motion: the script plays nothing, and the style sheet shows the still picture under `prefers-reduced-motion: reduce` also when a script put the stage in the page.
+- Nothing runs in a hidden tab. Nothing plays while the focus is in a field (the search): the still picture is back as soon as the reader enters the field, and the play starts again when the focus leaves it.
+- With no script the page shows the still picture.
+
+How the script and the tool agree on the rule. The rule is written two times: as a model in the tool, which the host tests run, and in the script, which the page runs. One list ties them: the tool runs the model with a generator of a fixed seed and writes its first 33 steps (two rounds and three steps) into the table of the script. The self test of the script (`?selftest=1`) runs the rule of the script with the same generator and compares each step. The generator is the same arithmetic on both sides: `state = state × 1664525 + 1013904223` in 32 bits, and the number is the upper 16 bits modulo the bound. The page itself takes its numbers from `Math.random`.
+
+The tests:
+
+| Test | What it checks |
+|---|---|
+| `site_mark_choice_plays_each_animation_once_in_a_round` | 400 rounds for each of 5 seeds: each animation once in a round, none follows itself, the rounds do not all have one order |
+| `site_mark_choice_goes_on_from_a_kept_memory` | A memory with 4 animations played: the 11 others play first, then the memory is emptied |
+| `site_mark_heron_is_still_for_its_share` | The bounds of a still time; over 6000 steps of the model, for each of 4 seeds, the still share is 40 % within one point |
+| `site_mark_generator_wraps_at_32_bits` | The numbers of the generator, and that the list of the steps does not change |
+| `site_mark_animation_table_parses` | The table of the script: the animations, the moves, the bounds, the list of the steps; the script and the style sheet name the same classes |
+| The self test of the script, `?selftest=1` | The table; the rule of the script against the list of the model; a long play of 200 rounds: no animation follows itself, each plays once in a round, the still share is 40 % within one point. The line is in the console and in the attribute `data-mark-animation-self-test` of the root element |
+
+A development aid: `#heron=<name>` at the end of the address of the home plays one animation again and again, with the shortest still time between two plays: `index.html#heron=dash`. The names are those of `DESIGN.md`, "The animations". The memory does not change during that play. A reader who asks for reduced motion still sees no move.
+
+### The moves of the heron
+
+An animation of `support/mark` changes cells. On the home, four animations also move the picture of the heron: the dash, the hop, the stretch and the flap. A move is a list of keys (`site_mark_motion_keys` in `tools/kerneltool/site_mark_schedule.odin`): at a time from the start of the animation, a place in cells, an edge of the window or none, a width and a height in percent, and the way to the next key.
+
+- The stage. While the script plays, the still picture is replaced by a stage of the same box, 192 by 192 pixels: one canvas for the two rows of the water, and one canvas above it for the 22 other rows. A move applies to the upper canvas only: the heron leaves, and the water stays. The size changes from the middle of the bottom edge of the upper canvas: the heron squashes onto the line of the water.
+- No key moves the heron while a foot is in the rows of the water: in such a frame only the size changes. The tool refuses a table that breaks this rule (`site_mark_motion_problems`).
+- A size is 75 to 140 %. The pictures stay sharp: the canvas has `image-rendering: pixelated`.
+- The dash, 1780 ms. The heron squashes for 380 ms (116 % wide, 86 % high). It leaves to the right, faster and faster, stretched along its way (135 % wide, 80 % high), and is past the right edge of the window 350 ms later. It stays outside for 280 ms. Then it is past the left edge at once, comes in at one speed in 350 ms, and goes 3 cells past its place. It squashes there (82 % wide, 114 % high), slides back to its place, and stands.
+- "Past an edge" is a place that the script computes from the window: the whole heron, at its widest, is outside the window at that side.
+- No scroll bar and no layout shift. The stage keeps the box of the picture, and a move is a transform: nothing beside the heron moves. While an animation with a key past an edge plays, the root element has the class `mark-travel`, and the style sheet cuts the page at the sides of the window (`overflow-x: clip`): a heron outside the window adds no width to the page.
+- What moves takes no pointer (`pointer-events: none`) and no focus. The heron of the dash passes over the tagline and the links of the head for less than 350 ms at each crossing; a click during that time goes to the link under it. The heron passes under the bar: the bar is above it (`z-index`).
+- The script sets no style. It sets classes, and it gives the keys to the animations of the browser (`Element.animate`). The header `Content-Security-Policy` of the host (`style-src 'self'`) refuses neither. A browser with no `Element.animate` plays the frames with no move.
+- The hop: a squash, 4 cells up, a squash on the water. The flap: 3 cells up while the wing beats, then a small squash. The stretch: 112 % high and 94 % wide for a third of a second, then a shake of its width.
+- The icon of the tab shows the frames of each animation, with no move.
+
+The sprite sheets. The three sheets hold 43 sprites: the still heron and 42 distinct frames, in rows of 16 (`SITE_MARK_SHEET_COLUMNS`). A sheet of the home is 3072 x 576 pixels; the sheet of the icon is 512 x 96. No side is longer than the 8192 pixels that a browser decodes. `kerneltool site` prints the count of the sprites and the bytes of each sheet and of the script. The script names each sheet with the version of its bytes (`?v=`, see "The versions of the files"): a script never cuts the sheet of another build that a cache kept.
 
 ### The icons
 
@@ -1256,7 +1349,7 @@ What a clean checkout gives to `kerneltool site`:
 
 | What the site reads | Made by | In the workflow |
 |---|---|---|
-| The documents, the news, the changelog, the code that the reference tables read, `flake.nix`, `flake.lock`, `LICENSE`, the pictures of `docs/screenshots` and `resources/logo` | Committed | Read |
+| The documents, the news, the changelog, the code that the reference tables read, `flake.nix`, `flake.lock`, `LICENSE`, the pictures of `docs/screenshots` and `resources/logo`, the films of `docs/films` | Committed | Read |
 | The pictures of the mark, the module pages and their signatures | The code of the tool (`support/mark`, `describe_package`); no module is built | Written |
 | The commit | `.git` | Read |
 | `build/boot.image` | `kerneltool build` | Written by the step before: the tiles of the home with their sizes and colors, the size of each module in its page, and the column "in the boot image" of the licenses. With no image these show the modules with no size, and "not recorded" |
@@ -1276,7 +1369,7 @@ The headers: GitHub Pages sends no header that a site chooses. The proxy of Clou
 
 | Header | Value | Why |
 |---|---|---|
-| `Content-Security-Policy` | `default-src 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; script-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` | The style sheet, the pictures and the grid of points (`data:`), the font of the name of the mark (`font-src`), `search.js` and its fetch of `search.json`, the manifest; nothing else. The page graph is data that a browser does not run: `script-src` does not apply to it |
+| `Content-Security-Policy` | `default-src 'none'; style-src 'self'; img-src 'self' data:; media-src 'self'; font-src 'self'; script-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` | The style sheet, the pictures and the grid of points (`data:`), the films of the news (`media-src`), the font of the name of the mark (`font-src`), `search.js` and its fetch of `search.json`, the manifest; nothing else. The page graph is data that a browser does not run: `script-src` does not apply to it |
 | `X-Content-Type-Options` | `nosniff` | A file is read as its type only |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` | Another host sees the host of the site, not the page |
 | `X-Frame-Options` | `DENY` | `frame-ancestors` for a browser that does not read it |

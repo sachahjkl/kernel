@@ -5459,7 +5459,7 @@ Do not use: changeset, news file, entry (for the file).
 
 A news entry is a dated report in prose, for a reader who is not a developer of the system, of one thing that the reader can see or use, with its picture.
 
-Each entry is one file of `news/`, `news/<yyyy-mm-dd>-<subject>.md`, never moved or merged: a head of six lines (`title`, `date`, `release`, `picture`, `kind`, `guide`), an empty line, then at most 1200 bytes of text. Its kind is one of four:
+Each entry is one file of `news/`, `news/<yyyy-mm-dd>-<subject>.md`, never moved or merged: a head of six lines (`title`, `date`, `release`, `picture`, `kind`, `guide`), one more line `film` when the entry has a film, an empty line, then at most 1200 bytes of text. Its kind is one of four:
 
 - **Shown**: a new thing can now be seen or used in the running system;
 - **Measured**: a number about a thing that exists, with its conditions;
@@ -5473,6 +5473,18 @@ The changelog lists every change for a developer; a news entry reports one thing
 The design: `docs/SITE.md`, "The news".
 
 Do not use: news item, post, announcement, blog post, changelog entry.
+
+### Film
+
+A film is the pictures of the screen of a test machine, taken 30 times in one second while a scenario of the tool sends its keys, as one file that a player shows at the speed of the machine.
+
+`kerneltool film <name>` makes a film: `terminal` or `palette`. It writes an MP4 file with H.264 and a WebM file with AV1 from the same pictures, in the build folder. A film is not a test: only its scenario has steps with a fixed time, the period between two typed keys and the hold of a state for its viewer.
+
+A news entry can name a film, `film: docs/films/<name>.webm`. The command then writes the WebM file in the repository too, which holds it as it holds a screen picture: at most 4 MiB. The site shows it on the page of the news in a `video` element that plays only when the reader starts it, with the picture of the entry in its place before that. A card of the home, the feed and a browser that does not play AV1 show the picture.
+
+The design: `docs/TOOLS.md`, "The film" and "The film of a document"; `docs/SITE.md`, "The film of a news entry".
+
+Do not use: video (for the file), clip, movie, recording, screencast.
 
 ### Feed
 
@@ -5550,7 +5562,7 @@ Do not use: rest pose, idle frame, base frame (a base frame is another thing: se
 
 An animation of the mark is a short list of frames in which a few cells of the still heron change.
 
-In a frame a cell takes the letter of another part, or becomes empty. Each frame has a duration in milliseconds, and starts from the still heron or from an earlier frame of the same animation, its base frame. After its last frame the heron is still again. The animations are data in `support/mark/animation.odin`, and the order of play chooses which one comes next. On the site, `mark_animation.js` plays them from the sprite sheet.
+In a frame a cell takes the letter of another part, or becomes empty. Each frame has a duration in milliseconds, and starts from the still heron or from an earlier frame of the same animation, its base frame. After its last frame the heron is still again. The animations are data in `support/mark/animation.odin`: 15 of them, from the blink of one cell to the dash. The data does not say when one plays: the order of play of the place that shows them chooses which one comes next. On the site, `mark_animation.js` plays them from the sprite sheet, and a move of the heron goes with four of them.
 
 The design: `docs/DESIGN.md`, "11. The mark".
 
@@ -5558,17 +5570,37 @@ Do not use: idle animation, clip, tween.
 
 ### Order of play
 
-The order of play is the fixed list of the steps of the animations of the mark: each step a still time, then one animation; the list repeats.
+The order of play is the rule that chooses the next animation of the mark on the home of the site: each animation plays once in a round, in an order of chance.
 
-The weight of an animation is how many times it is in the order (`animation_weight`). A fixed order makes each play the same, with no random choice: the same page shows the same heron at the same time after its load.
+The script keeps a memory of the animations that were played. It chooses the next one among those that the memory does not hold, each with the same chance. When the memory holds every animation, the script empties it and a new round starts; the animation played last is left out of the first choice of the round, so no animation follows itself. The memory is kept in the storage of the tab for the visit: a reader who comes back to the home does not see the same first animation. Example: with 15 animations, the blink plays once in each 15 animations, at a place of the round that changes.
 
-The design: `docs/DESIGN.md`, "11. The mark".
+The design: `docs/SITE.md`, "The rhythm of the animations".
 
-Do not use: playlist, random choice, schedule.
+Do not use: playlist, shuffle, random choice.
+
+### Still share
+
+The still share is the part of the time, over a long play, that the heron of the home does not move: 40 %.
+
+The still time between two animations is chosen by chance around a mean, and the mean follows from the still share and from the times of the animations: the mean time of an animation, times the still share, over the moving share. With 15 animations of 1.29 s on average, the mean still time is 858 ms, and a still time is 429 to 1287 ms. A change of an animation changes the still times, not the share.
+
+The design: `docs/SITE.md`, "The rhythm of the animations".
+
+Do not use: idle ratio, duty cycle, pause.
+
+### Move of the heron
+
+A move of the heron is a change of the place and of the size of the picture of the heron on the home of the site during an animation of the mark.
+
+An animation of the mark changes cells; a move takes the whole picture above the line of the water: across the window in the dash, up in the hop and the flap, wider and lower in a squash. The two rows of the water stay in their place. A move is a list of keys in the tool (`site_mark_motion_keys`): a time, a place in cells or past an edge of the window, a width and a height in percent. It is not data of `support/mark`: a picture that cannot move, as the icon of a tab, shows the frames alone.
+
+The design: `docs/SITE.md`, "The moves of the heron".
+
+Do not use: tween, sprite motion.
 
 ### Sprite sheet
 
-The sprite sheet is one PNG file of the site that holds each distinct frame of the animations of the mark side by side, from the left, with the still heron first.
+The sprite sheet is one PNG file of the site that holds each distinct frame of the animations of the mark, in rows of 16 from the top left, with the still heron first.
 
 The script of the mark shows one sprite at a time by its place in the file, so the page loads one picture for all the animations. A frame that two animations share is in the file once.
 

@@ -19,6 +19,9 @@
 //   guide: docs/CONSOLE.md
 //
 //   The text: a few sentences, one fact in each.
+//
+// An entry can have one more line in its head, "film: docs/films/<name>.webm":
+// a film that the command `film` wrote (tools/kerneltool/film_document.odin).
 package kerneltool
 
 import "core:fmt"
@@ -44,6 +47,9 @@ NEWS_DATE_LENGTH :: 11
 // machine test takes, and the files of the mark.
 NEWS_PICTURE_FOLDERS :: [2]string{"docs/screenshots/", "resources/logo/"}
 NEWS_KEYS :: [6]string{"title", "date", "release", "picture", "kind", "guide"}
+// The one key that an entry can leave out: most entries have no film, and
+// an entry with no line of this key says the same as "film: none".
+NEWS_FILM_KEY :: "film"
 
 // What an entry reports. The kind is the colored mark of its card.
 News_Kind :: enum {
@@ -69,6 +75,7 @@ News_Entry :: struct {
 	picture:   string, // A path of the repository, or NEWS_NONE.
 	kind:      News_Kind,
 	guide:     string, // A document of docs/, or NEWS_NONE.
+	film:      string, // A WebM file of docs/films/, or NEWS_NONE.
 	text:      string, // The Markdown of the text, with no head.
 	text_line: int, // The line of the file where the text starts, from 1.
 }
@@ -147,6 +154,26 @@ news_guide_problem :: proc(guide: string) -> string {
 	return ""
 }
 
+// news_film_problem gives the fault of the value of the key film, with no
+// read of a file, or "".
+news_film_problem :: proc(film: string) -> string {
+	if film == NEWS_NONE {
+		return ""
+	}
+	folder :: FILM_DOCUMENT_FOLDER + "/"
+	well_formed := strings.has_prefix(film, folder) && strings.has_suffix(film, FILM_DOCUMENT_SUFFIX) && len(film) > len(folder) + len(FILM_DOCUMENT_SUFFIX)
+	if !well_formed || strings.contains(film[len(folder):], "/") || strings.contains(film, "..") || strings.contains_any(film, " \\") {
+		return fmt.tprintf("the film %q is not a WebM file of %s (%s<name>%s), or \"none\"", film, folder, folder, FILM_DOCUMENT_SUFFIX)
+	}
+	return ""
+}
+
+// news_entry_has_film says whether an entry names a film. An entry that a
+// test builds with no parse has no value of the key, which is no film too.
+news_entry_has_film :: proc(entry: News_Entry) -> bool {
+	return entry.film != "" && entry.film != NEWS_NONE
+}
+
 // news_parse reads one entry and checks its form, with no read of another
 // file. Each problem is one sentence that names the file and the line.
 news_parse :: proc(file_name: string, content: string) -> (entry: News_Entry, problems: [dynamic]string) {
@@ -158,6 +185,7 @@ news_parse :: proc(file_name: string, content: string) -> (entry: News_Entry, pr
 		append(&problems, fmt.tprintf("%s: %s", place, name_problem))
 	}
 	entry.subject = subject
+	entry.film = NEWS_NONE
 	lines := strings.split(content, "\n", context.temp_allocator)
 
 	// The head: "key: value" lines up to the first empty line.
@@ -179,12 +207,12 @@ news_parse :: proc(file_name: string, content: string) -> (entry: News_Entry, pr
 		}
 		key := line[:colon]
 		value := strings.trim_prefix(line[colon + 1:], " ")
-		known := false
+		known := key == NEWS_FILM_KEY
 		for name in keys {
 			known ||= name == key
 		}
 		if !known {
-			append(&problems, fmt.tprintf("%s, line %d: the key %q is not known; the keys are title, date, release, picture, kind, guide", place, number, key))
+			append(&problems, fmt.tprintf("%s, line %d: the key %q is not known; the keys are title, date, release, picture, kind, guide, and film, which an entry can leave out", place, number, key))
 			continue
 		}
 		if earlier, repeated := seen[key]; repeated {
@@ -233,12 +261,23 @@ news_parse :: proc(file_name: string, content: string) -> (entry: News_Entry, pr
 			if problem := news_guide_problem(value); problem != "" {
 				append(&problems, fmt.tprintf("%s, line %d: %s", place, number, problem))
 			}
+		case NEWS_FILM_KEY:
+			entry.film = value
+			if problem := news_film_problem(value); problem != "" {
+				append(&problems, fmt.tprintf("%s, line %d: %s", place, number, problem))
+			}
 		}
 	}
 	for key in keys {
 		if key not_in seen {
 			append(&problems, fmt.tprintf("%s: the head has no line \"%s: <value>\"", place, key))
 		}
+	}
+	// The picture of an entry with a film is what the page shows before
+	// the film plays, and all that the feed, a card of the home and a
+	// browser that cannot play the film show.
+	if film_line, has_film_line := seen[NEWS_FILM_KEY]; has_film_line && news_entry_has_film(entry) && entry.picture == NEWS_NONE {
+		append(&problems, fmt.tprintf("%s, line %d: an entry with a film has a picture: the page shows it before the film plays, and the feed and a browser that cannot play the film show only it", place, film_line))
 	}
 
 	// The text, after the empty line.
@@ -310,7 +349,8 @@ news_read :: proc(folder: string, problems: ^[dynamic]string) -> []News_Entry {
 
 // news_files_problems checks what an entry names outside itself: the
 // release is in CHANGELOG.md, the picture is a PNG file, the guide is a
-// file, and no two entries have the same title.
+// file, the film is a WebM file under its size bound, and no two entries
+// have the same title.
 news_files_problems :: proc(entries: []News_Entry, changelog: Changelog, problems: ^[dynamic]string) {
 	releases := make(map[string]bool, context.temp_allocator)
 	for changelog_release in changelog.releases {
@@ -330,6 +370,14 @@ news_files_problems :: proc(entries: []News_Entry, changelog: Changelog, problem
 		}
 		if entry.guide != "" && entry.guide != NEWS_NONE && news_guide_problem(entry.guide) == "" && !os.exists(entry.guide) {
 			append(problems, fmt.tprintf("%s: the guide %s is not a file of the repository", place, entry.guide))
+		}
+		if news_entry_has_film(entry) && news_film_problem(entry.film) == "" {
+			data, err := os.read_entire_file(entry.film, context.temp_allocator)
+			if err != nil {
+				append(problems, fmt.tprintf("%s: the film %s is not a file of the repository; `kerneltool film <name>` writes it", place, entry.film))
+			} else if problem := film_document_problem(data); problem != "" {
+				append(problems, fmt.tprintf("%s: the film %s %s", place, entry.film, problem))
+			}
 		}
 		if entry.title != "" {
 			if other, found := titles[entry.title]; found {
@@ -358,7 +406,7 @@ news_check :: proc() -> bool {
 		fmt.eprintfln("kerneltool: test failed: the news has %d problems", len(problems))
 		return false
 	}
-	test_passed_print("%s has %d news entries, all well formed, each picture, release and guide present", NEWS_FOLDER, len(entries))
+	test_passed_print("%s has %d news entries, all well formed, each picture, release, guide and film present", NEWS_FOLDER, len(entries))
 	return true
 }
 

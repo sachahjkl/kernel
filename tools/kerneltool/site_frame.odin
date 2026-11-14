@@ -745,7 +745,8 @@ site_build :: proc(address: string) -> bool {
 	site_write_file(&site, SITE_MANIFEST, transmute([]u8)manifest) or_return
 	site_write_file(&site, SITE_LANGUAGE_MODEL_INDEX, transmute([]u8)site_language_model_index(&site)) or_return
 
-	// The copies: the pictures of the machine and of the guides, the icons.
+	// The copies: the pictures of the machine and of the guides, the icons,
+	// and the films of the news, which are written as they are.
 	// A picture of the repository can be stored with no compression (the
 	// screen pictures of docs/screenshots are): each PNG file is written
 	// again with the same pixels through the compressing encoder.
@@ -1227,7 +1228,7 @@ site_check_pages :: proc(pages: []Site_Page, written: map[string]string, files: 
 			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
 		}
 		folder := page.path[:max(strings.last_index_byte(page.path, '/'), 0)]
-		for attribute in ([]string{"href=\"", "src=\"", "srcset=\""}) {
+		for attribute in ([]string{"href=\"", "src=\"", "srcset=\"", "poster=\""}) {
 			for value in site_attribute_values(html, attribute) {
 				// A srcset has several candidates: "<file> <width>w, ...".
 				candidates := []string{value}

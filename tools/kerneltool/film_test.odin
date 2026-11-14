@@ -114,18 +114,42 @@ the_typing_of_a_film_is_the_same_for_the_same_seed :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(film_key_periods(0, FILM_TYPING_SEED)), 0)
 }
 
-// The command of the encoder: the rate of the film, each pixel doubled
-// with no filter, H.264 with the pixel format that each player reads.
+// The command of the encoder of the MP4 file: the rate of the film, each
+// pixel doubled with no filter, H.264 with the pixel format that each
+// player reads.
 @(test)
 the_encoder_of_a_film_doubles_each_pixel_with_no_filter :: proc(t: ^testing.T) {
 	defer free_all(context.temp_allocator)
-	command := film_encode_command("build/films/palette/pictures.ffconcat", "build/films/palette.mp4")
+	command := film_mp4_encode_command("build/films/palette/pictures.ffconcat", "build/films/palette.mp4")
 	joined := strings.join(command, " ", context.temp_allocator)
 	testing.expect_value(t, command[0], "ffmpeg")
 	testing.expect_value(t, command[len(command) - 1], "build/films/palette.mp4")
-	for part in ([]string{"-f concat", "-i build/films/palette/pictures.ffconcat", "fps=30,scale=iw*2:ih*2:flags=neighbor", "-c:v libx264", "-pix_fmt yuv420p"}) {
+	for part in ([]string{"-f concat", "-i build/films/palette/pictures.ffconcat", "fps=30,scale=iw*2:ih*2:flags=neighbor", "-c:v libx264", "-movflags +faststart", "-pix_fmt yuv420p"}) {
 		testing.expectf(t, strings.contains(joined, part), "the command of the encoder has \"%s\": %s", part, joined)
 	}
+	testing.expect(t, !strings.contains(joined, "libsvtav1"), "the MP4 file is not AV1")
+}
+
+// The command of the encoder of the WebM file: the same list of timed
+// pictures and the same doubled pixels as the MP4 file, AV1, no sound.
+@(test)
+the_encoder_of_the_film_of_a_document_is_av1_from_the_same_pictures :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	command := film_webm_encode_command("build/films/palette/pictures.ffconcat", "build/films/palette.webm")
+	joined := strings.join(command, " ", context.temp_allocator)
+	testing.expect_value(t, command[0], "ffmpeg")
+	testing.expect_value(t, command[len(command) - 1], "build/films/palette.webm")
+	for part in ([]string{"-f concat", "-i build/films/palette/pictures.ffconcat", "fps=30,scale=iw*2:ih*2:flags=neighbor", "-c:v libsvtav1", "-preset 6", "-crf 45", "-an", "-pix_fmt yuv420p", "-colorspace bt709"}) {
+		testing.expectf(t, strings.contains(joined, part), "the command of the encoder has \"%s\": %s", part, joined)
+	}
+	testing.expect(t, !strings.contains(joined, "libx264") && !strings.contains(joined, "faststart"), "the WebM file has no argument of the MP4 file")
+	// The two commands differ by the arguments of their encoder and by
+	// their output only: the head, up to the filter, is the same.
+	other := film_mp4_encode_command("build/films/palette/pictures.ffconcat", "build/films/palette.mp4")
+	for part, place in other[:12] {
+		testing.expect_value(t, command[place], part)
+	}
+	testing.expect_value(t, film_document_path("palette"), "docs/films/palette.webm")
 }
 
 @(private = "file")
