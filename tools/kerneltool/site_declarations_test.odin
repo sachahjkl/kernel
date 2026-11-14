@@ -273,7 +273,7 @@ site_declaration_index_of_the_repository :: proc(t: ^testing.T) {
 	found := false
 	for place in site.declarations.by_name["Fault_Record"] {
 		declaration := site.declarations.declarations[place]
-		found ||= declaration.package_name == "operation" && declaration.kind == .Type && declaration.folder == "contract/operation"
+		found ||= declaration.package_name == "operation" && declaration.kind == .Type && declaration.folder == SOURCE_FOLDER_CONTRACT + "/operation"
 	}
 	testing.expect(t, found, "the index has not the type Fault_Record of contract/operation")
 }

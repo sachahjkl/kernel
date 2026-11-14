@@ -13,14 +13,14 @@ import "contract:fixed_addresses"
 import module "contract:module"
 import op "contract:operation"
 
-SITE_OPERATION_FILE :: "contract/operation/operation.odin"
-SITE_ERRORS_FILE :: "contract/errors/errors.odin"
-SITE_FIXED_ADDRESSES_FILE :: "contract/fixed_addresses/fixed_addresses.odin"
-SITE_SYSTEM_GRANTS_FILE :: "support/system/grants.odin"
-SITE_ROOT_FILE :: "programs/root/main.odin"
-SITE_START_GRANT_FILE :: "contract/start_grant/start_grant.odin"
+SITE_OPERATION_FILE :: SOURCE_FOLDER_CONTRACT + "/operation/operation.odin"
+SITE_ERRORS_FILE :: SOURCE_FOLDER_CONTRACT + "/errors/errors.odin"
+SITE_FIXED_ADDRESSES_FILE :: FIXED_ADDRESSES_FOLDER + "/fixed_addresses.odin"
+SITE_SYSTEM_GRANTS_FILE :: SYSTEM_LIBRARY_FOLDER + "/grants.odin"
+SITE_ROOT_FILE :: PROGRAM_SOURCES + "root/main.odin"
+SITE_START_GRANT_FILE :: SOURCE_FOLDER_CONTRACT + "/start_grant/start_grant.odin"
 SITE_MODULES_FILE :: "tools/kerneltool/modules.odin"
-SITE_CONSOLE_COMMAND_FILES :: [?]string{"programs/console/commands.odin", "programs/console/debugger_commands.odin", "programs/console/tables.odin"}
+SITE_CONSOLE_COMMAND_FILES :: [?]string{PROGRAM_SOURCES + "console/commands.odin", PROGRAM_SOURCES + "console/debugger_commands.odin", PROGRAM_SOURCES + "console/tables.odin"}
 
 // The folder of each page of a generated table: site_page_file gives its file.
 SITE_OPERATIONS_FOLDER :: SITE_REFERENCE_FOLDER + "/operations"
@@ -206,7 +206,7 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	modules := make([dynamic]Site_Module, context.temp_allocator)
 	for build in module_builds {
 		description := describe_package(build.source) or_return
-		kind := strings.has_prefix(build.source, "programs/") ? "program" : "module"
+		kind := strings.has_prefix(build.source, PROGRAM_SOURCES) ? "program" : "module"
 		append(&modules, Site_Module{build = build, kind = kind, page = site_module_page(build.name), description = description})
 	}
 	reference.modules = modules[:]

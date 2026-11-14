@@ -17,6 +17,10 @@ import "support:mark"
 // (mark_font.odin): a page that shows the heron alone writes the name as
 // text in that font.
 
+// The package that holds the mark as data: its geometry, its letters and
+// its animations.
+MARK_SOURCE_FOLDER :: SOURCE_FOLDER_SUPPORT + "/mark"
+
 run_logo :: proc(args: []string) -> int {
 	if len(args) != 0 {
 		fmt.eprintln("kerneltool: logo takes no argument")
@@ -85,10 +89,10 @@ logo_check :: proc() -> bool {
 			}
 		}
 		if !same {
-			fmt.eprintfln("kerneltool: test failed: %s is not the picture of the data of support/mark: run kerneltool logo", picture.file_name)
+			fmt.eprintfln("kerneltool: test failed: %s is not the picture of the data of " + MARK_SOURCE_FOLDER + ": run kerneltool logo", picture.file_name)
 			return false
 		}
-		test_passed_print("%s is the picture of the data of support/mark", picture.file_name)
+		test_passed_print("%s is the picture of the data of " + MARK_SOURCE_FOLDER, picture.file_name)
 	}
 	return mark_font_check()
 }

@@ -14,13 +14,13 @@ import "contract:blake3"
 // the file of the repository, byte for byte. A reader audits the changes
 // here, not in a diff of each file.
 
-CRYPTOGRAPHY_MANIFEST :: "support/cryptography/origin.manifest"
+CRYPTOGRAPHY_MANIFEST :: CRYPTOGRAPHY_FOLDER + "/origin.manifest"
 // The files of support/cryptography that the system wrote itself (the
 // compatibility layer, the files in the place of a hardware dispatch, the
 // tests), each with its BLAKE3 hash: a change of one of them shows in the
 // check and in review, as a change of a taken file does.
-CRYPTOGRAPHY_SYSTEM_FILES :: "support/cryptography/system_files.manifest"
-CRYPTOGRAPHY_FOLDER :: "support/cryptography"
+CRYPTOGRAPHY_SYSTEM_FILES :: CRYPTOGRAPHY_FOLDER + "/system_files.manifest"
+CRYPTOGRAPHY_FOLDER :: SOURCE_FOLDER_SUPPORT + "/cryptography"
 CRYPTOGRAPHY_ORIGIN_PREFIX :: "core/crypto/"
 // The word in place of a hash that the coordinator has to compute with
 // `kerneltool cryptography-system-hashes`.
@@ -128,7 +128,7 @@ cryptography_adjusted :: proc(origin_path: string) -> bool {
 // zlib license of Odin asks that an altered source says so.
 cryptography_marking :: proc(origin_path: string) -> string {
 	what := cryptography_adjusted(origin_path) ? "its imports changed, and the adjustments that tools/kerneltool/cryptography_origin.odin lists" : "only its imports changed"
-	return fmt.tprintf("// Altered source: Odin %s, %s; %s (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).\n", CRYPTOGRAPHY_ORIGIN_RELEASE, origin_path, what)
+	return fmt.tprintf("// Altered source: Odin %s, %s; %s (" + CRYPTOGRAPHY_MANIFEST + ", docs/CRYPTOGRAPHY.md).\n", CRYPTOGRAPHY_ORIGIN_RELEASE, origin_path, what)
 }
 
 // cryptography_file_from_origin gives the bytes that the file of the
@@ -179,7 +179,7 @@ odin_files_of_a_folder :: proc(folder: string, files: ^[dynamic]string) -> bool 
 		path := join(folder, "/", entry.name)
 		switch {
 		case entry.type == .Symlink:
-			fmt.eprintfln("kerneltool: test failed: %s is a symbolic link: the files of support/cryptography are in its folders", path)
+			fmt.eprintfln("kerneltool: test failed: %s is a symbolic link: the files of " + CRYPTOGRAPHY_FOLDER + " are in its folders", path)
 			return false
 		case entry.type == .Directory:
 			odin_files_of_a_folder(path, files) or_return
@@ -368,7 +368,7 @@ cryptography_origin_check :: proc() -> bool {
 		}
 	}
 	test_passed_print("each of the %d .odin files of %s is in a list; %d files of the system have the hash of their list", len(found), CRYPTOGRAPHY_FOLDER, len(listed) - files)
-	test_passed_print("%d files of support/cryptography are their origin in Odin %s (each with the BLAKE3 hash of the manifest) with the %d listed import changes, the %d listed adjustments, and nothing else", files, CRYPTOGRAPHY_ORIGIN_RELEASE, len(cryptography_import_changes), len(cryptography_adjustments))
+	test_passed_print("%d files of " + CRYPTOGRAPHY_FOLDER + " are their origin in Odin %s (each with the BLAKE3 hash of the manifest) with the %d listed import changes, the %d listed adjustments, and nothing else", files, CRYPTOGRAPHY_ORIGIN_RELEASE, len(cryptography_import_changes), len(cryptography_adjustments))
 	return true
 }
 

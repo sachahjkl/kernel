@@ -26,7 +26,7 @@ SITE_MODULE_CONTRACT_DOCUMENT :: "docs/MODULE_CONTRACT.md"
 // The packages whose types the site documents: the packages whose files the
 // reference tables read, and the module contract, whose types the
 // descriptions of the exports use.
-SITE_TYPE_PACKAGES :: [?]string{"contract/operation", "contract/errors", "contract/fixed_addresses", "contract/module", "contract/start_grant"}
+SITE_TYPE_PACKAGES :: [?]string{SOURCE_FOLDER_CONTRACT + "/operation", SOURCE_FOLDER_CONTRACT + "/errors", FIXED_ADDRESSES_FOLDER, SOURCE_FOLDER_CONTRACT + "/module", SOURCE_FOLDER_CONTRACT + "/start_grant"}
 // A short card shows at most this many fields, members or bits; the page of
 // the types shows them all.
 SITE_TYPE_CARD_ROWS :: 8
@@ -684,7 +684,7 @@ site_types_read :: proc(site: ^Site) -> bool {
 
 	// The wire forms: the members of module.Type that the compiler knows,
 	// with the comment of each member in the source of the contract.
-	format_file :: "contract/module/format.odin"
+	format_file :: SOURCE_FOLDER_CONTRACT + "/module/format.odin"
 	format_text := site_read(format_file) or_return
 	members, problem := site_enumeration_read(format_text, format_file, "Type")
 	if problem != "" {
@@ -1105,7 +1105,7 @@ site_type_symbol_write :: proc(site: ^Site, b: ^strings.Builder, type: Site_Type
 		if type.kind == .Module_Record {
 			append(&facts, Site_Symbol_Fact{label = label, kind = .Module, html = strings.concatenate({"<a href=\"", site_page_link(site, page, site_module_page(type.package_name)), "\">", site_value_html(.Module, type.package_name), "</a>"}, context.temp_allocator)})
 		} else {
-			folder := strings.concatenate({"contract/", type.package_name}, context.temp_allocator)
+			folder := strings.concatenate({SOURCE_FOLDER_CONTRACT + "/", type.package_name}, context.temp_allocator)
 			link := strings.builder_make(context.temp_allocator)
 			site_value_link(&link, .File, site_folder_address(site, folder), folder, false)
 			append(&facts, Site_Symbol_Fact{label = label, kind = .File, html = strings.to_string(link)})

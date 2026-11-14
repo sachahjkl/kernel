@@ -13,12 +13,12 @@ SITE_NOT_RECORDED :: "not recorded"
 SITE_FLAKE_FILE :: "flake.nix"
 SITE_FLAKE_LOCK_FILE :: "flake.lock"
 SITE_FONT_FOLDER :: "resources/fonts"
-SITE_SPLEEN_LICENSE_FILE :: "support/graphics/FONT_LICENSE"
-SITE_PORTRAIT_LICENSE_FILE :: "programs/temple/PORTRAIT_LICENSE"
+SITE_SPLEEN_LICENSE_FILE :: SOURCE_FOLDER_SUPPORT + "/graphics/FONT_LICENSE"
+SITE_PORTRAIT_LICENSE_FILE :: SOURCE_FOLDER_PROGRAMS + "/temple/PORTRAIT_LICENSE"
 SITE_POSY_MANIFEST :: "resources/pointers/posy.manifest"
 SITE_SYSTEM_POINTER_MANIFEST :: "resources/pointers/system.manifest"
-SITE_ODIN_LICENSE_FILE :: "support/cryptography/LICENSE.odin.txt"
-SITE_FIAT_LICENSE_FILE :: "support/cryptography/LICENSE.fiat-crypto.txt"
+SITE_ODIN_LICENSE_FILE :: CRYPTOGRAPHY_FOLDER + "/LICENSE.odin.txt"
+SITE_FIAT_LICENSE_FILE :: CRYPTOGRAPHY_FOLDER + "/LICENSE.fiat-crypto.txt"
 
 Site_License_Row :: struct {
 	what:           string,

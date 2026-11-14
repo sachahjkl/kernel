@@ -55,8 +55,8 @@ call_source_line_of_content :: proc(t: ^testing.T) {
 // line of the store in the file.
 @(test)
 debugger_scenario_names_the_line_of_debug_target :: proc(t: ^testing.T) {
-	content, read := read_file("programs/debug_target/main.odin")
-	if !testing.expect(t, read, "programs/debug_target/main.odin is read") {
+	content, read := read_file(DEBUG_TARGET_SOURCE_FILE)
+	if !testing.expect(t, read, DEBUG_TARGET_SOURCE_FILE + " is read") {
 		return
 	}
 	testing.expect_value(t, DEBUG_TARGET_LINE_OF_THE_STORE, "79")

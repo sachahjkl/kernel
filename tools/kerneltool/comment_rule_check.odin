@@ -16,7 +16,7 @@ import "core:strings"
 
 // The folders whose sources the check reads, with their tests, and the
 // sources at the root of the repository.
-COMMENT_RULE_FOLDERS :: [?]string{"kernel", "boot", "runtime", "contract", "support", "modules", "programs", "tools"}
+COMMENT_RULE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_PROGRAMS, "tools"}
 COMMENT_RULE_ROOT_FILES :: [?]string{"flake.nix"}
 
 // The forms that a comment must not have.

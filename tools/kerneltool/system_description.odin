@@ -109,7 +109,7 @@ signing_key_read :: proc() -> (key: Signing_Key, ok: bool) {
 	ed25519.private_key_public_bytes(&key.private_key, key.public_key[:])
 	key.is_test = key.public_key == system_description.TEST_PUBLIC_KEY
 	if path == TEST_SIGNING_KEY_FILE && !key.is_test {
-		fmt.eprintfln("kerneltool: %s does not give the public key of the test signing key (contract/system_description)", path)
+		fmt.eprintfln("kerneltool: %s does not give the public key of the test signing key (" + SOURCE_FOLDER_CONTRACT + "/system_description)", path)
 		return
 	}
 	if !signing_key_said {

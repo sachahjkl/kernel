@@ -30,7 +30,7 @@ CHANGELOG_FILE :: "CHANGELOG.md"
 FRAGMENT_FOLDER :: "changelog.d"
 // The one file of the fragment folder that is not a fragment.
 FRAGMENT_FOLDER_GUIDE :: "README.md"
-RELEASE_NUMBER_SOURCE :: "contract/release/release.odin"
+RELEASE_NUMBER_SOURCE :: SOURCE_FOLDER_CONTRACT + "/release/release.odin"
 RELEASE_NUMBER_LINE_START :: "RELEASE_NUMBER :: "
 CHANGELOG_TITLE :: "# Changelog"
 // The longest subject of a fragment name.

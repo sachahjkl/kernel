@@ -301,7 +301,7 @@ each_declaration_of_the_repository_agrees_with_its_export :: proc(t: ^testing.T)
 		// The declarations of the drawing module are in the window layer of
 		// the interface package, for each program with the setting.
 		if slice.contains(build.defines, DRAWING_THROUGH_MODULE) {
-			append(&paths, "support/interface/window_drawing.odin")
+			append(&paths, SOURCE_FOLDER_SUPPORT + "/interface/window_drawing.odin")
 		}
 		compared := 0
 		for path in paths {

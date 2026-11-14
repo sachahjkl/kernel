@@ -43,9 +43,70 @@ BUILD_FOLDER :: "build"
 //              compiles with this library only.
 //   support    what a program compiles in to use the contracts.
 // flake.nix gives the same two flags to the compiler when it builds this tool.
-CONTRACT_LIBRARY :: "-collection:contract=contract"
-SUPPORT_LIBRARY :: "-collection:support=support"
+// The name and the folder of each library are in source_folders.odin.
+CONTRACT_LIBRARY :: "-collection:" + CONTRACT_LIBRARY_NAME + "=" + SOURCE_FOLDER_CONTRACT
+SUPPORT_LIBRARY :: "-collection:" + SUPPORT_LIBRARY_NAME + "=" + SOURCE_FOLDER_SUPPORT
 CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "datagram", "date", "errors", "fixed_addresses", "frame", "glyph_cache", "isolated", "module", "operation", "pointer_pictures", "release", "remote", "ring", "settings", "store", "cut_mark", "system_description", "debug_object", "value_kinds", "palette_table", "start_grant"}
+// The folders whose host tests `kerneltool check` runs, in the order of
+// the run: `odin test` on each.
+HOST_TEST_FOLDERS :: [?]string {
+	SOURCE_FOLDER_RUNTIME,
+	SOURCE_FOLDER_CONTRACT + "/blake3",
+	SOURCE_FOLDER_CONTRACT + "/isolated",
+	SOURCE_FOLDER_CONTRACT + "/pointer_pictures",
+	SOURCE_FOLDER_CONTRACT + "/remote",
+	SOURCE_FOLDER_SUPPORT + "/sentence",
+	SOURCE_FOLDER_SUPPORT + "/cryptography/vectors",
+	SOURCE_FOLDER_MODULES + "/cryptography",
+	SOURCE_FOLDER_SUPPORT + "/quic",
+	SOURCE_FOLDER_CONTRACT + "/date",
+	SOURCE_FOLDER_SUPPORT + "/storage_mount",
+	SOURCE_FOLDER_SUPPORT + "/storage_object",
+	SOURCE_FOLDER_SUPPORT + "/storage_tree",
+	SOURCE_FOLDER_SUPPORT + "/storage_retention",
+	SOURCE_FOLDER_SUPPORT + "/principals",
+	SOURCE_FOLDER_SUPPORT + "/calendar",
+	SOURCE_FOLDER_SUPPORT + "/line_editor",
+	SOURCE_FOLDER_SUPPORT + "/console_language",
+	SOURCE_FOLDER_SUPPORT + "/debugging",
+	SOURCE_FOLDER_MODULES + "/interface_module",
+	SOURCE_FOLDER_MODULES + "/drawing",
+	SOURCE_FOLDER_MODULES + "/sample",
+	SOURCE_FOLDER_SUPPORT + "/system",
+	SOURCE_FOLDER_SUPPORT + "/bar",
+	SOURCE_FOLDER_SUPPORT + "/palette",
+	SOURCE_FOLDER_CONTRACT + "/palette_table",
+	SOURCE_FOLDER_SUPPORT + "/bootscreen/image_card",
+	SOURCE_FOLDER_SUPPORT + "/graphics",
+	SOURCE_FOLDER_SUPPORT + "/interface",
+	SOURCE_FOLDER_SUPPORT + "/addresses",
+	SOURCE_FOLDER_SUPPORT + "/information",
+	SOURCE_FOLDER_SUPPORT + "/vector_font",
+	SOURCE_FOLDER_SUPPORT + "/network",
+	SOURCE_FOLDER_SUPPORT + "/tcp",
+	SOURCE_FOLDER_SUPPORT + "/virtio",
+	SOURCE_FOLDER_SUPPORT + "/web",
+	SOURCE_FOLDER_SUPPORT + "/cryptography/chacha20",
+	SOURCE_FOLDER_SUPPORT + "/random",
+	TOOL_SOURCE_FOLDER,
+	SOURCE_FOLDER_CONTRACT + "/fixed_addresses",
+	SOURCE_FOLDER_CONTRACT + "/settings",
+	SOURCE_FOLDER_MODULES + "/text_shaping",
+	SOURCE_FOLDER_SUPPORT + "/text_shaping",
+	SOURCE_FOLDER_SUPPORT + "/mark",
+	SOURCE_FOLDER_SUPPORT + "/terminal",
+	SOURCE_FOLDER_CONTRACT + "/cut_mark",
+	SOURCE_FOLDER_RUNTIME + "/without_vector_registers",
+	SOURCE_FOLDER_SUPPORT + "/instruction_sets",
+	SOURCE_FOLDER_CONTRACT + "/system_description",
+	SOURCE_FOLDER_CONTRACT + "/operation",
+	SOURCE_FOLDER_CONTRACT + "/debug_object",
+	SOURCE_FOLDER_CONTRACT + "/value_kinds",
+	SOURCE_FOLDER_SUPPORT + "/source_comment_markdown",
+	SOURCE_FOLDER_SUPPORT + "/console_results",
+	SOURCE_FOLDER_SUPPORT + "/key_path",
+	SOURCE_FOLDER_SUPPORT + "/kind_icons",
+}
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 // The boot program of the main boot volume, and its object: each boot
 // volume has its own object folder (boot_volumes.odin).
@@ -300,7 +361,7 @@ COMMANDS :: [?]Command {
 	// - `check`: draws them again and compares them with the files of the
 	//   repository; `kerneltool check` runs it, so a mark that changed in
 	//   the code and not in the files fails.
-	{name = "logo", about = "draw the files of the mark of the system from support/mark: " + LOGO_FOLDER + " and " + PROJECT_IMAGE + "; `check` verifies them; and " + MARK_ANIMATIONS_PICTURE + ", every frame of the animations of the mark", run = run_logo},
+	{name = "logo", about = "draw the files of the mark of the system from " + MARK_SOURCE_FOLDER + ": " + LOGO_FOLDER + " and " + PROJECT_IMAGE + "; `check` verifies them; and " + MARK_ANIMATIONS_PICTURE + ", every frame of the animations of the mark", run = run_logo},
 	// Draws one picture of the mark: the one entry to the generator of the
 	// pictures of the mark, which `logo` and `site` also ask.
 	//
@@ -362,7 +423,7 @@ COMMANDS :: [?]Command {
 	// `support/cryptography` that the manifest of the origin does not name:
 	// the files that the project wrote, which a reviewer checks before the
 	// lines go into the list.
-	{name = "cryptography-system-hashes", about = "print the line of " + CRYPTOGRAPHY_SYSTEM_FILES + " for each .odin file of support/cryptography that is not taken from Odin", run = run_cryptography_system_hashes},
+	{name = "cryptography-system-hashes", about = "print the line of " + CRYPTOGRAPHY_SYSTEM_FILES + " for each .odin file of " + CRYPTOGRAPHY_FOLDER + " that is not taken from Odin", run = run_cryptography_system_hashes},
 	// Checks that each file that the manifest of the origin names is its file
 	// in Odin with the listed changes only. `kerneltool check` runs it.
 	{name = "cryptography-origin", about = "check that each file of " + CRYPTOGRAPHY_MANIFEST + " is its origin in Odin with the listed changes only", run = run_cryptography_origin},
@@ -418,6 +479,19 @@ COMMANDS :: [?]Command {
 	// Prints the number of the newest release of `CHANGELOG.md`, as `0.91.0`:
 	// the number that a workflow gives to a release.
 	{name = "release_number", about = "print the release number of the system: the newest release of `" + CHANGELOG_FILE + "`", run = run_release_number},
+	// Records the hash of the file of each module of the build, or compares
+	// the build with such a record. It builds nothing: run `build` first.
+	//
+	// - `write <file>`: writes the record: one line for each module of
+	//   `build/modules`, its BLAKE3 hash and its name.
+	// - `compare <file>`: prints each module whose hash is not the hash of
+	//   the record, each module that only one of the two has, and the count
+	//   of the modules with the same hash. It fails when one differs.
+	//
+	// It is the proof of a change that must not change the system, such as
+	// a move of the sources
+	// (docs/TOOLS.md, "The hashes of the modules of two builds").
+	{name = "module-hashes", about = "write <file> | compare <file>: record the hash of each module of " + MODULE_BUILD_FOLDER + ", or compare the build with such a record: print each module whose hash differs, and fail if one does", run = run_module_hashes},
 	// Runs every check of the work tree, and writes no file of the
 	// repository. The full check of a batch is `screenshots` with
 	// `nix flake check`.
@@ -426,6 +500,7 @@ COMMANDS :: [?]Command {
 	// alone, the host tests of each library, the origin of the cryptography,
 	// the mark, the pictures of the README, the fixed addresses, the bounds
 	// of the tests, the rule on comments, the form of the glossary, the
+	// file index of the intent, the source paths in the documents, the
 	// changelog, the news and the roadmap. Then the whole machine test
 	// (`test`) and a second build that must give the same bytes.
 	{name = "check", about = "odin check -vet and odin test of the host code, the checks of the sources (among them the rule on comments and the form of the glossary), changelog check, news check, roadmap check, then test", run = run_check},
@@ -840,22 +915,23 @@ run_measure :: proc(args: []string) -> int {
 run_check :: proc(args: []string) -> int {
 	// The full check proves the build: it keeps no output of an earlier build.
 	build_whole = true
-	if !run({"odin", "check", "tools/kerneltool", "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY}) {
+	if !run({"odin", "check", TOOL_SOURCE_FOLDER, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY}) {
 		return EXIT_FAILURE
 	}
 	// A package of the contract library compiles with that library only:
 	// the compiler refuses an import of "support:".
 	for name in CONTRACT_PACKAGES {
-		if !run({"odin", "check", strings.concatenate({"contract/", name}, context.temp_allocator), "-no-entry-point", "-vet", CONTRACT_LIBRARY}) {
+		if !run({"odin", "check", strings.concatenate({SOURCE_FOLDER_CONTRACT + "/", name}, context.temp_allocator), "-no-entry-point", "-vet", CONTRACT_LIBRARY}) {
 			return EXIT_FAILURE
 		}
 		test_passed_print("contract:%s compiles with the contract library only", name)
 	}
-	// The tests of runtime/memory.asm link the form of the host: the
-	// compiler assembles runtime/memory_for_host_tests.asm itself and links
-	// its object by its path (a library found through `-L/` is refused by
-	// the linker of the Nix sandbox).
-	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/sentence", "support/cryptography/vectors", "modules/cryptography", "support/quic", "contract/date", "support/storage_mount", "support/storage_object", "support/storage_tree", "support/storage_retention", "support/principals", "support/calendar", "support/line_editor", "support/console_language", "support/debugging", "modules/interface_module", "modules/drawing", "modules/sample", "support/system", "support/bar", "support/palette", "contract/palette_table", "support/bootscreen/image_card", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/virtio", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool", "contract/fixed_addresses", "contract/settings", "modules/text_shaping", "support/text_shaping", "support/mark", "support/terminal", "contract/cut_mark", "runtime/without_vector_registers", "support/instruction_sets", "contract/system_description", "contract/operation", "contract/debug_object", "contract/value_kinds", "support/source_comment_markdown", "support/console_results", "support/key_path", "support/kind_icons"}) {
+	// The tests of the memory procedures in assembly link the form of the
+	// host: the compiler assembles memory_for_host_tests.asm itself and
+	// links its object by its path (a library found through `-L/` is
+	// refused by the linker of the Nix sandbox).
+	host_test_folders := HOST_TEST_FOLDERS
+	for folder in host_test_folders {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE
@@ -886,6 +962,9 @@ run_check :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	if !intent_index_check() {
+		return EXIT_FAILURE
+	}
+	if !source_paths_check() {
 		return EXIT_FAILURE
 	}
 	if !changelog_check() {

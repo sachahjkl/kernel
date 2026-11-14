@@ -2279,9 +2279,9 @@ scenario := [?]Step {
 	// procedure, the module and the source file. No step names a line
 	// number: a line added to the source of fault moves it. The tool checks
 	// the lines of fault::three against the source (trace.odin).
-	{kind = .Wait, text = " in fault (programs/fault/main.odin:"},
+	{kind = .Wait, text = " in fault (" + FAULT_SOURCE_FILE + ":"},
 	{kind = .Wait, text = "), fault::two + 0x"},
-	{kind = .Wait, text = " in fault (programs/fault/main.odin:"},
+	{kind = .Wait, text = " in fault (" + FAULT_SOURCE_FILE + ":"},
 	{kind = .Wait, text = "), fault::one + 0x"},
 	{kind = .Wait, text = "errors: t the pages of another program (Inspect, Pages): Inspect: the argument index has the value 1, which the call refuses"},
 	{kind = .Wait, text = "errors: u the pages past the end of the user half: Inspect: the argument address has the value 140737488351232, which the call refuses; it takes at most 140737488093184"},
@@ -2347,7 +2347,7 @@ scenario := [?]Step {
 	{kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"},
 	{kind = .Type, text = "fault"},
 	{kind = .Wait, text = "inspect: fault stopped: page fault at 0x0; stack: fault::three + 0x"},
-	{kind = .Wait, text = " in fault (programs/fault/main.odin:"},
+	{kind = .Wait, text = " in fault (" + FAULT_SOURCE_FILE + ":"},
 	{kind = .Wait, text = "), fault::two + 0x"},
 	{kind = .Shot, text = "inspect_stopped"},
 	{kind = .Key, text = "tab"},

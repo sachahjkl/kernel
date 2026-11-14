@@ -62,7 +62,7 @@ trace_check :: proc(line: string, names: string) -> (found: string, ok: bool) {
 }
 
 // The source file of the program fault, as its debug object names it.
-FAULT_SOURCE_FILE :: "programs/fault/main.odin"
+FAULT_SOURCE_FILE :: PROGRAM_SOURCES + "fault/main.odin"
 
 // source_lines_of_procedure gives the first and the last line (from 1) of a
 // procedure of the top level of an Odin source: the line that starts with
@@ -165,9 +165,9 @@ test_debug_objects :: proc() -> bool {
 	// The source file of the first instruction has the hash of the file
 	// of the repository.
 	source_of_line, has_source := debug_object.source_line_of(object, three.start)
-	source_file := read_file("programs/fault/main.odin") or_return
-	if !has_source || source_of_line.path != "programs/fault/main.odin" || !source_of_line.content_hash_known || source_of_line.content_hash != blake3.hash(source_file) {
-		return fail("the source file of fault::three is %s, and its hash is not the hash of programs/fault/main.odin", source_of_line.path)
+	source_file := read_file(FAULT_SOURCE_FILE) or_return
+	if !has_source || source_of_line.path != FAULT_SOURCE_FILE || !source_of_line.content_hash_known || source_of_line.content_hash != blake3.hash(source_file) {
+		return fail("the source file of fault::three is %s, and its hash is not the hash of " + FAULT_SOURCE_FILE, source_of_line.path)
 	}
 	// The parameter of fault::three and its type.
 	address, has_address := debug_object.variable_by_name_at(object, three.start, "address")
@@ -177,6 +177,6 @@ test_debug_objects :: proc() -> bool {
 	}
 	parts, _ := debug_object.tables(object)
 	test_passed_print("the debug object of fault names fault::three at %x to %x, its first instruction at %s:%d; %d procedures, %d files, %d rows; a changed object is refused", three.start, three.start + three.size, first.file, first.line, len(parts.procedures), len(parts.files) - 1, len(parts.lines))
-	test_passed_print("the debug object of fault describes its module only, has the hash of programs/fault/main.odin, and gives the parameter address of fault::three as a uintptr, place %v, register %d, offset %d; %d types, %d globals, %d variables in %d ranges", address.location, address.register, address.offset, len(parts.types) - 1, len(parts.globals), len(parts.variables), len(parts.ranges))
+	test_passed_print("the debug object of fault describes its module only, has the hash of " + FAULT_SOURCE_FILE + ", and gives the parameter address of fault::three as a uintptr, place %v, register %d, offset %d; %d types, %d globals, %d variables in %d ranges", address.location, address.register, address.offset, len(parts.types) - 1, len(parts.globals), len(parts.variables), len(parts.ranges))
 	return true
 }

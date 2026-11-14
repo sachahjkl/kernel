@@ -451,6 +451,33 @@ The link opens the guide for a reader of the repository. The labels after it are
 
 **What the check does not prove.** It reads the form, not the content: a file that is listed and that says what the code no longer does passes. A design that changes with no change of its intent file passes too. That rule is held by the review of a change.
 
+## The source paths in the documents
+
+A code span of a document that names a file of the repository is a link on the site. A span whose file is gone stays plain code, with no error: the link is lost in silence. A source that moves, or that gets a new name, must change each document that names it. `kerneltool check` runs `source_paths_check` (`tools/kerneltool/source_paths_check.odin`), which is the proof of that change.
+
+**What it reads.** Each document of `docs/` but the records of their time, `README.md`, `AGENTS.md`, and each intent file of `src/md`. In them, each code span outside a fence of code, also a span of a heading.
+
+**Which span is a source path.** A span that starts with the path of a folder of the sources, or with the last part of that path, then a `/`. The folders of the sources are the constants of `tools/kerneltool/source_folders.odin`. The last part is the name that a folder had before a move: a span that still starts with it is read, and is refused, so an old path cannot stay in a document. The first part of a path that has more parts is not a start: under it, an intent file names a folder of a later state or of a refused form, and such a span names nothing on purpose.
+
+| Span | How the check reads it |
+|---|---|
+| `kernel/enter.odin`, `support/system` | A file or a folder: it must exist |
+| `kernel/enter.odin:34` | The path before the `:`. A line number is not checked |
+| `programs/*/main.odin`, `programs/<name>/main.odin` | A name that is not written out ends the path at the folder before it: `programs` must exist |
+| `build/modules/x`, `docs/reference/modules/` | Not a source path: the name of a source folder is inside a longer path |
+| `kerneltool check`, `kernel`, `"contract:ring"` | Not a source path: the span does not start with the name of a folder and a `/` |
+
+A path is read from the root of the repository. A path that names nothing gives the document, the line and the span. When the path exists under the folder of its first name, the sentence gives the new path.
+
+**What it does not read.**
+
+- `docs/FIRST_MILESTONE.md`, `docs/HANDOFF.md`, `docs/REVIEWS.md` and `docs/DECISIONS.md`. Each is a record of its time: a choice of the past can name a file that was removed later, and that is not a fault of the record.
+- A fence of code: it holds a tree, a command or a log, not a pointer.
+- A path in running text, outside a code span. The site makes no link from it.
+- The news entries and the changelog.
+
+**What the check does not prove.** It proves that a path names something, not that it names the right thing. A span that names a package and a declaration in one text, a folder then `.` and a name, is read as a file and is refused: write the declaration and the folder in two spans.
+
 ## The commands of the tool
 
 All the automation of the project is one program of the host, `tools/kerneltool`. Each task (a build, a test, the site, a release) is one of its commands, so the same steps run on each computer and in each check. Run a command with `nix develop -c kerneltool <command>`; `kerneltool help` prints the list with one line for each.
@@ -465,8 +492,9 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "kerneltool: all tests passed", then the times of the test (below) |
 | `measure ...` | A measure run: a machine that measures with no other load. No argument: the locks. `scheduler N`, `clock`, `crowd`, `disk`, `flow`, `limits`: the program alone, and its lines. `windows`, `address_space`, `shortage`. The numbers are measures, never conditions ("A check by count, a measure by time") |
 | `screenshots` | The whole test, then the copy of the pictures to `docs/screenshots` and to the development log: the pictures are a fact of the machines, so they are copied as soon as each machine passed. Then a second build and the measure runs whose numbers the measure record holds (the locks, `clock`, `disk`, `scheduler`), then the measure record. `screenshots compress` compresses the PNG files that are stored with no compression |
-| `check` | `odin check -vet` and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the file index of the intent folder, the changelog, the news, the roadmap), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
+| `check` | `odin check -vet` and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the file index of the intent folder, the source paths in the documents, the changelog, the news, the roadmap), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
 | `repeat <module> <count>` | Builds one module again and again, with no machine, and counts the distinct results (`docs/REPRODUCIBLE_BUILD.md`). Each of its builds is a whole build |
+| `module-hashes write <file>`, `module-hashes compare <file>` | Records the hash of each module of the build in a file, or compares the build with such a record and fails when a module has another hash ("The hashes of the modules of two builds") |
 | `site` | Writes the site in `build/site/` |
 | `changelog ...`, `news ...`, `release_number` | The fragments of the changelog and its releases, the news entries, the number of the newest release |
 | `roadmap check` | Checks the form of `ROADMAP.md`, the planned work, and refuses an entry whose work has an entry of the changelog ("The roadmap") |
@@ -670,6 +698,25 @@ A volume that a command does not need is not built and not checked. It stays wit
 **The measure.** Each `build` prints its measure, lines that start with `kerneltool: measure: the build`: the whole time, the time of the hash of the input files with their count and their bytes, the time of the modules with the count of the modules built, converted and kept (and in it the time of the compile steps, the time of the conversions, the checks and the writes of the records; the time of a step is the time on the clock from the start of its first process to the end of its last one, in each level, with several processes at once), then one line for each later step: the debug image, the pointer themes, the glyph caches, the four boot images, the checks and the writes of the build records of the boot volumes, and the boot volumes in all. One line gives the count of the volumes built, kept and not needed by the command, with the count of volume processes at once; then one line for each built volume gives the whole time of its process. The process of a volume prints its own line, `kerneltool: measure: the build of the boot volume <name>`: the signed boot image, the compiler of the boot program, the assembler with the link and the firmware signature, and the volume file. Each number is a measure: nothing reads one.
 
 One whole build before the incremental build, on a host with 16 processors, read in the times of the files that it wrote: 83 s from the first LLVM IR file to the last module (84 modules, one compiler process for each processor), under 1 s for the debug image, the pointer themes and the three boot images, then 51 s for the 18 boot volumes, one after the other, 2.8 s each.
+
+### The hashes of the modules of two builds
+
+The hash of a module file is its identity. A change that must not change the system is proved by it: a move of the sources, a new name of a folder, a change of the tool. Each module of the build after the change has the hash of the build before.
+
+```
+nix develop -c kerneltool build
+nix develop -c kerneltool module-hashes write /tmp/module_hashes_before
+(the change)
+nix develop -c kerneltool build
+nix develop -c kerneltool module-hashes compare /tmp/module_hashes_before
+```
+
+- `module-hashes write <file>` writes the record: the line `module hashes, form 1`, then one line for each module of the table of the modules, the BLAKE3 hash of `build/modules/<name>.module` in 64 hexadecimal digits, a space and the name.
+- `module-hashes compare <file>` hashes the same files again and compares them with the record, by the name of the module. It prints one line for each module whose hash differs, with the two hashes, and one line for each module that only the record or only the build has. Its last line gives the count of the modules with the same hash. It fails when one module differs or is in one of the two only.
+
+The command builds nothing: it reads the build that is there, and stops when a module of the table has no file. The record is a file of the developer, outside the repository.
+
+A build key holds the path of each source, so a move of a folder builds each module again; the comparison then says whether the compiler gave the same bytes. A debug object holds the path of each source, so it changes with a move; the command does not read it.
 
 ### How the tool sends input and waits
 

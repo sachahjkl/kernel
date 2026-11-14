@@ -189,7 +189,7 @@ site_mark_animation_problems :: proc(files: map[string][]u8) -> []string {
 			same = image.pixels[index] == expected[index]
 		}
 		if !same {
-			append(&problems, fmt.tprintf("%s is not the frames of the animations of support/mark", path))
+			append(&problems, fmt.tprintf("%s is not the frames of the animations of " + MARK_SOURCE_FOLDER, path))
 		}
 		if width > MARK_PICTURE_SIDE_MOST || height > MARK_PICTURE_SIDE_MOST {
 			append(&problems, fmt.tprintf("%s is %d by %d pixels: a browser decodes at most %d", path, width, height, MARK_PICTURE_SIDE_MOST))
