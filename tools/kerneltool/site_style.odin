@@ -954,6 +954,9 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	// The font and the class of the name of the mark: after the rules, so
 	// that the class wins over the font of the place that holds the name.
 	strings.write_string(&builder, site_mark_name_rules())
+	// The stage of the heron of the home, which its script puts in the
+	// place of the still picture.
+	strings.write_string(&builder, site_mark_animation_rules())
 	// The color and the icon of each kind of value, in the dark form.
 	strings.write_string(&builder, site_value_rules(false))
 	// The colors of the code and of the parts of the browser, in the dark

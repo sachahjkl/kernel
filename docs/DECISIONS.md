@@ -1577,6 +1577,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: not done yet.
 - Where: `SITE.md`, "The mark on the site".
 
+### D-240 The heron of the home: more animations, a dash across the window, a random order with a memory
+- 2026-11-14. Decided by: the owner (the request); the coordinator and an agent (the form).
+- Decision: the large heron of the home has fifteen animations and is still for about 40 % of the time. One animation is a dash: the heron leaves the window at full speed, comes back from the other side, with squash and stretch. The order is random; an animation is not played again before every animation was played; then the memory is cleared and the round starts again, and the last animation of a round is not the first of the next. This replaces three rules of D-180 and D-181 for the site: the fixed order with no random number, the bound of about 6 changes of the picture each second (the run of the dash has frames of 70 ms), and "an animation only moves a few cells" (a move of the whole picture is added). D-180 stays for the place: the heron of the bar does not move, so only the home plays, and the memory serves a reader who leaves the home and comes back.
+- Words: "et l'oiseau du site manque d'animations : - une ou il part à toute vitesse, hors écran puis revient de l'autre côté, full speed squish and squash, beep beep style - en gros d'autres animations pour qu'il soit moins statique (il devrait être statique genre 40% du temps) je te laisse être créatif. + faire en sorte de joueur \"random\" mais éviter de rejouer une animation déjà joué (mémoire des animations jouées jusqu'à expiration puis clear memoire quand tout joué et on boucle"
+- State: done. Checked in a browser at fixed times of the dash; not seen in motion by the coordinator.
+- Where: `SITE.md`, "The rhythm of the animations", "The moves of the heron"; `DESIGN.md`, "The animations".
+
 ### D-182 A documentation in the form of the Odin site
 - 2026-11-12. Decided by: the owner.
 - Decision: the documentation has a sidebar of the pages, the technical text in the center, and the symbols of the page at the right, in the manner of the Odin documentation.

@@ -17,8 +17,10 @@ import "support:graphics"
 //   A frame starts from the still heron, or from an earlier frame of the
 //   same animation (base_frame), then applies its own changes. So a frame
 //   that repeats a pose names it, and the changes are not written twice.
-//   play_order: the still time, then the animation that follows it; the
-//   order repeats.
+//
+// The data says what the heron does, not when: which animation plays next,
+// and how long the heron is still between two of them, is the rule of the
+// place that plays them (docs/SITE.md, "The rhythm of the animations").
 //
 // A cell that a frame changes takes the color of its new part at that pixel:
 // the gradient over the box of the part in the still heron. A cell outside
@@ -33,30 +35,47 @@ Animation :: enum u8 {
 	Dip, // The head dips one cell, the eye closes, then a swallow goes down the neck.
 	Preen, // The neck bends down and back, the beak scratches the back two times, the neck comes up.
 	Scratch, // The raised leg goes down and scratches the ground three times.
+	Dash, // The heron winds up, runs with lines of speed behind it, then stops with a splash.
+	Hop, // The heron bends its knee, leaves the water with its foot tucked, and lands in two waves.
+	Fish, // A fish of two cells jumps out of the water in front of the heron, which looks at it.
+	Doze, // The eye stays closed and a letter z of cells rises behind the head.
+	Stretch, // The eye closes for a long stretch, then the crest stands out.
+	Ruffle, // The wind blows the crest back and lifts a feather of the tail.
+	Wade, // The heron changes the leg it stands on, two times.
+	Flap, // The wing beats above and below the body, and the foot leaves the water.
 }
 
 // The name of each animation, for a test and a line of the log.
 @(rodata)
 animation_names := [Animation]string {
-	.Blink  = "blink",
-	.Look   = "look",
-	.Leg    = "leg",
-	.Ripple = "ripple",
+	.Blink   = "blink",
+	.Look    = "look",
+	.Leg     = "leg",
+	.Ripple  = "ripple",
 	.Dip     = "dip",
 	.Preen   = "preen",
 	.Scratch = "scratch",
+	.Dash    = "dash",
+	.Hop     = "hop",
+	.Fish    = "fish",
+	.Doze    = "doze",
+	.Stretch = "stretch",
+	.Ruffle  = "ruffle",
+	.Wade    = "wade",
+	.Flap    = "flap",
 }
 
 // The bounds that the host tests hold the tables to. A frame that differs
 // from the still heron, or from the frame before it, by more cells than the
 // limit of its animation is a new drawing, not an idle movement. Most
 // animations move a few cells and keep FRAME_CHANGE_LIMIT. The preen moves
-// the whole head and the upper neck onto the back, so it has a limit of its
-// own; a new animation that needs more is a decision, not a change of the
-// common limit. The shortest frame keeps the changes to at most about 6
-// each second.
+// the whole head and the upper neck onto the back, and the dash moves both
+// legs and draws the lines of speed, so each has a limit of its own; a new
+// animation that needs more is a decision, not a change of the common
+// limit.
 FRAME_CHANGE_LIMIT :: 24
 PREEN_FRAME_CHANGE_LIMIT :: 48
+DASH_FRAME_CHANGE_LIMIT :: 40
 
 // The limit of the changed cells of a frame, for each animation.
 @(rodata)
@@ -68,13 +87,43 @@ animation_change_limits := [Animation]int {
 	.Dip     = FRAME_CHANGE_LIMIT,
 	.Preen   = PREEN_FRAME_CHANGE_LIMIT,
 	.Scratch = FRAME_CHANGE_LIMIT,
+	.Dash    = DASH_FRAME_CHANGE_LIMIT,
+	.Hop     = FRAME_CHANGE_LIMIT,
+	.Fish    = FRAME_CHANGE_LIMIT,
+	.Doze    = FRAME_CHANGE_LIMIT,
+	.Stretch = FRAME_CHANGE_LIMIT,
+	.Ruffle  = FRAME_CHANGE_LIMIT,
+	.Wade    = FRAME_CHANGE_LIMIT,
+	.Flap    = FRAME_CHANGE_LIMIT,
 }
 
+// The shortest frame keeps the changes of an idle movement to at most about
+// 6 each second. The legs of the dash run: their frames are shorter, and
+// only the dash has them.
 FRAME_DURATION_LEAST :: 150 // Milliseconds.
+DASH_FRAME_DURATION_LEAST :: 70 // Milliseconds: a step of the run.
 FRAME_DURATION_MOST :: 1000 // Milliseconds.
 ANIMATION_DURATION_MOST :: 3000 // All the frames of one animation.
-STILL_DURATION_LEAST :: 2000 // The still heron between two animations.
-STILL_DURATION_MOST :: 6000 // Milliseconds.
+
+// The shortest frame of each animation.
+@(rodata)
+animation_frame_duration_least := [Animation]int {
+	.Blink   = FRAME_DURATION_LEAST,
+	.Look    = FRAME_DURATION_LEAST,
+	.Leg     = FRAME_DURATION_LEAST,
+	.Ripple  = FRAME_DURATION_LEAST,
+	.Dip     = FRAME_DURATION_LEAST,
+	.Preen   = FRAME_DURATION_LEAST,
+	.Scratch = FRAME_DURATION_LEAST,
+	.Dash    = DASH_FRAME_DURATION_LEAST,
+	.Hop     = FRAME_DURATION_LEAST,
+	.Fish    = FRAME_DURATION_LEAST,
+	.Doze    = FRAME_DURATION_LEAST,
+	.Stretch = FRAME_DURATION_LEAST,
+	.Ruffle  = FRAME_DURATION_LEAST,
+	.Wade    = FRAME_DURATION_LEAST,
+	.Flap    = FRAME_DURATION_LEAST,
+}
 
 // One frame of an animation: a row of animation_frames.
 Animation_Frame :: struct {
@@ -132,6 +181,57 @@ animation_frames := [?]Animation_Frame {
 	{.Scratch, 6, 2, 200}, // Forward.
 	{.Scratch, 7, 3, 220}, // Back.
 	{.Scratch, 8, 1, 200}, // The knee in, then the raised leg again.
+	// The dash: the wind-up, fourteen steps of the run in two poses, the
+	// stop and the last wave. The place that plays it moves the heron during
+	// the run and the stop; the frames are the same with no move.
+	{.Dash, 1, 0, 380}, // The wind-up: the knee in, the pose of the leg animation.
+	{.Dash, 2, 0, 70}, // The run, the legs apart; lines of speed behind.
+	{.Dash, 3, 0, 70}, // The run, the legs together; the lines two cells back.
+	{.Dash, 4, 2, 70},
+	{.Dash, 5, 3, 70},
+	{.Dash, 6, 2, 70},
+	{.Dash, 7, 3, 70},
+	{.Dash, 8, 2, 70},
+	{.Dash, 9, 3, 70},
+	{.Dash, 10, 2, 70},
+	{.Dash, 11, 3, 70},
+	{.Dash, 12, 2, 70},
+	{.Dash, 13, 3, 70},
+	{.Dash, 14, 2, 70},
+	{.Dash, 15, 3, 70},
+	{.Dash, 16, 0, 220}, // The stop: the legs together, water lifts in front of them.
+	{.Dash, 17, 0, 200}, // The heron stands again; one wave at each side.
+	{.Hop, 1, 0, 180}, // The knee half in: the heron gathers.
+	{.Hop, 2, 0, 320}, // In the air: the foot tucked, the water closed under it.
+	{.Hop, 3, 0, 200}, // The landing: a wave at each side of the legs.
+	{.Hop, 4, 0, 180}, // The waves two columns farther.
+	{.Fish, 1, 0, 220}, // The fish comes out of the water.
+	{.Fish, 2, 0, 200}, // The fish higher; the head looks forward.
+	{.Fish, 3, 2, 250}, // The fish at the top of its jump.
+	{.Fish, 4, 3, 200}, // The fish on its way down.
+	{.Fish, 5, 0, 200}, // The fish enters the water; a splash at each side.
+	{.Fish, 6, 0, 180}, // The splash, farther out.
+	{.Doze, 1, 0, 500}, // The eye closes.
+	{.Doze, 2, 1, 400}, // One cell behind the head.
+	{.Doze, 3, 2, 600}, // A letter z above it.
+	{.Doze, 4, 1, 600}, // The letter higher, a cell under it.
+	{.Doze, 5, 1, 300}, // The eye still closed.
+	{.Stretch, 1, 0, 700}, // The eye closed.
+	{.Stretch, 2, 0, 400}, // The eye open, the crest out.
+	{.Ruffle, 1, 0, 180}, // The crest blown back one cell.
+	{.Ruffle, 2, 1, 180}, // The crest longer; a feather of the tail lifts.
+	{.Ruffle, 3, 1, 180},
+	{.Ruffle, 4, 2, 180},
+	{.Ruffle, 5, 1, 180},
+	{.Wade, 1, 0, 350}, // The other leg stands, the first one is raised behind.
+	{.Wade, 2, 0, 350}, // Still: no change.
+	{.Wade, 3, 1, 350}, // The other leg again.
+	{.Flap, 1, 0, 200}, // The wing above the back.
+	{.Flap, 2, 0, 150}, // The wing under the body; the foot out of the water.
+	{.Flap, 3, 1, 150}, // The wing above the back; the foot out of the water.
+	{.Flap, 4, 2, 150},
+	{.Flap, 5, 3, 150},
+	{.Flap, 6, 1, 200}, // The wing above the back; the foot in the water.
 }
 
 // The columns count from the left and the rows from the top, as in
@@ -378,39 +478,254 @@ animation_changes := [?]Cell_Change {
 	{.Scratch, 3, 14, 22, 'o'},
 	{.Scratch, 5, 16, 21, '.'},
 	{.Scratch, 5, 17, 21, 't'},
-}
 
-// One step of the order of play: the still heron for still_milliseconds,
-// then the animation.
-Play_Step :: struct {
-	still_milliseconds: u16, // The still heron before the animation.
-	animation:          Animation, // The animation that follows.
-}
+	// Dash, frame 1, the wind-up: the knee in, as the frame 2 of the leg
+	// animation.
+	{.Dash, 1, 12, 18, 'o'},
+	{.Dash, 1, 13, 18, '.'},
+	{.Dash, 1, 13, 19, 'o'},
+	{.Dash, 1, 14, 19, '.'},
+	{.Dash, 1, 12, 20, 'o'},
+	{.Dash, 1, 13, 20, '.'},
+	// Frame 2, the legs apart: the standing leg goes back and up from its
+	// hip (column 9, row 16) to a foot at the columns 5 and 6 of row 19; the
+	// other leg goes forward from its hip (column 12, row 16) to a foot at
+	// the columns 15 and 16 of row 19. No foot is in the water, so the water
+	// closes. The lines of speed are in the color of the neck, behind the
+	// head (row 3) and behind the neck (row 9).
+	{.Dash, 2, 9, 17, '.'},
+	{.Dash, 2, 9, 18, '.'},
+	{.Dash, 2, 9, 19, '.'},
+	{.Dash, 2, 9, 20, '.'},
+	{.Dash, 2, 9, 21, '.'},
+	{.Dash, 2, 8, 17, 'o'},
+	{.Dash, 2, 7, 18, 'o'},
+	{.Dash, 2, 6, 19, 'o'},
+	{.Dash, 2, 5, 19, 'o'},
+	{.Dash, 2, 12, 17, '.'},
+	{.Dash, 2, 13, 18, '.'},
+	{.Dash, 2, 14, 19, '.'},
+	{.Dash, 2, 13, 20, '.'},
+	{.Dash, 2, 12, 21, '.'},
+	{.Dash, 2, 13, 17, 'o'},
+	{.Dash, 2, 14, 18, 'o'},
+	{.Dash, 2, 15, 19, 'o'},
+	{.Dash, 2, 16, 19, 'o'},
+	{.Dash, 2, 9, 22, 't'},
+	{.Dash, 2, 10, 22, 't'},
+	{.Dash, 2, 11, 22, 't'},
+	{.Dash, 2, 5, 3, 'h'},
+	{.Dash, 2, 6, 3, 'h'},
+	{.Dash, 2, 7, 3, 'h'},
+	{.Dash, 2, 8, 3, 'h'},
+	{.Dash, 2, 9, 3, 'h'},
+	{.Dash, 2, 10, 3, 'h'},
+	{.Dash, 2, 2, 9, 'h'},
+	{.Dash, 2, 3, 9, 'h'},
+	{.Dash, 2, 4, 9, 'h'},
+	{.Dash, 2, 5, 9, 'h'},
+	{.Dash, 2, 6, 9, 'h'},
+	// Frame 3, the legs together: each leg keeps its two upper cells and
+	// has a short lower part toward the other leg. The lines of speed are
+	// two cells from their place in the frame 2.
+	{.Dash, 3, 9, 18, '.'},
+	{.Dash, 3, 9, 19, '.'},
+	{.Dash, 3, 9, 20, '.'},
+	{.Dash, 3, 9, 21, '.'},
+	{.Dash, 3, 10, 18, 'o'},
+	{.Dash, 3, 13, 18, '.'},
+	{.Dash, 3, 14, 19, '.'},
+	{.Dash, 3, 13, 20, '.'},
+	{.Dash, 3, 12, 21, '.'},
+	{.Dash, 3, 11, 18, 'o'},
+	{.Dash, 3, 9, 22, 't'},
+	{.Dash, 3, 10, 22, 't'},
+	{.Dash, 3, 11, 22, 't'},
+	{.Dash, 3, 3, 3, 'h'},
+	{.Dash, 3, 4, 3, 'h'},
+	{.Dash, 3, 5, 3, 'h'},
+	{.Dash, 3, 6, 3, 'h'},
+	{.Dash, 3, 7, 3, 'h'},
+	{.Dash, 3, 8, 3, 'h'},
+	{.Dash, 3, 4, 9, 'h'},
+	{.Dash, 3, 5, 9, 'h'},
+	{.Dash, 3, 6, 9, 'h'},
+	{.Dash, 3, 7, 9, 'h'},
+	{.Dash, 3, 8, 9, 'h'},
+	// Frame 16, the stop: the legs together as in the frame 3, with no line
+	// of speed, and water lifts in front of the legs. No foot is in the
+	// water yet: the place that plays the dash still moves the heron.
+	// Frame 17: the heron stands, with one wave at each side.
+	{.Dash, 16, 9, 18, '.'},
+	{.Dash, 16, 9, 19, '.'},
+	{.Dash, 16, 9, 20, '.'},
+	{.Dash, 16, 9, 21, '.'},
+	{.Dash, 16, 10, 18, 'o'},
+	{.Dash, 16, 13, 18, '.'},
+	{.Dash, 16, 14, 19, '.'},
+	{.Dash, 16, 13, 20, '.'},
+	{.Dash, 16, 12, 21, '.'},
+	{.Dash, 16, 11, 18, 'o'},
+	{.Dash, 16, 9, 22, 't'},
+	{.Dash, 16, 10, 22, 't'},
+	{.Dash, 16, 11, 22, 't'},
+	{.Dash, 16, 13, 21, 't'},
+	{.Dash, 16, 15, 21, 't'},
+	{.Dash, 17, 6, 21, 't'},
+	{.Dash, 17, 17, 21, 't'},
 
-// The order of play. It repeats after its last step, about every 80 seconds:
-// 64.1 seconds of still times and 15.7 seconds of animations.
-// The still times differ and the animations do not come in a fixed cycle,
-// so the order does not look periodic; no random number is needed. The
-// weight of an animation is how many times it is in this order.
-@(rodata)
-play_order := [?]Play_Step {
-	{3000, .Blink},
-	{4800, .Ripple},
-	{2200, .Blink},
-	{4000, .Look},
-	{5200, .Blink},
-	{3400, .Preen},
-	{2600, .Ripple},
-	{4400, .Blink},
-	{5500, .Dip},
-	{3000, .Look},
-	{3700, .Blink},
-	{5000, .Scratch},
-	{2400, .Leg},
-	{4200, .Blink},
-	{3300, .Ripple},
-	{2800, .Leg},
-	{4600, .Look},
+	// Hop, frame 1: the knee half in, as the frame 1 of the leg animation.
+	// Frame 2: the standing foot leaves the water and is one row higher, at
+	// the columns 10 and 11 of row 21; the water closes under it. Frames 3
+	// and 4: the waves of the ripple.
+	{.Hop, 1, 14, 19, '.'},
+	{.Hop, 1, 13, 19, 'o'},
+	{.Hop, 2, 9, 22, 't'},
+	{.Hop, 2, 10, 22, 't'},
+	{.Hop, 2, 11, 22, 't'},
+	{.Hop, 2, 10, 21, 'o'},
+	{.Hop, 2, 11, 21, 'o'},
+	{.Hop, 3, 8, 21, 't'},
+	{.Hop, 3, 13, 21, 't'},
+	{.Hop, 4, 6, 21, 't'},
+	{.Hop, 4, 15, 21, 't'},
+
+	// Fish: a fish of two cells, in the color of the crest, jumps in front
+	// of the legs, above the water: out at column 15, up to row 17 at the
+	// columns 17 and 18, down at column 18. In the frames 2 to 4 the head
+	// looks forward, as in the frame 1 of the look.
+	{.Fish, 1, 15, 21, 'v'},
+	{.Fish, 2, 14, 0, '.'},
+	{.Fish, 2, 16, 0, 'v'},
+	{.Fish, 2, 15, 1, '.'},
+	{.Fish, 2, 19, 1, 'h'},
+	{.Fish, 2, 14, 2, '.'},
+	{.Fish, 2, 17, 2, 'h'},
+	{.Fish, 2, 18, 2, 'k'},
+	{.Fish, 2, 19, 2, 'h'},
+	{.Fish, 2, 15, 3, '.'},
+	{.Fish, 2, 19, 3, 'h'},
+	{.Fish, 2, 22, 3, 'y'},
+	{.Fish, 2, 16, 19, 'v'},
+	{.Fish, 2, 17, 19, 'v'},
+	{.Fish, 3, 16, 19, '.'},
+	{.Fish, 3, 17, 19, '.'},
+	{.Fish, 3, 17, 17, 'v'},
+	{.Fish, 3, 18, 17, 'v'},
+	{.Fish, 4, 17, 17, '.'},
+	{.Fish, 4, 18, 17, '.'},
+	{.Fish, 4, 18, 19, 'v'},
+	{.Fish, 4, 19, 19, 'v'},
+	{.Fish, 5, 18, 21, 'v'},
+	{.Fish, 5, 17, 21, 't'},
+	{.Fish, 5, 19, 21, 't'},
+	{.Fish, 6, 16, 21, 't'},
+	{.Fish, 6, 20, 21, 't'},
+
+	// Doze: the eye closed in every frame. One cell in the color of the neck
+	// behind the head, then a letter z of three by three cells above it,
+	// then the letter three rows higher and three columns back, with one
+	// cell where the first letter ended.
+	{.Doze, 1, 17, 2, 'h'},
+	{.Doze, 2, 11, 7, 'h'},
+	{.Doze, 3, 8, 3, 'h'},
+	{.Doze, 3, 9, 3, 'h'},
+	{.Doze, 3, 10, 3, 'h'},
+	{.Doze, 3, 9, 4, 'h'},
+	{.Doze, 3, 8, 5, 'h'},
+	{.Doze, 3, 9, 5, 'h'},
+	{.Doze, 3, 10, 5, 'h'},
+	{.Doze, 4, 5, 0, 'h'},
+	{.Doze, 4, 6, 0, 'h'},
+	{.Doze, 4, 7, 0, 'h'},
+	{.Doze, 4, 6, 1, 'h'},
+	{.Doze, 4, 5, 2, 'h'},
+	{.Doze, 4, 6, 2, 'h'},
+	{.Doze, 4, 7, 2, 'h'},
+	{.Doze, 4, 10, 5, 'h'},
+
+	// Stretch: the eye closed, then the crest one cell longer at the back.
+	{.Stretch, 1, 17, 2, 'h'},
+	{.Stretch, 2, 13, 0, 'v'},
+
+	// Ruffle: the wind comes from the front. The crest moves one cell back;
+	// then it is one cell longer, and one cell of the tail lifts.
+	{.Ruffle, 1, 15, 0, '.'},
+	{.Ruffle, 1, 13, 0, 'v'},
+	{.Ruffle, 2, 12, 0, 'v'},
+	{.Ruffle, 2, 0, 14, 'v'},
+
+	// Wade: the raised leg goes straight down at column 12, with its foot in
+	// the water at the columns 12 to 14; the standing leg is raised, its
+	// knee behind it at column 7, row 19, and the water closes where its
+	// foot was.
+	{.Wade, 1, 13, 18, '.'},
+	{.Wade, 1, 12, 18, 'o'},
+	{.Wade, 1, 14, 19, '.'},
+	{.Wade, 1, 12, 19, 'o'},
+	{.Wade, 1, 13, 20, '.'},
+	{.Wade, 1, 12, 20, 'o'},
+	{.Wade, 1, 12, 22, 'o'},
+	{.Wade, 1, 13, 22, 'o'},
+	{.Wade, 1, 14, 22, 'o'},
+	{.Wade, 1, 9, 18, '.'},
+	{.Wade, 1, 8, 18, 'o'},
+	{.Wade, 1, 9, 19, '.'},
+	{.Wade, 1, 7, 19, 'o'},
+	{.Wade, 1, 9, 20, '.'},
+	{.Wade, 1, 8, 20, 'o'},
+	{.Wade, 1, 9, 22, 't'},
+	{.Wade, 1, 10, 22, 't'},
+	{.Wade, 1, 11, 22, 't'},
+
+	// Flap, frame 1: the cells of the wing on the body take the color of
+	// the body, and the wing is above the back: four cells on row 10, three
+	// on row 9. Frame 2: the wing is under the body instead, four cells on
+	// row 16 and two on row 17, and the foot is out of the water, as in the
+	// hop. Frame 3, from frame 1: the foot out of the water.
+	{.Flap, 1, 7, 13, 'b'},
+	{.Flap, 1, 8, 13, 'b'},
+	{.Flap, 1, 9, 13, 'b'},
+	{.Flap, 1, 10, 13, 'b'},
+	{.Flap, 1, 11, 13, 'b'},
+	{.Flap, 1, 12, 13, 'b'},
+	{.Flap, 1, 8, 14, 'b'},
+	{.Flap, 1, 9, 14, 'b'},
+	{.Flap, 1, 10, 14, 'b'},
+	{.Flap, 1, 11, 14, 'b'},
+	{.Flap, 1, 7, 10, 'd'},
+	{.Flap, 1, 8, 10, 'd'},
+	{.Flap, 1, 9, 10, 'd'},
+	{.Flap, 1, 10, 10, 'd'},
+	{.Flap, 1, 6, 9, 'd'},
+	{.Flap, 1, 7, 9, 'd'},
+	{.Flap, 1, 8, 9, 'd'},
+	{.Flap, 2, 7, 13, 'b'},
+	{.Flap, 2, 8, 13, 'b'},
+	{.Flap, 2, 9, 13, 'b'},
+	{.Flap, 2, 10, 13, 'b'},
+	{.Flap, 2, 11, 13, 'b'},
+	{.Flap, 2, 12, 13, 'b'},
+	{.Flap, 2, 8, 14, 'b'},
+	{.Flap, 2, 9, 14, 'b'},
+	{.Flap, 2, 10, 14, 'b'},
+	{.Flap, 2, 11, 14, 'b'},
+	{.Flap, 2, 5, 16, 'd'},
+	{.Flap, 2, 6, 16, 'd'},
+	{.Flap, 2, 7, 16, 'd'},
+	{.Flap, 2, 8, 16, 'd'},
+	{.Flap, 2, 6, 17, 'd'},
+	{.Flap, 2, 7, 17, 'd'},
+	{.Flap, 2, 9, 22, 't'},
+	{.Flap, 2, 10, 22, 't'},
+	{.Flap, 2, 11, 22, 't'},
+	{.Flap, 2, 10, 21, 'o'},
+	{.Flap, 2, 11, 21, 'o'},
+	{.Flap, 3, 9, 22, 't'},
+	{.Flap, 3, 10, 22, 't'},
+	{.Flap, 3, 11, 22, 't'},
+	{.Flap, 3, 10, 21, 'o'},
+	{.Flap, 3, 11, 21, 'o'},
 }
 
 // The letter of each cell of the heron, by row, then by column.
@@ -459,18 +774,6 @@ animation_duration :: proc "contextless" (animation: Animation) -> int {
 		}
 	}
 	return total
-}
-
-// animation_weight gives how many times an animation is in the order of
-// play.
-animation_weight :: proc "contextless" (animation: Animation) -> int {
-	count := 0
-	for step in play_order {
-		if step.animation == animation {
-			count += 1
-		}
-	}
-	return count
 }
 
 // The deepest chain of base frames that animation_frame_cells follows. A
