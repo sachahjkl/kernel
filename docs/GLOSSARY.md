@@ -5582,19 +5582,19 @@ Do not use: idle animation, clip, tween.
 
 ### Order of play
 
-The order of play is the rule that chooses the next animation of the mark on the home of the site: each animation plays once in a round, in an order of chance.
+The order of play is the rule that chooses the next animation of the mark, on the home of the site and in the program `heron`: each animation plays once in a round, in an order of chance.
 
-The script keeps a memory of the animations that were played. It chooses the next one among those that the memory does not hold, each with the same chance. When the memory holds every animation, the script empties it and a new round starts; the animation played last is left out of the first choice of the round, so no animation follows itself. The memory is kept in the storage of the tab for the visit: a reader who comes back to the home does not see the same first animation. Example: with 15 animations, the blink plays once in each 15 animations, at a place of the round that changes.
+The place that plays keeps a memory of the animations that were played. It chooses the next one among those that the memory does not hold, each with the same chance. When the memory holds every animation, it is emptied and a new round starts; the animation played last is left out of the first choice of the round, so no animation follows itself. The rule is one procedure, `mark.next_animation` (`support/mark/play.odin`): the program `heron` calls it, and the kernel tool runs it to check the script of the site. On the site the memory is kept in the storage of the tab for the visit: a reader who comes back to the home does not see the same first animation. Example: with 15 animations, the blink plays once in each 15 animations, at a place of the round that changes.
 
-The design: `docs/SITE.md`, "The rhythm of the animations".
+The design: `docs/SITE.md`, "The rhythm of the animations"; `docs/DESIGN.md`, "The animations".
 
 Do not use: playlist, shuffle, random choice.
 
 ### Still share
 
-The still share is the part of the time, over a long play, that the heron of the home does not move: 40 %.
+The still share is the part of the time, over a long play, that the heron does not move where its animations play: 40 %.
 
-The still time between two animations is chosen by chance around a mean, and the mean follows from the still share and from the times of the animations: the mean time of an animation, times the still share, over the moving share. With 15 animations of 1.29 s on average, the mean still time is 858 ms, and a still time is 429 to 1287 ms. A change of an animation changes the still times, not the share.
+It holds on the home of the site and in the program `heron` (`mark.STILL_SHARE_PERCENT`). The still time between two animations is chosen by chance around a mean, and the mean follows from the still share and from the times of the animations: the mean time of an animation, times the still share, over the moving share. With 15 animations of 1.29 s on average, the mean still time is 858 ms, and a still time is 429 to 1287 ms. A change of an animation changes the still times, not the share.
 
 The design: `docs/SITE.md`, "The rhythm of the animations".
 
@@ -5619,6 +5619,16 @@ A cell of the heron is a square of one size, so a squashed heron is not a pictur
 The design: `docs/DESIGN.md`, "The moves".
 
 Do not use: scaled frame, deformation, sampled frame.
+
+### Move on the grid
+
+A move on the grid is a move of the heron in which each cell stays a square of one size at a place of the grid.
+
+It is the way of the system to draw a squash, a stretch and a travel, and the name of that way in the program `heron`, where a key changes between it and the free way. On the grid the heron takes a form of the heron, a drawing in whole cells, and a travel is a count of whole cells: a fast run is many cells from one picture to the next. It is not a filter over a scaled picture: the forms and the places are cells from the start. The other way, the free move, is in the program `heron` only, to compare: the frame of the heron is stretched to the box of the form, so its cells are rectangles, and it is at any pixel. Example: the heron is 24 columns by 22 rows above its water; in the run of the dash it is 32 by 20, 4 cells to the right at its second step.
+
+The design: `docs/DESIGN.md`, "The moves" and "The animations".
+
+Do not use: snap, pixel-perfect scaling, quantized motion.
 
 ### Sprite sheet
 
