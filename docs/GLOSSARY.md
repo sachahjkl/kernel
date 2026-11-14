@@ -5672,6 +5672,52 @@ The design: `docs/SITE.md`, "The docs home".
 
 Do not use: docs landing page, portal, hub.
 
+### Gallery
+
+The gallery is the page of the site, at `/gallery/`, that shows every picture of the screen of the gallery table, in groups, each with its caption and the link to its guide.
+
+A reader who wants to see the system finds each picture there: the desktop and the palette, the console, the programs that show rights and faults, the developer tools, the fonts, the network, the storage and the boot. A picture on the page is a thumbnail, and its link opens the picture at its full size, one pixel of the picture for one pixel of the screen of the system. The home has the door of the gallery, and the link under its carousel; the bar does not name it, because its one line has no room for one more section. It has the presentation layout.
+
+It is not a list that a developer keeps by hand beside the pictures: the page is generated from the gallery table, which is checked against the folder of the pictures.
+
+The design: `docs/SITE.md`, "The page of the gallery".
+
+Do not use: screenshots page, album, lightbox.
+
+### Gallery table
+
+The gallery table is the one table of the tool that names each picture of the screen that the site shows: its file, its group, a caption of one sentence, its guide, and whether the home shows it.
+
+It is `site_gallery_rows` in `tools/kerneltool/site_gallery.odin`. The gallery and the carousel of the home take their pictures and their captions from it, so a caption is written once. Each PNG file of `docs/screenshots` is in one row of it, or in the short list of the excluded files with its reason: `kerneltool site` stops, and a host test fails, on a picture that neither names. So a step that adds a picture to a machine test writes its row, and the picture is on the site.
+
+Example: the row of `heron.png` has the group of the mark, the caption "The program heron: the heron of the mark held at a frame of its dash, in whole square cells, with the lines of the cells.", the guide of the design rules, and the mark of the home.
+
+The design: `docs/SITE.md`, "The gallery table".
+
+Do not use: picture list, screenshot manifest.
+
+### Carousel
+
+The carousel is the part of the home of the site that shows a few pictures of the gallery table in one row, one picture in view, with a numbered link to each picture.
+
+The home shows at most 8 pictures, so that it stays short; the gallery shows them all. The row scrolls sideways and stops at each picture, and every picture is in the page: a reader with no script reaches each one by its numbered link, by the scroll bar of the row or by a swipe. A small script adds the keys Left and Right and the mark of the picture in view. The carousel never changes its picture by itself. Each picture has its width and its height, so nothing on the page moves when a picture comes.
+
+It is not a film and not an animation: a picture changes only when the reader asks, at once.
+
+The design: `docs/SITE.md`, "The carousel of the home".
+
+Do not use: slideshow, banner, rotator.
+
+### Thumbnail
+
+A thumbnail is the picture that the gallery shows in the place of a picture of the screen: the same picture at one half of its width and of its height, which the tool writes when it writes the site.
+
+It exists for the bytes of the page: the gallery has more than 100 pictures, and a thumbnail is about 60 000 bytes where the picture is about 157 000. Each pixel of a thumbnail is the mean of a square of 2 by 2 pixels of the picture, so a line of 1 pixel stays a line and a letter keeps its form. The text of a thumbnail is not meant to be read: the link of the thumbnail opens the picture at its full size. The repository holds no thumbnail.
+
+The design: `docs/SITE.md`, "The thumbnails".
+
+Do not use: miniature, low-resolution copy.
+
 ### Guide
 
 A guide is a page of the site made from a document of `docs/`: how a part of the system is designed, and why.

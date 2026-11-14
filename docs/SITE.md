@@ -10,7 +10,7 @@ No page holds a text that a person must remember to update: each page is generat
 
 `kerneltool site` writes the site in `build/site/`. The folder is not committed. `kerneltool site --address https://<host>/<path>` sets the address of the site for one run (see "What the owner must decide").
 
-- One style sheet for all pages, one small script for the search (see "The search"), no request to another server: the pages work from a file, from a folder of a host and from the root of a domain. Each link inside the site is relative. Each page is whole with no script.
+- One style sheet for all pages, one small script for the search (see "The search") and a few small scripts of one page each (the animations of the mark and the carousel on the home, the module graph, the index of the glossary), no request to another server: the pages work from a file, from a folder of a host and from the root of a domain. Each link inside the site is relative. Each page is whole with no script.
 - Before it writes a page, the command checks all the pages. A failure stops the command with the page and the reason, and no page is written:
   - each page has one `h1`, a title and a description of at most 160 bytes; no two pages share a title or a description;
   - each `img` has an `alt` attribute (empty for a picture that only decorates a text beside it, as the heron of the bar), a `width` and a `height`;
@@ -25,7 +25,8 @@ No page holds a text that a person must remember to update: each page is generat
   - no page names a document of the repository as bare text (see "The count and the check").
 - Then the command checks what other programs read (see "What other sites read"); a failure stops it in the same way.
 - After the checks of the pages, the command makes the index of the search and checks it against the pages (see "The search"); a failure stops it in the same way.
-- At its end the command prints: the pages and their bytes, the count of the redirect pages and the count of each generation of old addresses, the other files, the bytes of the style sheet and the count of the icons inside it, the entries and the bytes of the index of the search and the bytes of the script, the bytes of each page of the glossary with its bound (see "The glossary"), the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, the count of the document references and the first three whose labels found no heading (see "The references to documents"), the count of the declarations of the sources and of the files that the parser refused, and the count of the code spans that link to a declaration, that are ambiguous and that name no declaration, with the first five of the last two (see "The declarations of the sources"), the counts of the module graph and its modules with no entry that no module imports (see "The module graph"), each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the count of the pictures of the repository that it compressed, with their bytes before and after.
+- At its end the command prints: the pages and their bytes, the count of the redirect pages and the count of each generation of old addresses, the other files, the bytes of the style sheet and the count of the icons inside it, the entries and the bytes of the index of the search and the bytes of the script, the bytes of each page of the glossary with its bound (see "The glossary"), the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, the count of the document references and the first three whose labels found no heading (see "The references to documents"), the count of the declarations of the sources and of the files that the parser refused, and the count of the code spans that link to a declaration, that are ambiguous and that name no declaration, with the first five of the last two (see "The declarations of the sources"), the counts of the module graph and its modules with no entry that no module imports (see "The module graph"), each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the count of the pictures of the repository that it compressed, with their bytes before and after, and the count and the bytes of the thumbnails of the gallery, with the bytes of the same pictures at full size.
+- Before any of these, the command checks the gallery table against the folder `docs/screenshots` (see "The gallery table"); a picture that the table does not name stops it.
 - `kerneltool check` runs the host tests of the site (`tools/kerneltool/site_test.odin`, `site_render_test.odin`) and checks that each picture that `README.md` names is a file of the repository. It does not write the site.
 
 ## The pages
@@ -34,7 +35,9 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 
 | Page | Generated from |
 |---|---|
-| `index.html`, the home | The mark (`support/mark`), the first sentence of the first paragraph of `README.md` as the tagline of the head, the three newest news entries, the rest of that paragraph in a section "What it is" after the news (the owner, 2026-11-12: "la tagline est trop longue"; after the news, so that the first screen of a phone holds the mark, the name, the tagline and the links only; the description of the home in its head, Open Graph, the manifest and the page graph stays the whole paragraph, cut at 160 bytes, because the tagline alone is too short to describe the system), the stages of the start from the lines `kernel: boot: ...` of `build/test_output.txt` or of the measure record (see "The measure record"), the tiles of the boot image (see "The tiles of the boot image"), the first three measured numbers, the pictures of `docs/screenshots` with the captions of `README.md`, the newest release of `CHANGELOG.md`, the count of steps of `docs/REVIEWS.md` |
+| `index.html`, the home | The mark (`support/mark`), the first sentence of the first paragraph of `README.md` as the tagline of the head, the three newest news entries, the rest of that paragraph in a section "What it is" after the news (the owner, 2026-11-12: "la tagline est trop longue"; after the news, so that the first screen of a phone holds the mark, the name, the tagline and the links only; the description of the home in its head, Open Graph, the manifest and the page graph stays the whole paragraph, cut at 160 bytes, because the tagline alone is too short to describe the system), the stages of the start from the lines `kernel: boot: ...` of `build/test_output.txt` or of the measure record (see "The measure record"), the tiles of the boot image (see "The tiles of the boot image"), the first three measured numbers, the carousel of the pictures of the gallery table that the home shows (see "The carousel of the home"), the newest release of `CHANGELOG.md`, the count of steps of `docs/REVIEWS.md` |
+| `gallery/`, the gallery | The gallery table and the pictures of `docs/screenshots`; see "The gallery" |
+| `pictures/thumbnails/<name>.png` | The thumbnail of each picture of the gallery; see "The thumbnails" |
 | `docs/`, the docs home | See "The docs home" |
 | `docs/guides/` | The table "Documents" of `README.md`, then the other documents of `docs/` by name |
 | `docs/guides/<name>/` | Each document of `docs/` but the working records `HANDOFF.md`, `REVIEWS.md`, `SITE.md` and `FIRST_MILESTONE.md` (`SITE_WORKING_RECORDS`), which stay out of the site: only the guides that explain the system are published. A link of a page to a working record names the file in the repository. The intent files of `src/md` are not in `docs/` and are not pages either. The glossary is a page of the reference |
@@ -82,6 +85,8 @@ The bar names the sections under the home: Docs, Status, News, Releases (`site_s
 
 The status page stays at `status/`, a section of the bar: it reports the state of the properties, the gaps and the next steps, not how the system works. The tree of the reference still lists it, as before.
 
+The gallery is a section under the home that the bar does not name: the home has its door (see "The page of the gallery"). Its breadcrumbs are Home / Gallery.
+
 ### The redirect pages
 
 The old addresses were public. Two generations of them exist, and each old address of each page keeps a redirect page (`GLOSSARY.md`) straight to the address of today:
@@ -97,7 +102,7 @@ The old addresses were public. Two generations of them exist, and each old addre
 - With a site address it also names the new address as its canonical address. With none it has no canonical address, as no page has one.
 - It is not a page of the site: it is not in the sitemap, the index of the search, `llms.txt` or the feeds, and the checks of the pages, of the page graph and of the search do not apply to it.
 - The check (`site_check_redirects`): its path is not the path of a page or of a file of the site, and its refresh and its link name a page that the command writes, never another redirect page.
-- The command prints the count of the redirect pages, and the count of each generation. With the pages of today (17 guides, 12 reference pages that are not index pages, 81 module pages, the three index pages of the guides, the reference and the modules, and the status, the news and the releases), it expects 113 of each: 226 redirect pages, and two more for the page of each group of the glossary (14 groups: 254). The page of the module graph and the pages of the groups of the glossary have the redirect pages of the rule, though their old addresses were never public: the rule has no exception. The index of the glossary is not an index page in this sense: it keeps its old path `reference/glossary.html`. A redirect page has no script, so it does not keep the anchor of an old address: `reference/glossary.html#term-<name>` opens the index at its top.
+- The command prints the count of the redirect pages, and the count of each generation. With the pages of today (17 guides, 12 reference pages that are not index pages, 81 module pages, the three index pages of the guides, the reference and the modules, and the status, the news and the releases), it expects 113 of each: 226 redirect pages, and two more for the page of each group of the glossary (14 groups: 254), and one more of the `.html` files for the gallery (`gallery.html`). The page of the module graph, the pages of the groups of the glossary and the gallery have the redirect pages of the rule, though their old addresses were never public: the rule has no exception. The index of the glossary is not an index page in this sense: it keeps its old path `reference/glossary.html`. A redirect page has no script, so it does not keep the anchor of an old address: `reference/glossary.html#term-<name>` opens the index at its top.
 - The host test `site_addresses_of_every_page` checks, with a site address and with none: every old path of both generations has its redirect page, which names its page; no old path is a page; a redirect to a page that is not written, to another redirect, or at the path of a file or a page fails the check; two pages with one old path fail; and the sitemap, the index of the search, `llms.txt` and the two feeds name no old address.
 
 ## The Markdown that the site renders
@@ -335,6 +340,143 @@ With the script, the chart follows the field:
 - The markup says what the script needs: each chip `data-kind` (the index of the kind in `search.json`), `data-count` (its count in the index) and `data-plural` (its name); the list of chips has the id `search-chart`; the bar has the id `search-chart-bar`, and each segment `data-kind`. The script writes the `x` and `width` attributes of each segment in the form that the tool writes ("74.6%", `site_search_chart_percent`), with the least share of the rule of the script.
 - The movement: a segment changes its place and its width in 150 ms (`transition: x 150ms ease-out, width 150ms ease-out`, on the segments only), and at once under `prefers-reduced-motion: reduce`. Nothing moves when the page loads: a transition plays only when the script changes an attribute. The `x` and `width` attributes of a `rect` are properties of the style sheet in SVG 2, so the transition applies where a browser maps the attribute to the property; a browser that does not changes the segment at once, which is correct. A style that the script sets is a style attribute in the page: it is not used.
 
+## The gallery
+
+The owner asked for it on 2026-11-14, of the program `heron`: "faudra évidemment le rendre visible dans les captures du site parce que c'est super sympa. D'ailleurs je veux pas mettre trop de captures sur la page d'accueil [...] idéalement avoir [un] carrousel et une page galerie". The code is `tools/kerneltool/site_gallery.odin`; its host tests are `site_gallery_test.odin`.
+
+Before it, the home showed 20 pictures in 7 groups, from a list of its own, and a picture that the list did not name was on no page: 91 of the 111 pictures of `docs/screenshots` were not on the site.
+
+### The gallery table
+
+The gallery table (`GLOSSARY.md`) is the one source of the pictures of the screen that the site shows: `site_gallery_rows`. A row is:
+
+| Field | What it holds |
+|---|---|
+| `file` | The name of a PNG file of `docs/screenshots` |
+| `group` | One of the groups of the gallery (`Site_Gallery_Group`); the rows of one group are on the page in the order of the table |
+| `caption` | One sentence of plain text that says what the picture shows, at most 160 bytes (`SITE_GALLERY_CAPTION_LIMIT`), with a period at its end and no mark of Markdown. It is also the alt text of the picture |
+| `guide` | The document of `docs/` that explains the subject; it is a page of the site, never a working record |
+| `home` | The carousel of the home shows the picture |
+| `film` | A film of `docs/films`, or none: the gallery then shows the film in the place of the thumbnail |
+
+The rule: **each PNG file of `docs/screenshots` is in one row of the table, or in one line of the excluded files (`site_gallery_excluded`) with its reason.** `kerneltool site` stops, and the host test `site_gallery_table_names_every_picture` fails, on a file that neither names, on a file that both name, on a row or an excluded line whose file is gone, and on an excluded line with no reason. So a new picture of a machine test cannot be forgotten: the step that adds it writes its row.
+
+A caption is written for the table: it is not the file name with spaces, and it is not the caption of `README.md`, which can be several sentences for the reader of the repository. A caption states what the picture shows; the writer of a row looks at the picture.
+
+The groups (`site_gallery_groups`), each with a title and one sentence:
+
+| Group | Pictures |
+|---|---|
+| The desktop and the palette | 20 |
+| The console and the terminal | 12 |
+| The mark and the graphics | 3 |
+| Rights, grants and faults | 13 |
+| Modules | 9 |
+| Memory, threads and time | 15 |
+| The developer tools | 4 |
+| The interface and the fonts | 9 |
+| The network, the cryptography and the randomness | 10 |
+| The storage | 7 |
+| The boot and the trusted boot | 7 |
+
+109 rows. The excluded files:
+
+| File | Reason |
+|---|---|
+| `notes_crash.png` | The picture was taken while the window of `notes` drew its note: the text of the note is cut |
+| `vector_glyphs.png` | An older picture of the prototype of the vector font: its bar has the words of the system before the mark and the palette |
+
+A picture of the table has the size of the screen of the system, 1024 by 768 pixels (`SITE_SCREEN_PICTURE_WIDTH`, `SITE_SCREEN_PICTURE_HEIGHT`): the command stops on another size. The style sheet names the two widths at which a picture is shown, and they come from these constants.
+
+### The page of the gallery
+
+`gallery/` is the gallery (`GLOSSARY.md`): every picture of the table, in its groups. It has the presentation layout.
+
+- From the top: the heading, the count of the pictures and of the groups, one paragraph, then the links to the groups (the squares of the doors of the home, `.doors`), then each group.
+- A group is a `<section>` with its heading (`group-<slug of its title>`), its sentence with the count of its pictures, and its pictures in two columns from 720 pixels, one under it.
+- A picture is a `<figure id="picture-<name>">`: the thumbnail as a link to the picture at its full size, then the caption and the link to the guide ("Guide: <title of the guide>").
+- The caption is the alt text of the thumbnail, so its text in the `figcaption` is `aria-hidden`: a screen reader reads it once. The link to the guide is not hidden.
+- Each thumbnail has `width`, `height`, `loading="lazy"` and `decoding="async"`: a browser asks for a thumbnail when the reader comes near it, and the page keeps the room of each one.
+- A row with a film shows the film over the whole width of the group, by the procedure of the news (`site_news_film`; "The film of a news entry"): `controls`, `preload="metadata"`, the picture as its `poster`, no `autoplay`. Its caption is a paragraph under it, read as it is.
+
+Where the gallery is linked. The bar does not name it (`site_section_in_bar`). The bar is one line of 41 pixels, and the parts under it are placed by that height ("The polish of the browser's parts"). With the five sections Docs, Gallery, Status, News and Releases, the mark, the sections and the search field need about 746 pixels: on a window of 720 to 745 pixels the bar breaks into two lines. So the home is the door of the gallery: a door in its head, beside the sections (`site_section_under_home`), and the link "All N pictures, in the gallery" under the carousel. The docs home has no link to it: that page has no row of doors ("The docs home"). The search finds the page, and the sitemap and `llms.txt` list it.
+
+The gallery is not an index page: by the rule of the redirect pages it has the redirect page `gallery.html`, though that address was never public.
+
+### The thumbnails
+
+The page of the gallery shows 108 pictures (the row with a film shows its film). A browser loads a picture when the reader comes near it, so the bytes of the page are the bytes of what the reader scrolls past. Two forms were measured on 12 pictures of the table, with the encoder of ImageMagick at its level 5 (the tool prints the bytes of its own encoder at each build):
+
+| Form | One picture, mean | The 108 pictures |
+|---|---|---|
+| The picture at its full size, scaled by the style sheet | 157 511 bytes | about 17.0 MB |
+| A thumbnail at one half, 512 by 384 | 59 637 bytes | about 6.4 MB |
+
+The tool writes a thumbnail for each picture, `pictures/thumbnails/<name>.png` (`site_thumbnail_encode`). It saves 62 % of the bytes for every reader of the page, because the `src` of the element is the thumbnail: the rule of "The pictures" for a second version of a picture (the common screens choose it, and it saves at least half of the bytes) holds here, where it did not hold for a `srcset` on the home.
+
+- The divisor is whole, 2 (`SITE_THUMBNAIL_DIVISOR`): each pixel of the thumbnail is one square of 2 by 2 pixels of the picture. A divisor that is not whole mixes parts of pixels.
+- The filter is the mean of the square, for each channel, rounded to the nearest (`site_thumbnail_pixels`). A picture of the screen is text and lines of 1 pixel. The mean keeps a line as a line of half its tone, and a letter keeps its form: the titles and the large text of a window stay readable, the small text is a grey texture. One pixel taken from each square (nearest) drops every second row and column: a line of 1 pixel is whole or gone, and each letter loses half of its strokes. So the mean is the filter.
+- A thumbnail is for a first look: its text is not meant to be read. The link opens the picture at one pixel of the picture for one pixel of the screen of the system.
+- A thumbnail is never shown wider than its 512 pixels (`max-width`): on a window of 1100 pixels or more it is shown at one pixel for one pixel, in a column of 538 pixels. On a narrower window it takes the width of its column.
+- The encoder is the one of the pictures of the repository (`png_encode`): the same pixels give the same bytes at each build. The command prints the count of the thumbnails, their bytes, and the bytes of the same pictures at full size.
+- The repository holds no thumbnail: the site is the one place that needs them, and the tool writes them from the pictures.
+
+### The carousel of the home
+
+The home shows a carousel (`GLOSSARY.md`) in the place of its 20 pictures: the rows of the table with `home`, at most 8 (`SITE_HOME_PICTURE_LIMIT`), in the order of the table. Today: the desktop, the palette, the completion list of the console, the program `heron`, the rights, the developer tool, the HTTP server and the boot display. The code is `site_carousel_write`.
+
+The form works with no script:
+
+- A row (`.carousel-track`) holds every picture, each a `<figure class="carousel-slide" id="picture-<name>">` as wide as the row. The row scrolls sideways and stops at a picture (`overflow-x: auto`, `scroll-snap-type: x mandatory`, `scroll-snap-align: start`): one picture is in view.
+- Above the row, a list of numbered links, one for each picture (`.carousel-controls`): squares of 32 pixels, 4 pixels apart, each a link to the id of its picture. A link scrolls the row to its picture. Its name for a screen reader is "Picture 3 of 8:" and the caption.
+- Every picture is in the page: nothing is hidden from a reader with no script. That reader reaches each picture by its numbered link, by the scroll bar of the row, by a swipe, or by the arrows when the row has the focus (the row is a region with `tabindex="0"`).
+- Under each picture, its caption: its place ("3 of 8"), the sentence of its row, and the link to its guide. The picture is a link to its file at full size.
+- Under the row, the link "All N pictures, in the gallery".
+
+What the script adds (`carousel.js`, a file of the site that the home alone loads, with `defer` and a file version; about 70 lines, no library):
+
+- A numbered link shows its picture with no move of the page: the script sets the place of the scroll of the row. With no script the browser also moves the page, so that the picture is under the bar; the room above a picture (`scroll-margin-top`) then keeps the numbered links in view.
+- The keys Left, Right, Home and End change the picture while the row has the focus.
+- The link of the picture in view is marked (`aria-current="true"`: the line color around it), also after a scroll by hand.
+- The script sets no style, stores nothing, asks for no file and starts no timer.
+
+Nothing moves that the reader did not ask for: the carousel never changes its picture by itself, and a change is a jump, not a slide (the site has no `scroll-behavior: smooth`). So a reader who asks for reduced motion sees the same page, and no rule is needed for `prefers-reduced-motion`.
+
+No layout shift:
+
+- Each `img` has its `width` and its `height`, and the style sheet gives it a width (the whole width of its box, at most 1024 pixels), so the browser knows its height before the picture came.
+- The row has the height of its tallest picture and caption, because its pictures are the items of one flex line. A change of picture changes nothing under the row.
+- The script adds no element.
+
+No cut text, no text over a text:
+
+- A caption is text of the flow in its `figcaption`: it wraps at spaces, and under 720 pixels a long word breaks. No rule gives it a fixed height, hides its overflow or keeps it on one line (the host test `site_carousel_rules_and_script` refuses those rules).
+- At 360 pixels the column is 328 pixels and the box of the caption 310: about 43 characters a line at 14 pixels. The longest caption, 160 bytes, takes four lines, with the place and the link to the guide on lines of their own.
+- The 8 numbered links take 8 × 32 + 7 × 4 = 284 pixels: one line at 360 pixels. The list wraps if a narrower window needs it.
+
+The sizes of a picture of the carousel:
+
+| Width of the window | The picture |
+|---|---|
+| From about 1090 pixels | 1024 by 768: one pixel of the picture for one pixel of the page |
+| Under it | The width of the column: the picture is scaled, and its small text is not readable |
+| 360 pixels | 310 pixels wide |
+
+On a narrow screen the home did the same before the carousel: a picture took the width of its column, and the link opened it at its full size. That rule is kept: the home has no second file for a narrow screen and no control of the scale. On a wide screen the picture is now at its full size, where it was 538 pixels wide in a column of two.
+
+The bytes of the home: 8 pictures of about 157 500 bytes, 1.3 MB if the reader passes each one, where the 20 pictures of before were 3.1 MB. Each is loaded when the reader comes near it (`loading="lazy"` also holds inside a row that scrolls sideways).
+
+Refused:
+
+- **Autoplay**: a picture that changes by itself is motion that the reader did not ask for, and it takes a picture away while the reader looks at it.
+- **A carousel that needs its script**: pictures hidden by the style sheet until a script shows them are lost for a reader with no script, and for a search engine.
+- **Radio inputs with the `:checked` rule**: the form works with no script, but each hidden picture is `display: none`, a browser cannot find its text, and the state is lost at each load. The row that scrolls keeps every picture in the page.
+- **Buttons "previous" and "next" that the script adds**: they change the width of the line of the numbered links after the first paint. The keys and the numbered links do the same work.
+- **A caption over the picture**: a text over a picture of a screen full of text is a text over a text.
+- **Captions from the file names**, and captions of `README.md`: see "The gallery table".
+
+Not done: the page graph names no `ImageGallery` for the page; the script has no self test (`?selftest=1`), so no program of the repository runs it.
+
 ## What other sites read
 
 The owner asked for it on 2026-11-12: "we'll want a sitemap, json-ld, good seo (graph) etc". The structure follows a site of the owner that has these parts; no fact of that site is copied here. The code is `tools/kerneltool/site_metadata.odin`; its host tests are `site_metadata_test.odin`, with a site address and with none.
@@ -382,11 +524,11 @@ Not verified against a validator of schema.org or the documents of a search engi
 
 ### The pictures
 
-Each `img` has `width`, `height` and an alt text (a check of the pages). The pictures below the first screen have `loading="lazy"` and `decoding="async"`: the pictures of the machine, of the news and of the guides. The mark of the home and the heron of the bar are on the first screen and load at once. A film of a news entry is a `video` element with its `width`, its `height` and a `poster` ("The film of a news entry"); the check of the links of a page reads `poster` as it reads `href`, `src` and `srcset`.
+Each `img` has `width`, `height` and an alt text (a check of the pages). The pictures below the first screen have `loading="lazy"` and `decoding="async"`: the pictures of the carousel of the home, the thumbnails of the gallery, the pictures of the news and of the guides. The mark of the home and the heron of the bar are on the first screen and load at once. A film of a news entry is a `video` element with its `width`, its `height` and a `poster` ("The film of a news entry"); the check of the links of a page reads `poster` as it reads `href`, `src` and `srcset`.
 
 Each PNG file that the site copies from the repository (the screen pictures, the pictures of the news and of the guides, the icons) is written again through `site_png_compress` (`tools/kerneltool/site_pictures.odin`): it decodes the file and encodes the same pixels with the encoder of the standard library, `core:image/png` (a row filter chosen for each row, then the deflate of `core:compress/deflate` at its default level 5). The screen pictures of `docs/screenshots` are stored with no compression (`png_encode` of `tools/kerneltool/machine.odin`): 2 360 312 bytes for 1024 by 768. The command prints the count of the pictures and their bytes before and after. The output is the same bytes at each build: the encoder reads no clock, no random number and no thread, and its buffers start at zero; a host test encodes each picture twice and compares the bytes, and compares the pixels of the two files byte for byte. A picture of 16 bits a channel stops the command: the repository has none.
 
-No picture is written at half its width. A browser takes a picture of 512 pixels from a `srcset` only when its place, times the density of the screen, is at most 512 pixels: the place of a picture of the home is 556 pixels on a wide screen, and a phone of density 2 or 3 needs more than 512 pixels for its whole width. So nearly no reader gets the half picture, and its 2 by 2 mean blurs the text of a screen picture. A build that wrote them measured about 60 000 bytes for each half picture; the compressed whole picture is expected near 150 000 bytes (the command prints the measure), so a half picture saves about 90 000 bytes, for that rare reader only. The rule: a version for `srcset` earns its place only when the common screens choose it and it saves at least half of the bytes; the half pictures fail the first part.
+No picture is written at half its width as a second candidate of a `srcset`. The thumbnails of the gallery are another case: a thumbnail is the `src` of its element, so every reader gets it, and the picture at its full size is behind its link (see "The thumbnails"). A browser takes a picture of 512 pixels from a `srcset` only when its place, times the density of the screen, is at most 512 pixels: the place of a picture of the home was 556 pixels on a wide screen, and a phone of density 2 or 3 needs more than 512 pixels for its whole width. So nearly no reader gets the half picture, and its 2 by 2 mean blurs the text of a screen picture. A build that wrote them measured about 60 000 bytes for each half picture; the compressed whole picture is expected near 150 000 bytes (the command prints the measure), so a half picture saves about 90 000 bytes, for that rare reader only. The rule: a version for `srcset` earns its place only when the common screens choose it and it saves at least half of the bytes; the half pictures fail the first part.
 
 ### The checks
 
@@ -573,7 +715,7 @@ The writer of each page states its layout (`Site_Page.layout`); the tool does no
 
 | Layout | Pages | Form |
 |---|---|---|
-| Presentation | The home, the docs home, the news, the releases | One centred column of at most 1152 pixels |
+| Presentation | The home, the docs home, the news, the releases, the gallery | One centred column of at most 1152 pixels |
 | Documentation (`GLOSSARY.md`) | Each guide, each reference page, the index and the page of each group of the glossary, each module page, the status, and the index pages of the guides, the reference and the modules | The documentation tree, the text, "On this page", over the whole width of the window |
 
 The documentation tree (`GLOSSARY.md`) is one `<nav class="tree" aria-label="Documentation">`. Its first link is the docs home, "Docs", the way back to the door of the docs. Then, on a guide: "Guides" with each guide in the reading order of the page of the guides, "Reference" with each reference page in the order of its index (under the glossary, each of its groups with the count of its terms), "Modules" with a heading for each group (Kernel, Programs, Modules) and the modules of the group under it, and "Status". The tree is whole: it has no `details`, and no part of it is folded. Each list under an item is a list of tree lines (see "The tree lines"). The current page has `aria-current="page"`. It is written once in each page, inside the site menu, after the search: under 720 pixels it is under the sections in the open menu, which scrolls on its own; from 720 pixels the style sheet fixes it at the left of the window (`position: fixed`, its own `overflow-y`), so a long tree never moves the page. With no script, a browser with no `::details-content` shows the tree when the button of the menu opens it, as the sections.
@@ -696,7 +838,7 @@ The legend: the reference index ends with the section "The kinds of values", a t
 
 ### The versions of the files
 
-The site is behind a proxy that keeps a file for hours. Each link to a file whose bytes change between builds carries its file version (`GLOSSARY.md`): `style.css?v=<16 hexadecimal digits>`, the first 8 bytes of the BLAKE3 hash of its bytes (`contract/blake3`). The files: `style.css`, `search.js`, `mark_animation.js`, `module_graph.js`, `glossary.js` and `search.json` (`SITE_VERSIONED_FILES`). The same bytes give the same address. The index of the search is written before the pages, so that each page names its version: `search.js` reads it from the attribute `data-index` of its own `script` element, relative to its folder, with no inline script. The check of the links ignores the query. The icons, the pictures and the font of the name of the mark carry no version: their bytes come from the mark and the repository and change rarely. One exception: the sprite sheets of the animations of the mark change with each new frame, and `mark_animation.js` cuts them by the places of its own table, so the script names each sheet with the version of its bytes.
+The site is behind a proxy that keeps a file for hours. Each link to a file whose bytes change between builds carries its file version (`GLOSSARY.md`): `style.css?v=<16 hexadecimal digits>`, the first 8 bytes of the BLAKE3 hash of its bytes (`contract/blake3`). The files: `style.css`, `search.js`, `mark_animation.js`, `module_graph.js`, `glossary.js`, `carousel.js` and `search.json` (`SITE_VERSIONED_FILES`). The same bytes give the same address. The index of the search is written before the pages, so that each page names its version: `search.js` reads it from the attribute `data-index` of its own `script` element, relative to its folder, with no inline script. The check of the links ignores the query. The icons, the pictures and the font of the name of the mark carry no version: their bytes come from the mark and the repository and change rarely. One exception: the sprite sheets of the animations of the mark change with each new frame, and `mark_animation.js` cuts them by the places of its own table, so the script names each sheet with the version of its bytes.
 
 ### A page of an older build
 
@@ -1291,7 +1433,7 @@ A host test checks that the style sheet holds each of these rules, has no `outli
 
 ### The scroll bars
 
-The owner asked for it on 2026-11-12, with two pictures of the scroll bar of another program of the same design: "petit détail visuel, mais à mon sens, la scrollbar est trop basique, je la veux plus comme ça (theme justement PROVENANT de TON design à la base)". The rules are `SITE_SCROLL_RULES` and `site_scroll_variables` in `tools/kerneltool/site_style.odin`. They apply to every part that scrolls: the page, the tree, "On this page", the table boxes, the blocks of code, the open menu, the list of the search and the cards of the types and of the declarations.
+The owner asked for it on 2026-11-12, with two pictures of the scroll bar of another program of the same design: "petit détail visuel, mais à mon sens, la scrollbar est trop basique, je la veux plus comme ça (theme justement PROVENANT de TON design à la base)". The rules are `SITE_SCROLL_RULES` and `site_scroll_variables` in `tools/kerneltool/site_style.odin`. They apply to every part that scrolls: the page, the tree, "On this page", the table boxes, the blocks of code, the open menu, the list of the search, the cards of the types and of the declarations, and the row of the carousel of the home.
 
 The form, 16 pixels wide (a size of the grid of the design, near the 22 pixels of the pictures), all rectangular:
 
