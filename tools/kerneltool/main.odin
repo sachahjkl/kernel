@@ -850,6 +850,9 @@ run_check :: proc(args: []string) -> int {
 	if !glossary_check() {
 		return EXIT_FAILURE
 	}
+	if !intent_index_check() {
+		return EXIT_FAILURE
+	}
 	if !changelog_check() {
 		return EXIT_FAILURE
 	}
