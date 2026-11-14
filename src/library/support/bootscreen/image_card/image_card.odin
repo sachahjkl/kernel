@@ -14,8 +14,8 @@
 // because the boot program has no allocator.
 package image_card
 
-import info "contract:boot_info"
-import module "contract:module"
+import info "modus:contract/boot_info"
+import module "modus:contract/module"
 
 // What a file of the boot image is: the kind sets its color and its row.
 File_Kind :: enum u8 {

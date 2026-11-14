@@ -4,9 +4,9 @@ import "base:runtime"
 import "core:reflect"
 import "core:strings"
 import "core:testing"
-import "contract:errors"
-import module "contract:module"
-import op "contract:operation"
+import "modus:contract/errors"
+import module "modus:contract/module"
+import op "modus:contract/operation"
 
 // A struct whose layout has padding inside and at its end: a u8, three
 // bytes, a u32, a u16, two bytes.

@@ -7,7 +7,7 @@
 // names of the origin (docs/CRYPTOGRAPHY.md).
 package chacha20
 
-import "support:cryptography/_chacha20/ref"
+import "modus:support/cryptography/_chacha20/ref"
 
 DEFAULT_IMPLEMENTATION :: Implementation.Portable
 

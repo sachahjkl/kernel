@@ -1,6 +1,6 @@
 // A program that the program `frames` starts several times, to show the
 // shared code of a module and a page that two programs share (package
-// support:twins). The value MODE of its context says what it does.
+// modus:support/twins). The value MODE of its context says what it does.
 //
 // **What it is for.** Two facts of the memory of the system need a second
 // program to show them: the code pages of one module are shared between
@@ -13,8 +13,8 @@
 package twin
 
 import "base:intrinsics"
-import "support:system"
-import "support:twins"
+import "modus:support/system"
+import "modus:support/twins"
 
 // The entry of twin: it does what its mode says, then sleeps until
 // `frames` stops it.

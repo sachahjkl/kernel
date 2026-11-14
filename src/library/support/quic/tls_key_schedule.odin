@@ -5,7 +5,7 @@ package quic
 // no 0-RTT secret. Each secret is a record of the handshake in memory of the
 // caller, erased when the handshake ends.
 
-import "contract:errors"
+import "modus:contract/errors"
 
 // The bytes of a SHA-256 hash: 32.
 //

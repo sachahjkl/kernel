@@ -1,6 +1,6 @@
 package boot
 
-import info "contract:boot_info"
+import info "modus:contract/boot_info"
 import "base:intrinsics"
 
 // The debug image (docs/MODULE_CONTRACT.md, "Debug information"): the debug

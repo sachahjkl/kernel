@@ -1,8 +1,8 @@
 #+build !freestanding
 package sentence
 
-import "contract:errors"
-import "contract:start_grant"
+import "modus:contract/errors"
+import "modus:contract/start_grant"
 import "core:testing"
 
 // A refused debug access names the start grant that refuses by its name,

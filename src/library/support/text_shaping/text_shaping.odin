@@ -15,7 +15,7 @@
 package text_shaping
 
 import "base:intrinsics"
-import "contract:glyph_cache"
+import "modus:contract/glyph_cache"
 
 FIRST_CHARACTER :: 32 // The first character of a glyph cache: the space.
 CHARACTER_COUNT :: glyph_cache.CHARACTER_LIMIT // The characters of a glyph cache: 32 to 126.

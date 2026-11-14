@@ -12,7 +12,7 @@
 // It makes no call and never allocates.
 package kind_icons
 
-import "contract:value_kinds"
+import "modus:contract/value_kinds"
 
 // The side of an icon, in cells. A cell is one pixel at the size that a row
 // of a list and the site show: 12 pixels, in a line of 16 or a row of 24.

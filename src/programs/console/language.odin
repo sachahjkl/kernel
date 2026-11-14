@@ -1,9 +1,9 @@
 package console
 
-import "contract:errors"
-import module "contract:module"
-import "support:console_language"
-import "support:system"
+import "modus:contract/errors"
+import module "modus:contract/module"
+import "modus:support/console_language"
+import "modus:support/system"
 
 // The language of the console.
 //

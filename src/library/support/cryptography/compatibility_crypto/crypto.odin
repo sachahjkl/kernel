@@ -8,7 +8,7 @@
 // generator (src/library/support/random), seeded by the root service.
 package compatibility_crypto
 
-import subtle "support:cryptography/_subtle"
+import subtle "modus:support/cryptography/_subtle"
 
 // zero_explicit writes 0 in len bytes at data, with erase_secret_bytes of
 // src/runtime/memory.asm: a call that the compiler cannot remove.
@@ -70,5 +70,5 @@ HAS_RAND_BYTES :: false
 // rand_bytes stops the program: a module of this system draws its bytes
 // from src/library/support/random, never from here.
 rand_bytes :: proc "contextless" (dst: []byte) {
-	ensure_contextless(false, "cryptography: no system entropy source here: draw from support/random")
+	ensure_contextless(false, "cryptography: no system entropy source here: draw from modus:support/random")
 }

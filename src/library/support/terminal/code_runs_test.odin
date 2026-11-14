@@ -3,7 +3,7 @@ package terminal_records
 
 import "core:math"
 import "core:testing"
-import "support:graphics"
+import "modus:support/graphics"
 
 // The least contrast of a color of code on the surfaces where the terminal
 // draws code: the text and the edit line on the background, a row of the

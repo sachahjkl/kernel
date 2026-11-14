@@ -21,7 +21,7 @@
 package kerneltool
 
 import "core:strings"
-import "support:graphics"
+import "modus:support/graphics"
 
 // The three forms of a control: each has its own colors for its states.
 Site_Control_Form :: enum {

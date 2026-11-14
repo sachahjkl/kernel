@@ -27,12 +27,12 @@
 // program that it starts.
 package interface_font
 
-import "contract:glyph_cache"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:system"
-import "support:text_shaping"
+import "modus:contract/glyph_cache"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/system"
+import "modus:support/text_shaping"
 
 WIDTH :: 800
 HEIGHT :: 640

@@ -6,7 +6,7 @@
 // search show; no count is typed.
 package kerneltool
 
-import "contract:value_kinds"
+import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:strings"
 

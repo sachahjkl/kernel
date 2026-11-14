@@ -69,17 +69,17 @@
 // pointer is in docs/POINTERS.md.
 package compositor
 
-import "support:display"
-import "contract:settings"
-import "contract:date"
-import "support:calendar"
-import "support:graphics"
-import "support:interface"
-import "support:bar"
-import "support:mark"
-import "contract:ring"
-import "support:system"
-import "contract:pointer_pictures"
+import "modus:support/display"
+import "modus:contract/settings"
+import "modus:contract/date"
+import "modus:support/calendar"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/bar"
+import "modus:support/mark"
+import "modus:contract/ring"
+import "modus:support/system"
+import "modus:contract/pointer_pictures"
 import "base:intrinsics"
 
 // The context of this service.
@@ -458,7 +458,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("compositor: ok ", u64(width), "x", u64(height))
 	service_start(ctx) // exports.odin
 	// The text of the desktop: the settings of the principal and the glyph cache
-	// (contract:settings); a change of the settings wakes this loop.
+	// (modus:contract/settings); a change of the settings wakes this loop.
 	display.text_settings_open(ctx)
 	display.interface_font_load(ctx)
 	palette_start() // palette.odin

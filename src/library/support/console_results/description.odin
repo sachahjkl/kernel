@@ -22,8 +22,8 @@
 //   `draw_bytes`, `draw_failure`: the drawers.
 package console_results
 
-import module "contract:module"
-import "support:sentence"
+import module "modus:contract/module"
+import "modus:support/sentence"
 
 // A field of a record that the console describes: a column of a table that
 // a command makes, or a field that `join` or `columns` takes from a table.

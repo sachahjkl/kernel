@@ -9,7 +9,7 @@ See:
 */
 package aes
 
-import "support:cryptography/_aes"
+import "modus:support/cryptography/_aes"
 
 // KEY_SIZE_128 is the AES-128 key size in bytes.
 KEY_SIZE_128 :: _aes.KEY_SIZE_128

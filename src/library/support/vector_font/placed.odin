@@ -1,6 +1,6 @@
 package vector_font
 
-import "contract:glyph_cache"
+import "modus:contract/glyph_cache"
 
 // A glyph of a proportional font (docs/FONTS.md, section 12.4): not in a
 // cell of the grid, but at its origin, at one of the subpixel positions of

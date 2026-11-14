@@ -33,12 +33,12 @@
 // bounds.
 package vector_glyphs
 
-import "contract:glyph_cache"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:system"
-import "support:vector_font"
+import "modus:contract/glyph_cache"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/system"
+import "modus:support/vector_font"
 
 WIDTH :: 1008
 HEIGHT :: 704

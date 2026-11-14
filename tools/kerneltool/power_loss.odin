@@ -1,7 +1,7 @@
 package kerneltool
 
-import "contract:settings"
-import format "contract:store"
+import "modus:contract/settings"
+import format "modus:contract/store"
 import "base:runtime"
 import "core:fmt"
 import "core:math/rand"
@@ -12,9 +12,9 @@ import "core:slice"
 import "core:strings"
 import "core:sync"
 import "core:time"
-import "support:storage_mount"
-import block_tree "support:storage_object"
-import tree "support:storage_tree"
+import "modus:support/storage_mount"
+import block_tree "modus:support/storage_object"
+import tree "modus:support/storage_tree"
 
 // The loss of power: a stop of the machine never shows a part of a commit.
 // The tool serves the data disk itself (network_block_device.odin), so it

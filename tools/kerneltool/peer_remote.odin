@@ -1,15 +1,15 @@
 package kerneltool
 
-import "contract:errors"
-import "contract:remote"
+import "modus:contract/errors"
+import "modus:contract/remote"
 import "core:encoding/hex"
 import "core:fmt"
 import "core:strings"
 import "core:sys/linux"
 import "core:sync"
 import "core:time"
-import "support:quic"
-import "support:random"
+import "modus:support/quic"
+import "modus:support/random"
 import cryptography_module "../../src/modules/cryptography"
 
 // The peer as the QUIC client of the remote service (docs/QUIC.md,

@@ -14,11 +14,11 @@ package boot
 
 import "base:intrinsics"
 import "base:runtime"
-import "contract:blake3"
-import info "contract:boot_info"
-import "contract:system_description"
-import "support:bootscreen"
-import "support:cryptography/ed25519"
+import "modus:contract/blake3"
+import info "modus:contract/boot_info"
+import "modus:contract/system_description"
+import "modus:support/bootscreen"
+import "modus:support/cryptography/ed25519"
 
 // The public key of the signing key, 32 bytes: the tool writes it before
 // it builds the boot program (tools/kerneltool/system_description.odin).

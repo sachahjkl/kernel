@@ -1,5 +1,5 @@
 // A program that the program `locks` starts several times, to load the
-// kernel from several programs at one time (package support:lockers). It
+// kernel from several programs at one time (package modus:support/lockers). It
 // works only on its own objects: another program never waits for it, unless
 // the kernel makes it wait.
 //
@@ -30,8 +30,8 @@
 package locker
 
 import "base:intrinsics"
-import "support:lockers"
-import "support:system"
+import "modus:support/lockers"
+import "modus:support/system"
 
 // entries enters the kernel with one cheap operation on an own object,
 // until the time is end or the count is limit (0: no limit).

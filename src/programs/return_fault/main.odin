@@ -44,14 +44,14 @@
 // The design: (docs/ARCHITECTURE.md, "The return to a program").
 package return_fault
 
-import "contract:module"
-import op "contract:operation"
-import "support:display"
-import "support:graphics"
-import sets "support:instruction_sets"
-import "support:interface"
-import "support:random"
-import "support:system"
+import "modus:contract/module"
+import op "modus:contract/operation"
+import "modus:support/display"
+import "modus:support/graphics"
+import sets "modus:support/instruction_sets"
+import "modus:support/interface"
+import "modus:support/random"
+import "modus:support/system"
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 896

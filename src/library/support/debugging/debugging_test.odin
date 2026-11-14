@@ -1,9 +1,9 @@
 #+build !freestanding
 package debugging
 
-import debug_object "contract:debug_object"
+import debug_object "modus:contract/debug_object"
 import "core:testing"
-import "support:sentence"
+import "modus:support/sentence"
 
 // Memory that a test made by hand, in the place of the memory of a
 // debugged program.

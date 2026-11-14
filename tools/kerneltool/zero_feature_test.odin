@@ -3,7 +3,7 @@ package kerneltool
 import "core:os"
 import "core:strings"
 import "core:testing"
-import "support:vector_font"
+import "modus:support/vector_font"
 
 // source_font_path gives the path of a source font from VECTOR_FONT_SOURCES,
 // which the development shell and the check of the flake set.

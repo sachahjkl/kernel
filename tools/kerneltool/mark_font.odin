@@ -20,7 +20,7 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
-import "support:mark"
+import "modus:support/mark"
 
 // The file in the repository, beside the pictures of the mark.
 MARK_FONT_FILE_NAME :: "modus_mark.ttf"

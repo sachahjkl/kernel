@@ -1,10 +1,10 @@
 package kerneltool
 
-import "contract:value_kinds"
+import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:strings"
 import "core:testing"
-import "support:graphics"
+import "modus:support/graphics"
 
 // The table of the kinds is complete: each kind has a name of its own, a
 // title, a meaning, a kind icon of 12 by 12 cells that no other kind has, and

@@ -18,9 +18,9 @@
 // **Its grant**: **Store**, its private store in the storage service.
 package hierarchy
 
-import "contract:errors"
-import "support:storage"
-import "support:system"
+import "modus:contract/errors"
+import "modus:support/storage"
+import "modus:support/system"
 
 TOP_TREES :: 100
 PARTS :: 10

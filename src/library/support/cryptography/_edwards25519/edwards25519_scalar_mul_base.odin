@@ -1,10 +1,10 @@
 // Altered source: Odin dev-2026-11a, core/crypto/_edwards25519/edwards25519_scalar_mul_base.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package _edwards25519
 
-import crypto "support:cryptography/compatibility_crypto"
-import field "support:cryptography/_fiat/field_curve25519"
-import scalar "support:cryptography/_fiat/field_scalar25519"
-import subtle "support:cryptography/_subtle"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import field "modus:support/cryptography/_fiat/field_curve25519"
+import scalar "modus:support/cryptography/_fiat/field_scalar25519"
+import subtle "modus:support/cryptography/_subtle"
 
 ge_scalarmult_basepoint :: proc "contextless" (ge: ^Group_Element, sc: ^Scalar) {
 	when crypto.COMPACT_IMPLS == true {

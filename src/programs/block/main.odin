@@ -62,13 +62,13 @@
 // docs/STORAGE.md.
 package block_service
 
-import "contract:block"
-import "contract:errors"
-import op "contract:operation"
-import "contract:ring"
-import "support:pci"
-import "support:system"
-import "support:virtio"
+import "modus:contract/block"
+import "modus:contract/errors"
+import op "modus:contract/operation"
+import "modus:contract/ring"
+import "modus:support/pci"
+import "modus:support/system"
+import "modus:support/virtio"
 
 FEATURE_FLUSH :: 9 // The device has a cache for writes, and the request Flush.
 

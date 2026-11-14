@@ -1,8 +1,8 @@
 #+build !freestanding
 package remote
 
-import "contract:errors"
-import "contract:isolated"
+import "modus:contract/errors"
+import "modus:contract/isolated"
 import "core:math/rand"
 import "core:testing"
 

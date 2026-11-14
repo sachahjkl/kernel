@@ -1,9 +1,9 @@
 #+build !freestanding
 package settings
 
-import "contract:fixed_addresses"
-import "contract:glyph_cache"
-import op "contract:operation"
+import "modus:contract/fixed_addresses"
+import "modus:contract/glyph_cache"
+import op "modus:contract/operation"
 import "core:testing"
 
 // A writer that stops in a change (an odd count) does not stop a reader:

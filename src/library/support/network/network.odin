@@ -31,10 +31,10 @@
 // See [network service](term:network-service) and (docs/NETWORK.md).
 package network
 
-import "contract:datagram"
-import "contract:errors"
-import "contract:ring"
-import "support:system"
+import "modus:contract/datagram"
+import "modus:contract/errors"
+import "modus:contract/ring"
+import "modus:support/system"
 
 Hardware :: [6]u8 // A hardware address of Ethernet.
 BROADCAST :: Hardware{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF} // The hardware address of each device of the link.

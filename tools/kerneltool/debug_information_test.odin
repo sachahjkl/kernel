@@ -1,6 +1,6 @@
 package kerneltool
 
-import debug_object "contract:debug_object"
+import debug_object "modus:contract/debug_object"
 import "core:strings"
 import "core:testing"
 

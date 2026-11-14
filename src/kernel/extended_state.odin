@@ -1,7 +1,7 @@
 package kernel
 
 import "base:intrinsics"
-import op "contract:operation"
+import op "modus:contract/operation"
 
 // The extended state of the processor: the x87, SSE, AVX and AVX-512
 // registers of a thread (docs/ARCHITECTURE.md, "The extended state of the

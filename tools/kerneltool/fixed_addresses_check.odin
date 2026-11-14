@@ -10,6 +10,8 @@ import "core:strings"
 // which no check of the package sees. So no file of these folders, but the
 // package itself, names BAND_START or SLOT of that package.
 FIXED_ADDRESSES_FOLDER :: SOURCE_FOLDER_CONTRACT + "/fixed_addresses"
+// The end of the line that imports the package, with its quotes.
+FIXED_ADDRESSES_IMPORT :: "\"" + CONTRACT_IMPORT_START + "fixed_addresses\""
 FIXED_ADDRESSES_CHECKED_FOLDERS :: [?]string{SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_PROGRAMS, SOURCE_FOLDER_MODULES}
 FIXED_ADDRESSES_PRIVATE_NAMES :: [?]string{"BAND_START", "SLOT"}
 
@@ -62,16 +64,16 @@ fixed_addresses_check :: proc() -> bool {
 }
 
 // fixed_addresses_import_name gives the name under which a source file
-// imports contract:fixed_addresses: its alias, or the name of the package.
+// imports the package of the fixed addresses: its alias, or the name of the package.
 @(private = "file")
 fixed_addresses_import_name :: proc(text: string) -> (name: string, imports: bool) {
 	rest := text
 	for line in strings.split_lines_iterator(&rest) {
 		trimmed := strings.trim_space(line)
-		if !strings.has_prefix(trimmed, "import ") || !strings.has_suffix(trimmed, "\"contract:fixed_addresses\"") {
+		if !strings.has_prefix(trimmed, "import ") || !strings.has_suffix(trimmed, FIXED_ADDRESSES_IMPORT) {
 			continue
 		}
-		middle := strings.trim_space(trimmed[len("import "):len(trimmed) - len("\"contract:fixed_addresses\"")])
+		middle := strings.trim_space(trimmed[len("import "):len(trimmed) - len(FIXED_ADDRESSES_IMPORT)])
 		return middle == "" ? "fixed_addresses" : middle, true
 	}
 	return "", false

@@ -26,7 +26,7 @@ package quic
 // An attacker on the path can do worse anyway (drop the datagrams). A
 // replay gives nothing to an attacker off the path.
 
-import "contract:errors"
+import "modus:contract/errors"
 
 // The format number of a retry token of this server: its first byte, and the first byte of its additional data.
 //

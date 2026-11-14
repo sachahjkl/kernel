@@ -3,7 +3,7 @@ package mark
 
 import "core:log"
 import "core:testing"
-import "support:graphics"
+import "modus:support/graphics"
 
 // The forms that the keys of the moves use, each with a frame that plays
 // while its key holds: what a place that plays the moves draws.

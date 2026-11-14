@@ -40,14 +40,14 @@
 // "rings: node N does not run: M records wait in the ring before it".
 package rings
 
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import op "contract:operation"
-import "support:relay"
-import "contract:ring"
-import "support:random"
-import "support:system"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import op "modus:contract/operation"
+import "modus:support/relay"
+import "modus:contract/ring"
+import "modus:support/random"
+import "modus:support/system"
 
 WIDTH :: 720
 HEIGHT :: 540

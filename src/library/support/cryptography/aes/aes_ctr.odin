@@ -1,10 +1,10 @@
 // Altered source: Odin dev-2026-11a, core/crypto/aes/aes_ctr.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package aes
 
-import bytes "support:cryptography/compatibility_bytes"
-import "support:cryptography/_aes/ct64"
-import endian "support:cryptography/compatibility_endian"
-import bits "support:cryptography/compatibility_bits"
+import bytes "modus:support/cryptography/compatibility_bytes"
+import "modus:support/cryptography/_aes/ct64"
+import endian "modus:support/cryptography/compatibility_endian"
+import bits "modus:support/cryptography/compatibility_bits"
 
 // CTR_IV_SIZE is the size of the CTR mode IV in bytes.
 CTR_IV_SIZE :: 16

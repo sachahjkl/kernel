@@ -40,12 +40,12 @@
 // [private store](term:private-store).
 package storage
 
-import "contract:errors"
-import "contract:fixed_addresses"
-import "contract:isolated"
-import module "contract:module"
-import "contract:ring"
-import "support:system"
+import "modus:contract/errors"
+import "modus:contract/fixed_addresses"
+import "modus:contract/isolated"
+import module "modus:contract/module"
+import "modus:contract/ring"
+import "modus:support/system"
 
 GRANT_RING :: 7 // Memory: the call ring.
 GRANT_REGION :: 8 // Memory: the call region.

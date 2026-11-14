@@ -2,8 +2,8 @@
 package vectors
 
 import "core:testing"
-import "support:cryptography/argon2id"
-import "support:cryptography/blake2b"
+import "modus:support/cryptography/argon2id"
+import "modus:support/cryptography/blake2b"
 
 // RFC 7693, appendix A: BLAKE2b-512 of "abc".
 @(test)

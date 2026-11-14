@@ -39,13 +39,13 @@
 package drawing
 
 import "base:intrinsics"
-import "contract:errors"
-import "contract:glyph_cache"
-import "contract:settings"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:system"
+import "modus:contract/errors"
+import "modus:contract/glyph_cache"
+import "modus:contract/settings"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/system"
 
 // The names of the exports say which draw record they read.
 #assert(interface.DRAW_RECORD_VERSION == 7)

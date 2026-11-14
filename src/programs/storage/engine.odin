@@ -1,17 +1,17 @@
 package storage_service
 
 import "base:intrinsics"
-import "contract:block"
-import "contract:date"
-import "contract:errors"
-import "contract:ring"
-import format "contract:store"
-import answers "support:storage"
-import "support:storage_mount"
-import block_tree "support:storage_object"
-import "support:storage_retention"
-import tree "support:storage_tree"
-import "support:system"
+import "modus:contract/block"
+import "modus:contract/date"
+import "modus:contract/errors"
+import "modus:contract/ring"
+import format "modus:contract/store"
+import answers "modus:support/storage"
+import "modus:support/storage_mount"
+import block_tree "modus:support/storage_object"
+import "modus:support/storage_retention"
+import tree "modus:support/storage_tree"
+import "modus:support/system"
 
 // The format of the disk, and the one rule that keeps it whole (copy on
 // write), are in src/library/contract/store. The model of objects, trees and stores:

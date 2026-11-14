@@ -1,6 +1,6 @@
 package kerneltool
 
-import "contract:pointer_pictures"
+import "modus:contract/pointer_pictures"
 import "core:fmt"
 import "core:os"
 import "core:strings"

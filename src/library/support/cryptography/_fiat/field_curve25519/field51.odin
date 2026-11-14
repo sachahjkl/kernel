@@ -37,8 +37,8 @@ package field_curve25519
 //    instead of 51-bit limbs will be faster, though the gains are
 //    minimal unless adcx/adox/mulx are used.
 
-import fiat "support:cryptography/_fiat"
-import bits "support:cryptography/compatibility_bits"
+import fiat "modus:support/cryptography/_fiat"
+import bits "modus:support/cryptography/compatibility_bits"
 
 Loose_Field_Element :: distinct [5]u64
 Tight_Field_Element :: distinct [5]u64

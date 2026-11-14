@@ -3,11 +3,11 @@ package palette
 
 import "core:strings"
 import "core:testing"
-import "contract:palette_table"
-import "support:graphics"
-import "support:interface"
-import "support:kind_icons"
-import "support:line_editor"
+import "modus:contract/palette_table"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/kind_icons"
+import "modus:support/line_editor"
 
 @(private = "file")
 PROGRAMS := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "temple", "clock"}

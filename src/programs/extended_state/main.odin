@@ -42,11 +42,11 @@
 package extended_state
 
 import "base:intrinsics"
-import "support:display"
-import "support:graphics"
-import sets "support:instruction_sets"
-import "support:interface"
-import "support:system"
+import "modus:support/display"
+import "modus:support/graphics"
+import sets "modus:support/instruction_sets"
+import "modus:support/interface"
+import "modus:support/system"
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 1024

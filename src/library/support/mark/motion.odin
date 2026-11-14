@@ -1,6 +1,6 @@
 package mark
 
-import "support:graphics"
+import "modus:support/graphics"
 
 // The moves of the heron (docs/DESIGN.md, "The mark", "The moves"): during
 // some animations the heron squashes, stretches, lifts, or crosses the

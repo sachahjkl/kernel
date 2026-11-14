@@ -52,11 +52,11 @@
 package debugged
 
 import "base:intrinsics"
-import "contract:errors"
-import "contract:module"
-import op "contract:operation"
-import "support:random"
-import "support:system"
+import "modus:contract/errors"
+import "modus:contract/module"
+import op "modus:contract/operation"
+import "modus:support/random"
+import "modus:support/system"
 
 VALUE_ROLE :: 0 // The value of the context that gives the role of a child.
 VALUE_MODE :: 1 // What a child or a second debugger does: a Child_Mode or a Debugger_Mode.

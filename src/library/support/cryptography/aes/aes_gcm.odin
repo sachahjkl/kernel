@@ -1,12 +1,12 @@
 // Altered source: Odin dev-2026-11a, core/crypto/aes/aes_gcm.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package aes
 
-import bytes "support:cryptography/compatibility_bytes"
-import crypto "support:cryptography/compatibility_crypto"
-import "support:cryptography/_aes"
-import "support:cryptography/_aes/ct64"
-import aes_hw "support:cryptography/_aes/hw"
-import endian "support:cryptography/compatibility_endian"
+import bytes "modus:support/cryptography/compatibility_bytes"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import "modus:support/cryptography/_aes"
+import "modus:support/cryptography/_aes/ct64"
+import aes_hw "modus:support/cryptography/_aes/hw"
+import endian "modus:support/cryptography/compatibility_endian"
 
 // GCM_IV_SIZE is the default size of the GCM IV in bytes.
 GCM_IV_SIZE :: 12

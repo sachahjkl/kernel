@@ -110,12 +110,12 @@
 // that is the work of the grants of the root service.
 package console
 
-import "support:display"
-import "support:key_path"
-import "support:line_editor"
-import "support:random"
-import "support:system"
-import terminal "support:terminal"
+import "modus:support/display"
+import "modus:support/key_path"
+import "modus:support/line_editor"
+import "modus:support/random"
+import "modus:support/system"
+import terminal "modus:support/terminal"
 import "base:intrinsics"
 
 CONSOLE_MARK :: "console: ready"

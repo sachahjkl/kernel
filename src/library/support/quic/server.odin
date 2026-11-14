@@ -55,8 +55,8 @@ package quic
 //   most a fixed count in each second.
 // - The stateless reset is not done.
 
-import "contract:errors"
-import "support:random"
+import "modus:contract/errors"
+import "modus:support/random"
 
 // The limits of a server: how many records one remote address can hold, and
 // the budgets of the work of new connections.

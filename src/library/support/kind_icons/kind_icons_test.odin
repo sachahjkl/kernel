@@ -1,7 +1,7 @@
 #+build !freestanding
 package kind_icons
 
-import "contract:value_kinds"
+import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:strings"
 import "core:testing"

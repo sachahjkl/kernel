@@ -26,8 +26,8 @@ import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:time"
-import "contract:remote"
-import "support:pci"
+import "modus:contract/remote"
+import "modus:support/pci"
 
 EXIT_FAILURE :: 1
 EXIT_USAGE :: 2
@@ -36,17 +36,17 @@ ROOT_MARK :: "flake.nix"
 
 BUILD_FOLDER :: "build"
 
-// The two source libraries of the project (docs/GLOSSARY.md). An import
-// names its library: "contract:ring", "support:system".
+// The one source library of the project (docs/GLOSSARY.md, "Source
+// library"). An import names the library, then one of its two parts:
+// "modus:contract/ring", "modus:support/system".
 //   contract   what two parties agree on: records, numbers, and the code
 //              that reads them. It uses no kernel operation. The kernel
-//              compiles with this library only.
+//              imports these packages only.
 //   support    what a program compiles in to use the contracts.
-// flake.nix gives the same two flags to the compiler when it builds this tool.
-// The name and the folder of each library are in source_folders.odin.
-CONTRACT_LIBRARY :: "-collection:" + CONTRACT_LIBRARY_NAME + "=" + SOURCE_FOLDER_CONTRACT
-SUPPORT_LIBRARY :: "-collection:" + SUPPORT_LIBRARY_NAME + "=" + SOURCE_FOLDER_SUPPORT
-CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "datagram", "date", "errors", "fixed_addresses", "frame", "glyph_cache", "isolated", "module", "operation", "pointer_pictures", "release", "remote", "ring", "settings", "store", "cut_mark", "system_description", "debug_object", "value_kinds", "palette_table", "start_grant"}
+// The name, the folder and the flag of the library are in
+// source_folders.odin; the rule of the kernel is held by
+// library_imports_check.odin.
+
 // The folders whose host tests `kerneltool check` runs, in the order of
 // the run: `odin test` on each.
 HOST_TEST_FOLDERS :: [?]string {
@@ -427,6 +427,11 @@ COMMANDS :: [?]Command {
 	// Checks that each file that the manifest of the origin names is its file
 	// in Odin with the listed changes only. `kerneltool check` runs it.
 	{name = "cryptography-origin", about = "check that each file of " + CRYPTOGRAPHY_MANIFEST + " is its origin in Odin with the listed changes only", run = run_cryptography_origin},
+	// Checks that each import of each source file of the kernel and of the
+	// contract packages names a package of the base library or of the core
+	// library of the compiler, or a contract package. Each build runs it
+	// before its first compiler starts, and `kerneltool check` runs it.
+	{name = "library-imports", about = "check that each import of each source file of " + SOURCE_FOLDER_KERNEL + " and of " + SOURCE_FOLDER_CONTRACT + " names a package of base:, of core: or under " + CONTRACT_IMPORT_START, run = run_library_imports},
 	// Works on the changelog: the fragments of `changelog.d/`, and the releases
 	// of `CHANGELOG.md`.
 	//
@@ -915,16 +920,18 @@ run_measure :: proc(args: []string) -> int {
 run_check :: proc(args: []string) -> int {
 	// The full check proves the build: it keeps no output of an earlier build.
 	build_whole = true
-	if !run({"odin", "check", TOOL_SOURCE_FOLDER, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY}) {
+	if !run({"odin", "check", TOOL_SOURCE_FOLDER, "-vet", SOURCE_LIBRARY_FLAG}) {
 		return EXIT_FAILURE
 	}
-	// A package of the contract library compiles with that library only:
-	// the compiler refuses an import of "support:".
-	for name in CONTRACT_PACKAGES {
-		if !run({"odin", "check", strings.concatenate({SOURCE_FOLDER_CONTRACT + "/", name}, context.temp_allocator), "-no-entry-point", "-vet", CONTRACT_LIBRARY}) {
-			return EXIT_FAILURE
-		}
-		test_passed_print("contract:%s compiles with the contract library only", name)
+	// The kernel and the contract packages import no support package. The
+	// compiler does not refuse such an import: the library is one.
+	if !library_imports_check() {
+		return EXIT_FAILURE
+	}
+	// The import lines and the one flag are all that a program outside the
+	// sources of the system needs for the compiler to accept it.
+	if !third_party_example_check() {
+		return EXIT_FAILURE
 	}
 	// The tests of the memory procedures in assembly link the form of the
 	// host: the compiler assembles memory_for_host_tests.asm itself and
@@ -933,7 +940,7 @@ run_check :: proc(args: []string) -> int {
 	host_test_folders := HOST_TEST_FOLDERS
 	for folder in host_test_folders {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
-		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
+		if !run({"odin", "test", folder, "-vet", SOURCE_LIBRARY_FLAG, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE
 		}
 	}

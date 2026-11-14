@@ -29,7 +29,7 @@ package kerneltool
 import "core:fmt"
 import "core:image/png"
 import "core:strings"
-import "support:mark"
+import "modus:support/mark"
 
 SITE_MARK_ANIMATION_SCRIPT :: "mark_animation.js"
 // The icon of the tab that the script draws during an animation: the size

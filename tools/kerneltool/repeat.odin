@@ -1,6 +1,6 @@
 package kerneltool
 
-import module "contract:module"
+import module "modus:contract/module"
 import "core:fmt"
 import "core:os"
 import "core:slice"

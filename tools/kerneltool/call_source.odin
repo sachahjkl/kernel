@@ -1,8 +1,8 @@
 package kerneltool
 
-import "contract:blake3"
-import debug_object "contract:debug_object"
-import module "contract:module"
+import "modus:contract/blake3"
+import debug_object "modus:contract/debug_object"
+import module "modus:contract/module"
 import "core:fmt"
 import "core:os"
 import "core:strings"

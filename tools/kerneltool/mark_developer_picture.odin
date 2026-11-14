@@ -6,8 +6,8 @@ package kerneltool
 
 import "core:fmt"
 import "core:os"
-import "support:graphics"
-import "support:mark"
+import "modus:support/graphics"
+import "modus:support/mark"
 
 // The picture of every frame for a developer, written by `kerneltool logo`
 // and by `kerneltool mark developer` into the build folder: one row for

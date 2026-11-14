@@ -1,9 +1,9 @@
 package root
 
-import "contract:blake3"
-import op "contract:operation"
-import "contract:system_description"
-import "support:system"
+import "modus:contract/blake3"
+import op "modus:contract/operation"
+import "modus:contract/system_description"
+import "modus:support/system"
 
 // The check of the root service (docs/TRUSTED_BOOT.md, "Layer 1: the signed system description").
 //

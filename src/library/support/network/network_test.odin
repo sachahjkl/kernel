@@ -3,7 +3,7 @@ package network
 
 import "core:math/rand"
 import "core:testing"
-import "support:system"
+import "modus:support/system"
 
 @(private = "file")
 LOCAL :: Hardware{0x52, 0x54, 0x00, 0x12, 0x34, 0x56}

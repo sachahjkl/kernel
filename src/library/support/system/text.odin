@@ -1,9 +1,9 @@
 package system
 
-import "contract:cut_mark"
-import op "contract:operation"
-import "contract:value_kinds"
-import "support:sentence"
+import "modus:contract/cut_mark"
+import op "modus:contract/operation"
+import "modus:contract/value_kinds"
+import "modus:support/sentence"
 
 // Text without an allocator: src/library/support/sentence. These names stay in this
 // library, so a program writes system.Writer and system.format.

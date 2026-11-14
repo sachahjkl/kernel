@@ -7,7 +7,7 @@
 //   odin test src/library/support/quic -o:speed -define:ODIN_TEST_NAMES=quic.the_cost_of_the_work_of_new_connections
 package quic
 
-import "contract:errors"
+import "modus:contract/errors"
 import "core:fmt"
 import "core:testing"
 import "core:time"

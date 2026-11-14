@@ -1,9 +1,9 @@
 #+build !freestanding
 package bar
 
-import "contract:glyph_cache"
+import "modus:contract/glyph_cache"
 import "core:testing"
-import "support:vector_font"
+import "modus:support/vector_font"
 
 // The regular cache of B612 at scale 1, in memory that the caller frees:
 // the cache of the names of the bar.

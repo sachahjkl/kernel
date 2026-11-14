@@ -21,8 +21,8 @@
 // a list is never copied.
 package palette
 
-import "contract:palette_table"
-import "support:line_editor"
+import "modus:contract/palette_table"
+import "modus:support/line_editor"
 
 // The state of the panel. One value says all of it: no state is a pair of
 // flags.

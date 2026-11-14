@@ -31,8 +31,8 @@
 package remote
 
 import "base:intrinsics"
-import "contract:errors"
-import "contract:isolated"
+import "modus:contract/errors"
+import "modus:contract/isolated"
 
 // The UDP port of the listen grant of the remote service, on the address of
 // the machine.

@@ -5,10 +5,10 @@
 // and the check of the layout of a page.
 package kerneltool
 
-import "contract:value_kinds"
+import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:strings"
-import "contract:blake3"
+import "modus:contract/blake3"
 
 // The starts of the tree and of the list "On this page": the check of a
 // page counts them, so each one is written by this file only.

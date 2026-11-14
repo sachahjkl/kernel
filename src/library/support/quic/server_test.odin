@@ -6,10 +6,10 @@
 // addresses, a client that vanishes in its handshake, another version.
 package quic
 
-import "contract:errors"
+import "modus:contract/errors"
 import "core:fmt"
 import "core:testing"
-import "support:random"
+import "modus:support/random"
 
 HARNESS_RECORDS :: 16
 HARNESS_CLIENT_LIMIT :: 16

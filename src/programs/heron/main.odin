@@ -74,13 +74,13 @@
 // host of the run: no test compares it to a bound.
 package heron
 
-import "contract:errors"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:mark"
-import "support:random"
-import "support:system"
+import "modus:contract/errors"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/mark"
+import "modus:support/random"
+import "modus:support/system"
 
 // The stage: the part of the window where the heron stands and moves. It
 // is cut in square tiles; each tile is one picture of the window, with a

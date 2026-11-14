@@ -1,10 +1,10 @@
 package compositor
 
-import "contract:errors"
-import "contract:isolated"
-import "contract:pointer_pictures"
-import "contract:ring"
-import "support:system"
+import "modus:contract/errors"
+import "modus:contract/isolated"
+import "modus:contract/pointer_pictures"
+import "modus:contract/ring"
+import "modus:support/system"
 
 // The compositor is also a service: its exports give the place of the
 // pointer and the windows, as tables of records that a caller in another

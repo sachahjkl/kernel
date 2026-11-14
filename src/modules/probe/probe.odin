@@ -23,8 +23,8 @@
 // ```
 package probe
 
-import op "contract:operation"
-import "support:system"
+import op "modus:contract/operation"
+import "modus:support/system"
 import "base:intrinsics"
 
 // peek reads 8 bytes at an address. In a call host, the address space has

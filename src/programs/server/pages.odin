@@ -15,11 +15,11 @@ package server
 // The store holds each page under its name, and one object PAGE_INDEX_NAME
 // with the names of the pages.
 
-import "contract:errors"
-import "contract:isolated"
-import "support:storage"
-import "support:system"
-import "support:web"
+import "modus:contract/errors"
+import "modus:contract/isolated"
+import "modus:support/storage"
+import "modus:support/system"
+import "modus:support/web"
 
 PAGE_CAPACITY :: 16
 PAGE_SIZE_LIMIT :: 60 * 1024 // Bytes of one page: the call region of a connection has 64 KiB.

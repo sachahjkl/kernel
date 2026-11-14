@@ -1,9 +1,9 @@
 package interface
 
-import "contract:glyph_cache"
-import "support:display"
-import "support:graphics"
-import "support:text_shaping"
+import "modus:contract/glyph_cache"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/text_shaping"
 
 // The fonts that the package can measure (docs/FONTS.md, section 12.6).
 // Cells_8x16: the grid of the font of the cells, 8 x 16 pixels at scale 1;

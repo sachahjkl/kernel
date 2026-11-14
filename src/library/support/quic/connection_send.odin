@@ -15,7 +15,7 @@ package quic
 // 2 bytes: the packets are short, and a fixed form keeps the room of each
 // packet known before its frames are written.
 
-import "contract:errors"
+import "modus:contract/errors"
 
 PACKET_NUMBER_SIZE :: 4 // The bytes of the packet number of each packet that this side sends: always 4, the longest form (RFC 9000, section 17.1), so the size of a header does not depend on the number.
 LONG_HEADER_LENGTH_SIZE :: 2 // The bytes of the Length field of each long header that this side sends: a variable-length integer of 2 bytes, which counts up to 16 383 bytes. A packet has 1200 bytes at most.

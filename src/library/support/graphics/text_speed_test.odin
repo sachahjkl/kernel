@@ -1,11 +1,11 @@
 #+build !freestanding
 package graphics
 
-import "contract:glyph_cache"
+import "modus:contract/glyph_cache"
 import "core:fmt"
 import "core:testing"
 import "core:time"
-import "support:vector_font"
+import "modus:support/vector_font"
 
 // The cost of the text, part by part, on the host (docs/FONTS.md, section
 // 5): run with `taskset -c N` and -o:speed. Each number is the least of

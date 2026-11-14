@@ -58,9 +58,9 @@
 // "Locks of the kernel".
 package kernel
 
-import info "contract:boot_info"
-import module "contract:module"
-import op "contract:operation"
+import info "modus:contract/boot_info"
+import module "modus:contract/module"
+import op "modus:contract/operation"
 import "base:intrinsics"
 
 KERNEL_MARK :: "kernel: ok"

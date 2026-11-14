@@ -1,8 +1,8 @@
 #+build !freestanding
 package system
 
-import "contract:fixed_addresses"
-import op "contract:operation"
+import "modus:contract/fixed_addresses"
+import op "modus:contract/operation"
 import "core:testing"
 
 // The modules of a program end before the band of the fixed ranges: a

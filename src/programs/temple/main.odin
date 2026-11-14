@@ -13,10 +13,10 @@
 // "temple: ok" after the first picture.
 package temple
 
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:system"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/system"
 
 WIDTH :: 440
 HEIGHT :: 460

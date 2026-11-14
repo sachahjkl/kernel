@@ -7,11 +7,11 @@ package server
 // the requests). One answer at a time for each connection: the next head is
 // read when the answer before it is all in the send buffer.
 
-import "contract:date"
-import "support:calendar"
-import "support:system"
-import "support:tcp"
-import "support:web"
+import "modus:contract/date"
+import "modus:support/calendar"
+import "modus:support/system"
+import "modus:support/tcp"
+import "modus:support/web"
 
 // The limits of a connection that makes no progress (milliseconds), so
 // that one host cannot keep a record for ever. 10 s is long for a request

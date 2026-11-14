@@ -1,7 +1,7 @@
 #+build !freestanding
 package network
 
-import "contract:datagram"
+import "modus:contract/datagram"
 import "core:testing"
 
 // Two endpoints and the machine. Endpoint A has a grant of port 7 and

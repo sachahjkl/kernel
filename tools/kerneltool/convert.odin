@@ -1,7 +1,7 @@
 package kerneltool
 
-import "contract:blake3"
-import module "contract:module"
+import "modus:contract/blake3"
+import module "modus:contract/module"
 import "core:fmt"
 import "core:mem"
 import "core:slice"

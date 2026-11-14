@@ -5,7 +5,7 @@ import "core:image/png"
 import "core:os"
 import "core:strings"
 import "core:testing"
-import "support:mark"
+import "modus:support/mark"
 
 // The request of a test: the still picture of the home of the site.
 @(private = "file")

@@ -6,10 +6,10 @@ See: [[ https://datatracker.ietf.org/doc/rfc9106/ ]]
 */
 package argon2id
 
-import "support:cryptography/blake2b"
-import endian "support:cryptography/compatibility_endian"
-import bits "support:cryptography/compatibility_bits"
-import mem "support:cryptography/compatibility_memory"
+import "modus:support/cryptography/blake2b"
+import endian "modus:support/cryptography/compatibility_endian"
+import bits "modus:support/cryptography/compatibility_bits"
+import mem "modus:support/cryptography/compatibility_memory"
 
 // Implementation based on the RFC, Monocypher (CC0-1.0), and the reference
 // code (CC0-1.0).

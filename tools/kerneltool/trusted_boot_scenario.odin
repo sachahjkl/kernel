@@ -4,7 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
-import "contract:system_description"
+import "modus:contract/system_description"
 
 // The machines of the trusted boot (docs/TRUSTED_BOOT.md), `kerneltool test
 // trusted_boot`. With the usual firmware, the boot program must refuse:

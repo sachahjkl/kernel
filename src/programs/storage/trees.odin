@@ -1,14 +1,14 @@
 package storage_service
 
 import "base:intrinsics"
-import "contract:blake3"
-import "contract:errors"
-import "contract:isolated"
-import format "contract:store"
-import "support:storage_mount"
-import block_tree "support:storage_object"
-import tree "support:storage_tree"
-import "support:system"
+import "modus:contract/blake3"
+import "modus:contract/errors"
+import "modus:contract/isolated"
+import format "modus:contract/store"
+import "modus:support/storage_mount"
+import block_tree "modus:support/storage_object"
+import tree "modus:support/storage_tree"
+import "modus:support/system"
 
 // The trees of a store (docs/STORAGE.md): each tree is its own B+ tree
 // (src/library/support/storage_tree), and an entry of kind Tree holds the root node of

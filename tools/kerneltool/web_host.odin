@@ -2,7 +2,7 @@ package kerneltool
 
 import "core:strconv"
 
-import "support:calendar"
+import "modus:support/calendar"
 
 import "core:fmt"
 import "core:net"
@@ -11,7 +11,7 @@ import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
-import "support:web"
+import "modus:support/web"
 
 // The test of TCP against a stack that this project did not write
 // (docs/NETWORK.md). The machine has QEMU user networking: its TCP talks

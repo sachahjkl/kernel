@@ -28,7 +28,7 @@
 // example, wraps.
 package math
 
-import "contract:errors"
+import "modus:contract/errors"
 
 // gcd gives the greatest common divisor.
 //

@@ -50,14 +50,14 @@
 // main.odin: the endpoint, the server and the loop. draw.odin: the window.
 package quic_echo
 
-import "contract:datagram"
-import "contract:errors"
-import "contract:ring"
-import "support:display"
-import "support:network"
-import "support:quic"
-import "support:random"
-import "support:system"
+import "modus:contract/datagram"
+import "modus:contract/errors"
+import "modus:contract/ring"
+import "modus:support/display"
+import "modus:support/network"
+import "modus:support/quic"
+import "modus:support/random"
+import "modus:support/system"
 
 foreign _ {
 	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---

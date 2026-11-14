@@ -29,9 +29,9 @@
 // ```
 package date_service
 
-import "contract:date"
-import "support:calendar"
-import "support:system"
+import "modus:contract/date"
+import "modus:support/calendar"
+import "modus:support/system"
 
 PORT_INDEX :: 0x70
 PORT_DATA :: 0x71

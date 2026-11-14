@@ -465,7 +465,7 @@ A code span of a document that names a file of the repository is a link on the s
 | `src/kernel/enter.odin:34` | The path before the `:`. A line number is not checked |
 | `src/programs/*/main.odin`, `src/programs/<name>/main.odin` | A name that is not written out ends the path at the folder before it: `src/programs` must exist |
 | `build/modules/x`, `docs/reference/modules/` | Not a source path: the name of a source folder is inside a longer path |
-| `kerneltool check`, `kernel`, `"contract:ring"` | Not a source path: the span does not start with the name of a folder and a `/` |
+| `kerneltool check`, `kernel`, `"modus:contract/ring"` | Not a source path: the span does not start with the name of a folder and a `/` |
 
 A path is read from the root of the repository. A path that names nothing gives the document, the line and the span. When the path exists under the folder of its first name, the sentence gives the new path.
 
@@ -477,6 +477,48 @@ A path is read from the root of the repository. A path that names nothing gives 
 - The news entries and the changelog.
 
 **What the check does not prove.** It proves that a path names something, not that it names the right thing. A span that names a package and a declaration in one text, a folder then `.` and a name, is read as a file and is refused: write the declaration and the folder in two spans.
+
+## The imports of the kernel and of the contract packages
+
+The system has one source library, so the compiler accepts each package of the library in each source: an import of a support package compiles in the kernel. The rule that the kernel imports the contract packages only is held by the tool, with `library_imports_check` (`tools/kerneltool/library_imports_check.odin`).
+
+**The rule.** Each import of each source file of `src/kernel` and of `src/library/contract` names one of these, and nothing else:
+
+| Import | Example |
+|---|---|
+| A package of the base library of the compiler | `"base:intrinsics"` |
+| A package of the core library of the compiler | `"core:testing"`, in a host test of a contract package |
+| A contract package | `"modus:contract/ring"` |
+
+Each other import is refused:
+
+- a support package (`"modus:support/sentence"`);
+- a relative path (`"../../support/sentence"`), also one that names a contract package;
+- a path with `..` after the name of the library (`"modus:contract/../support/sentence"`);
+- a package of another library, the vendor library of the compiler too.
+
+**Why this is complete.** If no file of the two folders imports outside that list, no chain of imports from the kernel reaches a support package.
+
+**What it reads.** Each `.odin` file of the two folders and of each folder under them, with the parser of the library of the compiler. It reads more than the compiler compiles: a host test, a file that a build tag leaves out, and an import inside a `when` whatever its condition. The check is stricter than the compiler, never looser. A file with an error of syntax is refused as a file, because the parser does not read it whole. A foreign import names a file of assembly or an object, not a package: the check does not read it.
+
+**When it runs.** Before the first compiler of each build starts: `build`, `test`, `run`, `measure`, `screenshots`, `film`, `repeat`, and `module <name>` with no step. `kerneltool check` runs it first, and `kerneltool library-imports` runs it alone. A refused import stops the build with the file, the line and the text of the import:
+
+```
+kerneltool: src/kernel/serial.odin:12: the import "modus:support/sentence" is refused: a source of src/kernel and of src/library/contract imports a package of base:, of core: or under modus:contract/ only, by a path with no ".."; the kernel and a contract package import no support package
+```
+
+**What it does not prove.** It does not prove that a contract package uses no kernel operation: that rule is held by review.
+
+## A program outside the sources
+
+A program outside the repository imports the library of the system with the lines of a program of the system, and gives the compiler one flag. `kerneltool check` proves it with one example (`third_party_example_check`, in `tools/kerneltool/library_imports_check.odin`):
+
+1. It copies each `.odin` file of `src/programs/tally` to `build/third_party_example/tally`, with no change.
+2. It runs the check of the compiler on the copy: `odin check build/third_party_example/tally -target:freestanding_amd64_sysv -no-entry-point -default-to-nil-allocator -vet -collection:modus=src/library`.
+
+The copy has no relative path to the library, so the folder of the copy does not matter: a program in another repository names the folder `src/library` of the repository of the system in the flag.
+
+This proves the import lines and the flag. It does not build a module from the copy: the tool builds the modules of its module table only, and the build of a module whose source is outside the repository has no design.
 
 ## The commands of the tool
 
@@ -492,7 +534,7 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "kerneltool: all tests passed", then the times of the test (below) |
 | `measure ...` | A measure run: a machine that measures with no other load. No argument: the locks. `scheduler N`, `clock`, `crowd`, `disk`, `flow`, `limits`: the program alone, and its lines. `windows`, `address_space`, `shortage`. The numbers are measures, never conditions ("A check by count, a measure by time") |
 | `screenshots` | The whole test, then the copy of the pictures to `docs/screenshots` and to the development log: the pictures are a fact of the machines, so they are copied as soon as each machine passed. Then a second build and the measure runs whose numbers the measure record holds (the locks, `clock`, `disk`, `scheduler`), then the measure record. `screenshots compress` compresses the PNG files that are stored with no compression |
-| `check` | `odin check -vet` and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the file index of the intent folder, the source paths in the documents, the changelog, the news, the roadmap), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
+| `check` | `odin check -vet`, the imports of the kernel and of the contract packages, the example of a program outside the sources and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the file index of the intent folder, the source paths in the documents, the changelog, the news, the roadmap), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
 | `repeat <module> <count>` | Builds one module again and again, with no machine, and counts the distinct results (`docs/REPRODUCIBLE_BUILD.md`). Each of its builds is a whole build |
 | `module-hashes write <file>`, `module-hashes compare <file>` | Records the hash of each module of the build in a file, or compares the build with such a record and fails when a module has another hash ("The hashes of the modules of two builds") |
 | `site` | Writes the site in `build/site/` |
@@ -501,6 +543,7 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `key new <folder>`, `key show` | The key that signs the system description |
 | `font`, `vector_fonts`, `pointers`, `logo`, `portrait` | Convert a source (a font, a pointer theme, the mark, a picture) into the files of the repository. A build reads the result, never the source |
 | `mark <what> [options]` | Draws one picture of the mark: the still mark, a frame, a tile map, the table of a tile map, the picture for a developer; `mark uses` prints the table of the uses ("The pictures of the mark") |
+| `library-imports` | Checks that each import of each source file of the kernel and of the contract packages names a package of the compiler or a contract package ("The imports of the kernel and of the contract packages") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
 | `film [terminal \| palette \| heron]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4` and `build/films/<name>.webm` ("The film"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
 
@@ -601,7 +644,7 @@ A source names an export of an import in a `foreign` block: a name, the paramete
 
 | Input | How the tool knows it |
 |---|---|
-| The source files of the module and of each package that it imports, to any depth: the folder of the module, `contract:`, `support:`, and the libraries of the compiler (`base:`, `core:`) | The list of the compiler; the tool hashes each file |
+| The source files of the module and of each package that it imports, to any depth: the folder of the module, the source library (`modus:contract/`, `modus:support/`), and the libraries of the compiler (`base:`, `core:`) | The list of the compiler; the tool hashes each file |
 | The files of `#load` | The same list |
 | Every other file of the folder of each of these packages | The tool lists each folder. A file that the compiler did not read becomes a source with no change of a listed file in one way only: it is in such a folder (a new file, or a file whose build tag now admits the target) |
 | The assembly files that the module links: `src/runtime/memory.asm`, the `.asm` files of its folder, and those of `src/library/support/system` for a program | The tool lists them as the build does |
@@ -626,7 +669,7 @@ A source names an export of an import in a `foreign` block: a name, the paramete
 - **The description of an export** (its name, its parameters, its result). The compiled code depends on the declaration in the `foreign` block of the importer, which is a source of the importer. The description in the file of the import is not read by the compile step. The conversion compares the two: it reads each `foreign` procedure of the sources of the importer and the description of the export of that name in the module file of the import, and a declaration with another count of parameters, another type, direction, record layout, result, error record or calling convention stops the build with its file and its line, and so does a symbol that became a slot of the importer and has no compared declaration (`import_declarations.odin`; `MODULE_CONTRACT.md`, "The declaration of an import is checked"). A change of the sources changes the key of the compile step, which the key of the conversion holds, and a change of the import changes the key of the conversion: each runs the comparison again.
 - **A library module** (`GLOSSARY.md`; the field `library` of the module table, set for `drawing`). The conversion refuses its module file when a segment that the loader writes is read-only after the load: a segment with a rebase (a table of addresses) or a slot (an import) (`MODULE_CONTRACT.md`, "A library as a module"). A segment of that range of the linker with no rebase and no slot is a constant segment for every module, and is not refused. After the modules, each build prints one measure line for each library module: the size of its file, and the size of the file of each module that imports it with their sum: "kerneltool: measure: the library module drawing has ... bytes; the files of the 24 modules that import it have ... bytes in all". It is a measure to compare two builds; no check reads it.
 - **A program that draws through the drawing module** has two entries in its line of the module table: the import `drawing`, and the compiler setting `DRAWING_THROUGH_MODULE=true`, which makes the window layer of `src/library/support/interface` call the exports. A host test of the tool (`programs_that_draw_through_the_module_follow_its_rules`) refuses a line with the setting and no import, a source of such a program that draws a picture or a grid of text cells, and one that starts a child of its own file with no load source.
-- **The layout of a record, and a constant.** An importer that uses a record or a constant of a library imports the package that declares it (`contract:`, `support:`, or the folder of the module). That package is in the list of the compiler, so its files are inputs of the compile step.
+- **The layout of a record, and a constant.** An importer that uses a record or a constant of a library imports the package that declares it (`modus:contract/`, `modus:support/`, or the folder of the module). That package is in the list of the compiler, so its files are inputs of the compile step.
 - **A file of `#load`.** It is in the list of the compiler. No source loads a module file of the build; if one did, the list names that file, and the key of the compile step holds its hash.
 - **The number of an export, and the hash of the import.** They are in the module file only, and the conversion writes them. They are why the conversion holds the whole file of the import, not its description.
 

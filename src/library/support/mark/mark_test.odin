@@ -2,7 +2,7 @@
 package mark
 
 import "core:testing"
-import "support:graphics"
+import "modus:support/graphics"
 
 // The box of each part in the table is the box of its letter in the rows,
 // and each letter of the rows has a part.

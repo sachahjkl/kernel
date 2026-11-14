@@ -16,12 +16,12 @@ package console
 // second thread changes the tables of names during a line, never between
 // two lines.
 
-import module "contract:module"
-import op "contract:operation"
-import "support:display"
-import "support:line_editor"
-import "support:system"
-import terminal "support:terminal"
+import module "modus:contract/module"
+import op "modus:contract/operation"
+import "modus:support/display"
+import "modus:support/line_editor"
+import "modus:support/system"
+import terminal "modus:support/terminal"
 
 List_Mode :: enum u8 {
 	Closed  = 0,

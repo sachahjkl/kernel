@@ -1,10 +1,10 @@
 package monitor
 
 import "base:intrinsics"
-import "contract:errors"
-import "contract:isolated"
-import op "contract:operation"
-import "support:system"
+import "modus:contract/errors"
+import "modus:contract/isolated"
+import op "modus:contract/operation"
+import "modus:support/system"
 
 // The monitor is also a service: its exports give what its window shows, as
 // tables of records, not text. The console calls them through a

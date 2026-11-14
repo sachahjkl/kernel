@@ -28,11 +28,11 @@
 // threads on several processors shows 100% at most.
 package monitor
 
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import op "contract:operation"
-import "support:system"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import op "modus:contract/operation"
+import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [512]interface.Draw_Record

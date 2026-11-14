@@ -1,13 +1,13 @@
 package vector_font
 
-import "contract:blake3"
-import "contract:glyph_cache"
+import "modus:contract/blake3"
+import "modus:contract/glyph_cache"
 
 FIRST_CHARACTER :: 32 // The first character of a glyph cache: the space.
 #assert(int(max(Stripe_Filter)) + 1 == glyph_cache.FILTER_COUNT)
 CHARACTER_COUNT :: glyph_cache.CHARACTER_LIMIT // The characters of a glyph cache: 32 to 126.
 
-// The places of the tables of a glyph cache file (contract:glyph_cache).
+// The places of the tables of a glyph cache file (modus:contract/glyph_cache).
 @(private)
 Cache_Layout :: struct {
 	sizes, glyphs, advances, pairs, words: int, // The offset of each table in the file.
@@ -89,7 +89,7 @@ cache_header_write :: proc "contextless" (out: []u8, font_bytes: []u8, font_name
 
 // glyph_cache_build draws the characters 32 to 126 of a monospace font at
 // the three scales of the grid and writes a glyph cache file
-// (contract:glyph_cache) into the memory of the caller: one position, each
+// (modus:contract/glyph_cache) into the memory of the caller: one position, each
 // glyph the full width of its cell, each advance the width of the cell, no
 // pair. The kernel tool makes the cache of the boot image with it; a
 // program makes its own cache of another font with it. It gives the size

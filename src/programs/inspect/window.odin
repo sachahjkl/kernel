@@ -1,11 +1,11 @@
 package inspect
 
-import op "contract:operation"
-import "support:addresses"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:system"
+import op "modus:contract/operation"
+import "modus:support/addresses"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/system"
 
 // The window follows docs/DESIGN.md: cards with a title in the accent of
 // their concept and a caption that names their record, rectangles only, the

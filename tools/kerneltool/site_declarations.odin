@@ -8,7 +8,7 @@
 // tokenizer of the compiler, as the blocks of code are.
 package kerneltool
 
-import "contract:value_kinds"
+import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:mem/virtual"
 import "core:odin/ast"

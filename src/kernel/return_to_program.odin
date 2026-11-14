@@ -1,6 +1,6 @@
 package kernel
 
-import op "contract:operation"
+import op "modus:contract/operation"
 
 // The return to a program (docs/ARCHITECTURE.md, "The return to a
 // program"). The kernel returns to a thread with iretq, from the frame that

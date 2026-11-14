@@ -58,15 +58,15 @@
 package unlock
 
 import "base:intrinsics"
-import "contract:errors"
-import "contract:ring"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:principals"
-import "support:random"
-import "support:storage"
-import "support:system"
+import "modus:contract/errors"
+import "modus:contract/ring"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/principals"
+import "modus:support/random"
+import "modus:support/storage"
+import "modus:support/system"
 
 // The cost record of the export argon2id of the module cryptography: the
 // same fields, in the same order (src/modules/cryptography).

@@ -9,7 +9,7 @@ import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
-import "support:mark"
+import "modus:support/mark"
 
 MARK_COMMAND_USAGE :: "kerneltool mark still | frame | tile_map | table | uses | developer" +
 	" [--variant smooth|cells] [--cell <pixels>] [--scheme dark|light] [--background none|scheme]" +

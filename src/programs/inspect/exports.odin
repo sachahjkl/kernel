@@ -1,10 +1,10 @@
 package inspect
 
-import "contract:errors"
-import "contract:isolated"
-import op "contract:operation"
-import "support:addresses"
-import "support:system"
+import "modus:contract/errors"
+import "modus:contract/isolated"
+import op "modus:contract/operation"
+import "modus:support/addresses"
+import "modus:support/system"
 
 // The same facts as the window, as tables of records, not text: a caller
 // that acts for the principal reads them, the remote service among them:

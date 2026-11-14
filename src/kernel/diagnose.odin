@@ -1,10 +1,10 @@
 package kernel
 
 import "base:intrinsics"
-import "contract:errors"
-import op "contract:operation"
-import "contract:ring"
-import "contract:value_kinds"
+import "modus:contract/errors"
+import op "modus:contract/operation"
+import "modus:contract/ring"
+import "modus:contract/value_kinds"
 
 // The error record of a kernel operation that failed, and the stack trace
 // of a fault (docs/MODULE_CONTRACT.md, section 8).

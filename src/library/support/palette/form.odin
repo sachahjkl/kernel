@@ -1,7 +1,7 @@
 package palette
 
-import "contract:palette_table"
-import "support:line_editor"
+import "modus:contract/palette_table"
+import "modus:support/line_editor"
 
 // The form of an entry with parameters (docs/DESIGN.md, "Palette"): the
 // input band shows the call, with one field for each parameter. A field has

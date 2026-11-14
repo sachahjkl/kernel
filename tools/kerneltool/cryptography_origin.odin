@@ -4,7 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
-import "contract:blake3"
+import "modus:contract/blake3"
 
 // The cryptography of the system is code of Odin's `core:crypto`, taken
 // into src/library/support/cryptography and changed in a listed way only
@@ -36,12 +36,12 @@ CRYPTOGRAPHY_ORIGIN_RELEASE :: "dev-2026-11a" // The release of Odin that flake.
 // the origin as its alias.
 @(rodata)
 cryptography_import_changes := [?][2]string {
-	{"\"core:crypto\"", "crypto \"support:cryptography/compatibility_crypto\""},
-	{"\"core:crypto/hash\"", "hash \"support:cryptography/compatibility_hash\""},
-	{"\"core:crypto/", "\"support:cryptography/"},
-	{"\"core:encoding/endian\"", "endian \"support:cryptography/compatibility_endian\""},
-	{"\"core:math/bits\"", "bits \"support:cryptography/compatibility_bits\""},
-	{"\"core:bytes\"", "bytes \"support:cryptography/compatibility_bytes\""},
+	{"\"core:crypto\"", "crypto \"modus:support/cryptography/compatibility_crypto\""},
+	{"\"core:crypto/hash\"", "hash \"modus:support/cryptography/compatibility_hash\""},
+	{"\"core:crypto/", "\"modus:support/cryptography/"},
+	{"\"core:encoding/endian\"", "endian \"modus:support/cryptography/compatibility_endian\""},
+	{"\"core:math/bits\"", "bits \"modus:support/cryptography/compatibility_bits\""},
+	{"\"core:bytes\"", "bytes \"modus:support/cryptography/compatibility_bytes\""},
 }
 
 // One listed adjustment of a taken file: lines of the origin, and the lines
@@ -75,7 +75,7 @@ cryptography_adjustments := [?]Cryptography_Adjustment {
 	{
 		"core/crypto/argon2id/argon2id.odin",
 		"import \"core:mem\"\n",
-		"import mem \"support:cryptography/compatibility_memory\"\n",
+		"import mem \"modus:support/cryptography/compatibility_memory\"\n",
 	},
 	{
 		"core/crypto/argon2id/argon2id.odin",

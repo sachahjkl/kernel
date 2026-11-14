@@ -65,7 +65,7 @@ source_path_that_does_not_exist_is_a_fault :: proc(t: ^testing.T) {
 // read, whatever it names.
 @(test)
 source_path_inside_a_longer_path_is_not_read :: proc(t: ^testing.T) {
-	problems, count := problems_at_the_root("The output is `build/modules/gone`, the pages are in `docs/reference/modules/`.\nRun `kerneltool check`. The module `kernel`. An import: `\"support:gone\"`, or `support:gone`.\nA path of the host: `/kernel/gone`, and `./kernel/gone`.\n")
+	problems, count := problems_at_the_root("The output is `build/modules/gone`, the pages are in `docs/reference/modules/`.\nRun `kerneltool check`. The module `kernel`. An import: `\"modus:support/gone\"`, or `modus:support/gone`.\nA path of the host: `/kernel/gone`, and `./kernel/gone`.\n")
 	testing.expectf(t, len(problems) == 0, "%v", problems)
 	testing.expect_value(t, count, 0)
 }

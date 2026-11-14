@@ -1,9 +1,9 @@
 package system
 
-import info "contract:boot_info"
-import debug_object "contract:debug_object"
-import "contract:fixed_addresses"
-import op "contract:operation"
+import info "modus:contract/boot_info"
+import debug_object "modus:contract/debug_object"
+import "modus:contract/fixed_addresses"
+import op "modus:contract/operation"
 
 // The names of a stop report (docs/MODULE_CONTRACT.md, "Debug information").
 // The kernel gives each frame as an address in a module record; a program

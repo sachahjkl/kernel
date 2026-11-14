@@ -1,7 +1,7 @@
 package interface
 
-import "support:graphics"
-import "support:text_shaping"
+import "modus:support/graphics"
+import "modus:support/text_shaping"
 
 // execute draws each record of a table into a canvas, in order. The records
 // are in the coordinates of the surface; (origin_x, origin_y) is where the

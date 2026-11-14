@@ -203,6 +203,12 @@ module_step_processes_run :: proc(tool_path: string, indexes: []int, step: strin
 // conversions: each step has its own process and its own time in the
 // measure of the build.
 build_modules_in_parallel :: proc() -> bool {
+	// Each build of each command passes here, in the process that starts
+	// the module processes: the rule of the imports is read one time,
+	// before the first compiler starts (library_imports_check.odin).
+	if _, _, imports_hold := library_imports_hold(); !imports_hold {
+		return false
+	}
 	levels := module_levels() or_return
 	modules_started := time.tick_now()
 	// Before the first compiler starts: the hash of each source.
@@ -317,6 +323,14 @@ run_module :: proc(args: []string) -> int {
 	// modules of the build stay as they are.
 	debug_information = args[2] == "with_debug_information"
 	module_build_folder = debug_information ? MODULE_BUILD_FOLDER : MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION
+	// A developer who builds one module passes no parallel build: the rule
+	// of the imports is read here. A step of the parallel build has a
+	// parent that read it.
+	if len(args) == 3 {
+		if _, _, imports_hold := library_imports_hold(); !imports_hold {
+			return EXIT_FAILURE
+		}
+	}
 	for build in module_builds {
 		if build.name != args[0] {
 			continue

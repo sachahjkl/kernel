@@ -42,8 +42,8 @@ package quic
 // transport does not do yet"): no key update, no migration, no stateless
 // reset, no unidirectional stream.
 
-import "contract:errors"
-import "support:random"
+import "modus:contract/errors"
+import "modus:support/random"
 
 CLOSE_REASON_KEPT :: 48 // The bytes of the reason phrase of a CONNECTION_CLOSE of the peer that a connection keeps, in `Connection.close_reason_of_peer`. A longer phrase is cut: a program logs these bytes to tell why a foreign stack closed.
 MAX_DATAGRAM_SIZE :: 1200 // The bytes of the largest datagram that this side sends: 1200, the size that every path of QUIC carries (RFC 9000, section 14). `connection_datagram_send` never writes more. A datagram with an Initial packet of a client, or with an ack-eliciting Initial packet of a server, has exactly this size.

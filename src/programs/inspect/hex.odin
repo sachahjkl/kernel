@@ -1,10 +1,10 @@
 package inspect
 
-import module "contract:module"
-import op "contract:operation"
-import "support:graphics"
-import "support:interface"
-import "support:system"
+import module "modus:contract/module"
+import op "modus:contract/operation"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/system"
 
 // The bytes of the memory of this program itself (docs/TOOLS.md): the
 // reports of the kernel give no byte of another program, and this tool has

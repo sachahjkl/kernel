@@ -31,13 +31,13 @@
 // The design: (docs/STORAGE.md, "Versions, thinning and the limit") and (docs/STORAGE.md, "A loss of power").
 package notes
 
-import "contract:errors"
-import "support:calendar"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:storage"
-import "support:system"
+import "modus:contract/errors"
+import "modus:support/calendar"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/storage"
+import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [512]interface.Draw_Record

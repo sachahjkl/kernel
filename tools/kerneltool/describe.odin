@@ -1,7 +1,7 @@
 package kerneltool
 
-import module "contract:module"
-import op "contract:operation"
+import module "modus:contract/module"
+import op "modus:contract/operation"
 import "core:reflect"
 import "core:fmt"
 import "core:odin/ast"
@@ -21,8 +21,8 @@ import "core:strings"
 //   - A result of type i64 is an Integer. If the last parameter has the type
 //     ^[]u8, it is the buffer of a Text result, and the result type is i64.
 //   - A parameter of type ^Name is a Record, if Name is a struct of the
-//     package, or a struct of a package of the libraries `support:` and
-//     `contract:` that the file imports (^information.Module). A field of
+//     package, or a struct of a package of the library `modus` that the
+//     file imports (^information.Module). A field of
 //     the struct has the type i64 (Integer), Lent({...}) (Handle) or [N]u8
 //     (Text of N bytes, N a number). The struct has the layout of the C
 //     language: no #packed, no #align, no `using`. Its size is at most

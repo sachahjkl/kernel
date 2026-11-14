@@ -17,11 +17,11 @@
 //     then fails the self test of the script until the script has the new rule.
 package kerneltool
 
-import "contract:value_kinds"
+import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:strings"
 import "core:unicode/utf8"
-import "support:line_editor"
+import "modus:support/line_editor"
 
 SITE_SEARCH_INDEX :: "search.json"
 SITE_SEARCH_SCRIPT :: "search.js"

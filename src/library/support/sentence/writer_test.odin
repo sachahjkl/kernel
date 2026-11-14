@@ -1,8 +1,8 @@
 #+build !freestanding
 package sentence
 
-import op "contract:operation"
-import "contract:value_kinds"
+import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "core:testing"
 
 // A writer counts the bytes that its buffer does not hold, and its text

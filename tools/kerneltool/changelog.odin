@@ -16,7 +16,7 @@
 // can be made from it: `check` refuses each line that is not in its place.
 package kerneltool
 
-import "contract:release"
+import "modus:contract/release"
 import "core:fmt"
 import "core:os"
 import "core:slice"

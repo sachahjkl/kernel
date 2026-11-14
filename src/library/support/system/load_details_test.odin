@@ -1,9 +1,9 @@
 #+build !freestanding
 package system
 
-import "contract:blake3"
-import info "contract:boot_info"
-import module "contract:module"
+import "modus:contract/blake3"
+import info "modus:contract/boot_info"
+import module "modus:contract/module"
 import "core:testing"
 
 // The details of a load (docs/MODULE_CONTRACT.md, section 8, "The table of

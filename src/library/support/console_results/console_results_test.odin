@@ -1,8 +1,8 @@
 #+build !freestanding
 package console_results
 
-import "contract:errors"
-import module "contract:module"
+import "modus:contract/errors"
+import module "modus:contract/module"
 import "core:strings"
 import "core:testing"
 

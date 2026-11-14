@@ -23,18 +23,18 @@
 // The design: `docs/STORAGE.md`; the large objects: [read_range](storage.read_range) and the exports after it.
 package storage_service
 
-import "contract:block"
-import "contract:date"
-import "contract:errors"
-import "contract:isolated"
-import "contract:ring"
-import format "contract:store"
-import answers "support:storage"
+import "modus:contract/block"
+import "modus:contract/date"
+import "modus:contract/errors"
+import "modus:contract/isolated"
+import "modus:contract/ring"
+import format "modus:contract/store"
+import answers "modus:support/storage"
 import "base:intrinsics"
-import block_tree "support:storage_object"
-import tree "support:storage_tree"
-import "support:principals"
-import "support:system"
+import block_tree "modus:support/storage_object"
+import tree "modus:support/storage_tree"
+import "modus:support/principals"
+import "modus:support/system"
 
 ERROR_ACTS_FOR_PRINCIPAL :: answers.ERROR_ACTS_FOR_PRINCIPAL
 ERROR_PLACE :: answers.ERROR_PLACE

@@ -4,11 +4,11 @@ import "core:reflect"
 import "core:slice"
 import "core:strings"
 import "core:testing"
-import "contract:errors"
-import "contract:fixed_addresses"
-import module "contract:module"
-import op "contract:operation"
-import "contract:start_grant"
+import "modus:contract/errors"
+import "modus:contract/fixed_addresses"
+import module "modus:contract/module"
+import op "modus:contract/operation"
+import "modus:contract/start_grant"
 
 @(private = "file")
 read_text :: proc(t: ^testing.T, path: string) -> string {

@@ -1,8 +1,8 @@
 package root
 
-import "contract:fixed_addresses"
-import op "contract:operation"
-import "support:system"
+import "modus:contract/fixed_addresses"
+import op "modus:contract/operation"
+import "modus:support/system"
 
 // The debug image (docs/MODULE_CONTRACT.md, "Debug information"): the
 // debug objects of the modules, which the boot program read from the boot

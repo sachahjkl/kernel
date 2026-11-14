@@ -30,8 +30,8 @@
 // See [system description](term:system-description).
 package system_description
 
-import "contract:blake3"
-import info "contract:boot_info"
+import "modus:contract/blake3"
+import info "modus:contract/boot_info"
 
 MAGIC :: u64(0x5243534544535953) // The bytes "SYSDESCR".
 VERSION :: 1 // The version of the format. A reader refuses another.

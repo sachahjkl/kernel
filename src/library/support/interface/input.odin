@@ -1,6 +1,6 @@
 package interface
 
-import "support:display"
+import "modus:support/display"
 
 KEY_CAPACITY :: 16 // The keys of one frame.
 FOCUS_ORDER_CAPACITY :: 64 // The elements that can take the focus in one frame.

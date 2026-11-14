@@ -1,12 +1,12 @@
 package root
 
-import "contract:block"
-import "contract:frame"
-import op "contract:operation"
-import "contract:ring"
-import "support:pci"
-import "support:random"
-import "support:system"
+import "modus:contract/block"
+import "modus:contract/frame"
+import op "modus:contract/operation"
+import "modus:contract/ring"
+import "modus:support/pci"
+import "modus:support/random"
+import "modus:support/system"
 
 // The devices of the bus. This service holds the two ports of the
 // configuration of all devices: no other program has them. It gives a

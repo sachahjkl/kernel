@@ -1,19 +1,19 @@
 package console
 
-import op "contract:operation"
-import "contract:palette_table"
-import "contract:ring"
-import "contract:settings"
-import "support:console_results"
-import "support:line_editor"
-import "support:system"
+import op "modus:contract/operation"
+import "modus:contract/palette_table"
+import "modus:contract/ring"
+import "modus:contract/settings"
+import "modus:support/console_results"
+import "modus:support/line_editor"
+import "modus:support/system"
 import "base:intrinsics"
 
 // The palette provider (docs/CONSOLE.md, "8. The palette provider"): the
 // console gives the palette of the desktop one entry for each of its
 // commands, and runs the entry that the input chose there.
 //
-// The console writes the entry table (contract:palette_table), a memory
+// The console writes the entry table (modus:contract/palette_table), a memory
 // object that the compositor maps read-only, after each line: a line can
 // load a module or connect to a service, and the command table then has
 // new commands. The compositor names a chosen entry on a ring, by the

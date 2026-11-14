@@ -56,10 +56,10 @@
 // See [terminal](term:terminal) and [terminal ring](term:terminal-ring).
 package terminal_records
 
-import "contract:cut_mark"
-import "contract:errors"
-import "contract:ring"
-import "support:system"
+import "modus:contract/cut_mark"
+import "modus:contract/errors"
+import "modus:contract/ring"
+import "modus:support/system"
 
 // The roles of the context of a program that has a terminal, and of the
 // terminal itself.

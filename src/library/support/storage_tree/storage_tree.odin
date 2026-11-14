@@ -36,7 +36,7 @@
 // See [tree](term:tree) and (docs/STORAGE.md).
 package storage_tree
 
-import format "contract:store"
+import format "modus:contract/store"
 
 // The names of the format of the disk that this package uses.
 BLOCK_SIZE :: format.BLOCK_SIZE

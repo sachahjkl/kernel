@@ -5,12 +5,12 @@ package server
 // the colors of the concepts. Each value is a field of a record of the
 // connection table (tcp.Table, tcp.Connection) or a count of this program.
 
-import "support:display"
-import "support:graphics"
-import "support:network"
-import "support:system"
-import "support:tcp"
-import "support:web"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/network"
+import "modus:support/system"
+import "modus:support/tcp"
+import "modus:support/web"
 
 WIDTH :: 976
 HEIGHT :: 672
@@ -226,7 +226,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	fact(inside, 40, "new connections", best_new_connection_rate == 0 ? "" : system.format(buffer[:], best_new_connection_rate, " requests in 1 s, the best"), graphics.COLOR_MACHINE, MEASURES_VALUE_COLUMN)
 	fact(inside, 60, "one second", best_second_requests == 0 ? "" : system.format(buffer[:], best_second_requests, " requests at most"), graphics.COLOR_MACHINE, MEASURES_VALUE_COLUMN)
 	fact(inside, 80, "one draw", draw_time == 0 ? "" : time_text(buffer[:], draw_time), graphics.COLOR_TEXT, MEASURES_VALUE_COLUMN)
-	fact(inside, 100, "ISN secret", system.format(buffer[:], "support/random, ", program_generator.served, " bytes drawn"), graphics.COLOR_TEXT, MEASURES_VALUE_COLUMN)
+	fact(inside, 100, "ISN secret", system.format(buffer[:], "modus:support/random, ", program_generator.served, " B"), graphics.COLOR_TEXT, MEASURES_VALUE_COLUMN)
 
 	// The connection table, live, then the connections that ended.
 	inside = card(canvas, 8, 176, 536, 488, "CONNECTIONS", "tcp.Connection", graphics.COLOR_PROGRAM)

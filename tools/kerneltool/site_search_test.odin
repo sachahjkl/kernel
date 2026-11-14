@@ -1,11 +1,11 @@
 package kerneltool
 
-import "contract:value_kinds"
+import "modus:contract/value_kinds"
 import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
 import "core:testing"
-import "support:line_editor"
+import "modus:support/line_editor"
 
 // The matcher of the console over the table that the script also carries:
 // a change of the score or of the order in src/library/support/line_editor fails here

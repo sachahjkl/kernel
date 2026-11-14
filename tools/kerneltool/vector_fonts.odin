@@ -4,8 +4,8 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
-import "contract:glyph_cache"
-import "support:vector_font"
+import "modus:contract/glyph_cache"
+import "modus:support/vector_font"
 
 // The vector fonts of the system (docs/FONTS.md).
 //

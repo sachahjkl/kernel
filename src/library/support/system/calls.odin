@@ -1,12 +1,12 @@
 package system
 
 import "base:intrinsics"
-import info "contract:boot_info"
-import "contract:errors"
-import "contract:isolated"
-import module "contract:module"
-import op "contract:operation"
-import "contract:ring"
+import info "modus:contract/boot_info"
+import "modus:contract/errors"
+import "modus:contract/isolated"
+import module "modus:contract/module"
+import op "modus:contract/operation"
+import "modus:contract/ring"
 
 // The caller side of one description, three ways to call
 // (docs/MODULE_CONTRACT.md, "Tables and bytes as parameters"):

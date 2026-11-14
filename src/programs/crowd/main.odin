@@ -37,12 +37,12 @@
 // run. The check is of order and of count, not of speed.
 package crowd
 
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import op "contract:operation"
-import "contract:ring"
-import "support:system"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import op "modus:contract/operation"
+import "modus:contract/ring"
+import "modus:support/system"
 import "base:intrinsics"
 
 // The window is built with the interface package (docs/INTERFACE.md).

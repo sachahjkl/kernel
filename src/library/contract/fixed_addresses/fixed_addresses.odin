@@ -32,7 +32,7 @@
 // See [fixed range](term:fixed-range) and [mapped ranges](term:mapped-ranges).
 package fixed_addresses
 
-import op "contract:operation"
+import op "modus:contract/operation"
 
 // The band of the fixed ranges: one slot of 1 TiB for each range.
 BAND_START :: 0x0000_3000_0000_0000
@@ -59,7 +59,7 @@ RANGE_SPAN :: SLOT
 // first read, and the bit tells the child before it reads. The other
 // ranges come with their size in a value of the context.
 Fixed_Range :: enum u8 {
-	Module_Files, // The files of a module and of its imports, in the program that runs the module (contract:isolated).
+	Module_Files, // The files of a module and of its imports, in the program that runs the module (modus:contract/isolated).
 	// A call host finds there, read-only, the module that it runs, its
 	// imports and the replacement records, as one list in the form of the
 	// boot image. The console or the root service maps them before the
@@ -70,12 +70,12 @@ Fixed_Range :: enum u8 {
 	// The root service maps the theme files of the boot image there,
 	// read-only, in the compositor, and gives the address and the size of
 	// each one in the values of its context.
-	Settings_Page, // The settings page (contract:settings).
+	Settings_Page, // The settings page (modus:contract/settings).
 	// One page, read-only, that the program `settings` writes and every
 	// program with a surface or a terminal reads: the value of each setting
 	// of the machine. The root service maps it. A program reads a change at
 	// its next read of the page, with no message.
-	Glyph_Cache, // The glyph caches of the text of the system (contract:settings).
+	Glyph_Cache, // The glyph caches of the text of the system (modus:contract/settings).
 	// The glyphs of the default font of the text, fitted to the grid of
 	// the pixels, drawn once at build time. The root service maps it,
 	// read-only, beside the settings page; each program draws text from it
@@ -87,7 +87,7 @@ Fixed_Range :: enum u8 {
 	Glyph_Cache_Bold,
 	// The glyphs of the emphasis weight of the default font. Mapped as the
 	// cache above.
-	Date_Page, // The date page (contract:date).
+	Date_Page, // The date page (modus:contract/date).
 	// One page, read-only, that the program `date` writes from the
 	// real-time clock: each program reads the date of the day there with
 	// no call. The root service maps it.
@@ -97,17 +97,17 @@ Fixed_Range :: enum u8 {
 	// start: the program reads the descriptions of the exports there. The
 	// root service maps it, and gives its size at the value 3 of the
 	// context.
-	Module_Tables, // The tables of the parameters of one export, in the program that receives the call (contract:isolated).
+	Module_Tables, // The tables of the parameters of one export, in the program that receives the call (modus:contract/isolated).
 	// A receiver maps the memory object of each table parameter there for
 	// the time of one call: the parameter n at `TABLE_ADDRESS` plus n
 	// times 16 GiB. The same addresses at each call cost no new page
 	// tables, where an address that the kernel chooses would.
-	Interface_Glyph_Cache, // The glyph cache of the interface font, regular weight (contract:settings).
+	Interface_Glyph_Cache, // The glyph cache of the interface font, regular weight (modus:contract/settings).
 	// The glyphs of the proportional font of the windows. Mapped as the
 	// glyph caches above.
 	Interface_Glyph_Cache_Bold, // The glyph cache of the interface font, bold weight.
 	// Mapped as the glyph caches above.
-	Debug_Image, // The debug image, read-only: the debug objects of the modules, by the hash of each module (contract:debug_object).
+	Debug_Image, // The debug image, read-only: the debug objects of the modules, by the hash of each module (modus:contract/debug_object).
 	// The root service maps it in a program that prints stop reports, as
 	// the console, and gives its size at the value 21 of the context. The
 	// report then names the procedure and the line of each frame.

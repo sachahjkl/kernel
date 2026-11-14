@@ -5,7 +5,7 @@
 // names are the names of the origin.
 package compatibility_hash
 
-import "support:cryptography/sha2"
+import "modus:support/cryptography/sha2"
 
 MAX_DIGEST_SIZE :: 64 // The largest digest: SHA-512.
 MAX_BLOCK_SIZE :: sha2.BLOCK_SIZE_512 // The largest block: 128 bytes.

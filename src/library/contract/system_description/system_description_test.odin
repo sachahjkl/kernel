@@ -1,8 +1,8 @@
 #+build !freestanding
 package system_description
 
-import "contract:blake3"
-import info "contract:boot_info"
+import "modus:contract/blake3"
+import info "modus:contract/boot_info"
 import "core:testing"
 
 @(private = "file")

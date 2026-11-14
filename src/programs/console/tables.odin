@@ -1,7 +1,7 @@
 package console
 
-import module "contract:module"
-import "support:console_results"
+import module "modus:contract/module"
+import "modus:support/console_results"
 
 // Tables: a value that holds records of one record description, one after
 // the other (module.Type.Table). A Table result of an export gives one, and

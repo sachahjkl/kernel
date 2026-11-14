@@ -5,8 +5,8 @@ package kerneltool
 
 import "core:fmt"
 import "core:strings"
-import "support:graphics"
-import "support:mark"
+import "modus:support/graphics"
+import "modus:support/mark"
 
 // The level of graphics.mix for a percent.
 site_percent :: proc(percent: u32) -> u32 {

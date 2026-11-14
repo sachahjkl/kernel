@@ -9,7 +9,7 @@ package quic
 // write is copied once, and its header is read, unmasked and opened in that
 // copy only. So no byte is checked in one place and used from another.
 
-import "contract:errors"
+import "modus:contract/errors"
 
 // The version number of QUIC version 1, the one version that this library speaks (RFC 9000, section 15).
 //

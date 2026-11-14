@@ -24,10 +24,10 @@
 // is placed as "?"), no ligature, no direction other than left to right.
 package text_shaping_module
 
-import "contract:errors"
-import "contract:glyph_cache"
-import "support:system"
-import shaping "support:text_shaping"
+import "modus:contract/errors"
+import "modus:contract/glyph_cache"
+import "modus:support/system"
+import shaping "modus:support/text_shaping"
 
 // The most records or bytes of a table of a caller, its count included: no
 // count times a size wraps, and a count holds in the i64 of the result.

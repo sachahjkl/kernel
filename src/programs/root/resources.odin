@@ -1,8 +1,8 @@
 package root
 
-import "contract:blake3"
-import "contract:pointer_pictures"
-import "support:system"
+import "modus:contract/blake3"
+import "modus:contract/pointer_pictures"
+import "modus:support/system"
 
 // The resources of the boot image (docs/ARCHITECTURE.md, U2b): files that
 // are not modules, each with its name and the hash of its bytes. This
@@ -33,7 +33,7 @@ resource_mapping :: proc "contextless" (name: string, address: u64, receiver: st
 // pointer_theme_choice gives the names of the pointer theme files that the
 // compositor receives, in order: the theme of the owner when the build had
 // its input, then the theme of the system (docs/POINTERS.md, section 5).
-// The setting "pointer_theme" of the system (contract:settings)
+// The setting "pointer_theme" of the system (modus:contract/settings)
 // chooses between them while the compositor runs: "owner" is the first one
 // that the image has, "system" the last.
 pointer_theme_choice :: proc "contextless" () -> []string {

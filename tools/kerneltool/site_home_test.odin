@@ -4,8 +4,8 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
-import "support:graphics"
-import "support:mark"
+import "modus:support/graphics"
+import "modus:support/mark"
 
 // The stages of the start as a run of the main machine test logged them.
 @(private = "file")

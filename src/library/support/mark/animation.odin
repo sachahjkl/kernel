@@ -1,6 +1,6 @@
 package mark
 
-import "support:graphics"
+import "modus:support/graphics"
 
 // The animations of the heron (docs/DESIGN.md, "The mark", "The
 // animations"): small idle movements of a few cells. The bird itself is the

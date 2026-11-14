@@ -7,9 +7,9 @@ See:
 */
 package x25519
 
-import crypto "support:cryptography/compatibility_crypto"
-import ed "support:cryptography/_edwards25519"
-import field "support:cryptography/_fiat/field_curve25519"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import ed "modus:support/cryptography/_edwards25519"
+import field "modus:support/cryptography/_fiat/field_curve25519"
 
 // SCALAR_SIZE is the size of a X25519 scalar (private key) in bytes.
 SCALAR_SIZE :: 32

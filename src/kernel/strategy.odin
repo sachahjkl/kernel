@@ -1,7 +1,7 @@
 package kernel
 
 import "base:intrinsics"
-import op "contract:operation"
+import op "modus:contract/operation"
 
 // The scheduling strategies (docs/SCHEDULING.md). A strategy is six
 // procedures over the data of one run queue. The generic code of

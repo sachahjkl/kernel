@@ -1,6 +1,6 @@
 package kerneltool
 
-import "contract:blake3"
+import "modus:contract/blake3"
 import "core:fmt"
 import "core:os"
 import "core:slice"
@@ -755,8 +755,8 @@ path_without_dots :: proc(path: string) -> string {
 }
 
 // imported_folders_of_source adds the folder of each package of the
-// repository that a source file imports: "contract:x" is src/library/contract/x,
-// "support:x" is src/library/support/x, and a path with no library is relative to the
+// repository that a source file imports: "modus:contract/x" is src/library/contract/x,
+// "modus:support/x" is src/library/support/x, and a path with no library is relative to the
 // folder of the file. A library of the compiler ("core:", "base:") is not
 // a folder of the repository: the compiler itself is an input.
 imported_folders_of_source :: proc(source: string, folder: string, folders: ^[dynamic]string) {

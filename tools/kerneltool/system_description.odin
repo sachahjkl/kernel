@@ -1,16 +1,16 @@
 package kerneltool
 
-import "contract:blake3"
-import info "contract:boot_info"
-import "contract:system_description"
+import "modus:contract/blake3"
+import info "modus:contract/boot_info"
+import "modus:contract/system_description"
 import "core:fmt"
 import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:sys/linux"
-import crypto "support:cryptography/compatibility_crypto"
-import "support:cryptography/ed25519"
-import "support:cryptography/sha2"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import "modus:support/cryptography/ed25519"
+import "modus:support/cryptography/sha2"
 
 // The system description and its signature (docs/TRUSTED_BOOT.md).
 //

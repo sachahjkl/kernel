@@ -30,9 +30,9 @@
 // [damage by difference](term:damage-by-difference).
 package interface
 
-import "contract:glyph_cache"
-import "support:display"
-import "support:graphics"
+import "modus:contract/glyph_cache"
+import "modus:support/display"
+import "modus:support/graphics"
 
 DRAW_RECORD_VERSION :: 7 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid. 4: Line, and the field line_thickness. 5: the fields filled and background of a cell of a text grid. 6: the byte line_thickness is kind_detail, the weight of a text too. 7: Interface_Text, and the byte text_subpixel_x is text_origin_thirds.
 

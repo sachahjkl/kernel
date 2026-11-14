@@ -4,9 +4,9 @@
 // ways, and drives the fake clock of the endpoints.
 package quic
 
-import "contract:errors"
+import "modus:contract/errors"
 import "core:testing"
-import "support:random"
+import "modus:support/random"
 
 // idle_bound gives the latest end of a connection that receives nothing:
 // its last activity plus the larger of its idle timeout and three probe

@@ -16,7 +16,7 @@ The identity of a module is the BLAKE3 hash of the whole file. A module names ea
 
 A program gets a module from its load source: the boot image that it was granted, or the files that its starter gives. The loader maps the segments, rebases them, binds each slot, and writes a module record in the kernel. Example: `load("calendar")` in the console loads the module `calendar` into the console and calls its exports directly; `isolate("calendar")` starts it as its own program, a call host.
 
-A module is not a "package" of a source language, and not a source library: `contract` and `support` are compiled into modules and have no hash of their own. A kernel module of Linux runs with kernel privilege; a module here never does, except the one module that is the kernel.
+A module is not a "package" of a source language, and not a source library: the packages of `src/library` are compiled into modules and have no hash of their own. A kernel module of Linux runs with kernel privilege; a module here never does, except the one module that is the kernel.
 
 The design: `docs/MODULE_CONTRACT.md`, "The module file", and `docs/PROPERTIES.md`, "One code module".
 
@@ -860,7 +860,7 @@ Do not use: span (for this), token, highlight range.
 
 ### Cut mark
 
-A cut mark is the end of a text that a place of a fixed size does not hold: the start of the text, cut after a whole character, then "... and N bytes more" (`contract:cut_mark`).
+A cut mark is the end of a text that a place of a fixed size does not hold: the start of the text, cut after a whole character, then "... and N bytes more" (`modus:contract/cut_mark`).
 
 N counts each byte that the place does not hold, so the reader knows what is missing. It is the one form of a cut text in the system: a text is written whole, cut with this mark, or refused; never cut in silence. `kerneltool check` refuses a source that sets the count of a writer by hand.
 
@@ -1999,7 +1999,7 @@ Do not use: condition variable, semaphore, signal, barrier.
 
 A source library is a named folder of source packages that a module compiles in.
 
-An import of the source names the library and the package: `contract:ring`. The project has two: `contract` (what two parties agree on, with no kernel operation) and `support` (what a program compiles in to use the contracts). A source library is not a module: it has no file and no hash of its own, and it is not an edge of the module graph.
+An import of the source names the library and the package: `modus:contract/ring`. The project has one source library. Its name is `modus`, and its folder is `src/library`. It has two parts: `src/library/contract` (what two parties agree on, with no kernel operation) and `src/library/support` (what a program compiles in to use the contracts). A program of the system and a program outside the repository import a package with the same line. The compiler gets the library with one flag: `-collection:modus=src/library`. The kernel and the contract packages import no support package: the tool checks each of their imports before each build (`docs/TOOLS.md`, "The imports of the kernel and of the contract packages"). A source library is not a module: it has no file and no hash of its own, and it is not an edge of the module graph.
 
 Do not use: collection, SDK, libc, static library.
 

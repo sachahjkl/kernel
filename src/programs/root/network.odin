@@ -1,10 +1,10 @@
 package root
 
-import "contract:datagram"
-import "contract:errors"
-import "contract:remote"
-import "contract:ring"
-import "support:system"
+import "modus:contract/datagram"
+import "modus:contract/errors"
+import "modus:contract/remote"
+import "modus:contract/ring"
+import "modus:support/system"
 
 // The network. The network service is the one client of the frame service of
 // the network device; it starts when a program with the grant Network starts

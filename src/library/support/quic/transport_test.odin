@@ -5,9 +5,9 @@
 // draws from a generator with a fixed seed.
 package quic
 
-import "contract:errors"
+import "modus:contract/errors"
 import "core:testing"
-import "support:random"
+import "modus:support/random"
 
 CHANNEL_LIMIT :: 512
 

@@ -1,8 +1,8 @@
 package interface
 
-import "support:display"
-import "support:graphics"
-import "support:kind_icons"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/kind_icons"
 
 // The elements of the rules (docs/DESIGN.md, section 10). Each one appends
 // draw records to the table of the frame; an element that takes input

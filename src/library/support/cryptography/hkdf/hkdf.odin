@@ -6,9 +6,9 @@ See: [[ https://www.rfc-editor.org/rfc/rfc5869 ]]
 */
 package hkdf
 
-import crypto "support:cryptography/compatibility_crypto"
-import hash "support:cryptography/compatibility_hash"
-import "support:cryptography/hmac"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import hash "modus:support/cryptography/compatibility_hash"
+import "modus:support/cryptography/hmac"
 
 // extract_and_expand derives output keying material (OKM) via the
 // HKDF-Extract and HKDF-Expand algorithms, with the specified has

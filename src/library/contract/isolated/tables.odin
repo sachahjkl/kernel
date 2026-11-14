@@ -1,8 +1,8 @@
 package isolated
 
-import "contract:errors"
-import module "contract:module"
-import op "contract:operation"
+import "modus:contract/errors"
+import module "modus:contract/module"
+import op "modus:contract/operation"
 import "base:intrinsics"
 
 // Tables and bytes as parameters in an isolated call

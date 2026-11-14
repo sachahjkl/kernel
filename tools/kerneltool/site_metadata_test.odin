@@ -4,7 +4,7 @@ import "core:encoding/json"
 import "core:image/png"
 import "core:strings"
 import "core:testing"
-import "support:mark"
+import "modus:support/mark"
 
 @(private = "file")
 TEST_ADDRESS :: "https://example.invalid/modus"

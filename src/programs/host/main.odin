@@ -32,11 +32,11 @@
 // The design: docs/MODULE_CONTRACT.md, "The isolated call, as implemented".
 package host
 
-import op "contract:operation"
-import "contract:isolated"
-import module "contract:module"
-import "contract:ring"
-import "support:system"
+import op "modus:contract/operation"
+import "modus:contract/isolated"
+import module "modus:contract/module"
+import "modus:contract/ring"
+import "modus:support/system"
 
 file: []u8
 region: []u8

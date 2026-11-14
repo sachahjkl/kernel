@@ -14,7 +14,7 @@
 // of the cells, the two of the interface font) are not on the page: the
 // root service maps these resources of the boot image read-only in the
 // same programs, after it checked their hashes and their format, at the
-// fixed ranges of contract:fixed_addresses, and sets the bit of each range
+// fixed ranges of modus:contract/fixed_addresses, and sets the bit of each range
 // in the context of each program (glyph_cache_open). The program
 // `settings` writes the page, so a field of the page can only change a
 // look: no program reads an address or a size from it.
@@ -33,9 +33,9 @@
 package settings
 
 import "base:intrinsics"
-import "contract:fixed_addresses"
-import "contract:glyph_cache"
-import op "contract:operation"
+import "modus:contract/fixed_addresses"
+import "modus:contract/glyph_cache"
+import op "modus:contract/operation"
 
 PAGE_ADDRESS :: fixed_addresses.SETTINGS_PAGE_ADDRESS // Where a program maps the settings page.
 GLYPH_CACHE_ADDRESS :: fixed_addresses.GLYPH_CACHE_ADDRESS // Where a program maps the glyph cache with grid fit.

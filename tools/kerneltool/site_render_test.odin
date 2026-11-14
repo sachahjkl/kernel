@@ -3,7 +3,7 @@ package kerneltool
 import "core:os"
 import "core:strings"
 import "core:testing"
-import "support:mark"
+import "modus:support/mark"
 
 test_site :: proc() -> Site {
 	site: Site

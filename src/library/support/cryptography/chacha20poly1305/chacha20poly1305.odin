@@ -10,10 +10,10 @@ See:
 */
 package chacha20poly1305
 
-import crypto "support:cryptography/compatibility_crypto"
-import "support:cryptography/chacha20"
-import "support:cryptography/poly1305"
-import endian "support:cryptography/compatibility_endian"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import "modus:support/cryptography/chacha20"
+import "modus:support/cryptography/poly1305"
+import endian "modus:support/cryptography/compatibility_endian"
 
 // KEY_SIZE is the chacha20poly1305 key size in bytes.
 KEY_SIZE :: chacha20.KEY_SIZE

@@ -48,8 +48,8 @@
 // (docs/ARCHITECTURE.md, "The virtual memory of a program").
 package operation
 
-import info "contract:boot_info"
-import "contract:value_kinds"
+import info "modus:contract/boot_info"
+import "modus:contract/value_kinds"
 
 // The bytes of one page: the unit of each mapping, of each memory object and
 // of each budget of pages. It is the small page of the x86-64 processor.
@@ -2695,7 +2695,7 @@ LOG_TEXT_CAPACITY :: 152
 // operation.
 LOG_CHANNEL_CAPACITY :: 16
 // The value runs that one record keeps: the kind of each typed part of its
-// text (contract:value_kinds). A text with more typed parts keeps its first
+// text (modus:contract/value_kinds). A text with more typed parts keeps its first
 // runs; the rest of its text is plain.
 LOG_RUN_CAPACITY :: 8
 // The value runs that one Log operation takes, after its text.
@@ -2988,7 +2988,7 @@ CONTEXT_VALUE_SEED_COUNT :: 4 // The values of the seed: 4 values of 8 bytes.
 CONTEXT_VALUE_SEED_STRENGTH :: 16
 // The value 17: the program `settings` runs its boot pass (1): it reads the
 // settings kept in its store, writes the settings page, and stops, with no
-// window (contract:settings).
+// window (modus:contract/settings).
 //
 // The root service writes 1 when it starts `settings` at boot; each other
 // start of `settings` has 0 and opens its window. No other program reads
@@ -3006,14 +3006,14 @@ CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS :: 18
 // address of the value 18. The compositor reads no byte past it.
 CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE :: 19
 // The value 20: a set of bits, bit n for the member n of the fixed ranges
-// (contract:fixed_addresses, Fixed_Range): the ranges that the starter
+// (modus:contract/fixed_addresses, Fixed_Range): the ranges that the starter
 // mapped for this program. A set bit is the statement of the starter that
 // the range is mapped; a program reads nothing at a fixed range whose bit
 // is clear. It is a value of the context, which only the starter writes,
 // and not a field of a shared page, which another program can write.
 CONTEXT_VALUE_FIXED_RANGES_MAPPED :: 20
 // The value 21: the size in bytes of the debug image, which the starter
-// mapped at the fixed range Debug_Image (contract:fixed_addresses) when its
+// mapped at the fixed range Debug_Image (modus:contract/fixed_addresses) when its
 // bit of the value 20 is set. The value 23 has no role.
 //
 // A program that prints a stop report (the console) reads the names of the

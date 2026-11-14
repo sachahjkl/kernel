@@ -1,6 +1,6 @@
 package kerneltool
 
-import "contract:blake3"
+import "modus:contract/blake3"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -159,8 +159,7 @@ boot_program_compile_command :: proc(volume: Boot_Volume) -> []string {
 		// build key of the volume.
 		"-export-dependencies:json",
 		join("-export-dependencies-file:", boot_volume_dependency_file(volume)),
-		CONTRACT_LIBRARY,
-		SUPPORT_LIBRARY,
+		SOURCE_LIBRARY_FLAG,
 		join("-define:BOOT_IMAGE=", to_root, signed_image_path(volume.path)),
 		join("-define:SYSTEM_PUBLIC_KEY=", to_root, SYSTEM_PUBLIC_KEY_FILE),
 		fmt.tprintf("-define:SELF_TEST=%d", volume.self_test),

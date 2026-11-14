@@ -22,9 +22,9 @@
 // ```
 package sentence
 
-import "contract:cut_mark"
-import op "contract:operation"
-import "contract:value_kinds"
+import "modus:contract/cut_mark"
+import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 
 // Text without an allocator: a Part is a string or a value with a kind, and
 // format writes parts in a buffer.
@@ -77,7 +77,7 @@ part_kind :: proc "contextless" (part: Part) -> value_kinds.Value_Kind {
 HEX_DIGITS :: [16]u8{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'}
 
 // A writer fills its buffer, and counts the bytes that the buffer cannot
-// hold: written ends the text with the cut mark (contract:cut_mark) when it
+// hold: written ends the text with the cut mark (modus:contract/cut_mark) when it
 // dropped some. A text is never cut in silence (docs/ARCHITECTURE.md).
 Writer :: struct {
 	buffer:         []u8, // The memory of the text, from the caller.

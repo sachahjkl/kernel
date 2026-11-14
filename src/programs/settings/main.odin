@@ -5,7 +5,7 @@
 // exports set() and get() make the same changes from the console and from
 // `kerneltool call`.
 //
-// This program is the one writer of the settings page (contract:settings).
+// This program is the one writer of the settings page (modus:contract/settings).
 // A change is written first to its private store, as one record in one
 // object (one commit), then to the page; the page wakes the compositor,
 // which gives the new font and pointer theme to each window: every program
@@ -41,14 +41,14 @@
 // store" or "NOT kept: the store refused".
 package settings_program
 
-import "contract:errors"
-import "contract:isolated"
-import "contract:settings"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:storage"
-import "support:system"
+import "modus:contract/errors"
+import "modus:contract/isolated"
+import "modus:contract/settings"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/storage"
+import "modus:support/system"
 
 WIDTH :: 560
 HEIGHT :: 520

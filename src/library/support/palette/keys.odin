@@ -1,7 +1,7 @@
 package palette
 
-import "contract:palette_table"
-import "support:line_editor"
+import "modus:contract/palette_table"
+import "modus:support/line_editor"
 
 // What each key does in each state of the panel. Two pure procedures hold
 // the whole state machine: key_action says what a key asks, state_after

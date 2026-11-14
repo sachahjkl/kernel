@@ -1,6 +1,6 @@
 package interface
 
-import "support:graphics"
+import "modus:support/graphics"
 
 // An area of the surface, where an element draws.
 Area :: struct {

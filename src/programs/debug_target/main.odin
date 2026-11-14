@@ -37,7 +37,7 @@
 package debug_target
 
 import "base:intrinsics"
-import "support:system"
+import "modus:support/system"
 
 // What the program does now.
 Phase :: enum u8 {

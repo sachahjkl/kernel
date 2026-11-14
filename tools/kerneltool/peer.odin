@@ -1,6 +1,6 @@
 package kerneltool
 
-import "contract:remote"
+import "modus:contract/remote"
 import "core:fmt"
 import "core:net"
 import "core:sync"

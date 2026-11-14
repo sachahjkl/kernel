@@ -1,6 +1,6 @@
 package interface
 
-import "support:graphics"
+import "modus:support/graphics"
 
 // The scroll bar (docs/INTERFACE.md, "4.1 The scroll bar"): the one
 // drawing of a scroll bar of the system. Its look is in the design rules

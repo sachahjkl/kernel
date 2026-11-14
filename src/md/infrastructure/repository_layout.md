@@ -1,6 +1,6 @@
 # The layout of the repository
 
-Everything that becomes the system is in one folder, `src`. A program of a third party imports the packages of the system through one source library, `modus`. This file is the design of that layout and of the move that reaches it. The folders are moved. The one source library is not built yet: "The order of the move" says what is built and what is left.
+Everything that becomes the system is in one folder, `src`. A program of a third party imports the packages of the system through one source library, `modus`. This file is the design of that layout and of the move that reaches it. Both are built. "The order of the move" says what each step did, and "What a third party types" says what is left.
 
 The term source library is in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Source library". The flag of the compiler for a source library is `-collection`.
 
@@ -17,7 +17,7 @@ Two faults of that layout:
 1. A reader cannot tell what becomes the system from what builds it, tells it and checks it. A new folder at the root must be added to several lists of the tool and to the file set of the flake, and one that is forgotten is not checked.
 2. A program outside the repository has no name for the library of the system. `contract` and `support` are common words: they can be the names of the source libraries of that program. And it needs two flags that point at two folders.
 
-The first fault is removed: the seven folders are under `src`, in the layout below. The second fault stays until the one source library is built: the two libraries keep their two names, and the flags are `-collection:contract=src/library/contract -collection:support=src/library/support`.
+Both faults are removed. The seven folders are under `src`, in the layout below. The two libraries are one source library, `modus`, with the one flag `-collection:modus=src/library`.
 
 ## The layout to reach
 
@@ -56,7 +56,7 @@ build/           the output, which git ignores
 
 - A program of a third party writes no relative import, and names the library of the system by one name.
 - A program inside the repository imports with the same lines as a program outside it. An example program that is copied out still builds.
-- The kernel imports the contract packages only. A contract package imports no support package. This rule is held by the compiler today, not by a convention.
+- The kernel imports the contract packages only. A contract package imports no support package. This rule is held by a check that stops a build, not by a convention. Before the one library, the compiler held it: the kernel got the contract library only.
 - One spelling for one package: an import line of a package is the same in each file that imports it.
 - No relative import in `src`.
 
@@ -91,10 +91,22 @@ With one source library, `"modus:support/system"` compiles in the kernel. The re
 - **The rule**: each import of each source file of `src/kernel` and of `src/library/contract` names a package of the base library or of the core library of the compiler, or a package under `modus:contract/`. Each other import is refused, and a relative import too.
 - **Why this is complete**: if no file of the two folders imports outside that list, no chain of imports from the kernel reaches a support package.
 - **The reader** is the parser of the compiler's own library, which the tool already uses for the declaration index. It reads each file of the two folders, also a file that a build tag leaves out: the check is stricter than the compiler, never looser.
-- **When**: at the start of each build, not only in `kerneltool check`. A writer who adds the import gets a build that stops with the file and the line, as the compiler stops today.
-- It replaces the loop of `kerneltool check` that compiles each contract package with the contract library only.
+- **When**: at the start of each build, not only in `kerneltool check`. A writer who adds the import gets a build that stops with the file and the line, as the compiler stopped before.
+- It replaces the loop of `kerneltool check` that compiled each contract package with the contract library only.
 
-**The test that breaks this design on its first day**: a source file of the kernel that imports `modus:support/sentence`, and a contract package that imports a support package through a relative path. The build must stop and name each file. A host test of the tool holds both cases, on a small tree.
+The subtle points of the rule, each with its reason:
+
+- **A path with `..` is refused.** `"modus:contract/../support/system"` starts as a contract package, and the compiler follows it to a support package. A check of the start of the path alone lets it pass.
+- **A relative import of a contract package is refused too.** It reaches no support package, but it gives one package two import lines.
+- **The core library is allowed.** A host test of a contract package imports the test package of the core library. So the check does not prove that the kernel is freestanding: the compile of the kernel does, with its target.
+- **The vendor library is refused.** The compiler of the project has none, and no contract needs one.
+- **A file that the parser cannot read whole is refused as a file.** An import after an error of syntax can be unread. An import inside a procedure is such an error.
+- **A foreign import is not read.** It names a file of assembly or an object, not a package.
+- **One place for the check in a build.** Each build passes one procedure before its first compiler starts, in the process that starts the module processes. The check runs there one time, not in each module process. The command that builds one module by hand runs it too.
+
+**The test that breaks this design on its first day**: a source file of the kernel that imports `modus:support/sentence`, and a contract package that imports a support package through a relative path. The build must stop and name each file. A host test of the tool holds both cases, on a small tree, and one more test reads the repository.
+
+**What the end of the contract-only compile gives up.** That loop also compiled each contract package alone, with `-vet`. A contract package that no module and no host test imports is no longer compiled by any command. Today each contract package has an importer.
 
 This is the least sure point of the design. If a refusal by the compiler is required, form D is the nearest form that keeps it.
 
@@ -104,6 +116,8 @@ This is the least sure point of the design. If a refusal by the compiler is requ
 - For a language server and for `odin check`: one source library, `modus`, at `<the repository of modus>/src/library`.
 - To build a module: the tool. The converter that makes a module file from a linked file is a part of the tool, and the compile needs about fifteen flags that only the tool knows. A build with no tool is not a path that the project supports.
 - Not designed: how the tool builds a module whose source is outside the repository (a module table of the third party, and where the tool finds `src/library` and `src/runtime`). The import lines and the one flag are fixed now, so that this later design changes no source.
+
+**The proof of the second constraint, and its limit.** `kerneltool check` copies the sources of one small program of the system to a folder outside `src`, with no change, and runs the check of the compiler on the copy with the one flag ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "A program outside the sources"). This is the smallest honest form: it proves the import lines and the flag, which are what this design fixes. It builds no module from the copy, because that path has no design. The copy is in the folder of the build, inside the repository: the sources of the copy hold no relative path to the library, so its folder does not matter. A copy in another repository was refused as a proof: the check then needs a second repository, and proves nothing more about the import lines.
 
 The words "SDK" and "collection" are not terms of the system: the term is source library, and `-collection` is only the name of the flag.
 
@@ -145,7 +159,7 @@ The words "SDK" and "collection" are not terms of the system: the term is source
 11. **The flake.** The file set of the check names each of the seven source folders. After the move it names `./src` whole. The command of the tool in the flake holds the two library flags on one line.
 12. **The history.** Move with `git mv`. Git finds a move as a rename when the file keeps most of its lines, so a step is one commit: the move, and the few lines that the move breaks (a relative path, an include). A commit that only moves does not build, and each step must build. The change of the import lines is another step.
 13. **The branches of other agents.** A branch that was made before the move adds its new files at the old paths. The move runs when no other branch is in flight, and each worktree is made again after it.
-14. **The fixtures of the host tests.** The tests of the tool that build a small tree with the two libraries, or with a boot program, place them at the folders of the constants: the tool looks for them there. The tests that read a real file of the sources name it by its constant. The tests that only hold a path as a text of a fixture (a row of a line table, a path of a debug object) do not follow the layout, and stay.
+14. **The fixtures of the host tests.** The tests of the tool that build a small tree with the two parts of the library, or with a boot program, place them at the folders of the constants: the tool looks for them there. The tests that read a real file of the sources name it by its constant. The tests that only hold a path as a text of a fixture (a row of a line table, a path of a debug object) do not follow the layout, and stay.
 15. **The record of the decision.** The decision on the layout of the repository names the folder of the boot program and the two libraries. It is amended first, and the glossary term of the source library says that the project has one.
 
 ## The order of the move
@@ -157,10 +171,10 @@ Each step is one commit that builds and passes its tests. A step that only moves
 3. **Move the folders that few documents name**: `runtime`, `boot`, `kernel`, to `src/`. Built. With `git mv`, the three constants, the file set of the flake, the paths of the documents and of the comments for these three. With the move of `runtime`: the include of the two assembly files of the host tests, and the two relative foreign imports of the library. With the move of `boot`: the default paths of its three `#load`. The expected lines of the scenarios follow the constants. The hashes of the modules are those of step 1; the debug objects change.
 4. **Move `modules` and `programs`** to `src/`, in the same way. Built. Most of the pointers of the documents are here. With it: the three relative imports of the cryptography module, and the relative `#load` of a font in one program and in two tests of modules. No text that a program draws changes (hazard 3). View the pictures that show a path: a stop report, a stack trace, the debugger.
 5. **Move `contract` and `support`** to `src/library/`. Built. The two flags stay, with their new folders: `-collection:contract=src/library/contract -collection:support=src/library/support`. No import line changes, so the compiler still holds the rule of the kernel. With it: the relative `#load` of a font in the tests of the support packages, the two relative foreign imports again, the first line of each taken file of the cryptography, the two manifests and the hashes of the system files (hazards 9 and 10).
-6. **One source library.** In one commit: the check of the imports of the kernel and of the contract packages, with its host test; the one flag `-collection:modus=src/library` in the tool and in the flake; each import line (`"contract:` becomes `"modus:contract/`, `"support:` becomes `"modus:support/`: 1328 lines in 411 files, the tool among them); the list of the import changes of the cryptography and the hashes of its system files; the end of the two old flags and of the contract-only compile. In the tool, the two libraries of the constants become one, whose folder is `src/library`. The check and the loss of the refusal by the compiler are in the same commit, so the rule is held at each commit. The hashes of the modules are those of step 1.
-7. **The documents of the library**: the glossary term, the guide of the module contract where it names the libraries, the README, the four texts of the sources that name a package (hazard 3), and one example program that is built from a copy outside `src`, as the proof of the second constraint. The hashes of the modules that hold one of the four texts change here.
+6. **One source library.** Built. In one commit: the check of the imports of the kernel and of the contract packages, with its host tests; the one flag `-collection:modus=src/library` in the tool and in the flake; each import line (`"contract:` becomes `"modus:contract/`, `"support:` becomes `"modus:support/`); the list of the import changes of the cryptography and the hashes of its system files; the end of the two old flags and of the contract-only compile. In the tool, the two libraries of the constants are one, whose folder is `src/library`. The check and the loss of the refusal by the compiler are in the same commit, so the rule is held at each commit. An import line is not in the output of the compiler, so no module is expected to change; the proof is the full check.
+7. **The documents of the library.** Built. The glossary term, the guide of the module contract, the README, the four texts of the sources that name a package (hazard 3), and the example of a program that is checked from a copy outside `src`, as the proof of the second constraint. The hashes of the four modules that hold one of the four texts change here, and of each module that compiles in the message of the cryptography.
 
-The full check runs after step 6 and after step 7.
+The full check runs after step 7.
 
 ## What the move of the folders showed
 
@@ -173,4 +187,7 @@ The full check runs after step 6 and after step 7.
 - **An example of a log line is a path too.** The guides, the glossary and the comments quote a stop report and a command of a breakpoint with the path of a source. Each quote changes with the move, in a fence of code also: the system prints the new path.
 - **A fixture is not a pointer.** The host tests of the tool hold paths as texts of their own small trees, in strings and in the comments that explain those strings. They stay. A rewrite of the tests of the tool reads only the lines that are whole comments, and never the test of the check of the source paths.
 - **The count of a rewrite.** The proof of a batch is the count of the lines that match before, and no match after. The count of the changed lines of the whole change is smaller than the sum of the batches: a line that names a folder of two steps changes two times and counts one time.
+- **The import lines are regular.** 1308 import lines in 408 files named one of the two libraries, each on one line, with at most one attribute before the word `import`. 20 more lines held an import as a text: the fixtures of the host tests of the tool, the list of the import changes of the cryptography, and one check that looks for one import line. A text is changed by hand, with its test.
+- **The name of a package in prose is the path of its import.** A comment or a guide that names a package writes it as its import does: `modus:contract/ring`. 50 lines did, far fewer than the import lines: most of the prose names a package by its folder. The check of the source paths does not read such a span, because it does not start with a folder.
+- **The record of the choice of the two libraries keeps its words.** That choice describes two libraries and their two names. A new name there says what the choice did not decide.
 - **The record of the choices keeps what is gone.** Five spans of the working record name a file or a folder that was removed before the move. They keep their old text: a new path there names nothing either, and says that the thing was once under `src`.

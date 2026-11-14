@@ -70,12 +70,12 @@
 // (docs/NETWORK.md, "The listen grant of UDP").
 package network_service
 
-import "contract:datagram"
-import "contract:errors"
-import "contract:frame"
-import "contract:ring"
-import "support:network"
-import "support:system"
+import "modus:contract/datagram"
+import "modus:contract/errors"
+import "modus:contract/frame"
+import "modus:contract/ring"
+import "modus:support/network"
+import "modus:support/system"
 
 LOCAL_ADDRESS :: 0x0A00020F // 10.0.2.15
 GATEWAY_ADDRESS :: 0x0A000202 // 10.0.2.2

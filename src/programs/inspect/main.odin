@@ -54,10 +54,10 @@
 // does not read: the bytes of another program".
 package inspect
 
-import op "contract:operation"
-import "support:addresses"
-import "support:display"
-import "support:system"
+import op "modus:contract/operation"
+import "modus:support/addresses"
+import "modus:support/display"
+import "modus:support/system"
 
 SAMPLE_INTERVAL :: 250 // Milliseconds.
 KEY_TAB :: 0x0F

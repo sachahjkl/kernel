@@ -62,19 +62,19 @@
 // its child.
 package errors_program
 
-import "contract:errors"
-import "contract:fixed_addresses"
-import "contract:isolated"
-import module "contract:module"
-import op "contract:operation"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:storage"
-import terminal "support:terminal"
-import "contract:ring"
-import "support:random"
-import "support:system"
+import "modus:contract/errors"
+import "modus:contract/fixed_addresses"
+import "modus:contract/isolated"
+import module "modus:contract/module"
+import op "modus:contract/operation"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/storage"
+import terminal "modus:support/terminal"
+import "modus:contract/ring"
+import "modus:support/random"
+import "modus:support/system"
 import "base:intrinsics"
 
 // The window is built with the interface package (docs/INTERFACE.md).

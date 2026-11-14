@@ -32,14 +32,14 @@
 // See [surface](term:surface) and [compositor](term:compositor).
 package display
 
-import "contract:errors"
-import "support:graphics"
-import "contract:ring"
-import "contract:fixed_addresses"
-import "contract:glyph_cache"
-import "contract:pointer_pictures"
-import "contract:settings"
-import "support:system"
+import "modus:contract/errors"
+import "modus:support/graphics"
+import "modus:contract/ring"
+import "modus:contract/fixed_addresses"
+import "modus:contract/glyph_cache"
+import "modus:contract/pointer_pictures"
+import "modus:contract/settings"
+import "modus:support/system"
 
 // A command of a program to the compositor, on the ring of its window.
 Command :: enum u32 {
@@ -55,7 +55,7 @@ Event_Kind :: enum u32 {
 	None             = 0, // No event.
 	Key              = 1, // values: code, character, 1 when pressed, modifiers
 	Pointer          = 2, // values: x, y in the surface (signed), buttons
-	// The settings of the owner changed (contract:settings): next_event
+	// The settings of the owner changed (modus:contract/settings): next_event
 	// already gave the new font to src/library/support/graphics; the program draws its
 	// window again. values: the change count of the settings page.
 	Settings_Changed = 3,
@@ -70,7 +70,7 @@ Control :: enum u32 {
 	Stop          = 4, // compositor to root. values: the handle of the client
 	// root to compositor: a program is the palette provider. values: the
 	// handle of its ring, then the handle of its entry table, read-only
-	// (contract:palette_table), both in the compositor.
+	// (modus:contract/palette_table), both in the compositor.
 	Palette_Provider_Add    = 5,
 	Palette_Provider_Remove = 6, // root to compositor: the palette provider ended. values: the same two handles.
 }
@@ -319,7 +319,7 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 	return event, true
 }
 
-// The settings page of this program (contract:settings), or nil.
+// The settings page of this program (modus:contract/settings), or nil.
 settings_page: ^settings.Page
 
 // The two glyph caches of this program, each validated once: with the grid fit
@@ -337,7 +337,7 @@ glyph_cache_valid: [settings.Grid_Fit]bool
 // offsets of a cache again at each glyph, so the bytes must not change
 // after `validate`. A program trusts its starter, which already chooses
 // its grants, its mappings and its budget: the starter states in the
-// context which fixed ranges it mapped (contract:fixed_addresses) and maps
+// context which fixed ranges it mapped (modus:contract/fixed_addresses) and maps
 // the memory there; the cache states its own size in its header. So a
 // starter that sets a bit with no mapping, or maps less than the header
 // states, makes this program fault, and a starter that keeps that memory

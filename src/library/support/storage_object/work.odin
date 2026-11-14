@@ -1,7 +1,7 @@
 package storage_object
 
-import "contract:blake3"
-import format "contract:store"
+import "modus:contract/blake3"
+import format "modus:contract/store"
 
 // The work of one commit on one object: it starts from a state of the
 // disk, cuts it, extends it, changes blocks of data, then computes the

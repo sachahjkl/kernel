@@ -12,7 +12,7 @@
 // runs its own rule with the same generator and compares each step.
 package kerneltool
 
-import "support:mark"
+import "modus:support/mark"
 
 // The list that keeps the script in agreement with the rule: the first
 // steps of a play that starts with an empty memory, with this seed. Two

@@ -1,6 +1,6 @@
 package kerneltool
 
-import "contract:blake3"
+import "modus:contract/blake3"
 import "core:strings"
 import "core:testing"
 

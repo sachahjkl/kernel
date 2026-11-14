@@ -13,7 +13,7 @@ package kerneltool
 import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
-import "support:mark"
+import "modus:support/mark"
 
 SITE_FAVICON :: "favicon.ico"
 SITE_ICON_SVG :: "icon.svg"

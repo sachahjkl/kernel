@@ -1,6 +1,6 @@
 package system
 
-import "contract:errors"
+import "modus:contract/errors"
 
 // The table of error details (docs/MODULE_CONTRACT.md, section 8, "The table
 // of error details"): an optional Append table of error records that the

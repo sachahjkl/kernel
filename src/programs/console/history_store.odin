@@ -22,12 +22,12 @@ package console
 // bytes, the bytes 32 to 126), and nothing of the file runs. A file that a
 // check refuses gives an empty history and one log line.
 
-import "contract:blake3"
-import "contract:errors"
-import module "contract:module"
-import "support:line_editor"
-import "support:storage"
-import "support:system"
+import "modus:contract/blake3"
+import "modus:contract/errors"
+import module "modus:contract/module"
+import "modus:support/line_editor"
+import "modus:support/storage"
+import "modus:support/system"
 
 HISTORY_OBJECT_NAME :: "line_history"
 // The time that the console waits for the connection at its start: the

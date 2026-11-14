@@ -6,11 +6,11 @@
 // source of the module (describe.odin), and the root service.
 package kerneltool
 
-import "contract:value_kinds"
+import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:strings"
-import module "contract:module"
-import "support:graphics"
+import module "modus:contract/module"
+import "modus:support/graphics"
 
 // site_module_by_name gives the module of module_builds with this name.
 site_module_by_name :: proc(site: ^Site, name: string) -> (item: Site_Module, found: bool) {

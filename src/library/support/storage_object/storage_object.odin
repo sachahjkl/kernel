@@ -18,8 +18,8 @@
 package storage_object
 
 import "base:intrinsics"
-import "contract:blake3"
-import format "contract:store"
+import "modus:contract/blake3"
+import format "modus:contract/store"
 
 // The names of the format of the disk and of BLAKE3 that this package uses.
 BLOCK_SIZE :: format.BLOCK_SIZE

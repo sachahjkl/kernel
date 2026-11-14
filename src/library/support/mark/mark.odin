@@ -26,7 +26,7 @@
 // See [mark](term:mark) and (docs/DESIGN.md, "The mark").
 package mark
 
-import "support:graphics"
+import "modus:support/graphics"
 
 // The heron is a square of this many cells on each side.
 HERON_GRID_SIZE :: 24

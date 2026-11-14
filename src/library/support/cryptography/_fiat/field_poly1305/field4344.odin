@@ -34,8 +34,8 @@ package field_poly1305
 // At some point, it may be worth adding support to fiat-crypto for
 // generating Odin output.
 
-import fiat "support:cryptography/_fiat"
-import bits "support:cryptography/compatibility_bits"
+import fiat "modus:support/cryptography/_fiat"
+import bits "modus:support/cryptography/compatibility_bits"
 
 Loose_Field_Element :: distinct [3]u64
 Tight_Field_Element :: distinct [3]u64

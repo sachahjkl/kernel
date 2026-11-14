@@ -1,7 +1,7 @@
 package kerneltool
 
-import "contract:system_description"
-import "support:cryptography/ed25519"
+import "modus:contract/system_description"
+import "modus:support/cryptography/ed25519"
 import "core:testing"
 
 // The test signing key of the repository is the key of RFC 8032, section

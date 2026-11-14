@@ -6,10 +6,10 @@ package console
 // src/library/support/console_language gives what each part is; the console gives the
 // roles of its names; the terminal maps each kind to a color.
 
-import "support:console_language"
-import "support:line_editor"
-import "support:system"
-import terminal "support:terminal"
+import "modus:support/console_language"
+import "modus:support/line_editor"
+import "modus:support/system"
+import terminal "modus:support/terminal"
 
 // console_name_role gives what a name is for this console now: a command or
 // an export, a command that makes a record, a service or a module that the

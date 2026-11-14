@@ -1,7 +1,7 @@
 #+build !freestanding
 package addresses
 
-import op "contract:operation"
+import op "modus:contract/operation"
 import "core:testing"
 
 // Two mappings that follow each other have no gap; a gap is one folded part

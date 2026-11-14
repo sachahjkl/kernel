@@ -1,7 +1,7 @@
 package kernel
 
 import "base:intrinsics"
-import op "contract:operation"
+import op "modus:contract/operation"
 
 // The control of a thread (docs/ARCHITECTURE.md, "The control of a
 // thread"): Thread_Control stops a thread, reads and writes its registers

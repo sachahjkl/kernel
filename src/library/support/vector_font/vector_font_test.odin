@@ -2,7 +2,7 @@
 package vector_font
 
 import "core:fmt"
-import "contract:glyph_cache"
+import "modus:contract/glyph_cache"
 import "core:testing"
 
 @(private = "file")

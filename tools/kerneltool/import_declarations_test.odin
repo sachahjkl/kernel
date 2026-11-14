@@ -12,8 +12,8 @@ import "core:testing"
 EXPORT_SOURCE :: `// A module of the tests.
 package exports_of_the_test
 
-import "contract:errors"
-import "support:system"
+import "modus:contract/errors"
+import "modus:support/system"
 
 Reading :: struct {
 	sensor: i64,
@@ -35,8 +35,8 @@ sum_values :: proc "c" (readings: ^system.Table_To_Read(Reading), factor: i64, n
 @(private = "file")
 IMPORTER_HEAD :: `package importer_of_the_test
 
-import "contract:errors"
-import "support:system"
+import "modus:contract/errors"
+import "modus:support/system"
 
 Measure :: struct {
 	place:  i64,

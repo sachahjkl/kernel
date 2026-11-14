@@ -2,7 +2,7 @@
 package console_language
 
 import "core:testing"
-import terminal "support:terminal"
+import terminal "modus:support/terminal"
 
 // The names of a console of the tests.
 test_name_role :: proc "contextless" (data: rawptr, name: string) -> Name_Role {

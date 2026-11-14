@@ -48,12 +48,12 @@
 // The design of the description tables: (docs/MODULE_CONTRACT.md, "Description tables").
 package manual
 
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import info "contract:boot_info"
-import module "contract:module"
-import "support:system"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import info "modus:contract/boot_info"
+import module "modus:contract/module"
+import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before, records_second: [512]interface.Draw_Record

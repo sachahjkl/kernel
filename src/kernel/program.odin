@@ -1,9 +1,9 @@
 package kernel
 
-import "contract:errors"
-import "contract:ring"
+import "modus:contract/errors"
+import "modus:contract/ring"
 import "base:intrinsics"
-import op "contract:operation"
+import op "modus:contract/operation"
 
 // The objects, the handle tables, the programs and the scheduler
 // (docs/ARCHITECTURE.md, "Handle table"; docs/ARCHITECTURE.md, "Scheduler").

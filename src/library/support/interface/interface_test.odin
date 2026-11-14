@@ -1,9 +1,9 @@
 #+build !freestanding
 package interface
 
-import "support:display"
-import "support:graphics"
-import "support:kind_icons"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/kind_icons"
 import "core:testing"
 
 @(private = "file")

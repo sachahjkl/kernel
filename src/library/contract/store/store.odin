@@ -79,7 +79,7 @@
 package store
 
 import "base:intrinsics"
-import "contract:blake3"
+import "modus:contract/blake3"
 
 BLOCK_SIZE :: 4096 // The bytes of one block of the disk: one page, one block of the block service.
 ROOT_MAGIC :: u64(0x34454741524F5453) // The bytes "STORAGE4": the format with an object as a tree of blocks.

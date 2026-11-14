@@ -1,7 +1,7 @@
 package kernel
 
 import "base:intrinsics"
-import op "contract:operation"
+import op "modus:contract/operation"
 
 // Kernel events (docs/ARCHITECTURE.md, "Kernel events"). Four fixed event
 // points in the kernel (an operation of a kernel entry, a switch of threads,

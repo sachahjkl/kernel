@@ -32,8 +32,8 @@
 // See (docs/NETWORK.md, "The TCP library").
 package tcp
 
-import "contract:blake3"
-import "contract:errors"
+import "modus:contract/blake3"
+import "modus:contract/errors"
 
 RTO_INITIAL :: 1_000_000 // Microseconds before the first retransmission (RFC 6298 2.1).
 RTO_LEAST :: 200_000 // Not the 1 s of RFC 6298 2.4: the round trips of the link are under 1 ms.

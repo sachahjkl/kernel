@@ -44,15 +44,15 @@
 // through large pages) are measures of the host of the run.
 package address_space
 
-import "contract:fixed_addresses"
+import "modus:contract/fixed_addresses"
 import "base:intrinsics"
-import "contract:errors"
-import op "contract:operation"
-import "support:display"
-import "support:graphics"
-import "support:interface"
-import "support:random"
-import "support:system"
+import "modus:contract/errors"
+import op "modus:contract/operation"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/random"
+import "modus:support/system"
 
 WIDTH :: 960
 HEIGHT :: 640

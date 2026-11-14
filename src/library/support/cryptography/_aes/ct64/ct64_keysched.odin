@@ -23,9 +23,9 @@
 
 package aes_ct64
 
-import crypto "support:cryptography/compatibility_crypto"
-import "support:cryptography/_aes"
-import endian "support:cryptography/compatibility_endian"
+import crypto "modus:support/cryptography/compatibility_crypto"
+import "modus:support/cryptography/_aes"
+import endian "modus:support/cryptography/compatibility_endian"
 
 @(private, require_results)
 sub_word :: proc "contextless" (x: u32) -> u32 {
