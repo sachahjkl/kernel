@@ -4,8 +4,8 @@
 // heron. The text stays text: a reader selects it, and a screen reader says
 // it. One class gives the font, and one procedure writes the markup.
 //
-// Also here, because they follow from the same choice: the description of
-// the heron alone, and the rhythm of the animations of the mark on the site.
+// Also here, because it follows from the same choice: the description of
+// the heron alone.
 package kerneltool
 
 import "core:fmt"
@@ -95,24 +95,4 @@ site_heron_description :: proc(mark_description: string) -> string {
 		return mark_description[:cut]
 	}
 	return mark_description
-}
-
-// The rhythm of the animations on the site. The order of play of
-// support/mark is the rhythm of the system: a mark in a bar that a
-// principal works under stays still for seconds. The large heron of the
-// home is what the page shows, so there the still time before each
-// animation is this part of the still time of the table, in percent. One
-// rule for every step: the order, the animations and their frames do not
-// change, and the still times keep their differences.
-SITE_MARK_STILL_PERCENT :: 40
-SITE_MARK_STILL_DURATION_LEAST :: mark.STILL_DURATION_LEAST * SITE_MARK_STILL_PERCENT / 100
-SITE_MARK_STILL_DURATION_MOST :: mark.STILL_DURATION_MOST * SITE_MARK_STILL_PERCENT / 100
-// The still heron stays at least as long as several of the shortest frames:
-// two animations never read as one.
-#assert(SITE_MARK_STILL_DURATION_LEAST >= 4 * mark.FRAME_DURATION_LEAST)
-
-// site_mark_still_milliseconds gives the still time of a step of the order
-// of play on the site.
-site_mark_still_milliseconds :: proc(step: mark.Play_Step) -> int {
-	return int(step.still_milliseconds) * SITE_MARK_STILL_PERCENT / 100
 }

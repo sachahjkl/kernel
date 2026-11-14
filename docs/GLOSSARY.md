@@ -5538,7 +5538,7 @@ Do not use: rest pose, idle frame, base frame (a base frame is another thing: se
 
 An animation of the mark is a short list of frames in which a few cells of the still heron change.
 
-In a frame a cell takes the letter of another part, or becomes empty. Each frame has a duration in milliseconds, and starts from the still heron or from an earlier frame of the same animation, its base frame. After its last frame the heron is still again. The animations are data in `support/mark/animation.odin`, and the order of play chooses which one comes next. On the site, `mark_animation.js` plays them from the sprite sheet.
+In a frame a cell takes the letter of another part, or becomes empty. Each frame has a duration in milliseconds, and starts from the still heron or from an earlier frame of the same animation, its base frame. After its last frame the heron is still again. The animations are data in `support/mark/animation.odin`: 15 of them, from the blink of one cell to the dash. The data does not say when one plays: the order of play of the place that shows them chooses which one comes next. On the site, `mark_animation.js` plays them from the sprite sheet, and a move of the heron goes with four of them.
 
 The design: `docs/DESIGN.md`, "11. The mark".
 
@@ -5546,17 +5546,37 @@ Do not use: idle animation, clip, tween.
 
 ### Order of play
 
-The order of play is the fixed list of the steps of the animations of the mark: each step a still time, then one animation; the list repeats.
+The order of play is the rule that chooses the next animation of the mark on the home of the site: each animation plays once in a round, in an order of chance.
 
-The weight of an animation is how many times it is in the order (`animation_weight`). A fixed order makes each play the same, with no random choice: the same page shows the same heron at the same time after its load.
+The script keeps a memory of the animations that were played. It chooses the next one among those that the memory does not hold, each with the same chance. When the memory holds every animation, the script empties it and a new round starts; the animation played last is left out of the first choice of the round, so no animation follows itself. The memory is kept in the storage of the tab for the visit: a reader who comes back to the home does not see the same first animation. Example: with 15 animations, the blink plays once in each 15 animations, at a place of the round that changes.
 
-The design: `docs/DESIGN.md`, "11. The mark".
+The design: `docs/SITE.md`, "The rhythm of the animations".
 
-Do not use: playlist, random choice, schedule.
+Do not use: playlist, shuffle, random choice.
+
+### Still share
+
+The still share is the part of the time, over a long play, that the heron of the home does not move: 40 %.
+
+The still time between two animations is chosen by chance around a mean, and the mean follows from the still share and from the times of the animations: the mean time of an animation, times the still share, over the moving share. With 15 animations of 1.29 s on average, the mean still time is 858 ms, and a still time is 429 to 1287 ms. A change of an animation changes the still times, not the share.
+
+The design: `docs/SITE.md`, "The rhythm of the animations".
+
+Do not use: idle ratio, duty cycle, pause.
+
+### Move of the heron
+
+A move of the heron is a change of the place and of the size of the picture of the heron on the home of the site during an animation of the mark.
+
+An animation of the mark changes cells; a move takes the whole picture above the line of the water: across the window in the dash, up in the hop and the flap, wider and lower in a squash. The two rows of the water stay in their place. A move is a list of keys in the tool (`site_mark_motion_keys`): a time, a place in cells or past an edge of the window, a width and a height in percent. It is not data of `support/mark`: a picture that cannot move, as the icon of a tab, shows the frames alone.
+
+The design: `docs/SITE.md`, "The moves of the heron".
+
+Do not use: tween, sprite motion.
 
 ### Sprite sheet
 
-The sprite sheet is one PNG file of the site that holds each distinct frame of the animations of the mark side by side, from the left, with the still heron first.
+The sprite sheet is one PNG file of the site that holds each distinct frame of the animations of the mark, in rows of 16 from the top left, with the still heron first.
 
 The script of the mark shows one sprite at a time by its place in the file, so the page loads one picture for all the animations. A frame that two animations share is in the file once.
 

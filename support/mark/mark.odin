@@ -17,8 +17,8 @@
 // - `heron_rows`, `parts`, `Part`: the heron as cells.
 // - `mark_pixel`, `mark_draw`: the heron at a cell size.
 // - `name_letters`, `name_pixel`, `name_draw`: the name.
-// - `Animation`, `animation_frames`, `play_order` (`animation.odin`): the
-//   idle movements.
+// - `Animation`, `animation_frames`, `animation_changes` (`animation.odin`):
+//   the idle movements.
 //
 // See [mark](term:mark) and (docs/DESIGN.md, "The mark").
 package mark

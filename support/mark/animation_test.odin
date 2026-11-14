@@ -85,32 +85,25 @@ each_animation_starts_and_ends_at_the_still_heron :: proc(t: ^testing.T) {
 	testing.expect_value(t, cells_differ_count(&blink, &still), 1)
 }
 
-// The durations are in their range, each animation is in the order of play,
-// and the order has a still time in its range before each animation.
+// The durations are in their range: each frame between the shortest frame
+// of its animation and the longest frame, each animation under its limit.
+// Only the dash has frames shorter than the common shortest frame.
 @(test)
-durations_and_order_are_in_range :: proc(t: ^testing.T) {
+durations_are_in_range :: proc(t: ^testing.T) {
 	for row in animation_frames {
 		duration := int(row.duration_milliseconds)
-		testing.expectf(t, duration >= FRAME_DURATION_LEAST && duration <= FRAME_DURATION_MOST, "%v frame %d: %d ms", row.animation, row.frame, duration)
+		least := animation_frame_duration_least[row.animation]
+		testing.expectf(t, duration >= least && duration <= FRAME_DURATION_MOST, "%v frame %d: %d ms", row.animation, row.frame, duration)
 	}
 	for animation in Animation {
 		total := animation_duration(animation)
 		testing.expectf(t, total > 0 && total <= ANIMATION_DURATION_MOST, "%v: %d ms in all", animation, total)
-		testing.expectf(t, animation_weight(animation) >= 1, "%v is not in the order of play", animation)
-	}
-	weights := 0
-	for step in play_order {
-		still := int(step.still_milliseconds)
-		testing.expectf(t, still >= STILL_DURATION_LEAST && still <= STILL_DURATION_MOST, "a still time of %d ms", still)
-	}
-	for animation in Animation {
-		weights += animation_weight(animation)
-	}
-	testing.expect_value(t, weights, len(play_order))
-	// No animation follows itself, also across the end of the order.
-	for index in 0 ..< len(play_order) {
-		next := play_order[(index + 1) % len(play_order)]
-		testing.expectf(t, next.animation != play_order[index].animation, "the step %d and the next play %v", index, next.animation)
+		least := animation_frame_duration_least[animation]
+		if animation == .Dash {
+			testing.expect_value(t, least, DASH_FRAME_DURATION_LEAST)
+		} else {
+			testing.expectf(t, least == FRAME_DURATION_LEAST, "%v has the shortest frame %d ms, not the common %d", animation, least, FRAME_DURATION_LEAST)
+		}
 	}
 }
 
@@ -174,17 +167,99 @@ a_frame_that_does_not_exist :: proc(t: ^testing.T) {
 }
 
 // Each animation has its limit of changed cells in the data. Only the preen
-// is above the common limit, and its limit is stated.
+// and the dash are above the common limit, and their limits are stated.
 @(test)
 the_limit_of_each_animation :: proc(t: ^testing.T) {
 	for animation in Animation {
 		limit := animation_change_limits[animation]
-		if animation == .Preen {
+		#partial switch animation {
+		case .Preen:
 			testing.expect_value(t, limit, PREEN_FRAME_CHANGE_LIMIT)
-		} else {
+		case .Dash:
+			testing.expect_value(t, limit, DASH_FRAME_CHANGE_LIMIT)
+		case:
 			testing.expectf(t, limit == FRAME_CHANGE_LIMIT, "%v has the limit %d, not the common %d", animation, limit, FRAME_CHANGE_LIMIT)
 		}
 	}
+}
+
+// Pinned frames of the animations that share a pose, or that the place that
+// plays them cuts at the line of the water: the wind-up of the dash and the
+// gathering of the hop are poses of the leg animation; the landing of the
+// hop is the ripple; the doze and the stretch start as the blink; a frame
+// in which the heron leaves the water has no foot in the two rows of the
+// water, and the water is whole there.
+@(test)
+new_animations_pinned_cells :: proc(t: ^testing.T) {
+	still := still_cells()
+	knee_in, _ := animation_frame_cells(.Leg, 2)
+	wind_up, _ := animation_frame_cells(.Dash, 1)
+	testing.expect_value(t, cells_differ_count(&wind_up, &knee_in), 0)
+	knee_half_in, _ := animation_frame_cells(.Leg, 1)
+	gather, _ := animation_frame_cells(.Hop, 1)
+	testing.expect_value(t, cells_differ_count(&gather, &knee_half_in), 0)
+	for frame in 1 ..= 2 {
+		wave, _ := animation_frame_cells(.Ripple, frame)
+		landing, _ := animation_frame_cells(.Hop, frame + 2)
+		testing.expect_value(t, cells_differ_count(&landing, &wave), 0)
+	}
+	blink, _ := animation_frame_cells(.Blink, 1)
+	doze, _ := animation_frame_cells(.Doze, 1)
+	stretch, _ := animation_frame_cells(.Stretch, 1)
+	testing.expect_value(t, cells_differ_count(&doze, &blink), 0)
+	testing.expect_value(t, cells_differ_count(&stretch, &blink), 0)
+	// The run has two poses, and the fourteen steps alternate them.
+	apart, _ := animation_frame_cells(.Dash, 2)
+	together, _ := animation_frame_cells(.Dash, 3)
+	testing.expect_value(t, cells_differ_count(&apart, &still), 32)
+	testing.expect_value(t, cells_differ_count(&together, &still), 24)
+	for frame in 4 ..= 15 {
+		step, _ := animation_frame_cells(.Dash, frame)
+		pose := &apart if frame % 2 == 0 else &together
+		testing.expectf(t, cells_differ_count(&step, pose) == 0, "the step %d of the run is not its pose", frame)
+	}
+	// Out of the water: the two rows of the water hold water only, and the
+	// row 22 is whole from the column 2 to the column 18.
+	Lifted :: struct {
+		animation: Animation,
+		frame:     int,
+	}
+	lifted := [?]Lifted{{.Dash, 2}, {.Dash, 3}, {.Dash, 16}, {.Hop, 2}, {.Flap, 2}, {.Flap, 3}, {.Flap, 5}}
+	for entry in lifted {
+		cells, found := animation_frame_cells(entry.animation, entry.frame)
+		testing.expect(t, found)
+		for row in HERON_GRID_SIZE - 2 ..< HERON_GRID_SIZE {
+			for column in 0 ..< HERON_GRID_SIZE {
+				letter := cells[row][column]
+				testing.expectf(t, letter == '.' || letter == 't', "%v frame %d: the cell %d, %d of the water is %c", entry.animation, entry.frame, column, row, letter)
+			}
+		}
+		for column in 2 ..= 18 {
+			testing.expectf(t, cells[22][column] == 't', "%v frame %d: the water is open at the column %d", entry.animation, entry.frame, column)
+		}
+	}
+	// The other leg of the wade stands in the water.
+	wade, _ := animation_frame_cells(.Wade, 1)
+	testing.expect_value(t, wade[22][12], u8('o'))
+	testing.expect_value(t, wade[22][14], u8('o'))
+	testing.expect_value(t, wade[22][9], u8('t'))
+	testing.expect_value(t, cells_differ_count(&wade, &still), 18)
+	// The wing of the flap leaves the body.
+	wing_up, _ := animation_frame_cells(.Flap, 1)
+	testing.expect_value(t, wing_up[13][7], u8('b'))
+	testing.expect_value(t, wing_up[10][7], u8('d'))
+	testing.expect_value(t, cells_differ_count(&wing_up, &still), 17)
+	last, _ := animation_frame_cells(.Flap, 6)
+	testing.expect_value(t, cells_differ_count(&last, &wing_up), 0)
+	testing.expect_value(t, animation_frame_count(.Dash), 17)
+	testing.expect_value(t, animation_duration(.Dash), 1780)
+	testing.expect_value(t, animation_duration(.Hop), 880)
+	testing.expect_value(t, animation_duration(.Fish), 1250)
+	testing.expect_value(t, animation_duration(.Doze), 2400)
+	testing.expect_value(t, animation_duration(.Stretch), 1100)
+	testing.expect_value(t, animation_duration(.Ruffle), 900)
+	testing.expect_value(t, animation_duration(.Wade), 1050)
+	testing.expect_value(t, animation_duration(.Flap), 1000)
 }
 
 // Pinned frames of the preen and the scratch: the head on the back with the
@@ -222,5 +297,4 @@ preen_and_scratch_pinned_cells :: proc(t: ^testing.T) {
 	testing.expect_value(t, animation_frame_count(.Scratch), 8)
 	testing.expect_value(t, animation_duration(.Preen), 2090)
 	testing.expect_value(t, animation_duration(.Scratch), 1680)
-	testing.expect_value(t, len(play_order), 17)
 }
