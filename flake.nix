@@ -20,12 +20,16 @@
     odin = pkgs.odin.overrideAttrs (_: {
       version = odinRelease;
       src = pkgs.fetchFromGitHub {
-        owner = "odin-lang";
+        # The fork of this system: the release above and four commits that
+        # make the code the same with and without debug information
+        # (docs/REPRODUCIBLE_BUILD.md, section 8). The branch is
+        # `odin-modus`; the commit is pinned.
+        owner = "sachahjkl";
         repo = "Odin";
-        tag = odinRelease;
-        hash = "sha256-LzvPcA6CA0p9DZi1cuFUizDPkVODMZ0OC9/y+NAO0Kc=";
+        rev = "83b6c485f896a67a30bf45d8e90b6878133b3cba";
+        hash = "sha256-Z+NZesxsVXnwCWu3R3QdwNMFF+3IND0p0s+/IQZ4qrw=";
       };
-      # The compiler as its release gives it: no patch. The patches of
+      # No patch file: the changes are commits of the fork. The patches of
       # Nixpkgs are for raylib and for Darwin, which this system does not use.
       patches = [];
       postPatch = "patchShebangs --build build_odin.sh";
