@@ -73,6 +73,7 @@ A draw record is 40 bytes. The fields are little-endian, in this order:
 - **An `Interface_Text` record of a hostile caller** draws nothing when its range is outside the text table, its third is 3 or more, its ink margin passes `INK_MARGIN_LIMIT`, its scale is not 1 to 3, or it has more than `INTERFACE_TEXT_LIMIT` (256) bytes. The checks are on the one copy of the record that the execution reads; the sums are in 64 bits, so no margin or range wraps. A program with no interface font draws such a record in the font of the cells at its origin, cut to its rectangle.
 - The text of a run is in the text table of the draw table, not in the record: a record stays 40 bytes, and two runs with the same bytes compare equal.
 - A `Picture` record shows the pixels of a picture of the caller. The program raises its generation when its pixels change; with the same generation the record compares equal and damages nothing. `life`, `paint`, `plasma`, `temple` and the surfaces of the windows in the compositor are pictures.
+- **A picture in tiles**: a Picture record damages its whole rectangle when its generation changes. A program whose picture changes in one part cuts it in tiles: each tile is a picture of its own over the same pixels (`graphics.view`), with its own record and its own generation, and the program raises the generation of the tiles that it drew in. The difference then damages those tiles only. The program `heron` cuts its stage of 640 by 384 pixels in 240 tiles of 32 by 32, and writes the mean damage of a picture on its log.
 - A `Text_Grid` record shows a grid of text cells of the caller (`Text_Grid_Cell`: a character, reverse, a color; or filled: a character in its color on a cell of a fill color, for a list drawn over text, 12 bytes for each cell). Its 40 bytes do not change when its cells change: the difference compares the cells (section 2.4).
 
 ### 2.2 Damage by difference
@@ -224,7 +225,7 @@ The module is the right form: the interface is shared code, as P10 and P11 say. 
 
 | Programs | Why |
 |---|---|
-| `compositor`, `life`, `paint`, `plasma`, `processors`, `temple`, `threads`, `workers`, `terminal` | A Picture record or a Text_Grid record |
+| `compositor`, `heron`, `life`, `paint`, `plasma`, `processors`, `temple`, `threads`, `workers`, `terminal` | A Picture record or a Text_Grid record |
 | `interface_elements`, `pointers` | They call the execution of the package themselves |
 | `interface_font`, `settings`, `vector_glyphs` | They draw text with `support/graphics` themselves: they keep the text code and its state |
 | `address_space`, `errors`, `fault_ring`, `kernel_events`, `return_fault` | Each starts a child of its own file with no load source: the loader of the child would not find the import |

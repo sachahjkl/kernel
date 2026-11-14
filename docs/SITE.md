@@ -768,7 +768,7 @@ Where the site shows the name of the system as the mark, the name is text in the
 
 ### The rhythm of the animations
 
-The animations of the mark (`DESIGN.md`, "The animations") play on the large heron of the home and on the icon of its tab. `support/mark` holds the 15 animations as frames of cells. The site holds the rule of the choice and the still times (`tools/kerneltool/site_mark_schedule.odin`), and `mark_animation.js` runs them.
+The animations of the mark (`DESIGN.md`, "The animations") play on the large heron of the home and on the icon of its tab. `support/mark` holds the 15 animations as frames of cells, and the rule of the choice and of the still times (`support/mark/play.odin`): the program `heron` of the system plays by the same rule. `mark_animation.js` runs the rule on the page, and `tools/kerneltool/site_mark_schedule.odin` ties the script to it.
 
 The choice of the next animation:
 
@@ -780,7 +780,7 @@ The choice of the next animation:
 
 The still times:
 
-- The heron is still for 40 % of a long play, and moves for 60 % (`SITE_MARK_STILL_SHARE_PERCENT`).
+- The heron is still for 40 % of a long play, and moves for 60 % (`mark.STILL_SHARE_PERCENT`).
 - The mean still time follows from the times of the animations: it is the mean time of an animation, times the still share, over the moving share. `mean still = (sum of the times of the animations / count) × 40 / 60`.
 - A still time is a whole number of milliseconds from half the mean to one and a half times the mean. Each number has the same chance, so the mean of the still times is the mean still time.
 
@@ -799,16 +799,18 @@ The still times:
 - Nothing runs in a hidden tab. Nothing plays while the focus is in a field (the search): the still picture is back as soon as the reader enters the field, and the play starts again when the focus leaves it.
 - With no script the page shows the still picture.
 
-How the script and the tool agree on the rule. The rule is written two times: as a model in the tool, which the host tests run, and in the script, which the page runs. One list ties them: the tool runs the model with a generator of a fixed seed and writes its first 33 steps (two rounds and three steps) into the table of the script. The self test of the script (`?selftest=1`) runs the rule of the script with the same generator and compares each step. The generator is the same arithmetic on both sides: `state = state × 1664525 + 1013904223` in 32 bits, and the number is the upper 16 bits modulo the bound. The page itself takes its numbers from `Math.random`.
+How the script and the system agree on the rule. The rule is written two times: in Odin in `support/mark/play.odin` (`next_animation`, `still_time`, `play_step`), which the host tests of `support/mark` run and the program `heron` calls, and in the script, which the page runs. One list ties them: the tool runs the rule of `support/mark` with a generator of a fixed seed (`mark.Number_Generator`) and writes its first 33 steps (two rounds and three steps) into the table of the script. The self test of the script (`?selftest=1`) runs the rule of the script with the same generator and compares each step. The generator is the same arithmetic on both sides: `state = state × 1664525 + 1013904223` in 32 bits, and the number is the upper 16 bits modulo the bound. The page itself takes its numbers from `Math.random`.
 
 The tests:
 
 | Test | What it checks |
 |---|---|
-| `site_mark_choice_plays_each_animation_once_in_a_round` | 400 rounds for each of 5 seeds: each animation once in a round, none follows itself, the rounds do not all have one order |
-| `site_mark_choice_goes_on_from_a_kept_memory` | A memory with 4 animations played: the 11 others play first, then the memory is emptied |
-| `site_mark_heron_is_still_for_its_share` | The bounds of a still time; over 6000 steps of the model, for each of 4 seeds, the still share is 40 % within one point |
-| `site_mark_generator_wraps_at_32_bits` | The numbers of the generator, and that the list of the steps does not change |
+| `choice_plays_each_animation_once_in_a_round` (`support/mark`) | 400 rounds for each of 5 seeds: each animation once in a round, none follows itself, the rounds do not all have one order |
+| `choice_takes_any_number_of_chance` (`support/mark`) | The rule holds for the smallest and the largest numbers of 32 bits, which a program gives from its random generator |
+| `choice_goes_on_from_a_kept_memory` (`support/mark`) | A memory with 4 animations played: the 11 others play first, then the memory is emptied |
+| `heron_is_still_for_its_share` (`support/mark`) | The bounds of a still time; over 6000 steps of the rule, for each of 4 seeds, the still share is 40 % within one point |
+| `generator_wraps_at_32_bits` (`support/mark`) | The numbers of the generator |
+| `site_mark_check_steps_follow_the_rule` | The list of the steps does not change from one call to the next, and follows the rule |
 | `site_mark_animation_table_parses` | The table of the script: the animations, the moves, the bounds, the list of the steps; the script and the style sheet name the same classes |
 | The self test of the script, `?selftest=1` | The table; the rule of the script against the list of the model; a long play of 200 rounds: no animation follows itself, each plays once in a round, the still share is 40 % within one point. The line is in the console and in the attribute `data-mark-animation-self-test` of the root element |
 

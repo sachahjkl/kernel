@@ -1368,6 +1368,32 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: surface temple"},
 	{kind = .Shot, text = "temple"},
 
+	// The heron of the mark plays its animations. The key 8 asks for the
+	// dash: the program writes its line when the animation ended, and the
+	// line says that a picture had the heron wholly outside the window,
+	// and that the move was on the grid, in whole cells.
+	// The two pictures are of a state that does not move: the play is
+	// paused, the dash is held at its fourth frame (the key 8 shows the
+	// first frame, each dot the next one), and the key l shows the lines
+	// of the cells. The first picture has the move on the grid; the key g
+	// makes it free, for the second picture of the same frame. The program
+	// writes the line of what it shows after it presented that state, so
+	// the screen has it when the line is on the log.
+	{kind = .Launch, text = "heron"},
+	{kind = .Wait, text = "heron: ok", any_order = true},
+	{kind = .Wait, text = "compositor: surface heron"},
+	{kind = .Keys, text = "8"},
+	{kind = .Wait, text = "heron: dash played: 17 frames, the heron left the window and came back, on the grid"},
+	{kind = .Key, text = "spc"},
+	{kind = .Keys, text = "8...l"},
+	{kind = .Wait, text = "heron: shows dash at frame 4 of 17, held, on the grid, the lines of the cells shown, 32 cells differ from the still heron"},
+	{kind = .Shot, text = "heron"},
+	{kind = .Keys, text = "g"},
+	{kind = .Wait, text = "heron: shows dash at frame 4 of 17, held, free, the lines of the cells shown, 32 cells differ from the still heron"},
+	{kind = .Shot, text = "heron_free"},
+	{kind = .Close, text = "heron"},
+	{kind = .Wait, text = "root: heron stopped"},
+
 	// Communication between programs: six programs pass records through
 	// six rings. A stopped program takes no record: the records wait.
 	{kind = .Launch, text = "rings"},

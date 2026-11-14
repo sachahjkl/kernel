@@ -5558,19 +5558,19 @@ Do not use: idle animation, clip, tween.
 
 ### Order of play
 
-The order of play is the rule that chooses the next animation of the mark on the home of the site: each animation plays once in a round, in an order of chance.
+The order of play is the rule that chooses the next animation of the mark, on the home of the site and in the program `heron`: each animation plays once in a round, in an order of chance.
 
-The script keeps a memory of the animations that were played. It chooses the next one among those that the memory does not hold, each with the same chance. When the memory holds every animation, the script empties it and a new round starts; the animation played last is left out of the first choice of the round, so no animation follows itself. The memory is kept in the storage of the tab for the visit: a reader who comes back to the home does not see the same first animation. Example: with 15 animations, the blink plays once in each 15 animations, at a place of the round that changes.
+The place that plays keeps a memory of the animations that were played. It chooses the next one among those that the memory does not hold, each with the same chance. When the memory holds every animation, it is emptied and a new round starts; the animation played last is left out of the first choice of the round, so no animation follows itself. The rule is one procedure, `mark.next_animation` (`support/mark/play.odin`): the program `heron` calls it, and the kernel tool runs it to check the script of the site. On the site the memory is kept in the storage of the tab for the visit: a reader who comes back to the home does not see the same first animation. Example: with 15 animations, the blink plays once in each 15 animations, at a place of the round that changes.
 
-The design: `docs/SITE.md`, "The rhythm of the animations".
+The design: `docs/SITE.md`, "The rhythm of the animations"; `docs/DESIGN.md`, "The animations".
 
 Do not use: playlist, shuffle, random choice.
 
 ### Still share
 
-The still share is the part of the time, over a long play, that the heron of the home does not move: 40 %.
+The still share is the part of the time, over a long play, that the heron does not move where its animations play: 40 %.
 
-The still time between two animations is chosen by chance around a mean, and the mean follows from the still share and from the times of the animations: the mean time of an animation, times the still share, over the moving share. With 15 animations of 1.29 s on average, the mean still time is 858 ms, and a still time is 429 to 1287 ms. A change of an animation changes the still times, not the share.
+It holds on the home of the site and in the program `heron` (`mark.STILL_SHARE_PERCENT`). The still time between two animations is chosen by chance around a mean, and the mean follows from the still share and from the times of the animations: the mean time of an animation, times the still share, over the moving share. With 15 animations of 1.29 s on average, the mean still time is 858 ms, and a still time is 429 to 1287 ms. A change of an animation changes the still times, not the share.
 
 The design: `docs/SITE.md`, "The rhythm of the animations".
 
@@ -5578,13 +5578,23 @@ Do not use: idle ratio, duty cycle, pause.
 
 ### Move of the heron
 
-A move of the heron is a change of the place and of the size of the picture of the heron on the home of the site during an animation of the mark.
+A move of the heron is a change of the place and of the size of the picture of the heron during an animation of the mark, in a place that can move the picture: the home of the site and the program `heron`.
 
-An animation of the mark changes cells; a move takes the whole picture above the line of the water: across the window in the dash, up in the hop and the flap, wider and lower in a squash. The two rows of the water stay in their place. A move is a list of keys in the tool (`site_mark_motion_keys`): a time, a place in cells or past an edge of the window, a width and a height in percent. It is not data of `support/mark`: a picture that cannot move, as the icon of a tab, shows the frames alone.
+An animation of the mark changes cells; a move takes the whole picture above the line of the water: across the window in the dash, up in the hop and the flap, wider and lower in a squash. The two rows of the water stay in their place. A move is a list of keys: a time, a size of the part above the water, a travel in cells or past an edge of the window. On the site the keys are in the tool (`site_mark_motion_keys`). In the program `heron` the keys are in whole cells (`move_keys`), and a move is drawn on the grid: a squashed heron has more columns and fewer rows of square cells, and it travels by whole cells. The program also draws the same keys in a free way, to compare: the cells become rectangles at any pixel. A picture that cannot move, as the icon of a tab, shows the frames alone.
 
-The design: `docs/SITE.md`, "The moves of the heron".
+The design: `docs/SITE.md`, "The moves of the heron"; `docs/DESIGN.md`, "The animations".
 
 Do not use: tween, sprite motion.
+
+### Move on the grid
+
+A move on the grid is a move of the heron in which each cell stays a square of one size at a place of the grid.
+
+It is the way of the system to draw a squash, a stretch and a travel. A squashed heron has more columns and fewer rows of whole cells; a stretched one has fewer columns and more rows; a travel is a count of whole cells, and a fast run is many cells from one picture to the next. Each cell of the deformed heron shows one cell of the heron, the cell under its middle: the nearest sampling of the cell grid. The program `heron` draws its moves this way (`programs/heron/moves.odin`). It is not a filter over a scaled picture: the program computes cells and draws cells. The other way, the free move, is in the program only to compare: the cells are drawn as rectangles and the heron is at any pixel. Example: the heron is 24 columns by 22 rows above its water; in the run of the dash it is 32 by 18.
+
+The design: `docs/DESIGN.md`, "The animations".
+
+Do not use: snap, pixel-perfect scaling, quantized motion.
 
 ### Sprite sheet
 

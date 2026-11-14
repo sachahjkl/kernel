@@ -2,9 +2,11 @@
 // animations"): the large heron of the home and the icon of the tab move;
 // the small mark of the bar does not. The frames are the animations of
 // support/mark, drawn by the same code as the still pictures of the mark
-// (site_pictures.odin, site_icons.odin). Which animation plays, and how the
-// heron moves on the page, is in site_mark_schedule.odin
-// (docs/SITE.md, "The rhythm of the animations").
+// (site_pictures.odin, site_icons.odin). Which animation plays is the rule
+// of support/mark (play.odin), which the program `heron` of the system
+// follows too; site_mark_schedule.odin ties the script to that rule, and
+// holds how the heron moves on the page (docs/SITE.md, "The rhythm of the
+// animations").
 //
 // What the site gets:
 //   pictures/mark_animation_home.png and mark_animation_home_light.png: one
@@ -195,11 +197,11 @@ site_mark_animation_write :: proc(site: ^Site) -> bool {
 		site_write_file(site, path, data) or_return
 	}
 	sprites, _ := site_mark_sprites()
-	still_least, still_most := site_mark_still_bounds()
+	still_least, still_most := mark.still_bounds()
 	fmt.printfln(
 		"kerneltool: site: the animations of the mark: %d animations, %d ms in all, %d sprites; a still time of %d to %d ms; %s %d bytes, %s %d bytes, %s %d bytes, %s %d bytes",
 		len(mark.Animation),
-		site_mark_animations_duration(),
+		mark.animations_duration(),
 		len(sprites.cells),
 		still_least,
 		still_most,
@@ -349,13 +351,13 @@ site_mark_animation_table_json :: proc(sprites: ^Site_Mark_Sprites, home: Site_M
 		}
 		write(&b, "}")
 	}
-	still_least, still_most := site_mark_still_bounds()
+	still_least, still_most := mark.still_bounds()
 	write(&b, "],\"schedule\":{\"stillLeast\":")
 	number(&b, still_least)
 	write(&b, ",\"stillMost\":")
 	number(&b, still_most)
 	write(&b, ",\"sharePercent\":")
-	number(&b, SITE_MARK_STILL_SHARE_PERCENT)
+	number(&b, mark.STILL_SHARE_PERCENT)
 	write(&b, "},\"check\":{\"seed\":")
 	number(&b, SITE_MARK_CHECK_SEED)
 	write(&b, ",\"steps\":[")
@@ -439,7 +441,7 @@ mark_animations_picture_write :: proc() -> bool {
 	graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, "The animations of the mark (support/mark): frame 0 is the still heron; cells of 8 pixels", graphics.COLOR_TEXT)
 	y += MARK_ANIMATIONS_LINE
 	for animation in mark.Animation {
-		moves := "" if !site_mark_animation_moves(animation) else "; the home of the site moves the heron"
+		moves := "" if !site_mark_animation_moves(animation) else "; the home of the site and the program heron move the heron"
 		heading := fmt.tprintf("%s: %d frames, %d ms%s", mark.animation_names[animation], mark.animation_frame_count(animation), mark.animation_duration(animation), moves)
 		graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, heading, graphics.COLOR_KERNEL)
 		count := mark.animation_frame_count(animation)
@@ -458,7 +460,7 @@ mark_animations_picture_write :: proc() -> bool {
 		}
 		y += row_height
 	}
-	still_least, still_most := site_mark_still_bounds()
+	still_least, still_most := mark.still_bounds()
 	graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, fmt.tprintf("On the home of the site: each animation once in a round, in an order of chance; still for %d to %d ms between two", still_least, still_most), graphics.COLOR_TEXT)
 
 	rgb := make([]u8, 3 * len(colors), context.temp_allocator)
@@ -509,7 +511,7 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
   // The ways from a key of a move to the next one, in the order of the tool.
   const EASES = ["linear", "ease-out", "ease-in", "steps(1, end)"];
 
-  // The rule of the choice, as site_mark_next_animation of the tool. The
+  // The rule of the choice, as next_animation of support/mark. The
   // memory holds the animations that were played, one bit each, and the one
   // played last. The next one is chosen among those that the memory does
   // not hold. When the memory holds every animation, it is emptied first,
