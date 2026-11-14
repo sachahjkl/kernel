@@ -37,8 +37,17 @@ A button is its text and 16 pixels of padding, and 8 pixels stand between two bu
 
 **The current mark.** On a page of a section of the menu, the button of the menu has the line of a current button, and the link of the section in the panel is marked. A reader sees where the page is before the menu opens.
 
+**The states of a control.** A button of the bar was a rectangle of the track, and a link under the pointer takes the track: so a button showed nothing under the pointer and nothing while pressed. Each control of the site now has its states from one table and one procedure, in the colors of the desktop of the system: the blue of the title bar at 60 % with the pointer over a button or with the focus, the blue of a chosen row with a white label while it is pressed or open. A line of the panel under the pointer is a chosen row, as a line of a menu of the desktop. A row of a list takes the band of the track. The look is in [`docs/SITE.md`](../../../docs/SITE.md), "The states of a control".
+
+- One table, because a control with states of its own drifts: the fault was that each control had only what its author thought of.
+- A state changes a color, never a size: a border that appears moves the text beside it.
+- No transition: the site shows a state at once, as the desktop does.
+- The rules of the states are the end of the style sheet, so a state wins over a rule of the same weight that gives a control its current mark.
+
 ## Refused forms
 
+- **A lighter track under the pointer.** The step from the track to a lighter track is under the contrast that a reader sees at a glance, and it is not a color of the desktop.
+- **A line that appears under a button under the pointer.** A line under a button is the mark of the current section: two meanings for one sign.
 - **A second line of the bar.** The height of the bar would change with the width of the window, and each part that is placed by that height would need a second rule. A sticky bar of two lines also takes 80 pixels of a small window.
 - **Smaller text.** The buttons have the size of the text of the page. A smaller size gains about one button, and the next section breaks the bar again.
 - **Icons with no word.** A reader does not know the icon of "Status" or of "Roadmap". The site uses an icon for a kind of value, beside its word, never in the place of a word.
@@ -61,6 +70,6 @@ A button is its text and 16 pixels of padding, and 8 pixels stand between two bu
 
 ## State
 
-Built: the two tables, the navigation, the rules, the part of the script, the host tests.
+Built: the two tables, the navigation, the rules, the part of the script, the states of every control, the host tests.
 
 Not yet seen in a browser. Left: the focus of the keyboard does not move into the panel when it opens; Tab reaches its links in the order of the page.
