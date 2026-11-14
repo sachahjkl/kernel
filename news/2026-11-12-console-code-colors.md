@@ -1,6 +1,6 @@
 title: The console shows code in colors
 date: 2026-11-12
-release: next
+release: 0.92.0
 picture: docs/screenshots/console_completion.png
 kind: Shown
 guide: docs/CONSOLE.md

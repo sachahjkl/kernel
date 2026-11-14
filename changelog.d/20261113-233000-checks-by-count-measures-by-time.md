@@ -1,3 +1,0 @@
-type: Changed
-
-**A program checks by count in a test and measures by time in a measure run**: `clock`, `flow`, `crowd`, `disk`, `locks` and `scheduler` no longer measure a rate for a fixed time at each start. Their windows and their log lines show the counts of their checks (for example "200000 records read in order, 0 lost"), and the rates in one second are in a measure run: `kerneltool measure`, `kerneltool measure scheduler` and the new `kerneltool measure clock|crowd|disk|flow|limits`. A measure run uses the same modules as the test; the value 22 of the context tells a program that it runs for a measure.

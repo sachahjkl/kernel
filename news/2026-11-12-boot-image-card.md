@@ -1,6 +1,6 @@
 title: The boot display names the files of the boot image
 date: 2026-11-12
-release: next
+release: 0.92.0
 picture: docs/screenshots/boot_secure_boot.png
 kind: Shown
 guide: docs/DESIGN.md

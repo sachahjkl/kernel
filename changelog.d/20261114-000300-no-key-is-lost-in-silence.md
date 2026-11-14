@@ -1,3 +1,0 @@
-type: Fixed
-
-**No key is lost in silence**: four queues between the keyboard and a program dropped a key with no count and no log line when they were full, and a typed line was lost once in a machine test. The input service now leaves the bytes in the keyboard controller while its ring to the compositor is full. The compositor keeps 256 records for a window whose ring is full and sends them in order. The console leaves the keys in its terminal ring while 128 keys wait for the end of a line. Where a writer cannot wait, each lost record is counted, and the log has one line when the loss begins and one with the count when it ends; `compositor.pointer()` and `compositor.windows()` give the counts (`keys_refused`, 0 on a system that works).

@@ -1,6 +1,6 @@
 title: The heron of the home has fifteen animations
 date: 2026-11-14
-release: next
+release: 0.92.0
 picture: none
 kind: Decided
 guide: docs/DESIGN.md

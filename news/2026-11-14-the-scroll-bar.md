@@ -1,6 +1,6 @@
 title: The scroll bar takes the pointer
 date: 2026-11-14
-release: next
+release: 0.92.0
 picture: docs/screenshots/scroll_bar.png
 kind: Shown
 guide: docs/DESIGN.md

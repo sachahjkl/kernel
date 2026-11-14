@@ -1,6 +1,6 @@
 title: An object of 8 GiB that holds 13 blocks, and a commit that hashes what changed
 date: 2026-11-13
-release: next
+release: 0.92.0
 picture: none
 kind: Shown
 guide: docs/STORAGE.md

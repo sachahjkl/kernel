@@ -1,6 +1,6 @@
 title: A fault handler gets every kind of fault, not page faults only
 date: 2026-11-12
-release: next
+release: 0.92.0
 picture: docs/screenshots/fault_ring.png
 kind: Shown
 guide: docs/ARCHITECTURE.md

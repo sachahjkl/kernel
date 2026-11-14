@@ -1,6 +1,6 @@
 title: The boot verifies the system before the kernel starts
 date: 2026-11-12
-release: next
+release: 0.92.0
 picture: docs/screenshots/boot_fails_changed_module.png
 kind: Shown
 guide: docs/TRUSTED_BOOT.md

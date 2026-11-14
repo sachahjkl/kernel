@@ -1,3 +1,0 @@
-type: Changed
-
-**The manual reads the Markdown of the documentation of a module**: the program `manual` shows a bold word in the bold weight, a word in italics with a thin line under it, code in the font of the cells, a list item with its mark and its indentation, an example as a block, and a link as a colored name. A click on a link to a module or to an export of the boot image shows that page. A module now carries its documentation text with the marks of its comment; the line of help of an export stays plain, so `help()` in the console prints the same lines. A new library, `support/source_comment_markdown`, reads that part of Markdown with no allocator.

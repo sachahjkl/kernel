@@ -1,6 +1,6 @@
 title: Each row of the palette has the icon of its kind
 date: 2026-11-14
-release: next
+release: 0.92.0
 picture: docs/screenshots/palette_open.png
 kind: Shown
 guide: docs/DESIGN.md

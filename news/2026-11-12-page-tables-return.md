@@ -1,6 +1,6 @@
 title: An unmap gives its page tables back
 date: 2026-11-12
-release: next
+release: 0.92.0
 picture: none
 kind: Fixed
 guide: docs/ARCHITECTURE.md

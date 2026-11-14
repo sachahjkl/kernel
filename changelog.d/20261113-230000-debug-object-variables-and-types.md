@@ -1,3 +1,0 @@
-type: Added
-
-**The debug object of a module describes its variables and its types**: beside the names of the procedures and the source lines, it now holds the types, the global variables, and the parameters and the local variables of each procedure, each with its range of instructions and where its value is (a register, or memory at the frame pointer, the stack pointer or another register plus an offset; "not readable" when the compiler gives no such location). It also holds the BLAKE3 hash of the content of each source file at the build, so a reader shows a source line only from the same version of the file, and it is used only for the module whose hash it names. The module file does not change, and two builds give the same debug object.

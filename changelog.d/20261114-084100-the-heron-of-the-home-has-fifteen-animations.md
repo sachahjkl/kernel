@@ -1,3 +1,0 @@
-type: Changed
-
-**The heron of the home of the site has fifteen animations and moves most of the time**: eight animations are new: a dash in which the heron runs out of the window by its right edge and comes back by its left edge, with a squash at its start and at its stop; a hop; a fish that jumps in front of it; a doze; a stretch; the wind in its crest; a change of the leg it stands on; a flap of its wing. The heron is still for about 40 % of the time. Each animation plays once before one plays again, in an order of chance, and a visit keeps what was played from one page to the next. A reader who asks for reduced motion sees a heron that does not move.
