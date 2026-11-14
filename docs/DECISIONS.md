@@ -1585,6 +1585,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done. Checked in a browser at fixed times of each move, and each form viewed; not seen in motion by the coordinator.
 - Where: `SITE.md`, "The rhythm of the animations", "The moves of the heron"; `DESIGN.md`, "The animations".
 
+### D-242 The program `heron`: the animations of the mark also play in the system
+- 2026-11-14. Decided by: the owner (the request, the option); the coordinator and an agent (the form).
+- Decision: the system has a program, `heron`, that plays the animations of the mark in a window: a demonstration of the graphics of the system. It plays by the rule of the home of the site (each animation once in a round, an order of chance, still for about 40 % of the time), from one source in `support/mark`. This changes one sentence of D-180: the animations play on the home of the site, on the icon of its tab, and in a program that a reader starts; never on a mark beside a text or a control (the bar of the site, the bar of the desktop). The reason of D-180 stays: a picture that moves beside a text takes the eye from it. The program has an option that the reader turns on and off: a move "on the grid" (the default and the rule of D-240: the drawn forms of `support/mark` in whole cells, at places in whole cells) or "free" (the frame stretched to rectangles, at any pixel), to compare the two. The free way exists only in this program.
+- Words: "Et ce serait cool d'avoir un programme dans l'OS qui est capable de... C'est un programme fun et qui permet de voir les animations du héron. Ça permet de faire une démonstration de graphics."; "dans l'application qui permet de visualiser les animations [...] ça peut être une option qu'on peut activer désactiver".
+- State: done. The main machine test plays the dash and takes the pictures `heron` and `heron_free`.
+- Where: `DESIGN.md`, "The animations" and "The moves"; `INTERFACE.md`, section 2.1, "A picture in tiles"; `FIRST_MILESTONE.md`, choice 733.
+
 ### D-182 A documentation in the form of the Odin site
 - 2026-11-12. Decided by: the owner.
 - Decision: the documentation has a sidebar of the pages, the technical text in the center, and the symbols of the page at the right, in the manner of the Odin documentation.

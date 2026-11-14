@@ -96,6 +96,9 @@ module_builds := [?]Module_Build {
 	{name = "paint", source = "programs/paint", image = true},
 	{name = "fault", source = "programs/fault", image = true},
 	{name = "temple", source = "programs/temple", image = true},
+	// It keeps the interface package compiled in: its stage is Picture
+	// records, which the drawing module does not draw.
+	{name = "heron", source = "programs/heron", image = true},
 	{name = "node", source = "programs/node", image = true},
 	{name = "rings", source = "programs/rings", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "threads", source = "programs/threads", image = true},
