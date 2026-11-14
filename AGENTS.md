@@ -14,6 +14,18 @@ The owner asked for this rule on 2026-11-10 (D-047).
 - A proposal that agrees with the properties needs no objection. Do not invent one.
 - Apply the same test to your own ideas.
 
+## Intent
+
+The owner asked for this rule on 2026-11-14.
+
+- This project follows <https://srcmd.org>, with the Markdown in `src/md`, as the standard suggests. Read `src/md/README.md` first.
+- A file of `src/md` is an intent file (`docs/GLOSSARY.md`): it records the intent of a part of the system: its purpose, its design, the forms that were refused and why, its subtle points. It is not a guide: a guide of `docs/` says what the system does and how to use it, and the site shows it. It is not the record of who decided what: that is `docs/DECISIONS.md`.
+- A design goes in `src/md` before its code. A change of design changes its intent file in the same commit as the code.
+- Never write a design in a folder outside the repository. A review, a log and a measure of one run are process documents: they do not go in `src/md`.
+- `src/md/README.md` has the section `## File Index`. It lists and links every other file of the folder, one line each, with paths relative to `src/md`. `kerneltool check` checks it (`intent_index_check`).
+- The rules of the form of an intent file are in `src/md/README.md`, "The rules of this folder".
+- The folder `src` holds everything that becomes the system. The design of that layout, and the order of the move of the code into it, is `src/md/infrastructure/repository_layout.md`.
+
 ## Work
 
 - One term for one concept. Define a term in `docs/GLOSSARY.md` before its first use.

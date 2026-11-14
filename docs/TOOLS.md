@@ -417,6 +417,40 @@ A module carries the same text, with its marks, and the program `manual` reads t
 
 The documentation of the kernel operations is the model: for each operation, one sentence that says what it does, its arguments as a list, its results, its statuses as a list with when each comes, the rights that it needs in bold, links to its records and to its guide, and an example call through `support/system` when one helps.
 
+## The intent folder
+
+The folder `src/md` holds the intent files (`GLOSSARY.md`, "Intent file"): one Markdown file for the design of each part of the system, by the standard of [srcmd.org](https://srcmd.org). Its entry point is `src/md/README.md`: an overview of the system, the points that a newcomer gets wrong, the rules of the form of a file (`src/md/README.md`, "The rules of this folder"), and the file index.
+
+**Why a check.** A reader who starts work on a part reads the file index first, and opens only the files that it lists. A file that the index does not list is a design that nobody finds. An entry with no file sends a reader nowhere. Both faults come from a change that touched one side only, so a check keeps the two the same set.
+
+`kerneltool check` runs `intent_index_check` (`tools/kerneltool/intent_index.odin`). It reads each `.md` file of `src/md` and of its folders, and refuses:
+
+| Fault | Message |
+|---|---|
+| `src/md/README.md` is absent | "does not exist: the intent folder has no entry point" |
+| The README has no heading `## File Index`, or more than one | "has N headings "## File Index": it has exactly one" |
+| A line under that heading is not one link and a description, `- [path](path): description` | "a line of the file index is one link and a description" |
+| An entry is not a path from `src/md` (it leaves the folder, or it is an address) | "is not a path from the intent folder" |
+| An entry names a file that the folder does not have | "names no file of the intent folder" |
+| An entry names the README | "the file index lists the other files, not itself" |
+| A file of the folder is not in the index, or is there two times | "is not in the file index", "is N times in the file index" |
+| The first heading of a file is not a heading of level 1 | "the first heading of the file is not a heading of level 1" |
+| A relative link of a file names no file of the repository | "the link to ... names no file of the repository" |
+
+The section of the index ends at the next heading. A line inside a fence of code is an example, and a link inside a code span is not a link. A link to an address of another site, and a link to a heading of the same file, are not read.
+
+**The pointers of an intent file.** An intent file names a guide with a link whose text is the path of the guide, then the heading in quotes:
+
+```
+[`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "8. The palette provider"
+```
+
+The link opens the guide for a reader of the repository. The labels after it are those of a document pointer, and the check of the pointers of the site reads them with the same rule (`site_document_pointer_problems`, which `kerneltool site` and the host test `site_document_pointers_of_the_repository` run): a heading that the guide does not have stops the command. A code span of an intent file that names a document is checked as a code span of a guide is.
+
+**A pointer to an intent file.** An intent file is a working record: the site does not publish it. A comment of a source and a code span of a guide name one by its whole path, `src/md/features/palette.md`, with the labels of a place after it. On a page, the reference links to the file in the repository, at the line of the heading. A pointer to a file that the folder does not have is a stale pointer, and stops the command. The name of an intent file has letters, digits and `_`, so that a path in a sentence ends where the name ends.
+
+**What the check does not prove.** It reads the form, not the content: a file that is listed and that says what the code no longer does passes. A design that changes with no change of its intent file passes too. That rule is held by the review of a change.
+
 ## The commands of the tool
 
 All the automation of the project is one program of the host, `tools/kerneltool`. Each task (a build, a test, the site, a release) is one of its commands, so the same steps run on each computer and in each check. Run a command with `nix develop -c kerneltool <command>`; `kerneltool help` prints the list with one line for each.
@@ -431,7 +465,7 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "kerneltool: all tests passed", then the times of the test (below) |
 | `measure ...` | A measure run: a machine that measures with no other load. No argument: the locks. `scheduler N`, `clock`, `crowd`, `disk`, `flow`, `limits`: the program alone, and its lines. `windows`, `address_space`, `shortage`. The numbers are measures, never conditions ("A check by count, a measure by time") |
 | `screenshots` | The whole test, then the copy of the pictures to `docs/screenshots` and to the development log: the pictures are a fact of the machines, so they are copied as soon as each machine passed. Then a second build and the measure runs whose numbers the measure record holds (the locks, `clock`, `disk`, `scheduler`), then the measure record. `screenshots compress` compresses the PNG files that are stored with no compression |
-| `check` | `odin check -vet` and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the changelog, the news), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
+| `check` | `odin check -vet` and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the file index of the intent folder, the changelog, the news), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
 | `repeat <module> <count>` | Builds one module again and again, with no machine, and counts the distinct results (`docs/REPRODUCIBLE_BUILD.md`). Each of its builds is a whole build |
 | `site` | Writes the site in `build/site/` |
 | `changelog ...`, `news ...`, `release_number` | The fragments of the changelog and its releases, the news entries, the number of the newest release |
