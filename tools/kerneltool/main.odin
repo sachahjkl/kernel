@@ -659,9 +659,9 @@ test_passed_print :: proc(format: string, args: ..any) {
 	fmt.printfln("kerneltool: test passed: %s", fmt.tprintf(format, ..args))
 }
 
-// run_screenshots runs the machine test and the second build, writes the
-// measure record (measure_record.odin), and copies the pictures of the test
-// to the documents and to a new folder of the development log.
+// run_screenshots runs the machine test, copies the pictures of the test
+// to the documents and to a new folder of the development log, then runs
+// the second build and writes the measure record (measure_record.odin).
 // `screenshots compress` runs no machine: it compresses each PNG file of
 // the documents and of the resources whose data is stored (picture_files.odin).
 run_screenshots :: proc(args: []string) -> int {
@@ -682,6 +682,13 @@ run_screenshots :: proc(args: []string) -> int {
 	if code := run_test(nil); code != 0 {
 		return code
 	}
+	// The pictures are a fact of the machines, which all passed: they go
+	// to the documents now. The proofs of the build below say nothing of a
+	// picture, and a proof that fails must not leave old pictures in the
+	// documents.
+	if !screenshots_copy() {
+		return EXIT_FAILURE
+	}
 	// The record states the second build, as `kerneltool check` makes it.
 	if !outputs_same_after_second_build() {
 		return EXIT_FAILURE
@@ -694,25 +701,31 @@ run_screenshots :: proc(args: []string) -> int {
 	if !measure_record_write(run_facts) {
 		return EXIT_FAILURE
 	}
+	return 0
+}
+
+// screenshots_copy copies the pictures of the test to the documents and to
+// a new folder of the development log.
+screenshots_copy :: proc() -> bool {
 	pictures, ok := files_with_suffix(SCREENSHOT_FOLDER, ".png")
 	// The name of the folder is the time of the run, in UTC.
 	year, month, day := time.date(time.now())
 	hour, minute, second := time.clock(time.now())
 	log_folder := fmt.tprintf("%s/%04d-%02d-%02d_%02d%02d%02d", DEVELOPMENT_LOG_FOLDER, year, int(month), day, hour, minute, second)
 	if !ok || !make_folder(DOCUMENT_SCREENSHOT_FOLDER) || !make_folder(DEVELOPMENT_LOG_FOLDER) || !make_folder(log_folder) {
-		return EXIT_FAILURE
+		return false
 	}
 	for picture in pictures {
 		for folder in ([]string{DOCUMENT_SCREENSHOT_FOLDER, log_folder}) {
 			target := strings.concatenate({folder, picture[strings.last_index(picture, "/"):]}, context.temp_allocator)
 			if err := os.copy_file(target, picture); err != nil {
 				fmt.eprintfln("kerneltool: cannot write %s: %v", target, err)
-				return EXIT_FAILURE
+				return false
 			}
 			fmt.printfln("kerneltool: wrote %s", target)
 		}
 	}
-	return 0
+	return true
 }
 
 TEST_OUTPUT_MEASURE :: BUILD_FOLDER + "/test_output_measure.txt"

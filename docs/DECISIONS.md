@@ -1435,6 +1435,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: in work. Done: the build of a module in two steps; the first library module, `drawing`, which 23 programs import (the difference of two draw tables and the execution of a draw table); the check of each declaration of an import against the description of its export. Not done: the programs with a picture or a text grid, the terminal, the compositor; the error sentences; the network libraries.
 - Where: `MODULE_CONTRACT.md`; property 10.
 
+### D-239 The compiler gives the same code with and without debug information: the fault is corrected in a fork of Odin, and the check stays a condition
+- 2026-11-14. Decided by: the owner.
+- Decision: a module must be the same bytes with and without debug information, so that the debug object of a module that was built without it can be made later from the same sources. The full check found that 3 of 88 modules (`kernel`, `kernel_without_return_check`, `inspect`) differ. The cause is in the Odin compiler: its code generation takes other paths when debug information is asked (measured: the copy of a small record is written field by field with `-debug`, and by blocks without, before any optimization). It is a fault of the compiler, not of the reproducible build: the same sources with the same options give the same bytes, for the 88 modules. The fault is corrected in a fork of Odin for this system, `odin-modus`, which the flake pins; the correction goes to the Odin project as a pull request when it is proved on the 88 modules. The third build of the full check stays a condition: it does not become a measure, so the full check fails until the fork corrects the fault.
+- Words: "à corriger donc, dans notre fork de odin (puis PR upstream quand prouvé) odin-modus"; "donc non 85 sur 88".
+- State: in work. The full check fails on this point only.
+- Where: `REPRODUCIBLE_BUILD.md`, section 8; `MODULE_CONTRACT.md`, "Debug information".
+
 ## 12. The site and the publication
 
 ### D-163 A technical site
