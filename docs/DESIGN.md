@@ -450,14 +450,56 @@ The mark has idle animations: 15 of them. They play only on the large mark of th
 - The preen and the scratch: in the preen the bird bends and scratches its body; in the scratch it scrapes the ground with its front foot. In the scratch the body does not dip: the body, the wing and the tail one row lower change 46 cells (counted on the table), five times the cells of a stroke of the leg, and the leg reads alone.
 - The bounds, which the host tests hold: each animation has its limit of changed cells in the data (`animation_change_limits`): a frame differs from the still heron and from the frame before it by at most 24 cells, 48 for the preen, which moves the whole head onto the back, and 40 for the dash, which moves both legs and draws the lines of speed. A frame lasts 150 to 1000 ms, so the picture changes at most about 6 times each second; the steps of the run of the dash last 70 ms, and only the dash has such frames (`animation_frame_duration_least`). An animation lasts at most 3 s.
 - A frame in which the heron leaves the water (the run and the stop of the dash, the air of the hop, the beats of the flap) has no foot in the two rows of the water, and the water is whole there. A place that moves the heron can then cut the picture at the line of the water: the water stays, and the heron moves.
-- The moves. The frames are the whole animation where the picture cannot move: the icon of a tab, a later mark in the bar of the desktop. The home of the site also moves and scales the picture during the dash, the hop, the stretch and the flap: `SITE.md`, "The moves of the heron". A squash or a stretch is a change of the width and of the height of the picture, drawn with sharp pixels; no frame holds a cell that is not a square.
-- The sprite sheets of the site hold 43 sprites: the still heron and 42 distinct frames, in rows of 16. A sheet of the home is 3072 x 576 pixels (the heron alone, 192 for each sprite): no side is longer than the 8192 pixels that a browser decodes. The sheet of the icon is 512 x 96.
+- The moves. The frames are the whole animation where the picture cannot move: the icon of a tab, a later mark in the bar of the desktop. During the dash, the hop, the stretch and the flap the heron also takes other forms and other places: see "The moves".
+- The sprite sheets of the site hold 43 sprites: the still heron and 42 distinct frames, in rows of 16 (the heron alone, 192 pixels for each sprite), and under them, in the sheets of the home, the 19 drawn forms of the moves. A sheet of the home is 3072 x 992 pixels: no side is longer than the 8192 pixels that a browser decodes. The sheet of the icon is 512 x 96.
 - Where it plays: the large heron of the head of the home of the site, and the icon of the tab of the home. Not the small mark of the bar of the site: a page of the documentation is read, and a picture that moves at the top of a text takes the eye from it. Not the desktop of the system yet.
 - How often: on the home the heron is still for 40 % of the time and moves for 60 %. Each animation plays once before one plays again, in an order of chance, and none follows itself.
 - Reduced motion: when the browser says that the visitor asks for reduced motion, nothing moves, and the still picture stays. A change of that choice while the page is open stops or starts the play.
 - A hidden tab: the play stops, no timer runs, and the icon is the still icon again.
 - `kerneltool logo` writes `build/mark_animations.png`: each animation as a row of its frames at cells of 8 pixels, with the durations, for a reader to look at.
 - The desktop of the system does not play the animations. The data is ready for it: `animation_frame_cells` gives the cells of a frame, and `cells_draw` draws them. To play them, the compositor needs one picture of 24 x 24 pixels for each distinct frame, drawn at the start as the still heron is. It also needs one timer that changes the generation of the Picture record of the bar, and a rule of its own for the choice and the still times.
+
+### The moves
+
+During four animations the heron squashes, stretches, lifts, or crosses the window. The data is in `support/mark/motion.odin`; the home of the site and the program `heron` of the system play it.
+
+The rule: a cell of the heron never changes its form. It is a square of one size at a place of the grid. So a squashed heron is not the picture of the heron made wider: it is another drawing of the heron, in the same cells, with more columns and fewer rows. And the heron travels by whole cells: its place is a whole count of cells from its place of rest. No transform changes the size of a picture of the heron, and nothing rounds a smooth move to the grid: the drawings and the places are cells from the start.
+
+- Only the part of the heron above the water takes a form and a place: 24 columns by 22 rows. The two rows of the water stay.
+- A form is one drawing of that part. It is made in two steps, both by hand. First its lines: the columns and the rows of the frame that the form draws two times, and those that it leaves out (`form_lines`). Then its corrections: cells that are set or cleared where the lines alone give a poor drawing (`form_corrections`). A form is not a sampling of the grid at regular places: such a sampling of 22 rows into 19 leaves out the row under the eye.
+- What the lines never change: the columns from 13 to the right and the rows 0 to 3. So the eye is one cell, the beak has its cells and its tip, and the crest its two cells, in every form. The column 9 of the standing leg is never repeated and never left out, and it keeps its place in every form: the leg stays above its foot, which is in the water. The last row of a form is on the line of the water.
+- Where the lines are taken: a wide form repeats columns of the body at each side of the standing leg (4 to 7 behind it, 10 and 11 in front), never a column of a leg. A low form leaves out a row of the neck that repeats its neighbour (5, 8) and a row of the straight part of the legs (17). A high form repeats rows of the neck. The forms of the run and of the stop leave out rows under the feet of a heron that runs: the body comes down to the water.
+
+| Form | Cells | Columns two times | Columns out | Rows two times | Rows out | Corrections | Drawn |
+|---|---|---|---|---|---|---|---|
+| natural | 24 x 22 | | | | | | the frame itself |
+| gather | 26 x 21 | 5, 10 | | | 5 | | lines |
+| crouch | 28 x 19 | 4, 5, 10, 11 | | | 5, 8, 17 | 1: one cell of body closes the gap between the tail and the body, which the repeated columns made 3 cells wide | lines, corrected |
+| run | 32 x 20 | 1, 2, 4, 5, 6, 7, 10, 11 | | | 20, 21 | 8: the same gap (1); the back leg, 2 cells thick with a foot of 4 cells across the repeated columns, is 1 cell wide with a foot of 2 (5); the two feet of the legs together, joined in a bar of 4 cells, are 1 cell each (2) | lines, corrected |
+| brake | 20 x 23 | | 3, 5, 6, 7 | 5, 7, 9 | 19, 20 | | lines |
+| slide | 22 x 21 | | 5, 6 | 7 | 19, 20 | | lines |
+| rebound | 26 x 20 | 5, 10 | | | 5, 17 | | lines |
+| tall | 22 x 24 | | 5, 6 | 6, 9 | | | lines |
+| thin | 22 x 23 | | 5, 6 | 7 | | | lines |
+| neck | 24 x 24 | | | 6, 9 | | | lines |
+| long neck | 24 x 26 | | | 4, 6, 7, 9 | | | lines |
+
+- No form is drawn cell by cell from nothing: the lines and 9 corrections give each drawing. A form that needs more is written as corrections.
+- A correction names its form, and a frame or every frame. A frame that repeats a pose with no change of its own (the steps of the run of the dash) takes the corrections of that pose.
+- A cell of a form takes the color of its part at its place, as a cell of a frame does: the gradient over the box of the part in the still heron, and past that box the color of the nearer end.
+- The bounds: a form has at most 32 columns and 26 rows, and passes the place of the natural heron by at most 6 cells at its left, 2 at its right and 4 above.
+- A move is a list of keys (`move_keys`). A key has a time, the form that the heron takes from that time to the next key, a place in whole cells to the right and upward, an edge of the window or none, and a pace. No form exists between two keys: the form changes at a key. The place goes from a key to the next one cell by cell, the cells spread evenly over the time (`move_pose`); with the pace "hold" it stays, then is at the next key at once.
+- The type of a key holds no part of a cell. The table is refused (`move_keys_fault`) when the keys of an animation do not go from the natural heron in its place at 0 to the same at its end; when a way goes to the right and upward at once (its steps are then not whole cells); when a key past the right edge is not followed at once by a key past the left edge; when a key moves the heron while a frame has a foot in the water; or when such a frame is drawn in a form that leaves out its last row.
+
+| Move | Keys: the time in ms, the form, the place |
+|---|---|
+| dash | 0 natural; 90 gather; 180 crouch; 380 run; 450 run, 4 cells to the right; 520 run, 14 cells; 730 run, past the right edge, hold; 1010 run, past the left edge; 1360 brake, 3 cells; 1460 slide, 3 cells; 1580 rebound, in its place; 1680 natural; 1780 natural |
+| hop | 0 natural; 60 gather; 120 crouch; 180 tall; 340 tall, 4 cells up; 500 crouch, on the water; 600 rebound; 700 gather; 790 natural; 880 natural |
+| stretch | 0 natural; 100 neck; 200 long neck; 620 gather; 700 thin; 780 gather; 860 thin; 940 natural; 1100 natural |
+| flap | 0 natural; 200 natural; 420 natural, 3 cells up; 650 natural, 3 cells up; 800 rebound, on the water; 900 natural; 1000 natural |
+
+- The times of the animations and of their frames did not change with the forms.
+- `kerneltool logo` draws, in `build/mark_animations.png`, under the frames of each animation that moves, each drawing that its move shows, at the cells of the frames, with the water of its frame, its time, its name, its size, and how it was drawn. The host test `drawn_forms_keep_the_eye_the_beak_and_the_legs` writes each drawing as text on its log, and checks the eye, the beak, the head cell for cell, the width of the legs and the standing leg.
 
 ## 12. The card of the boot image
 
