@@ -56,7 +56,7 @@ site_declaration_value_kinds := [Site_Declaration_Kind]value_kinds.Value_Kind {
 Site_Declaration :: struct {
 	name:           string,
 	package_name:   string, // The name after "package" in its file.
-	folder:         string, // The folder of its file: "support/graphics".
+	folder:         string, // The folder of its file: "src/library/support/graphics".
 	file:           string,
 	line:           int,
 	kind:           Site_Declaration_Kind,
@@ -454,8 +454,8 @@ site_declaration_resolve :: proc(index: ^Site_Declaration_Index, span: Site_Decl
 }
 
 // site_context_folders gives the folders of the index that a text names:
-// "support/graphics" and "support/graphics/blend.odin" both give
-// "support/graphics". The heading and the paragraph of a span give the
+// "src/library/support/graphics" and "src/library/support/graphics/blend.odin" both give
+// "src/library/support/graphics". The heading and the paragraph of a span give the
 // packages that the span most likely means.
 site_context_folders :: proc(index: ^Site_Declaration_Index, text: string) -> []string {
 	folders := make([dynamic]string, context.temp_allocator)

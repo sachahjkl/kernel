@@ -60,4 +60,4 @@ The owner asked for this rule on 2026-11-14.
 - Forms (owner, 2026-11-11): rectangular forms are the preference, not an absolute rule. Lines at an angle are allowed; any geometry can be drawn, sparingly. Avoid a look where everything is a rounded blob.
 - Subagents (owner, 2026-11-11): a subagent that writes code only writes code. The coordinator reviews, builds, tests, commits and merges.
 - Never commit under an AI identity.
-- Changelog (owner, 2026-11-11): a branch adds one fragment in `changelog.d/` for each change that a reader notices (`kerneltool changelog new`; read `changelog.d/README.md`). Never edit `CHANGELOG.md` or `contract/release/release.odin`: `kerneltool changelog release` writes them.
+- Changelog (owner, 2026-11-11): a branch adds one fragment in `changelog.d/` for each change that a reader notices (`kerneltool changelog new`; read `changelog.d/README.md`). Never edit `CHANGELOG.md` or `src/library/contract/release/release.odin`: `kerneltool changelog release` writes them.

@@ -5,7 +5,7 @@
 // mark_tile_map.odin): it asks for the three tile maps of the site, which
 // the table of the uses of the mark names, and writes the script of the
 // page with the table of the generator in it. It draws no picture of the
-// site. Which animation plays is the rule of support/mark (play.odin),
+// site. Which animation plays is the rule of src/library/support/mark (play.odin),
 // which the program `heron` of the system follows too;
 // site_mark_schedule.odin ties the script to that rule (docs/SITE.md, "The
 // rhythm of the animations").
@@ -126,7 +126,7 @@ site_mark_animation_files :: proc() -> (files: map[string][]u8, ok: bool) {
 
 // site_mark_animation_write writes the files of the animations into the
 // site, after the check that each sheet reads back as the frames of
-// support/mark and that the moves agree with the frames.
+// src/library/support/mark and that the moves agree with the frames.
 site_mark_animation_write :: proc(site: ^Site) -> bool {
 	files := site_mark_animation_files() or_return
 	problems := site_mark_animation_problems(files)
@@ -163,7 +163,7 @@ site_mark_animation_write :: proc(site: ^Site) -> bool {
 // site_mark_animation_problems checks the files of the animations: each
 // sheet decodes, has the size of its sprites, no side longer than a
 // browser decodes, and each sprite has the pixels of its frame in
-// support/mark; the script has its table; the moves agree with the frames.
+// src/library/support/mark; the script has its table; the moves agree with the frames.
 site_mark_animation_problems :: proc(files: map[string][]u8) -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
 	tile_maps, tile_maps_ok := site_mark_tile_maps()
@@ -217,7 +217,7 @@ site_mark_animation_problems :: proc(files: map[string][]u8) -> []string {
 //   check: the seed and the first steps of the model of the choice, each
 //     [still milliseconds, animation], which the self test compares;
 //   press: the animation that the first press on the heron plays;
-//   limits: the bounds of support/mark for a frame.
+//   limits: the bounds of src/library/support/mark for a frame.
 // The paths are relative to the folder of the script: the root of the site.
 site_mark_animation_table_json :: proc(tile_maps: ^Site_Mark_Tile_Maps, sheet_addresses: [SITE_MARK_SHEET_COUNT]string) -> string {
 	// The braces are written as text, never through a format of fmt.
@@ -362,7 +362,7 @@ site_mark_animation_rules :: proc() -> string {
 // a whole count of cells from its place.
 SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home, written by kerneltool site
 // (tools/kerneltool/site_mark_animation.odin and site_mark_schedule.odin)
-// from support/mark/animation.odin.
+// from src/library/support/mark/animation.odin.
 // The large heron of the head and the icon of the tab move. Each animation
 // plays once before one plays again, in an order of chance; between two
 // animations the heron is still.
@@ -383,7 +383,7 @@ SITE_MARK_ANIMATION_SCRIPT_SOURCE :: `// The animations of the mark on the home,
   const EVERY = Math.pow(2, COUNT) - 1;
   const STORE = "modus.mark.played";
 
-  // The rule of the choice, as next_animation of support/mark. The
+  // The rule of the choice, as next_animation of src/library/support/mark. The
   // memory holds the animations that were played, one bit each, and the one
   // played last. The next one is chosen among those that the memory does
   // not hold. When the memory holds every animation, it is emptied first,

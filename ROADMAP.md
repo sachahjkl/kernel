@@ -5,7 +5,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 ## Now
 
 - **Every program that draws imports the drawing module.** The programs that draw a picture, the terminal and the compositor use the drawing module, as 23 programs do today. The code of the drawing is then loaded one time, and one correction reaches every program. [Design](src/md/api/library_modules.md)
-- **The sources in one folder.** Everything that becomes the system moves into the folder `src`, and the code that the programs share becomes the source library `modus`. A developer then finds each part of the system by one rule. [Design](src/md/infrastructure/repository_layout.md)
+- **One source library for a program of a third party.** Everything that becomes the system is now in the folder `src`. What is left: the code that the programs share becomes one source library, `modus`, so that a developer names the system by one name in each import and gives the compiler one folder. [Design](src/md/infrastructure/repository_layout.md)
 
 ## Next
 

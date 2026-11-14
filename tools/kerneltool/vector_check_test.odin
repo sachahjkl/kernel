@@ -8,7 +8,7 @@ import "core:testing"
 // --x86-asm-syntax=att`, as the flake's LLVM 18 prints them for the kernel.
 
 // The three allowed procedures, each with its vector instructions and its
-// end label, as kernel/processor.asm makes them.
+// end label, as src/kernel/processor.asm makes them.
 @(private = "file")
 ALLOWED_PROCEDURES :: `
 0000000000026692 <extended_state_save>:

@@ -3,11 +3,11 @@
 // animations"). How the heron moves on the page during an animation is in
 // mark_tile_map.odin.
 //
-// The rule of the choice and the still times are in support/mark
+// The rule of the choice and the still times are in src/library/support/mark
 // (play.odin): the program `heron` of the system plays by the same rule.
 // The rule is written a second time in mark_animation.js, which the page
 // runs. The two stay in agreement by one list: the tool runs the rule of
-// support/mark with a generator of a fixed seed and writes the steps into
+// src/library/support/mark with a generator of a fixed seed and writes the steps into
 // the table of the script, and the self test of the script (?selftest=1)
 // runs its own rule with the same generator and compares each step.
 package kerneltool

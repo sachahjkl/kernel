@@ -36,7 +36,7 @@ The forms that the system can take, weighed against the properties:
 
 ## 2. The generator
 
-`support/random/generator.odin`: ChaCha20 with fast key erasure (D. J. Bernstein, "Fast-key-erasure random-number generators", 2017).
+`src/library/support/random/generator.odin`: ChaCha20 with fast key erasure (D. J. Bernstein, "Fast-key-erasure random-number generators", 2017).
 
 - Each refill runs ChaCha20 with the key of the generator and the nonce 0 for 13 blocks (832 bytes). The first 32 bytes are the next key; the next 800 bytes are served in order.
 - The key that made a refill is overwritten at once. Each byte is erased (`erase_secret_bytes`) when it is served. So a copy of the state after a draw does not give the bytes before it.
@@ -60,7 +60,7 @@ The root service hashes, with BLAKE3, each value of each source, each with its l
 
 The strength of the seed is the strongest source that gave all its values. The root service writes it on the log: "root: the random seed of the system, strength ...". It gives the facts of the gathering, never the seed, to the program `randomness` (its context values 0 to 7).
 
-**The reads are not merged.** The reads of `rdrand` and `rdseed` through a procedure value (`processor_values` in `support/random`) carry `#side_effects`: without it, LLVM keeps one value for all the reads (a machine test then shows "rdrand present, 1 good, 255 refused").
+**The reads are not merged.** The reads of `rdrand` and `rdseed` through a procedure value (`processor_values` in `src/library/support/random`) carry `#side_effects`: without it, LLVM keeps one value for all the reads (a machine test then shows "rdrand present, 1 good, 255 refused").
 
 **No claim beyond the sources.** The system does not test the output of `rdseed` or `rdrand` for quality. A processor whose generator is wrong or hostile gives a wrong seed, with no sign; the jitter of the cycle counter is mixed in so that such a processor alone does not fix the seed, but this system claims no bits from it.
 
@@ -79,7 +79,7 @@ The strength of the seed is the strongest source that gave all its values. The r
 
 ## 4. The tests
 
-- Host tests (`odin test support/random`):
+- Host tests (`odin test src/library/support/random`):
   - the generator gives the ChaCha20 stream of its key after its first 32 bytes, then the stream of the next key;
   - each served byte is erased;
   - two seeds give two streams, a zero seed is refused, and a child seed is not part of the later stream of its starter;

@@ -2,11 +2,11 @@
 // search.json, and one small script, search.js, that the tool writes. No
 // server and no request to another host: the script reads the index of
 // this site on the first key, and filters it with the fuzzy match and the
-// order of the console of the system (support/line_editor/fuzzy_match.odin).
+// order of the console of the system (src/library/support/line_editor/fuzzy_match.odin).
 //
 // The match of the script is a port of that file, rule for rule. Two things
 // keep the two in step:
-//   - the tool writes the scoring constants of support/line_editor into the
+//   - the tool writes the scoring constants of src/library/support/line_editor into the
 //     script, so a change of a constant reaches the script at the next site;
 //   - site_search_match_names and site_search_match_orders below are one
 //     table of queries, names and expected scores and orders. The host test

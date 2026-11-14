@@ -6,7 +6,7 @@ import "core:os"
 import "support:mark"
 
 // The files of the mark of the system in the repository (docs/DESIGN.md,
-// section "The mark"). support/mark holds the mark as data. The command
+// section "The mark"). src/library/support/mark holds the mark as data. The command
 // `logo` is a caller of the generator of the pictures of the mark
 // (mark_pictures.odin): it asks for each row of the repository of the table
 // of the uses, and writes the file. `check` verifies that the files of the

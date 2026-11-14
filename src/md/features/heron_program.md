@@ -19,15 +19,15 @@ The animations play in a program that a reader starts. They never play on a mark
 
 ## The chosen form
 
-**The rules are in `support/mark`.** The cells and the frames, the order of play and the still times (`play.odin`), the forms and the keys of the moves (`motion.odin`) are data and pure procedures there. The kernel tool runs the same procedures to check the script of the site. The program holds no rule: it asks for the next animation, the frame at a time, the form and the place at a time, and draws.
+**The rules are in `src/library/support/mark`.** The cells and the frames, the order of play and the still times (`play.odin`), the forms and the keys of the moves (`motion.odin`) are data and pure procedures there. The kernel tool runs the same procedures to check the script of the site. The program holds no rule: it asks for the next animation, the frame at a time, the form and the place at a time, and draws.
 
 - The rule of the order takes a number of chance as a parameter. A test gives the numbers of a generator with a seed; the program gives numbers of its random generator. The rule itself has no source of chance, so the tool and the program can share it.
 
-**A move on the grid is the rule; the free way is the comparison.** On the grid the program draws the drawn form of `support/mark` for the frame, at a place in whole cells. The free way reads the same keys, stretches the frame as it is to the box of the form, and moves the box pixel by pixel.
+**A move on the grid is the rule; the free way is the comparison.** On the grid the program draws the drawn form of `src/library/support/mark` for the frame, at a place in whole cells. The free way reads the same keys, stretches the frame as it is to the box of the form, and moves the box pixel by pixel.
 
 - The free way stretches the frame, not the form. A stretched form would look almost right, and the comparison would show only the travel between two cells. A stretched frame shows what a form is for: the eye is no longer one cell, the beak and the legs change their thickness.
 - The grid way is not a filter over the free way. It never draws a scaled picture and never rounds a smooth place: the form and the place are cells from the data.
-- The free way lives in one file of the program. It is not a rule of the system, so it is not in `support/mark`.
+- The free way lives in one file of the program. It is not a rule of the system, so it is not in `src/library/support/mark`.
 
 **The play goes forward by at most 40 ms for a picture.** A picture that comes late slows the animation. The shortest frame is 70 ms, so each frame is in one picture at least, and the dash always has a picture with the heron outside the window. The lines of the log are then the same on each host: "17 frames", "left the window".
 
@@ -46,7 +46,7 @@ The animations play in a program that a reader starts. They never play on a mark
 
 ## The refused forms
 
-- **A copy of the order rule or of the moves in the program.** It was the first form of the moves, for the time when `support/mark` did not hold them. Two tables drift.
+- **A copy of the order rule or of the moves in the program.** It was the first form of the moves, for the time when `src/library/support/mark` did not hold them. Two tables drift.
 - **A sampling of the cell grid for a squashed heron** (each cell of the wider heron shows the nearest cell of the frame). It keeps square cells, but it leaves out the row under the eye and makes a leg two cells wide. A form is drawn by hand: lines chosen on the heron, then corrections.
 - **One Picture record for the whole stage.** It does not make a frame whole: the copy of that picture into a surface with one picture is torn in the same way. And each frame damages the whole stage.
 - **A second buffer in the program, copied at the end of a frame.** The stage is that buffer already. The compositor never reads it. The tear is in the surface.

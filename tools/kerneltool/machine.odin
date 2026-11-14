@@ -25,12 +25,12 @@ SCREEN_DUMP :: BUILD_FOLDER + "/screen.ppm"
 // reason of its own: a loaded host runs the machine many times slower, and
 // that says nothing about the system. It is larger than the bound of a hang
 // in the checks of a program (TEST_HANG_BOUND_MILLISECONDS in
-// support/system, 60 s), so that the program writes its own report first.
+// src/library/support/system, 60 s), so that the program writes its own report first.
 HANG_BOUND :: 120 * time.Second
 // The bound of a Wait for the line of a case that writes a count of its
 // progress, which the program reads: the program bounds a stall of the
 // count and the whole case (TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS in
-// support/system, 600 s), and this bound is larger, so that the report of
+// src/library/support/system, 600 s), and this bound is larger, so that the report of
 // the program comes first.
 PROGRESS_CASE_HANG_BOUND_SECONDS :: 660
 // The bound of the first Wait of each machine: its boot ("compositor:
@@ -49,7 +49,7 @@ KEYS_HELD_LINE :: "1000 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 
 #assert(len(KEYS_HELD_LINE) == 100)
 
 // The places of the scroll bar of the window of the console, inside its
-// surface (programs/terminal/main.odin, layout; programs/root/main.odin,
+// surface (src/programs/terminal/main.odin, layout; src/programs/root/main.odin,
 // terminal_of: 96 columns and 26 rows). The surface is 8 + 96 * 8 + 7 + 17
 // = 800 pixels wide; the bar is its last 17 pixels, from y = 0 to the line
 // over the status at 8 + 26 * 16 + 8 - 4 = 428, with an arrow button of 17
@@ -643,7 +643,7 @@ scenario_network := [?]Step {
 }
 
 // The data disk of the test of persistence, read with the format of the
-// storage service (contract/store).
+// storage service (src/library/contract/store).
 disk_open :: proc(path: string) -> (file: ^os.File, ok: bool) {
 	err: os.Error
 	if file, err = os.open(path, {.Read, .Write}); err != nil {
@@ -754,7 +754,7 @@ object_damage :: proc(path: string, store_name: string, object_name: string) -> 
 }
 
 // tree_entry_find finds an entry of a tree on a disk file: the walk down
-// the B+ tree of the tree, as support/storage_tree does.
+// the B+ tree of the tree, as src/library/support/storage_tree does.
 tree_entry_find :: proc(file: ^os.File, root: store.Pointer, name: string) -> (found_entry: store.Entry, found: bool, ok: bool) {
 	key := store.entry_name(name)
 	pointer := root
@@ -860,7 +860,7 @@ self_tests_run :: proc() -> bool {
 	return true
 }
 
-// The positions below come from programs/compositor/main.odin: the buttons
+// The positions below come from src/programs/compositor/main.odin: the buttons
 // in the bar, and the place of window n at (60 + 36 n, 52 + 30 n).
 scenario := [?]Step {
 	{kind = .Wait, text = "boot program: ok"},
@@ -871,7 +871,7 @@ scenario := [?]Step {
 	// which QEMU takes from the clock of the host. The date must be within a
 	// few seconds of the host.
 	{kind = .Date, text = " UTC, seconds since 1970 ", any_order = true},
-	// The measure of the copy and the fill of runtime/memory.asm, at the start
+	// The measure of the copy and the fill of src/runtime/memory.asm, at the start
 	// of the compositor, before its first frame.
 	{kind = .Wait, text = "compositor: copy_bytes_without_overlap, ns for 8 64 512 4096 65536 3145600 bytes, aligned: ", any_order = true},
 	{kind = .Wait, text = "compositor: fill_bytes_with_value, not aligned: ", any_order = true},
@@ -2342,7 +2342,7 @@ scenario := [?]Step {
 	// second line chooses network.
 	{kind = .Type, text = "rk"},
 	{kind = .Wait, text = "inspect: workers: "},
-	{kind = .Click, inside_window = "inspect", x = 48, y = 96}, // The second line of the list: programs/inspect, LIST_ROWS_Y + 16 + 8.
+	{kind = .Click, inside_window = "inspect", x = 48, y = 96}, // The second line of the list: src/programs/inspect, LIST_ROWS_Y + 16 + 8.
 	{kind = .Wait, text = "inspect: network: "},
 	{kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"},
 	{kind = .Type, text = "fault"},
@@ -2407,7 +2407,7 @@ scenario := [?]Step {
 	{kind = .Close, text = "vector_glyphs"},
 	{kind = .Wait, text = "root: vector_glyphs stopped"},
 	// The interface font (docs/FONTS.md, section 12): B612 placed by
-	// support/text_shaping and drawn by graphics.text_proportional.
+	// src/library/support/text_shaping and drawn by graphics.text_proportional.
 	{kind = .Launch, text = "interface_font"},
 	{kind = .Wait, text = "interface_font: one line of "},
 	{kind = .Wait, text = "interface_font: ok, "},
@@ -2424,7 +2424,7 @@ scenario := [?]Step {
 	{kind = .Point, inside_window = "pointers", x = 100, y = 12, text = "move"}, // The title bar.
 	{kind = .Point, inside_window = "pointers", x = -14, y = 12, text = "pointing_hand"}, // The close button.
 	{kind = .Point, inside_window = "pointers", x = 1, y = 300, text = "arrow"}, // The left border.
-	{kind = .Point, inside_window = "pointers", x = 2 + 208 + 60, y = 24 + 368 + 60, text = "wait"}, // The tile of wait (programs/pointers, tile_area(6)): the request of the program.
+	{kind = .Point, inside_window = "pointers", x = 2 + 208 + 60, y = 24 + 368 + 60, text = "wait"}, // The tile of wait (src/programs/pointers, tile_area(6)): the request of the program.
 	{kind = .Wait, text = "compositor: pointers asks for the pointer shape wait over its surface"},
 	{kind = .Shot, text = "pointers"},
 	{kind = .Point, inside_window = "pointers", x = 2 + 16 + 60, y = 24 + 216 + 60, text = "arrow"}, // The tile of arrow.

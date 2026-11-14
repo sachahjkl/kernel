@@ -595,7 +595,7 @@ append_u32 :: proc(out: ^[dynamic]u8, value: u32) {
 }
 
 // glyph_cache_of draws the characters 32 to 126 of a font file at the three
-// scales of the grid, and gives the glyph cache file (contract/glyph_cache),
+// scales of the grid, and gives the glyph cache file (src/library/contract/glyph_cache),
 // in memory aligned on 8 bytes.
 glyph_cache_of :: proc(font_bytes: []u8, font_name: string, grid_fit: bool, scale_count := 3) -> (cache: []u8, ok: bool) {
 	font, problem := vector_font.font_open(font_bytes)

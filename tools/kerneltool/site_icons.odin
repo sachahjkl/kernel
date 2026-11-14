@@ -1,6 +1,6 @@
 // The icons of the site (docs/SITE.md, "The icons"): favicon.ico at the root,
 // an SVG icon, the icon of a phone and the icons of the manifest. Each one is
-// drawn from the table of the heron of support/mark: a raster icon is the
+// drawn from the table of the heron of src/library/support/mark: a raster icon is the
 // drawing at a whole cell size, centred with an even margin, so that each
 // cell keeps square pixels; the SVG icon is the cells as rectangles.
 //
@@ -165,7 +165,7 @@ site_color_hex :: proc(color: u32) -> string {
 }
 
 // site_gradient_end_colors gives the colors of a part at the start and at
-// the end of its gradient, as support/mark computes them: a channel c is
+// the end of its gradient, as src/library/support/mark computes them: a channel c is
 // 0.7 * c + 76.5 at the start and 0.7 * c at the end, rounded to the
 // nearest whole value.
 site_gradient_end_colors :: proc(base: u32) -> (start, end: u32) {
@@ -180,7 +180,7 @@ site_gradient_end_colors :: proc(base: u32) -> (start, end: u32) {
 // site_icon_svg gives the heron as an SVG file: one rectangle for each run
 // of cells of one part in a row, each part filled with its gradient (an SVG
 // gradient along the diagonal of the box of the part, in cells, which is the
-// gradient of support/mark) or its flat color. The colors are those of the
+// gradient of src/library/support/mark) or its flat color. The colors are those of the
 // light form, which reads on a light and on a dark tab; a rule for a dark
 // scheme gives the dark form where the two forms differ. A browser that
 // does not apply the rule shows the light form.

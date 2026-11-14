@@ -8,9 +8,9 @@ This document says which procedures of the system compute with vectors, in which
 
 | Procedure | Scalar form | Vector form | Values for each step |
 |---|---|---|---|
-| The blend of a glyph | `blend_coverage_row_in_order` (`support/graphics/blend.odin`) | `blend_coverage_row_sse2` (`support/graphics/blend_vectors_amd64.odin`) | 4 pixels |
-| The blend of a picture with premultiplied alpha | `blend_premultiplied_alpha_row_scalar` (`support/graphics/blend.odin`) | `blend_premultiplied_alpha_row_sse2` (`support/graphics/blend_vectors_amd64.odin`) | 4 pixels |
-| The BLAKE3 hash of a subtree of four chunks | `chunk_value`, four times (`contract/blake3/blake3.odin`) | `four_chunk_values_side_by_side` (`contract/blake3/chunks_side_by_side_amd64.odin`) | 4 chunks |
+| The blend of a glyph | `blend_coverage_row_in_order` (`src/library/support/graphics/blend.odin`) | `blend_coverage_row_sse2` (`src/library/support/graphics/blend_vectors_amd64.odin`) | 4 pixels |
+| The blend of a picture with premultiplied alpha | `blend_premultiplied_alpha_row_scalar` (`src/library/support/graphics/blend.odin`) | `blend_premultiplied_alpha_row_sse2` (`src/library/support/graphics/blend_vectors_amd64.odin`) | 4 pixels |
+| The BLAKE3 hash of a subtree of four chunks | `chunk_value`, four times (`src/library/contract/blake3/blake3.odin`) | `four_chunk_values_side_by_side` (`src/library/contract/blake3/chunks_side_by_side_amd64.odin`) | 4 chunks |
 
 **What this document is not.** It is not the rule on the vector registers of the kernel. The kernel has no vector instruction at all, and it saves the registers of each thread: `docs/ARCHITECTURE.md`, "The extended state of the processor". It is not the design of the blend in linear light either: `docs/FONTS.md`, "The blend in linear light".
 
@@ -46,7 +46,7 @@ blend_premultiplied_alpha_row :: #force_inline proc "contextless" (to: [^]Color,
 - the edge values often: 0, 1, 254 and 255 in each byte, whole words of 0, of all ones and of full coverage;
 - guard words before and after each row: a form that writes outside its columns changes them.
 
-When a test fails, it gives the first wrong pixel, the value of each form, and the count of pixels changed outside the drawn columns. The tests of the blends are in `support/graphics/blend_vectors_test_amd64.odin` (`coverage_forms_give_the_bytes_of_the_scalar_form`, `coverage_forms_meet_each_channel_value`, `premultiplied_forms_give_the_bytes_of_the_scalar_form`, `premultiplied_forms_meet_each_channel_value`). The tests of the hash are in `contract/blake3/chunks_side_by_side_test_amd64.odin` (`sse2_form_gives_the_hash_of_the_scalar_form`, `subtrees_side_by_side_at_each_counter`). `kerneltool check` runs them.
+When a test fails, it gives the first wrong pixel, the value of each form, and the count of pixels changed outside the drawn columns. The tests of the blends are in `src/library/support/graphics/blend_vectors_test_amd64.odin` (`coverage_forms_give_the_bytes_of_the_scalar_form`, `coverage_forms_meet_each_channel_value`, `premultiplied_forms_give_the_bytes_of_the_scalar_form`, `premultiplied_forms_meet_each_channel_value`). The tests of the hash are in `src/library/contract/blake3/chunks_side_by_side_test_amd64.odin` (`sse2_form_gives_the_hash_of_the_scalar_form`, `subtrees_side_by_side_at_each_counter`). `kerneltool check` runs them.
 
 ## 2. One form: SSE2
 
@@ -61,7 +61,7 @@ So a vector form needs no test of the processor and no choice at the start of a 
 
 **How a vector form is written.** The arithmetic is written with `base:intrinsics` on `#simd[N]T` types: `simd_shuffle`, `simd_select`, `simd_lanes_eq`, `simd_shr`, `simd_shl`, `simd_bit_and`, `simd_bit_or`, `simd_bit_xor`, `simd_reduce_or`, `simd_reduce_and`, `simd_extract`, `unaligned_load`, `unaligned_store`, the operators `+ - *`, and `cast` between element widths. The compiler lowers them to SSE2 instructions. No form names an instruction of the processor, and no form is written in assembler.
 
-**What SSE2 is not here.** It is not the only instruction set that a program can use. A program can read its usable instruction sets with `support/instruction_sets` (`usable_instruction_sets`) and run AVX2 code where the processor has it and the kernel saves its registers. No vector form of the system does that today: the measures below say why.
+**What SSE2 is not here.** It is not the only instruction set that a program can use. A program can read its usable instruction sets with `src/library/support/instruction_sets` (`usable_instruction_sets`) and run AVX2 code where the processor has it and the kernel saves its registers. No vector form of the system does that today: the measures below say why.
 
 ### What was measured about AVX2
 
@@ -78,7 +78,7 @@ AVX2 lost to SSE2 in both places, and its form of the blend of a glyph gave wron
 
 ### What an AVX2 form needs
 
-1. **The registers saved, and a way to know it.** This part exists. The kernel saves the extended state of a thread at each switch of threads: with `xsaveopt` when the processor has it, with the `ymm` registers of AVX and the registers of AVX-512 when the processor has them; with `fxsave` else (`kernel/extended_state.odin`; `docs/ARCHITECTURE.md`, "The extended state of the processor"). A program reads whether AVX2 is usable with `support/instruction_sets`, once at its start: CPUID is slow in a virtual machine.
+1. **The registers saved, and a way to know it.** This part exists. The kernel saves the extended state of a thread at each switch of threads: with `xsaveopt` when the processor has it, with the `ymm` registers of AVX and the registers of AVX-512 when the processor has them; with `fxsave` else (`src/kernel/extended_state.odin`; `docs/ARCHITECTURE.md`, "The extended state of the processor"). A program reads whether AVX2 is usable with `src/library/support/instruction_sets`, once at its start: CPUID is slow in a virtual machine.
 2. **A form that wins by measure** on the machine, with optimisation, on a host with a load under 8. The blend of a glyph reads a table at an index for each channel. The AVX2 gather (`vpgatherdd`) is not faster than single loads on every processor, and on processors from Skylake to Ice Lake and Tiger Lake the correction against Gather Data Sampling (2023) makes it several times slower. A form to measure first: the arithmetic in `ymm` registers with the reads of one byte of the SSE2 form, and no gather.
 3. **The cause of the wrong bytes understood.** The facts:
    - In the build with no optimisation, the AVX2 form gave the byte 03 in some channels. 03 is entry 0 of the table of square roots, so the gather read index 0 in those lanes: the vector of indices that the gather received had zeros where the indices were not 0. The build with optimisation gave the right bytes.
@@ -99,17 +99,17 @@ A vector of 128 bits or less is passed in one `xmm` register by both kinds. That
 
 ### SSSE3, SSE4.1 and AVX-512
 
-No form uses SSSE3 or SSE4.1. `pshufb` (SSSE3) does a rotation of 8 bits in one instruction in place of three in BLAKE3; `pmulld` and `pblendvb` (SSE4.1) have SSE2 forms of one to three instructions that the compiler writes. The gain is a few instructions in loops whose cost is elsewhere (the reads of the table, the 7 rounds). Such a form needs a test of the processor at the start of a program (`support/instruction_sets`).
+No form uses SSSE3 or SSE4.1. `pshufb` (SSSE3) does a rotation of 8 bits in one instruction in place of three in BLAKE3; `pmulld` and `pblendvb` (SSE4.1) have SSE2 forms of one to three instructions that the compiler writes. The gain is a few instructions in loops whose cost is elsewhere (the reads of the table, the 7 rounds). Such a form needs a test of the processor at the start of a program (`src/library/support/instruction_sets`).
 
 AVX-512 gives 512-bit registers (16 pixels, 16 chunks of BLAKE3 side by side), mask registers (the last pixels of a row with no scalar tail), and a gather of 16 lanes. The kernel already saves its three state components on a processor that has them: the extended state area of each thread has 2688 bytes for that (`EXTENDED_STATE_CAPACITY`). A form still needs the same test of the processor as AVX2, and a measure first: on some processors a 512-bit instruction lowers the clock of the core for a while.
 
-## 3. The blend of a glyph (`support/graphics`)
+## 3. The blend of a glyph (`src/library/support/graphics`)
 
 **What it is.** A glyph of the vector font is a rectangle of coverage words from the glyph cache: for each pixel, how much of each color stripe of the screen the shape covers. The blend mixes the text color over the pixels of the canvas with that coverage, in linear light (`docs/FONTS.md`, "Subpixel bands"; `docs/FONTS.md`, "The blend in linear light"). It is the cost of every text of the system.
 
-**The hot loop** is `blend_coverage_row_in_order` (`support/graphics/blend.odin`): for each pixel with partial coverage, three channels, each `square_root[(d * d * (255 - a) + c * c * a) >> 12]`, with `d` the pixel, `c` the color and `a` the coverage. `docs/FONTS.md`, section 5, gives its cost: a glyph from the glyph cache costs about 9 times a glyph of Spleen.
+**The hot loop** is `blend_coverage_row_in_order` (`src/library/support/graphics/blend.odin`): for each pixel with partial coverage, three channels, each `square_root[(d * d * (255 - a) + c * c * a) >> 12]`, with `d` the pixel, `c` the color and `a` the coverage. `docs/FONTS.md`, section 5, gives its cost: a glyph from the glyph cache costs about 9 times a glyph of Spleen.
 
-**The SSE2 form** is `blend_coverage_row_sse2` in `support/graphics/blend_vectors_amd64.odin`, 4 pixels at a time. Each byte of the four pixels gets one lane of 16 bits (16 lanes, which the compiler splits in two registers), because the product of two bytes fits in 16 bits.
+**The SSE2 form** is `blend_coverage_row_sse2` in `src/library/support/graphics/blend_vectors_amd64.odin`, 4 pixels at a time. Each byte of the four pixels gets one lane of 16 bits (16 lanes, which the compiler splits in two registers), because the product of two bytes fits in 16 bits.
 
 | Part | Form |
 |---|---|
@@ -137,10 +137,10 @@ The three give the same bytes: the host test `three_blends_give_the_same_bytes_f
 
 They have no vector form of their own:
 
-- `graphics.copy` calls `intrinsics.mem_copy_non_overlapping`, which is `copy_bytes_without_overlap` of `runtime/memory.asm`. That procedure already moves 16 bytes at a time in `xmm` registers: two or four moves that overlap for 16 to 64 bytes, a loop of 64 bytes above, and `rep movsb` from 2048 bytes to 1 MiB. It uses no AVX: the same file runs in the boot program and on a processor where AVX is not usable.
+- `graphics.copy` calls `intrinsics.mem_copy_non_overlapping`, which is `copy_bytes_without_overlap` of `src/runtime/memory.asm`. That procedure already moves 16 bytes at a time in `xmm` registers: two or four moves that overlap for 16 to 64 bytes, a loop of 64 bytes above, and `rep movsb` from 2048 bytes to 1 MiB. It uses no AVX: the same file runs in the boot program and on a processor where AVX is not usable.
 - `graphics.fill` is a loop of 32-bit stores, and the compiler makes it a vector loop: the code of the compositor has `pshufd $0x0` (the color in the four lanes) and stores of 16 bytes in `interface::execute_in_rectangle` (`objdump -d build/modules/compositor/linked.elf`). A fill of 32-bit pixels is not a fill of bytes: `fill_bytes_with_value` does not apply.
 
-The kernel links another form of `runtime/memory.asm` (`WITHOUT_VECTOR_REGISTERS`): general registers, `rep movsb` and `rep stosb` only.
+The kernel links another form of `src/runtime/memory.asm` (`WITHOUT_VECTOR_REGISTERS`): general registers, `rep movsb` and `rep stosb` only.
 
 ## 4. The compositor
 
@@ -148,7 +148,7 @@ The compositor draws each frame of the screen. This table says, for each kind of
 
 | Work of a frame | Form |
 |---|---|
-| The copy of the background and of a surface into the frame, and of the frame into the screen | `copy_bytes_without_overlap` of `runtime/memory.asm`: already vector moves |
+| The copy of the background and of a surface into the frame, and of the frame into the screen | `copy_bytes_without_overlap` of `src/runtime/memory.asm`: already vector moves |
 | The swap of red and blue when the screen is blue-green-red | the compiler makes it a vector loop (`psrld $0x10`, `pand`, `por` on 16 bytes, in `entry` of the compositor) |
 | The blend of the pointer picture (`blend_premultiplied_alpha`) | SSE2 form, `blend_premultiplied_alpha_row_sse2` |
 | Rectangles (`Rectangle` records), vertical gradients (a fill for each line) | `graphics.fill`: a vector loop of the compiler |
@@ -161,7 +161,7 @@ The compositor draws each frame of the screen. This table says, for each kind of
 - The source is then added as words of 32 bits, as in the scalar form: a source that is not premultiplied carries from one channel into the next in both forms. The validation of a pointer theme file refuses such a pixel, so the compositor never draws one.
 - A group of four transparent pixels is not read. A source with alpha 255 needs no case of its own in the SSE2 form: `255 - a` is 0, and the result is the source without its alpha.
 
-## 5. BLAKE3 (`contract/blake3`)
+## 5. BLAKE3 (`src/library/contract/blake3`)
 
 **Where the hash runs.** The root service checks the hash of each resource before it gives it to a program, and the loader checks the hash of each module that it loads. The hash of a module is its identity, so every start of a program pays this cost.
 
@@ -169,7 +169,7 @@ The compositor draws each frame of the screen. This table says, for each kind of
 
 **The form** is the one of the reference implementation of BLAKE3 for many chunks: the chunks of a subtree side by side, one chunk in each lane. The other candidate, the compression of one block of one chunk with the 16 words in 4 vectors (one row in each), gives less: the message words must be moved between lanes at each round.
 
-- `contract/blake3/chunks_side_by_side_amd64.odin` (`four_chunk_values_side_by_side`): the 16 words of the state of 4 chunks in 16 vectors of 4 words. A round is the 8 mixes of the scalar form, each on whole vectors (`mix_lanes`). The words of a block of the 4 chunks are turned with a transpose of 4 x 4 words (shuffles). The counter of each chunk is computed for each lane in 64 bits, so a low word that passes 2^32 between two lanes is right.
+- `src/library/contract/blake3/chunks_side_by_side_amd64.odin` (`four_chunk_values_side_by_side`): the 16 words of the state of 4 chunks in 16 vectors of 4 words. A round is the 8 mixes of the scalar form, each on whole vectors (`mix_lanes`). The words of a block of the 4 chunks are turned with a transpose of 4 x 4 words (shuffles). The counter of each chunk is computed for each lane in 64 bits, so a low word that passes 2^32 between two lanes is right.
 - `subtree_value` takes this path for a subtree of exactly 4 chunks. The left part of a tree is always a power of two of whole chunks, so every input of more than 4096 bytes has such subtrees. The parents of the chunk values are the scalar form.
 - Scalar: an input of 4096 bytes or less, the last part of a tree that is not a power of two of chunks, the parents, the root.
 
@@ -197,15 +197,15 @@ grep "root: the resource glyph_cache" build/test_output.txt
 On the host, with the optimisation of a module. Each test prints the time of each form, and fails only when the forms give different bytes:
 
 ```
-nix develop -c odin test support/graphics -o:speed -vet -collection:contract=contract -collection:support=support -define:ODIN_TEST_NAMES=graphics.glyph_draw_cost_of_each_form
-nix develop -c odin test contract/blake3 -o:speed -vet -collection:contract=contract -collection:support=support -define:ODIN_TEST_NAMES=blake3.hash_cost_of_each_form
+nix develop -c odin test src/library/support/graphics -o:speed -vet -collection:contract=src/library/contract -collection:support=src/library/support -define:ODIN_TEST_NAMES=graphics.glyph_draw_cost_of_each_form
+nix develop -c odin test src/library/contract/blake3 -o:speed -vet -collection:contract=src/library/contract -collection:support=src/library/support -define:ODIN_TEST_NAMES=blake3.hash_cost_of_each_form
 ```
 
 `graphics.text_speed_of_each_blend` gives the time of one glyph with the blend table, with the SSE2 form alone and with the scalar form alone, in the same way.
 
 ## 7. Limits
 
-- The horizontal gradient and the outline renderer (`support/vector_font`, at build time) stay scalar.
+- The horizontal gradient and the outline renderer (`src/library/support/vector_font`, at build time) stay scalar.
 - The object code of the SSE2 forms is not read yet: the measures say if the compiler lowered the 16-bit products to `pmullw` and `pmulhuw`.
 - The cryptography of the system has no vector form: it keeps the portable implementations of its origin (`docs/CRYPTOGRAPHY.md`).
-- No vector form uses a usable instruction set above SSE2. The package `support/instruction_sets` has two users, the test programs `extended_state` and `return_fault`.
+- No vector form uses a usable instruction set above SSE2. The package `src/library/support/instruction_sets` has two users, the test programs `extended_state` and `return_fault`.

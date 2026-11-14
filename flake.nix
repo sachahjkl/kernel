@@ -145,7 +145,7 @@
     # libraries of the project, and runs it in the folder of the project.
     kerneltool = pkgs.writeShellScriptBin "kerneltool" ''
       mkdir -p build
-      exec odin run tools/kerneltool -vet -collection:contract=contract -collection:support=support -out:build/kerneltool -- "$@"
+      exec odin run tools/kerneltool -vet -collection:contract=src/library/contract -collection:support=src/library/support -out:build/kerneltool -- "$@"
     '';
 
     # kerneltool check: the host code passes -vet and its tests, the system builds,
@@ -155,7 +155,7 @@
         src = inputs.nixpkgs.lib.fileset.toSource {
           root = ./.;
           # The host tests of `kerneltool site` read README.md, flake.lock and the Markdown documents; the check of the source paths in the documents reads AGENTS.md too; the check of the README needs its pictures; `kerneltool news check` reads news/, and the film that a news entry names (docs/films: absent in a tree where no entry names a film); the check of the font of the name of the mark reads LICENSE, whose text the font carries.
-          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./flake.lock ./CHANGELOG.md ./ROADMAP.md ./changelog.d ./news ./README.md ./AGENTS.md ./LICENSE (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "md") ./docs) ./docs/screenshots (inputs.nixpkgs.lib.fileset.maybeMissing ./docs/films) ./boot ./contract ./kernel ./modules ./programs ./resources ./runtime ./src ./support ./tools ./.project];
+          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./flake.lock ./CHANGELOG.md ./ROADMAP.md ./changelog.d ./news ./README.md ./AGENTS.md ./LICENSE (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "md") ./docs) ./docs/screenshots (inputs.nixpkgs.lib.fileset.maybeMissing ./docs/films) ./resources ./src ./tools ./.project];
         };
         nativeBuildInputs = buildTools ++ [kerneltool];
         buildPhase = ''

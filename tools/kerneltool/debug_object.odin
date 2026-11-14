@@ -765,7 +765,7 @@ odin_root :: proc() -> string {
 }
 
 // debug_path gives the path of a source file as the debug object keeps it:
-// from the root of the repository ("programs/fault/main.odin"), or from the
+// from the root of the repository ("src/programs/fault/main.odin"), or from the
 // root of the Odin installation with its library as a prefix
 // ("base:runtime/core.odin", "core:..."). A relative path is relative to the
 // folder where the compiler ran, the root of the repository. So the debug

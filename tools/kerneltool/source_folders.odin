@@ -8,13 +8,13 @@ package kerneltool
 
 import "core:strings"
 
-SOURCE_FOLDER_KERNEL :: "kernel" // The kernel.
-SOURCE_FOLDER_BOOT :: "boot" // The boot program.
-SOURCE_FOLDER_RUNTIME :: "runtime" // The memory procedures in assembly.
-SOURCE_FOLDER_PROGRAMS :: "programs" // The programs of the system: one folder for each.
-SOURCE_FOLDER_MODULES :: "modules" // The modules that are not programs: one folder for each.
-SOURCE_FOLDER_CONTRACT :: "contract" // The contract packages.
-SOURCE_FOLDER_SUPPORT :: "support" // The support packages.
+SOURCE_FOLDER_KERNEL :: "src/kernel" // The kernel.
+SOURCE_FOLDER_BOOT :: "src/boot" // The boot program.
+SOURCE_FOLDER_RUNTIME :: "src/runtime" // The memory procedures in assembly.
+SOURCE_FOLDER_PROGRAMS :: "src/programs" // The programs of the system: one folder for each.
+SOURCE_FOLDER_MODULES :: "src/modules" // The modules that are not programs: one folder for each.
+SOURCE_FOLDER_CONTRACT :: "src/library/contract" // The contract packages.
+SOURCE_FOLDER_SUPPORT :: "src/library/support" // The support packages.
 
 // Each folder of the sources of the system. A list of the tool that reads
 // a part of them names its folders by their constants, in its own order:

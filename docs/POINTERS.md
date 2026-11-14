@@ -61,7 +61,7 @@ What this system takes from it, and what not:
 
 ### The pointer shapes
 
-One enum of the system, `Pointer_Shape` in `contract/pointer_pictures`, with one long name for each. Zero is the arrow: a zero record asks for the default (ZII). The CSS names are the sources in the manifest of the Posy theme. The name of a shape in a manifest and on the log is the name of this table (`SHAPE_NAMES`).
+One enum of the system, `Pointer_Shape` in `src/library/contract/pointer_pictures`, with one long name for each. Zero is the arrow: a zero record asks for the default (ZII). The CSS names are the sources in the manifest of the Posy theme. The name of a shape in a manifest and on the log is the name of this table (`SHAPE_NAMES`).
 
 | Number | Name | CSS name | Where the system uses it today |
 |---|---|---|---|
@@ -85,7 +85,7 @@ Not taken: the CSS names that no part of the system has a use for (`context-menu
 
 ### The request of a program
 
-A program asks for a pointer shape with the display command `Pointer_Shape` (`support/display`, `display.pointer_shape_set`):
+A program asks for a pointer shape with the display command `Pointer_Shape` (`src/library/support/display`, `display.pointer_shape_set`):
 
 ```odin
 display.pointer_shape_set(&window, .Text)
@@ -100,7 +100,7 @@ Two programs ask today: `terminal` (the shape `text` over its surface) and `poin
 
 ### How the compositor chooses the shape
 
-`pointer_shape_under` (`programs/compositor/pointer_picture.odin`) gives the shape for the place of the pointer. The first rule that holds wins:
+`pointer_shape_under` (`src/programs/compositor/pointer_picture.odin`) gives the shape for the place of the pointer. The first rule that holds wins:
 
 1. While the pointer drags a window: `move`.
 2. While the palette is open: `text` over its input band, `pointing_hand` over an entry of its list, `arrow` elsewhere.
@@ -121,7 +121,7 @@ Two programs ask today: `terminal` (the shape `text` over its surface) and `poin
 
 ## 3. The format of the system: one pointer theme file
 
-`contract/pointer_pictures`. One file for a whole theme, mapped read-only and read in place: no parse at run time, one validation at the start. All numbers are little-endian; each header is of fixed size; no field depends on a language.
+`src/library/contract/pointer_pictures`. One file for a whole theme, mapped read-only and read in place: no parse at run time, one validation at the start. All numbers are little-endian; each header is of fixed size; no field depends on a language.
 
 ```
 Header           512 bytes  at 0
@@ -134,9 +134,9 @@ pixels           u32 each   at pixel_offset, pixel_size bytes
 - **Header**: `magic` (the bytes "POINTERS"), `version` (1), `shape_count`, `picture_count`, a reserved word of 0, `pixel_offset`, `pixel_size`, `file_size`, `theme_name` (32 bytes), `license` (32 bytes, an SPDX identifier), `attribution` (400 bytes). The texts are ASCII 32 to 126 followed by zero bytes, so that the font of the system shows them. The name and the license are not empty; the attribution can be.
 - **Shape_Entry**: `shape` (the number of the enum), `first_picture`, `size_count`, `frame_count`. The pictures of a shape are `size_count * frame_count` entries from `first_picture`: the frames of the smallest size, then of the next. Two shapes can name the same pictures (two names, one file, as the links of an Xcursor theme).
 - **Picture_Entry**: `nominal_size`, `width`, `height`, `hot_spot_x`, `hot_spot_y`, `delay_milliseconds` (0 for a shape with one frame), `pixel_offset` (from the start of the pixels).
-- **Pixels**: 0xAARRGGBB with premultiplied alpha, the form of an Xcursor file and the form of a canvas of `support/graphics` (0x00RRGGBB) plus alpha in the high byte. The blend reads the alpha from the same word and adds the source to the destination with no conversion. Straight alpha needs three more multiplications for each pixel.
+- **Pixels**: 0xAARRGGBB with premultiplied alpha, the form of an Xcursor file and the form of a canvas of `src/library/support/graphics` (0x00RRGGBB) plus alpha in the high byte. The blend reads the alpha from the same word and adds the source to the destination with no conversion. Straight alpha needs three more multiplications for each pixel.
 
-**The limits of the format** (constants of `contract/pointer_pictures`):
+**The limits of the format** (constants of `src/library/contract/pointer_pictures`):
 
 | Limit | Value |
 |---|---|
@@ -224,7 +224,7 @@ shape arrow hot 0 0
 - **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository, MIT): the 15 shapes as grids of squares, in the style of the arrow of `DESIGN.md`, at the sizes 24 (squares of 2 pixels) and 48 (squares of 4 pixels, for a later screen with twice the pixels). `wait` and `busy_with_arrow` have 4 frames of 250 ms. Its file has 42 pictures. It is always in the boot image, as the resource `pointers_system`.
 - **The Posy theme** (`resources/pointers/posy.manifest`): "Posy's Cursor" from the build input `posy-cursors` of `flake.nix` (the package of nixpkgs, pinned by `flake.lock`). The flake gives its folder to the tool as `POINTER_THEME_SOURCE`. The tool converts it at each build into `build/pointers/posy.pointers`, which the boot image holds as the resource `pointers_posy`. No file of that theme and no file made from its pixels is in the repository (section 6). Sizes: 32 (the smallest size of the theme) and 64 for the later screen; the two animated shapes keep 32 only (77 frames: 315 KiB at 32, 1.26 MiB more at 64). Its file has 178 pictures: `grab` and `grabbing` come from one file of the theme and share their pictures.
 - **The choice of the compositor**: the Posy theme is the default when the build has its input; the theme of the system is the fallback.
-  - The root service gives the compositor the themes of the boot image in order: `pointers_posy` when the boot image has it, then `pointers_system` (`pointer_theme_choice` in `programs/root/resources.odin`: the one place of this order).
+  - The root service gives the compositor the themes of the boot image in order: `pointers_posy` when the boot image has it, then `pointers_system` (`pointer_theme_choice` in `src/programs/root/resources.odin`: the one place of this order).
   - For each one, the root service checks the hash of the resource and maps it read-only in the compositor. It writes the address and the size of the first in the values 6 and 7 of the context of the compositor, and those of the second in the values 18 and 19 (`MODULE_CONTRACT.md`, "6. The context").
   - The compositor validates each file once. The setting `pointer_theme` of the principal chooses one of them while the compositor runs: `owner` is the first theme that the boot image has, `system` is the theme of the system (`docs/FONTS.md`, "7. The setting"). The compositor writes `compositor: the pointer theme in use: <name>` on the log at each change.
   - With no build input, the tool prints that `POINTER_THEME_SOURCE` is not set and makes the theme of the system only. The system works the same.

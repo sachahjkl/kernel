@@ -97,7 +97,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		for item in reference.modules {
 			in_image += item.build.image ? 1 : 0
 		}
-		fmt.sbprintf(&b, "<h1>Modules</h1>\n<p>The %d modules that the tool builds, %d of them in the boot image. A kernel runs in kernel mode; a program is a module whose source is in <code>programs/</code>; the others are modules that a program loads or calls. The purpose of each is the first sentence of the comment before <code>package</code> in its source.</p>\n", len(reference.modules), in_image)
+		fmt.sbprintf(&b, "<h1>Modules</h1>\n<p>The %d modules that the tool builds, %d of them in the boot image. A kernel runs in kernel mode; a program is a module whose source is in <code>" + SOURCE_FOLDER_PROGRAMS + "/</code>; the others are modules that a program loads or calls. The purpose of each is the first sentence of the comment before <code>package</code> in its source.</p>\n", len(reference.modules), in_image)
 		fmt.sbprintf(&b, "<p>The <a href=\"%s\">module graph</a> shows who imports whom: %d imports between the %d modules.</p>\n", site_page_link(site, modules_page, site_page_file(SITE_MODULE_GRAPH_FOLDER)), len(graph_layout.edges), len(reference.modules))
 		// One table for each group, in the order of the tree of the documentation.
 		for group in Site_Module_Group {

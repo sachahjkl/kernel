@@ -1,6 +1,6 @@
 // The style sheet of the site. Its colors come from the table of the design
-// rules (support/graphics/rules.odin, docs/DESIGN.md) and from the mark
-// (support/mark): the site repeats no color of the rules as its own number.
+// rules (src/library/support/graphics/rules.odin, docs/DESIGN.md) and from the mark
+// (src/library/support/mark): the site repeats no color of the rules as its own number.
 package kerneltool
 
 import "core:fmt"
@@ -743,7 +743,7 @@ h2:target, h3:target, li:target, p:target { box-sizing: border-box; border-left:
 `
 
 // The scroll bars (docs/SITE.md, "The scroll bars"): the scroll bar of the
-// system, from the same table (support/graphics/scroll_bar.odin). An arrow
+// system, from the same table (src/library/support/graphics/scroll_bar.odin). An arrow
 // button with a triangle at each end; a track with a gradient across it
 // and a border; a thumb with a border, a gradient across it, an inner line
 // and a grip of four lines. With the pointer over it, the thumb and an
@@ -795,7 +795,7 @@ SITE_SCROLL_RULES :: `
 `
 
 // site_scroll_colors gives the colors of the scroll bars of one form: the
-// table of the scroll bar of the system (support/graphics/scroll_bar.odin).
+// table of the scroll bar of the system (src/library/support/graphics/scroll_bar.odin).
 site_scroll_colors :: proc(light: bool) -> graphics.Scroll_Bar_Colors {
 	return light ? graphics.scroll_bar_colors_light : graphics.scroll_bar_colors_dark
 }

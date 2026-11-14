@@ -79,7 +79,7 @@ It does not protect against:
 
 ## 3. The system description
 
-The system description is one file. It is the identity of one version of the whole system (`contract/system_description`). It lists each file of the system with its size and its hash, in one fixed order, so one system has exactly one description and one hash: two machines with the same hash of the description run the same bytes.
+The system description is one file. It is the identity of one version of the whole system (`src/library/contract/system_description`). It lists each file of the system with its size and its hash, in one fixed order, so one system has exactly one description and one hash: two machines with the same hash of the description run the same bytes.
 
 ```
 Header, 16 bytes:
@@ -193,7 +193,7 @@ The measure is a record in the TPM of which system started: the hash of the syst
 
 ### A measure that does not depend on the event path of the firmware
 
-Designed, not built. When `HashLogExtendEvent` fails, the boot program can send `TPM2_PCR_Extend` itself through `SubmitCommand`, with the SHA-256 hash of the description that it computes with `support/cryptography/sha2` (the boot program links it already for Ed25519). The event log of the firmware then has no entry, and the display must say "measured, with no entry in the event log". It is not built because it does not help in the case that the test machines show: in the firmware of EDK II, as far as its source is known here, `SubmitCommand` checks the same flag "TPM present" as `HashLogExtendEvent`, and fails at once when the firmware cleared it. The one path that does not depend on that flag is a driver of the interface of the TPM in the boot program, and the boot program has no TPM driver: it talks to the TPM through the firmware.
+Designed, not built. When `HashLogExtendEvent` fails, the boot program can send `TPM2_PCR_Extend` itself through `SubmitCommand`, with the SHA-256 hash of the description that it computes with `src/library/support/cryptography/sha2` (the boot program links it already for Ed25519). The event log of the firmware then has no entry, and the display must say "measured, with no entry in the event log". It is not built because it does not help in the case that the test machines show: in the firmware of EDK II, as far as its source is known here, `SubmitCommand` checks the same flag "TPM present" as `HashLogExtendEvent`, and fails at once when the firmware cleared it. The one path that does not depend on that flag is a driver of the interface of the TPM in the boot program, and the boot program has no TPM driver: it talks to the TPM through the firmware.
 
 ### The machines of the TPM
 
@@ -246,13 +246,13 @@ The machines with this firmware run with four processors, as every other machine
 
 | Part | File |
 |---|---|
-| The format, its reader and its checks | `contract/system_description/system_description.odin` |
-| The trust record | `contract/boot_info/boot_info.odin` (`Boot_Trust`) |
-| The checks and the measure of the boot program | `boot/trust.odin` |
-| The check of the root service | `programs/root/trust.odin` |
-| The line of the trust and the line of the check on the boot display | `support/bootscreen/bootscreen.odin` (`trust_line`, `check_line`) |
-| The places of the card of the boot image | `support/bootscreen/image_card` |
+| The format, its reader and its checks | `src/library/contract/system_description/system_description.odin` |
+| The trust record | `src/library/contract/boot_info/boot_info.odin` (`Boot_Trust`) |
+| The checks and the measure of the boot program | `src/boot/trust.odin` |
+| The check of the root service | `src/programs/root/trust.odin` |
+| The line of the trust and the line of the check on the boot display | `src/library/support/bootscreen/bootscreen.odin` (`trust_line`, `check_line`) |
+| The places of the card of the boot image | `src/library/support/bootscreen/image_card` |
 | The signature, the keys, the command `key` | `tools/kerneltool/system_description.odin` |
 | The ten machines of `test trusted_boot` | `tools/kerneltool/trusted_boot_scenario.odin` |
 | The firmware signing key, `sbsign`, the variable store with Secure Boot | `tools/kerneltool/secure_boot.odin` |
-| The Ed25519 code of the boot program | `support/cryptography/ed25519` (`docs/CRYPTOGRAPHY.md`) |
+| The Ed25519 code of the boot program | `src/library/support/cryptography/ed25519` (`docs/CRYPTOGRAPHY.md`) |

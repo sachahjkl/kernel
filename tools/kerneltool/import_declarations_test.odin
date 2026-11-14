@@ -324,7 +324,7 @@ each_declaration_of_the_repository_agrees_with_its_export :: proc(t: ^testing.T)
 }
 
 // The rules of a program that draws its window through the drawing module
-// (support/interface, window_drawing.odin):
+// (src/library/support/interface, window_drawing.odin):
 //   - it imports the module, which is a library module of the table;
 //   - it draws no picture and no grid of text cells: a draw table names
 //     them by an address, and the module cannot read them;
