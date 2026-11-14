@@ -171,7 +171,7 @@ only_the_scenario_of_a_film_has_fixed_times :: proc(t: ^testing.T) {
 			testing.expectf(t, !step_is_of_a_film(step.kind), "the step %d of a scenario of a test is %v, a step of a film", index + 1, step.kind)
 		}
 	}
-	for name in ([]string{"terminal", "palette"}) {
+	for name in ([]string{"terminal", "palette", "heron"}) {
 		film, found := film_of_name(name)
 		testing.expectf(t, found, "the film %s is a film of the tool", name)
 		started, stopped := false, false
