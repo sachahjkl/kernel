@@ -1382,15 +1382,21 @@ scenario := [?]Step {
 	// state, so the screen has it when the line is on the log. A wait
 	// names the frame, the way and the form; the place and the counts that
 	// follow in the line are what the program computed, and no step
-	// repeats them.
+	// repeats them. The second dot writes a line of the third frame too,
+	// with the lines hidden: the wait after it is for the lines shown.
+	// The first line of the program says that its window has two
+	// pictures: the program draws one while the compositor reads the
+	// other, so no picture of the screen shows a half-drawn heron.
 	{kind = .Launch, text = "heron"},
-	{kind = .Wait, text = "heron: ok", any_order = true},
+	{kind = .Wait, text = "heron: ok, a window of two pictures: the screen never shows a picture that is being drawn", any_order = true},
 	{kind = .Wait, text = "compositor: surface heron"},
 	{kind = .Keys, text = "8"},
 	{kind = .Wait, text = "heron: dash played: 17 frames, the heron left the window and came back, on the grid"},
 	{kind = .Key, text = "spc"},
+	{kind = .Wait, text = "heron: paused"},
 	{kind = .Keys, text = "8..l"},
 	{kind = .Wait, text = "heron: shows dash at frame 3 of 17, held, on the grid: the form run, "},
+	{kind = .Wait, text = "; the lines of the cells shown"},
 	{kind = .Shot, text = "heron"},
 	{kind = .Keys, text = "g"},
 	{kind = .Wait, text = "heron: shows dash at frame 3 of 17, held, free: the frame stretched to "},

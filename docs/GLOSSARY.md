@@ -5397,11 +5397,23 @@ Do not use: issue, bug (for this), todo, known limitation.
 
 A working record is a document of `docs/` that records the work, not the system: `HANDOFF.md`, `REVIEWS.md`, `SITE.md` and `FIRST_MILESTONE.md`.
 
-A guide explains how a part of the system is designed and why; a working record holds steps, choices, gaps, reviews and the state of the work. So the site publishes the guides and not the working records (`SITE_WORKING_RECORDS`): a link of a page to a working record names the file in the repository, and says so. `docs/DECISIONS.md` is the record of the decisions.
+A guide explains how a part of the system is designed and why; a working record holds steps, choices, gaps, reviews and the state of the work. So the site publishes the guides and not the working records (`SITE_WORKING_RECORDS`): a link of a page to a working record names the file in the repository, and says so. `docs/DECISIONS.md` is the record of the decisions. An intent file is a working record for the site too, by its path under `src/md`.
 
 The design: `docs/SITE.md`, "The pages".
 
 Do not use: internal document, notes.
+
+### Intent file
+
+An intent file is a Markdown file of the folder `src/md` that records why a part of the system has its form.
+
+It holds the purpose of the part, its constraints, the chosen form with its reasons, each form that was refused with its reason, the subtle points, and what is built and what is left. A design is written there before its code, and a change of a design changes its intent file in the same commit as the code. `src/md/README.md` is the entry point of the folder: an overview of the system, and a file index that lists each other file once; `kerneltool check` refuses an index and a folder that are not the same set. The folder follows the standard of [srcmd.org](https://srcmd.org).
+
+An intent file is not a guide: a guide says what the system does and how to use it, and the site publishes it. It is not the record of a decision (`docs/DECISIONS.md`), a review, a log or a plan. It is a working record for the site: a pointer to one links to the file in the repository. Example: `src/md/features/palette.md` says why the palette is a panel of the compositor with the console as its provider, and which forms were refused.
+
+The design: `src/md/README.md`, "The rules of this folder"; `docs/TOOLS.md`, "The intent folder".
+
+Do not use: design document, specification, RFC, architecture decision record.
 
 ### Changelog
 
@@ -5478,7 +5490,7 @@ Do not use: news item, post, announcement, blog post, changelog entry.
 
 A film is the pictures of the screen of a test machine, taken 30 times in one second while a scenario of the tool sends its keys, as one file that a player shows at the speed of the machine.
 
-`kerneltool film <name>` makes a film: `terminal` or `palette`. It writes an MP4 file with H.264 and a WebM file with AV1 from the same pictures, in the build folder. A film is not a test: only its scenario has steps with a fixed time, the period between two typed keys and the hold of a state for its viewer.
+`kerneltool film <name>` makes a film: `terminal`, `palette` or `heron`. It writes an MP4 file with H.264 and a WebM file with AV1 from the same pictures, in the build folder. A film is not a test: only its scenario has steps with a fixed time, the period between two typed keys and the hold of a state for its viewer.
 
 A news entry can name a film, `film: docs/films/<name>.webm`. The command then writes the WebM file in the repository too, which holds it as it holds a screen picture: at most 4 MiB. The site shows it on the page of the news in a `video` element that plays only when the reader starts it, with the picture of the entry in its place before that. A card of the home, the feed and a browser that does not play AV1 show the picture.
 
